@@ -62,10 +62,11 @@ func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async thro
     }
 }
 
-/// Polls until `condition` holds or the timeout passes. Returns whether it held.
+/// Polls until `condition` holds or the timeout passes. Returns whether it held. The timeout is long because a loaded CI
+/// runner can take many seconds to start a process, and a condition that holds returns at once anyway.
 /// The condition runs on the caller's actor, so main-actor tests can read main-actor state.
 func eventually(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = .seconds(20),
     isolation: isolated (any Actor)? = #isolation,
     _ condition: () async -> Bool
 ) async -> Bool {

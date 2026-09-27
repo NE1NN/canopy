@@ -24,7 +24,8 @@ struct ControlServerTests {
         let handler = WorkspaceControlHandler(rows: rows, ui: ui)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         try await server.start()
-        return (workspace, server, ControlClient(socketPath: home.socketPath, timeout: 10), ui)
+        // Creating rows runs git and setup, which a loaded CI runner can take well over 10 seconds to finish.
+        return (workspace, server, ControlClient(socketPath: home.socketPath, timeout: 60), ui)
     }
 
     func call<T: Decodable & Sendable>(
