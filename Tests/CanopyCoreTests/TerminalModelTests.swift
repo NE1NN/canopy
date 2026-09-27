@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import CanopyCore
@@ -29,5 +30,35 @@ struct TerminalModelTests {
         #expect(
             BusyTerminals.quitWarning(["claude", "bun", "claude"])
                 == "3 terminals are running processes: claude, bun. Quitting stops them.")
+    }
+}
+
+struct RepoConfigTests {
+    @Test func readsCommandsAndDefaultsMissingOnes() throws {
+        let dir = try TempDir()
+        try FileManager.default.createDirectory(atPath: dir.sub(".canopy"), withIntermediateDirectories: true)
+        try #"{"setup": ["bun install"], "other": true}"#.write(
+            toFile: dir.sub(".canopy/config.json"), atomically: true, encoding: .utf8)
+
+        #expect(try RepoConfig.load(from: dir.path) == RepoConfig(setup: ["bun install"], teardown: []))
+        #expect(try RepoConfig.load(from: dir.sub("nowhere")) == RepoConfig())
+    }
+
+    @Test func explainsWhatIsWrong() throws {
+        let dir = try TempDir()
+        try FileManager.default.createDirectory(atPath: dir.sub(".canopy"), withIntermediateDirectories: true)
+        let path = dir.sub(".canopy/config.json")
+
+        try "{".write(toFile: path, atomically: true, encoding: .utf8)
+        #expect(throws: WorkspaceError.self) { try RepoConfig.load(from: dir.path) }
+
+        try #"{"teardown": [1]}"#.write(toFile: path, atomically: true, encoding: .utf8)
+        do {
+            _ = try RepoConfig.load(from: dir.path)
+            Issue.record("expected an error")
+        } catch let error as WorkspaceError {
+            #expect(error.code == "bad_config")
+            #expect(error.message.hasPrefix("Could not read \(path): teardown.0:"))
+        }
     }
 }

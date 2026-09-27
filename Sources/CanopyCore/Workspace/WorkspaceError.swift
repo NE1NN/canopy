@@ -14,6 +14,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case worktreeDirty(String)
     case cannotRemoveMain
     case notManaged(String)
+    case badConfig(String, reason: String)
+    case teardownFailed(Int32)
     case git(GitError)
 
     public var code: String {
@@ -33,6 +35,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
         case .notManaged: "not_managed"
+        case .badConfig: "bad_config"
+        case .teardownFailed: "teardown_failed"
         case .git: "git_failed"
         }
     }
@@ -55,6 +59,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
         case .notManaged(let path): "\(path) belongs to another tool. Adopt it first."
+        case .badConfig(let path, let reason): "Could not read \(path): \(reason)"
+        case .teardownFailed(let code):
+            "Teardown failed with exit code \(code). Its tab shows why. Pass --force to remove the row anyway."
         case .git(let error): error.description
         }
     }
