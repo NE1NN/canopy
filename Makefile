@@ -7,7 +7,7 @@ build:
 	swift build
 
 test:
-	swift test $(TEST_FLAGS)
+	LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(TEST_FLAGS)
 
 lint:
 	swift format lint --strict --recursive $(SOURCES)

@@ -33,7 +33,7 @@ struct InstanceLockTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(throws: InstanceLockError.heldElsewhere(path)) { try InstanceLock(path: path) }
 
-        _ = try InstanceLock.waiting(path: path, timeout: 3)
+        _ = try await offPool { try InstanceLock.waiting(path: path, timeout: 3) }
         try await holder.value
     }
 

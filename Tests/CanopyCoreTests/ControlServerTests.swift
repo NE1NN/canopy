@@ -24,9 +24,11 @@ struct ControlServerTests {
         return (workspace, server, ControlClient(socketPath: home.socketPath, timeout: 10), ui)
     }
 
-    func call<T: Decodable>(_ client: ControlClient, _ method: String, _ params: some Encodable, as: T.Type) throws -> T
-    {
-        let response = try client.send(ControlRequest(method: method, params: try .from(params)))
+    func call<T: Decodable & Sendable>(
+        _ client: ControlClient, _ method: String, _ params: some Encodable, as: T.Type
+    ) async throws -> T {
+        let request = ControlRequest(method: method, params: try .from(params))
+        let response = try await offPool { try client.send(request) }
         if let error = response.error { throw error }
         return try #require(response.result).decode(T.self)
     }
@@ -54,7 +56,10 @@ struct ControlServerTests {
         try await server.start()
         defer { server.stop() }
 
-        let response = try ControlClient(socketPath: home.socketPath).send(ControlRequest(method: "ping"))
+        let socketPath = home.socketPath
+        let response = try await offPool {
+            try ControlClient(socketPath: socketPath).send(ControlRequest(method: "ping"))
+        }
         #expect(response.result == .bool(true))
     }
 
@@ -64,13 +69,13 @@ struct ControlServerTests {
         let (_, server, client, ui) = try await startServer(dir)
         defer { server.stop() }
 
-        let status = try call(client, ControlMethod.status, JSONValue.null, as: StatusResult.self)
+        let status = try await call(client, ControlMethod.status, JSONValue.null, as: StatusResult.self)
         #expect(status.pid == ProcessInfo.processInfo.processIdentifier)
 
-        let added = try call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let added = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
         #expect(added.name == "demo")
 
-        let created = try call(
+        let created = try await call(
             client,
             ControlMethod.rowNew,
             RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", base: nil, select: true),
@@ -79,10 +84,10 @@ struct ControlServerTests {
         #expect(created.row.branch == "feat/cli")
         #expect(ui.selected.withLock { $0 } == [created.row.path])
 
-        let rows = try call(client, ControlMethod.rowList, RowListParams(repo: nil, all: false), as: [Row].self)
+        let rows = try await call(client, ControlMethod.rowList, RowListParams(repo: nil, all: false), as: [Row].self)
         #expect(rows.map(\.branch) == ["main", "feat/cli"])
 
-        let removed = try call(
+        let removed = try await call(
             client,
             ControlMethod.rowRemove,
             RowRemoveParams(
@@ -97,17 +102,20 @@ struct ControlServerTests {
         let (_, server, client, _) = try await startServer(dir)
         defer { server.stop() }
 
-        let unknown = try client.send(ControlRequest(method: "nope"))
+        let unknown = try await offPool { try client.send(ControlRequest(method: "nope")) }
         #expect(unknown.error?.code == "unknown_method")
 
-        let badVersion = try client.send(ControlRequest(method: ControlMethod.status, v: 99))
+        let badVersion = try await offPool { try client.send(ControlRequest(method: ControlMethod.status, v: 99)) }
         #expect(badVersion.error?.code == "version_mismatch")
 
-        let missingRepo = try client.send(
-            ControlRequest(method: ControlMethod.repoAdd, params: try .from(RepoAddParams(path: dir.sub("nope")))))
+        let missingRequest = ControlRequest(
+            method: ControlMethod.repoAdd, params: try .from(RepoAddParams(path: dir.sub("nope"))))
+        let missingRepo = try await offPool { try client.send(missingRequest) }
         #expect(missingRepo.error?.code == "path_not_found")
 
-        let badParams = try client.send(ControlRequest(method: ControlMethod.repoAdd, params: .string("x")))
+        let badParams = try await offPool {
+            try client.send(ControlRequest(method: ControlMethod.repoAdd, params: .string("x")))
+        }
         #expect(badParams.error?.code == "bad_params")
     }
 
@@ -116,13 +124,16 @@ struct ControlServerTests {
         let (_, server, _, _) = try await startServer(dir)
         defer { server.stop() }
 
-        let fd = try ControlClient.connect(to: dir.sub("home/canopy.sock"))
-        defer { close(fd) }
-        _ = "not json\n".withCString { write(fd, $0, strlen($0)) }
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let count = read(fd, &buffer, buffer.count)
-        let response = try ControlCodec.decode(
-            ControlResponse.self, from: Data(buffer[0..<max(count, 0)].prefix { $0 != 0x0A }))
+        let socketPath = dir.sub("home/canopy.sock")
+        let reply = try await offPool { () throws -> Data in
+            let fd = try ControlClient.connect(to: socketPath)
+            defer { close(fd) }
+            _ = "not json\n".withCString { write(fd, $0, strlen($0)) }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            let count = read(fd, &buffer, buffer.count)
+            return Data(buffer[0..<max(count, 0)].prefix { $0 != 0x0A })
+        }
+        let response = try ControlCodec.decode(ControlResponse.self, from: reply)
         #expect(response.error?.code == "bad_request")
     }
 

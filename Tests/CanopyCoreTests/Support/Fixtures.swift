@@ -45,6 +45,14 @@ enum Fixture {
     }
 }
 
+/// Runs blocking work (socket reads, lock waits) on its own thread. On a Swift concurrency thread it would
+/// hold one of the few threads the server needs to answer it, and a small CI machine deadlocks.
+func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        Thread { continuation.resume(with: Result { try work() }) }.start()
+    }
+}
+
 /// Polls until `condition` holds or the timeout passes. Returns whether it held.
 func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
     let clock = ContinuousClock()
