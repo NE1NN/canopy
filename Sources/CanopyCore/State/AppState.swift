@@ -29,6 +29,8 @@ public struct AppState: Codable, Sendable, Equatable {
     public var selectedRowPath: String?
     /// Each row's tabs and layouts, keyed by row path, rebuilt with fresh shells on launch.
     public var terminals: [String: SavedRowTerminals]
+    /// The next pane number, so a pane ID an agent kept never names a different terminal after a relaunch.
+    public var nextPane = 1
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -46,6 +48,7 @@ public struct AppState: Codable, Sendable, Equatable {
         repos = try container.decodeIfPresent([RepoEntry].self, forKey: .repos) ?? []
         selectedRowPath = try container.decodeIfPresent(String.self, forKey: .selectedRowPath)
         // Layouts that cannot be read are dropped on their own, so repos and rows still load.
+        nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
         terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
     }
 }

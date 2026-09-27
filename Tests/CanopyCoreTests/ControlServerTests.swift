@@ -182,6 +182,14 @@ struct ControlServerTests {
         }
         #expect(try await call(client, TermMethod.list, TermListParams(all: true), as: [TermInfo].self).isEmpty)
 
+        let typo = try await offPool {
+            try client.send(
+                ControlRequest(
+                    method: TermMethod.list,
+                    params: try .from(TermListParams(target: TargetHint(repo: "demo", row: "fix/nope")))))
+        }
+        #expect(typo.error?.code == "row_not_found")
+
         let missing = try await offPool {
             try client.send(ControlRequest(method: TermMethod.read, params: try .from(TermReadParams(pane: "p999"))))
         }

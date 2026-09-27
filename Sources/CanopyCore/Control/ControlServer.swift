@@ -94,6 +94,8 @@ private final class ControlConnection: Sendable {
     private let buffer = Mutex(Data())
     /// The last reply in line. Requests are handled at once but answered in the order they came.
     private let lastReply = Mutex<Task<Void, Never>?>(nil)
+    /// Set once the connection is being closed, after which nothing more is read.
+    private let closing = Mutex(false)
 
     init(connection: NWConnection, queue: DispatchQueue, handler: @escaping ControlServer.Handler) {
         self.connection = connection
@@ -111,14 +113,17 @@ private final class ControlConnection: Sendable {
             if let data, !data.isEmpty {
                 self.consume(data)
             }
-            if isComplete || error != nil {
+            if error != nil {
+                // The client is gone, so there is no one to answer.
+                self.connection.cancel()
+            } else if isComplete {
                 // The client may close its side right after sending, so answer what came in before closing.
                 let pending = self.lastReply.withLock { $0 }
                 Task {
                     await pending?.value
                     self.connection.cancel()
                 }
-            } else {
+            } else if !self.closing.withLock({ $0 }) {
                 self.receive()
             }
         }
@@ -135,6 +140,8 @@ private final class ControlConnection: Sendable {
             return lines
         }
         if buffer.withLock({ $0.count > Self.maximumLine }) {
+            closing.withLock { $0 = true }
+            buffer.withLock { $0 = Data() }
             reply(
                 ControlResponse.failure(
                     id: "", error: ControlError(code: "bad_request", message: "Request is too long.")))

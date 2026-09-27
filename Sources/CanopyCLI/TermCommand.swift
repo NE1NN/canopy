@@ -89,7 +89,8 @@ struct TermCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(TermMethod.send, TermSendParams(pane: id, text: text, enter: enter))
+            let result = client.call(
+                TermMethod.send, TermSendParams(pane: id, text: text, enter: enter), launchIfNeeded: false)
             try client.print(result) { "Sent to \(id)." }
         }
     }
@@ -102,11 +103,15 @@ struct TermCommand: AsyncParsableCommand {
         var id: String
         @Option(help: "Print the last this many lines, scrollback included, instead of the visible screen.")
         var lines: Int?
+
+        func validate() throws {
+            if let lines, lines < 1 { throw ValidationError("--lines must be at least 1.") }
+        }
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(TermMethod.read, TermReadParams(pane: id, lines: lines))
+            let result = client.call(TermMethod.read, TermReadParams(pane: id, lines: lines), launchIfNeeded: false)
             try client.print(result) { try result.decode(TermReadResult.self).text }
         }
     }
@@ -122,7 +127,7 @@ struct TermCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(TermMethod.close, TermCloseParams(pane: id, force: force))
+            let result = client.call(TermMethod.close, TermCloseParams(pane: id, force: force), launchIfNeeded: false)
             try client.print(result) { "Closed \(id)." }
         }
     }

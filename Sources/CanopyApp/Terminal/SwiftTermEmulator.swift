@@ -45,19 +45,32 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         return TerminalSize(columns: terminal.cols, rows: terminal.rows)
     }
 
+    /// The live screen, whatever the user has scrolled to.
     func screenText() -> String {
-        let terminal = terminalView.getTerminal()
-        let rows = (0..<terminal.rows).map { terminal.getLine(row: $0)?.translateToString(trimRight: true) ?? "" }
-        return TerminalText.trimmingTrailingBlankLines(rows).joined(separator: "\n")
+        TerminalText.trimmingTrailingBlankLines(lastLines(terminalView.getTerminal().rows)).joined(separator: "\n")
     }
 
     func recentText(lines count: Int) -> String {
-        let text = String(decoding: terminalView.getTerminal().getBufferAsData(), as: UTF8.self)
-        let lines = TerminalText.trimmingTrailingBlankLines(
-            text.components(separatedBy: "\n").map {
-                $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
-            })
-        return lines.suffix(max(count, 0)).joined(separator: "\n")
+        TerminalText.trimmingTrailingBlankLines(lastLines(max(count, 0))).joined(separator: "\n")
+    }
+
+    /// The last `count` lines of the buffer, scrollback included. Only those lines are turned into text.
+    private func lastLines(_ count: Int) -> [String] {
+        let terminal = terminalView.getTerminal()
+        let first = terminal.buffer.totalLinesTrimmed
+        var end = first
+        while terminal.getScrollInvariantLine(row: end) != nil {
+            end += 1
+        }
+        return (max(first, end - count)..<end).map { row in
+            // Map cells through the terminal so wide and combined characters survive and empty cells read as spaces.
+            terminal.getScrollInvariantLine(row: row)?.translateToString(
+                trimRight: true, skipNullCellsFollowingWide: true
+            ) { cell in
+                let character = terminal.getCharacter(for: cell)
+                return character == "\0" ? " " : character
+            } ?? ""
+        }
     }
 
     /// Gives the terminal the keyboard, if it is on screen.

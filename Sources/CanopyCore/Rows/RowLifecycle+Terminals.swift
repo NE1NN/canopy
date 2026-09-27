@@ -23,7 +23,8 @@ extension RowLifecycle {
 
     public func newTerminal(_ row: Row, repoName: String, _ params: TermNewParams) async -> TermNewResult {
         let context = PaneContext(row: row, repoName: repoName)
-        let (tab, pane) = terminals.openTerminal(for: context, tabNamed: params.tab, newTab: params.newTab)
+        let name = params.tab.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+        let (tab, pane) = terminals.openTerminal(for: context, tabNamed: name, newTab: params.newTab)
         if let title = params.title { pane.fixedTitle = title }
         if let run = params.run { await pane.run(run) }
         return TermNewResult(pane: pane.id.description, tab: tab.name)
@@ -31,11 +32,15 @@ extension RowLifecycle {
 
     public func sendToTerminal(_ params: TermSendParams) throws {
         let pane = try terminal(params.pane)
+        guard case .running = pane.status else { throw WorkspaceError.paneExited(params.pane) }
         pane.type(params.text + (params.enter ? "\r" : ""))
     }
 
     public func readTerminal(_ params: TermReadParams) throws -> TermReadResult {
         let pane = try terminal(params.pane)
+        if let lines = params.lines, lines < 1 {
+            throw ControlError(code: "bad_params", message: "--lines must be at least 1.")
+        }
         let text = params.lines.map { pane.emulator.recentText(lines: $0) } ?? pane.emulator.screenText()
         return TermReadResult(text: text)
     }

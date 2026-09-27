@@ -28,6 +28,7 @@ public final class Pane: Identifiable {
     @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
     @ObservationIgnored private var isClosed = false
+    @ObservationIgnored private var isScript = false
 
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
@@ -54,6 +55,8 @@ public final class Pane: Identifiable {
 
     /// True while something other than the shell holds the terminal, such as `claude` or `bun dev`.
     public var isBusy: Bool {
+        // A setup or teardown script is busy until it ends, even though zsh runs its last command in its own place.
+        if isScript, case .running = status { return true }
         guard let process, let foreground = process.foreground else { return false }
         return foreground.pid != process.pid
     }
@@ -126,6 +129,7 @@ public final class Pane: Identifiable {
     }
 
     private func start(_ command: PaneCommand) {
+        if case .script = command { isScript = true } else { isScript = false }
         let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
         let launch =
             switch command {

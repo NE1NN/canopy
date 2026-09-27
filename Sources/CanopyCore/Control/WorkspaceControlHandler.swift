@@ -106,7 +106,14 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(TermListParams.self)
             let snapshot = await workspace.snapshot
             // Every row's terminals with --all, or when no row resolves.
-            let row = params.all ? nil : try? TargetResolver.row(for: params.target, in: snapshot)
+            var row: Row?
+            if !params.all {
+                do {
+                    row = try TargetResolver.row(for: params.target, in: snapshot)
+                } catch WorkspaceError.missingTarget {
+                    row = nil
+                }
+            }
             let names = Dictionary(snapshot.repos.map { ($0.path, $0.name) }, uniquingKeysWith: { first, _ in first })
             return try .from(await rows.terminalInfo(rowPath: row?.path, repoNames: names))
 

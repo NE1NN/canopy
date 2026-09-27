@@ -60,6 +60,7 @@ final class AppModel {
             show(notice)
         }
         let saved = await workspace.savedTerminals
+        terminals.continueNumbering(from: await workspace.savedNextPane)
         snapshot = await workspace.snapshot
         restoreTerminals(saved)
         let updates = await workspace.updates()
@@ -332,7 +333,8 @@ final class AppModel {
     func saveTerminals() async {
         guard terminalsRestored else { return }
         do {
-            try await workspace.setSavedTerminals(terminals.saved().merging(deferredTerminals) { live, _ in live })
+            try await workspace.setSavedTerminals(
+                terminals.saved().merging(deferredTerminals) { live, _ in live }, nextPane: terminals.nextPaneNumber)
         } catch {
             show(error)
         }
