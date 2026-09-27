@@ -15,9 +15,13 @@ public struct GitError: Error, Sendable, Equatable, CustomStringConvertible {
 
 public struct GitRunner: Sendable {
     public var executable: String
+    private let baseEnvironment: [String: String]?
 
-    public init(executable: String = "/usr/bin/git") {
+    /// With no environment, git gets this process's environment with the user's login PATH,
+    /// resolved on the first run rather than here, so creating a runner never blocks.
+    public init(executable: String = "/usr/bin/git", environment: [String: String]? = nil) {
         self.executable = executable
+        self.baseEnvironment = environment
     }
 
     /// Runs git off the Swift concurrency pool. With a timeout, git and everything it started are killed
@@ -39,12 +43,10 @@ public struct GitRunner: Sendable {
     }
 
     private func runBlocking(_ arguments: [String], in directory: String?, timeout: Duration?) throws -> String {
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        environment["LC_ALL"] = "C"
-
         let result: SubprocessResult
         do {
+            let environment =
+                baseEnvironment.map { GitEnvironment.build(base: $0, loginPath: nil) } ?? GitEnvironment.current
             result = try Subprocess.run(
                 executable, arguments, environment: environment, directory: directory, timeout: timeout)
         } catch let error as SubprocessError {

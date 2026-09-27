@@ -111,6 +111,21 @@ struct RowLifecycleTests {
         #expect(created.row.path == dir.sub("home/worktrees/demo/feat-a-2"))
     }
 
+    @Test func failingCheckoutHookStillCreatesTheRow() async throws {
+        let dir = try TempDir()
+        let (repo, workspace) = try await setUp(dir)
+        let hook = repo + "/.git/hooks/post-checkout"
+        try "#!/bin/sh\necho 'git-lfs: command not found' >&2\nexit 2\n".write(
+            toFile: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook)
+
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat/hooked")
+
+        #expect(created.row.branch == "feat/hooked")
+        #expect(created.warnings.contains { $0.contains("git-lfs: command not found") })
+        #expect(await workspace.snapshot.repos.first?.rows.map(\.branch) == ["main", "feat/hooked"])
+    }
+
     @Test func parallelCreatesShareOneFetch() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir, origin: true)

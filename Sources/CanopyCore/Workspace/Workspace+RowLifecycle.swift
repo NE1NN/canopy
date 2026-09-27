@@ -72,16 +72,19 @@ extension Workspace {
             arguments += ["--no-track", "-b", branch, folder.path, start]
         }
 
+        let path = Paths.canonical(folder.path)
         do {
             try await git.run(arguments, in: repoPath)
         } catch let error as GitError {
             if error.stderr.contains("already checked out") || error.stderr.contains("already used by worktree") {
                 throw WorkspaceError.branchCheckedOut(branch)
             }
-            throw WorkspaceError.git(error)
+            // A failing post-checkout hook makes git exit non-zero after the worktree is complete.
+            await refresh(repoPath: repoPath)
+            guard snapshot.row(path: path)?.branch == branch else { throw WorkspaceError.git(error) }
+            warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
         }
 
-        let path = Paths.canonical(folder.path)
         if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].rowOrder.contains(path) {
             state.repos[current].rowOrder.append(path)
             try save()

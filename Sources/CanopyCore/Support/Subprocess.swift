@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 
 public struct SubprocessResult: Sendable {
     public var status: Int32
@@ -17,10 +16,17 @@ public struct SubprocessError: Error, Sendable, Equatable, CustomStringConvertib
     }
 }
 
+private typealias KeventCall = (
+    Int32, UnsafePointer<kevent>?, Int32, UnsafeMutablePointer<kevent>?, Int32, UnsafePointer<timespec>?
+) -> Int32
+
 public enum Subprocess {
-    /// Runs a program in its own process group with stdin from /dev/null and no inherited descriptors.
-    /// On timeout the whole group is killed, including grandchildren (such as ssh under git fetch)
-    /// that would otherwise keep the output pipes open forever.
+    /// Runs a program in its own process group with stdin from /dev/null and no inherited descriptors,
+    /// blocking the calling thread until it exits. On timeout the whole group is killed.
+    ///
+    /// Output goes to unlinked temporary files rather than pipes: a background process the child leaves
+    /// behind (a daemon started by a shell's rc files, say) can keep a pipe open forever, but a file is
+    /// simply read up to its current end once the child has exited.
     public static func run(
         _ executable: String,
         _ arguments: [String],
@@ -28,21 +34,17 @@ public enum Subprocess {
         directory: String?,
         timeout: Duration?
     ) throws -> SubprocessResult {
-        var output: [Int32] = [0, 0]
-        var errors: [Int32] = [0, 0]
-        guard pipe(&output) == 0 else { throw SubprocessError(executable: executable, code: errno) }
-        guard pipe(&errors) == 0 else {
-            close(output[0])
-            close(output[1])
-            throw SubprocessError(executable: executable, code: errno)
-        }
+        let output = try temporaryFile(for: executable)
+        defer { close(output) }
+        let errors = try temporaryFile(for: executable)
+        defer { close(errors) }
 
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_adddup2(&actions, output[1], 1)
-        posix_spawn_file_actions_adddup2(&actions, errors[1], 2)
+        posix_spawn_file_actions_adddup2(&actions, output, 1)
+        posix_spawn_file_actions_adddup2(&actions, errors, 2)
         if let directory {
             posix_spawn_file_actions_addchdir_np(&actions, directory)
         }
@@ -61,58 +63,72 @@ public enum Subprocess {
 
         var pid: pid_t = 0
         let spawned = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
-        close(output[1])
-        close(errors[1])
-        guard spawned == 0 else {
-            close(output[0])
-            close(errors[0])
-            throw SubprocessError(executable: executable, code: spawned)
-        }
+        guard spawned == 0 else { throw SubprocessError(executable: executable, code: spawned) }
 
-        let child = pid
-        let errorDescriptor = errors[0]
-        // The child is only reaped under this lock, so the timer never signals a reused process group.
-        let reaped = Mutex(false)
-        let timedOut = Mutex(false)
-        if let timeout {
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) {
-                reaped.withLock { reaped in
-                    guard !reaped else { return }
-                    timedOut.withLock { $0 = true }
-                    kill(-child, SIGKILL)
-                }
-            }
+        // Until waitpid reaps it, the child is at worst a zombie, so its pid and process group cannot be reused.
+        let timedOut = !waitForExit(pid, timeout: timeout)
+        if timedOut {
+            kill(-pid, SIGKILL)
         }
-
-        let errorData = Mutex(Data())
-        let group = DispatchGroup()
-        DispatchQueue.global().async(group: group) {
-            let data = FileHandle(fileDescriptor: errorDescriptor, closeOnDealloc: true).readDataToEndOfFile()
-            errorData.withLock { $0 = data }
-        }
-        let outputData = FileHandle(fileDescriptor: output[0], closeOnDealloc: true).readDataToEndOfFile()
-        group.wait()
-
-        var info = siginfo_t()
-        while waitid(P_PID, id_t(child), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
         var status: Int32 = 0
-        reaped.withLock { reaped in
-            waitpid(child, &status, 0)
-            reaped = true
-        }
+        while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
 
         let signal = status & 0x7f
         return SubprocessResult(
             status: signal == 0 ? (status >> 8) & 0xff : 128 + signal,
-            stdout: outputData,
-            stderr: errorData.withLock { $0 },
-            timedOut: timedOut.withLock { $0 }
+            stdout: contents(of: output),
+            stderr: contents(of: errors),
+            timedOut: timedOut
         )
     }
-}
 
-extension Duration {
-    var seconds: TimeInterval {
-        Double(components.seconds) + Double(components.attoseconds) / 1e18
+    /// Waits for `pid` to exit without reaping it. Returns false if the timeout passed first.
+    private static func waitForExit(_ pid: pid_t, timeout: Duration?) -> Bool {
+        let queue = kqueue()
+        guard queue >= 0 else { return true }
+        defer { close(queue) }
+        var change = Darwin.kevent(
+            ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT),
+            fflags: NOTE_EXIT, data: 0, udata: nil)
+        var event = Darwin.kevent()
+        // Typed to pick the kevent(2) function over the kevent struct's initializer.
+        let watch: KeventCall = kevent
+        let deadline = timeout.map { ContinuousClock.now + $0 }
+        while true {
+            let count: Int32
+            if let deadline {
+                let left = max(deadline - ContinuousClock.now, .zero).components
+                var limit = timespec(tv_sec: Int(left.seconds), tv_nsec: Int(left.attoseconds / 1_000_000_000))
+                count = watch(queue, &change, 1, &event, 1, &limit)
+            } else {
+                count = watch(queue, &change, 1, &event, 1, nil)
+            }
+            if count > 0 { return true }
+            if count == 0 { return false }
+            if errno == ESRCH { return true }  // Already exited before the watch was added.
+            guard errno == EINTR else { return true }
+        }
+    }
+
+    private static func temporaryFile(for executable: String) throws -> Int32 {
+        var template = Array((NSTemporaryDirectory() + "canopy-output.XXXXXX").utf8CString)
+        let descriptor = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
+        guard descriptor >= 0 else { throw SubprocessError(executable: executable, code: errno) }
+        template.withUnsafeBufferPointer { _ = unlink($0.baseAddress!) }
+        return descriptor
+    }
+
+    private static func contents(of descriptor: Int32) -> Data {
+        lseek(descriptor, 0, SEEK_SET)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while true {
+            let count = read(descriptor, &buffer, buffer.count)
+            if count > 0 {
+                data.append(contentsOf: buffer[0..<count])
+            } else if count == 0 || errno != EINTR {
+                return data
+            }
+        }
     }
 }
