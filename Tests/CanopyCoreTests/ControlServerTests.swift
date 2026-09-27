@@ -138,6 +138,56 @@ struct ControlServerTests {
             ]), as: RowRemoveResult.self)
     }
 
+    @Test func termCommandsDriveTerminals() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let target = TargetHint(repo: "demo", row: "main")
+        func read(_ pane: String) async -> String {
+            (try? await call(client, TermMethod.read, TermReadParams(pane: pane), as: TermReadResult.self))?.text ?? ""
+        }
+
+        let first = try await call(
+            client, TermMethod.new, TermNewParams(target: target, title: "Server"), as: TermNewResult.self)
+        let second = try await call(
+            client, TermMethod.new, TermNewParams(target: target, run: "echo from-second"), as: TermNewResult.self)
+        #expect(first.tab == second.tab)
+        #expect(await eventually { await read(second.pane).contains("from-second") })
+
+        _ = try await call(
+            client, TermMethod.send, TermSendParams(pane: first.pane, text: "echo typed-in", enter: true),
+            as: JSONValue.self)
+        #expect(await eventually { await read(first.pane).contains("typed-in") })
+
+        let listed = try await call(client, TermMethod.list, TermListParams(target: target), as: [TermInfo].self)
+        #expect(listed.map(\.pane) == [first.pane, second.pane])
+        #expect(listed.first?.title == "Server")
+        #expect(listed.first?.folder == repo)
+
+        _ = try await call(
+            client, TermMethod.send, TermSendParams(pane: second.pane, text: "sleep 30", enter: true),
+            as: JSONValue.self)
+        #expect(
+            await eventually {
+                let panes = try? await call(client, TermMethod.list, TermListParams(all: true), as: [TermInfo].self)
+                return panes?.last?.foreground == "sleep"
+            })
+        await #expect(throws: ControlError.self) {
+            try await call(client, TermMethod.close, TermCloseParams(pane: second.pane), as: JSONValue.self)
+        }
+        for pane in [first.pane, second.pane] {
+            _ = try await call(client, TermMethod.close, TermCloseParams(pane: pane, force: true), as: JSONValue.self)
+        }
+        #expect(try await call(client, TermMethod.list, TermListParams(all: true), as: [TermInfo].self).isEmpty)
+
+        let missing = try await offPool {
+            try client.send(ControlRequest(method: TermMethod.read, params: try .from(TermReadParams(pane: "p999"))))
+        }
+        #expect(missing.error?.code == "pane_not_found")
+    }
+
     @Test func errorsCarryCodes() async throws {
         let dir = try TempDir()
         let (_, server, client, _) = try await startServer(dir)

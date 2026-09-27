@@ -17,6 +17,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case badConfig(String, reason: String)
     case teardownFailed(Int32)
     case teardownStopped
+    case paneNotFound(String)
+    case paneBusy(String, program: String)
     case git(GitError)
 
     public var code: String {
@@ -39,6 +41,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .badConfig: "bad_config"
         case .teardownFailed: "teardown_failed"
         case .teardownStopped: "teardown_stopped"
+        case .paneNotFound: "pane_not_found"
+        case .paneBusy: "pane_busy"
         case .git: "git_failed"
         }
     }
@@ -65,6 +69,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .teardownFailed(let code):
             "Teardown failed with exit code \(code). Its tab shows why. Pass --force to remove the row anyway."
         case .teardownStopped: "Teardown stopped because its tab was closed. The row was not removed."
+        case .paneNotFound(let id): "No terminal \(id). Run `canopy term list --all`."
+        case .paneBusy(let id, let program): "\(program) is still running in \(id). Pass --force to close it anyway."
         case .git(let error): error.description
         }
     }

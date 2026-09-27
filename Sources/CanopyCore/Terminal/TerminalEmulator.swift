@@ -14,6 +14,10 @@ public protocol TerminalEmulator: AnyObject {
     var onTitle: ((String) -> Void)? { get set }
     /// Shows what the process wrote.
     func feed(_ data: Data)
+    /// The visible screen as plain text, one line per row, without trailing blank lines.
+    func screenText() -> String
+    /// The last `count` lines, scrollback included, as plain text.
+    func recentText(lines count: Int) -> String
 }
 
 @MainActor
@@ -88,5 +92,15 @@ public enum BusyTerminals {
         return names.count == 1
             ? "1 terminal is running a process: \(list). Quitting stops it."
             : "\(names.count) terminals are running processes: \(list). Quitting stops them."
+    }
+}
+
+public enum TerminalText {
+    public static func trimmingTrailingBlankLines(_ lines: [String]) -> [String] {
+        var lines = lines
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
+        }
+        return lines
     }
 }

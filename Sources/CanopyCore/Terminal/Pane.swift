@@ -19,6 +19,10 @@ public final class Pane: Identifiable {
     public let emulator: any TerminalEmulator
     public private(set) var status = Status.running
     public private(set) var title = ""
+    /// A title given with `canopy term new --title`. It wins over what the program sets.
+    public var fixedTitle: String? {
+        didSet { refreshTitle() }
+    }
     @ObservationIgnored private let settings: ShellSettings
     @ObservationIgnored private var process: PtyProcess?
     @ObservationIgnored private var programTitle: ProgramTitle?
@@ -70,6 +74,12 @@ public final class Pane: Identifiable {
         process?.write(command + "\r")
     }
 
+    /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
+    public func type(_ text: String) {
+        guard case .running = status else { return }
+        process?.write(text)
+    }
+
     /// Starts a new shell in the same folder after the last one exited.
     public func restart() {
         guard case .exited = status, !isClosed else { return }
@@ -92,6 +102,10 @@ public final class Pane: Identifiable {
     /// Reads the foreground process again. The app calls it while the pane is on screen.
     /// A pane whose process exited keeps its last title.
     public func refreshTitle() {
+        if let fixedTitle {
+            title = fixedTitle
+            return
+        }
         guard let process else { return }
         let resolved = PaneTitle.resolve(programTitle, foreground: process.foreground)
         if !resolved.isEmpty {

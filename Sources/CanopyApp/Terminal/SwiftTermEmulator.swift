@@ -45,6 +45,21 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         return TerminalSize(columns: terminal.cols, rows: terminal.rows)
     }
 
+    func screenText() -> String {
+        let terminal = terminalView.getTerminal()
+        let rows = (0..<terminal.rows).map { terminal.getLine(row: $0)?.translateToString(trimRight: true) ?? "" }
+        return TerminalText.trimmingTrailingBlankLines(rows).joined(separator: "\n")
+    }
+
+    func recentText(lines count: Int) -> String {
+        let text = String(decoding: terminalView.getTerminal().getBufferAsData(), as: UTF8.self)
+        let lines = TerminalText.trimmingTrailingBlankLines(
+            text.components(separatedBy: "\n").map {
+                $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+            })
+        return lines.suffix(max(count, 0)).joined(separator: "\n")
+    }
+
     /// Gives the terminal the keyboard, if it is on screen.
     func focus() {
         view.window?.makeFirstResponder(view)
