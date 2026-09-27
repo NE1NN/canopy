@@ -79,6 +79,74 @@ step "canopy row rm removes the worktree and branch"
 [[ ! -d "$CANOPY_HOME/worktrees/demo/feat-e2e" ]] || fail "worktree folder still exists"
 if git -C "$work/demo" show-ref --verify --quiet refs/heads/feat/e2e; then fail "branch still exists"; fi
 
+step "setup runs with the row's variables, then --run types a command into a new terminal"
+mkdir -p "$work/demo/.canopy"
+cat > "$work/demo/.canopy/config.json" <<'EOF'
+{
+  "setup": [
+    "printf '%s\\n' \"$CANOPY_ROOT_PATH\" \"$CANOPY_REPO\" \"$CANOPY_ROW\" \"$TERM_PROGRAM\" > \"$CANOPY_ROOT_PATH/../setup-$(basename \"$CANOPY_ROW_PATH\").env\""
+  ],
+  "teardown": ["echo \"$CANOPY_ROW\" >> \"$CANOPY_ROOT_PATH/../teardown.log\""]
+}
+EOF
+git -C "$work/demo" add .canopy
+git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q -m "canopy config"
+git -C "$work/demo" push -q origin main
+"$cli" row new feat/setup --repo demo --select --run 'echo "$CANOPY_PANE" > "$CANOPY_ROOT_PATH/../ran"' --json \
+    > "$work/setup.json"
+grep -q '"status" : "succeeded"' "$work/setup.json" || fail "setup did not succeed"
+pane=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pane"])' "$work/setup.json")
+env_file="$work/setup-feat-setup.env"
+[[ "$(sed -n 1p "$env_file")" == "$(cd "$work/demo" && pwd -P)" ]] || fail "CANOPY_ROOT_PATH is wrong"
+[[ "$(sed -n 2,4p "$env_file" | tr '\n' ' ')" == "demo feat/setup Canopy " ]] || fail "setup variables are wrong"
+for _ in $(seq 1 100); do
+    [[ "$(cat "$work/ran" 2>/dev/null)" == "$pane" ]] && break
+    sleep 0.1
+done
+[[ "$(cat "$work/ran" 2>/dev/null)" == "$pane" ]] || fail "--run did not reach pane $pane"
+sleep 1
+swift scripts/window-shot.swift "$(app_pid)" "$shots/terminal.png"
+echo "saved $shots/terminal.png"
+
+step "--no-setup skips setup"
+"$cli" row new feat/no-setup --repo demo --no-setup --json | grep -q '"status" : "skipped"' || fail "setup not skipped"
+[[ ! -e "$work/setup-feat-no-setup.env" ]] || fail "setup ran anyway"
+
+step "failed setup keeps the row, skips --run, and exits 1"
+git -C "$work/demo" switch -q -c broken-config
+printf '{"setup": ["exit 5"], "teardown": ["exit 6"]}\n' > "$work/demo/.canopy/config.json"
+git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q -am "broken config"
+git -C "$work/demo" switch -q main
+if "$cli" row new feat/broken --repo demo --from broken-config --run 'touch "$CANOPY_ROOT_PATH/../never"' --json \
+    > "$work/broken.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"exitCode" : 5' "$work/broken.json" || fail "setup exit code missing"
+[[ -d "$CANOPY_HOME/worktrees/demo/feat-broken" ]] || fail "row was not kept"
+sleep 1
+[[ ! -e "$work/never" ]] || fail "--run ran after failed setup"
+
+step "failed teardown keeps the row until --force"
+if "$cli" row rm feat/broken --repo demo --json > "$work/teardown.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"teardown_failed"' "$work/teardown.json" || fail "missing teardown_failed"
+[[ -d "$CANOPY_HOME/worktrees/demo/feat-broken" ]] || fail "row removed despite failed teardown"
+"$cli" row rm feat/broken --repo demo --force >/dev/null
+[[ ! -d "$CANOPY_HOME/worktrees/demo/feat-broken" ]] || fail "--force did not remove the row"
+
+step "teardown runs before the row goes"
+"$cli" row rm feat/setup --repo demo >/dev/null
+grep -qx feat/setup "$work/teardown.log" || fail "teardown did not run"
+[[ ! -d "$CANOPY_HOME/worktrees/demo/feat-setup" ]] || fail "row still exists"
+
+step "an agent can remove the row it runs in"
+"$cli" row new feat/self --repo demo --no-setup --run "'$cli' row rm" >/dev/null
+for _ in $(seq 1 150); do
+    [[ -d "$CANOPY_HOME/worktrees/demo/feat-self" ]] || break
+    sleep 0.1
+done
+[[ ! -d "$CANOPY_HOME/worktrees/demo/feat-self" ]] || fail "the row's own agent could not remove it"
+grep -qx feat/self "$work/teardown.log" || fail "teardown did not run for the self-removed row"
+
 step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"invalid_branch"' "$work/err.json" || fail "missing error code"
