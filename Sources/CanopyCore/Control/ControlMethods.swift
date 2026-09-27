@@ -1,3 +1,5 @@
+import Foundation
+
 public enum ControlMethod {
     public static let status = "status"
     public static let repoAdd = "repo.add"
@@ -8,6 +10,12 @@ public enum ControlMethod {
     public static let rowRemove = "row.remove"
     public static let rowSelect = "row.select"
     public static let rowAdopt = "row.adopt"
+
+    /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo,
+    /// so parallel `row new` calls can take minutes; reads answer from memory.
+    public static func replyTimeout(for method: String) -> TimeInterval {
+        [repoAdd, repoRemove, rowNew, rowRemove, rowAdopt].contains(method) ? 900 : 30
+    }
 }
 
 /// What the CLI knows about where it runs. The app resolves it against registered repos.

@@ -25,4 +25,27 @@ struct GitRunnerTests {
         #expect(await GitRunner().succeeds(["show-ref", "--verify", "--quiet", "refs/heads/main"], in: repo))
         #expect(!(await GitRunner().succeeds(["show-ref", "--verify", "--quiet", "refs/heads/nope"], in: repo)))
     }
+
+    @Test func timeoutKillsGitAndEverythingItStarted() async throws {
+        let dir = try TempDir()
+        // The backgrounded sleep keeps stdout open, like an ssh child of a stalled fetch.
+        let git = try Fixture.git(in: dir, before: "sleep 30 &\nsleep 30")
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        do {
+            try await git.run(["fetch"], timeout: .milliseconds(300))
+            Issue.record("expected a timeout")
+        } catch let error as GitError {
+            #expect(error.timedOut)
+        }
+
+        #expect(clock.now - start < .seconds(5))
+    }
+
+    @Test func noTimeoutByDefault() async throws {
+        let dir = try TempDir()
+        let git = try Fixture.git(in: dir, before: "sleep 0.5")
+        #expect(try await git.run(["--version"]).hasPrefix("git version"))
+    }
 }

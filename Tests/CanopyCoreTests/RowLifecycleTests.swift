@@ -111,6 +111,38 @@ struct RowLifecycleTests {
         #expect(created.row.path == dir.sub("home/worktrees/demo/feat-a-2"))
     }
 
+    @Test func parallelCreatesShareOneFetch() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let log = dir.sub("fetches.log")
+        let git = try Fixture.git(in: dir, before: #"[[ "$1" == "fetch" ]] && { echo fetch >> "\#(log)"; sleep 1; }"#)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        async let first = workspace.createRow(repoPath: repo, branch: "feat/one")
+        async let second = workspace.createRow(repoPath: repo, branch: "feat/two")
+        async let third = workspace.createRow(repoPath: repo, branch: "feat/three")
+        _ = try await [first, second, third]
+
+        let fetches = try String(contentsOfFile: log, encoding: .utf8).split(separator: "\n")
+        #expect(fetches.count == 1)
+    }
+
+    @Test func stalledFetchStillCreatesTheRow() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let git = try Fixture.git(in: dir, before: #"[[ "$1" == "fetch" ]] && sleep 30"#)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git, fetchTimeout: .milliseconds(500))
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat/offline")
+
+        #expect(created.row.branch == "feat/offline")
+        #expect(created.warnings.contains { $0.contains("timed out") })
+    }
+
     @Test func parallelCreatesInOneRepoAllSucceed() async throws {
         let dir = try TempDir()
         let (repo, workspace) = try await setUp(dir)

@@ -27,7 +27,7 @@ struct Client {
 
     func call(_ method: String, _ params: some Encodable, launchIfNeeded: Bool = true) throws -> JSONValue {
         let request = ControlRequest(method: method, params: try .from(params))
-        let client = ControlClient(socketPath: home.socketPath)
+        let client = ControlClient(socketPath: home.socketPath, timeout: ControlMethod.replyTimeout(for: method))
         let response: ControlResponse
         do {
             response = try client.send(request)

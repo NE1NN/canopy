@@ -5,13 +5,19 @@ public struct CreatedRow: Sendable, Equatable {
     public var warnings: [String]
 }
 
+struct FetchAttempt: Sendable {
+    var finishedAt: ContinuousClock.Instant
+    var warning: String?
+}
+
 extension Workspace {
     /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/.
     /// An existing local branch is checked out, a branch only on origin is tracked,
     /// and anything else is created from `base` (default: origin's default branch).
     public func createRow(repoPath: String, branch: String, base: String? = nil) async throws -> CreatedRow {
-        try await serialized(repoPath: repoPath) {
-            try await self.createRowNow(repoPath: repoPath, branch: branch, base: base)
+        let requestedAt = ContinuousClock.now
+        return try await serialized(repoPath: repoPath) {
+            try await self.createRowNow(repoPath: repoPath, branch: branch, base: base, requestedAt: requestedAt)
         }
     }
 
@@ -23,7 +29,12 @@ extension Workspace {
         }
     }
 
-    private func createRowNow(repoPath: String, branch: String, base: String?) async throws -> CreatedRow {
+    private func createRowNow(
+        repoPath: String,
+        branch: String,
+        base: String?,
+        requestedAt: ContinuousClock.Instant
+    ) async throws -> CreatedRow {
         let index = try entryIndex(repoPath: repoPath)
         let dirName = state.repos[index].dirName
         var warnings: [String] = []
@@ -36,12 +47,8 @@ extension Workspace {
         }
 
         let hasOrigin = await git.succeeds(["remote", "get-url", "origin"], in: repoPath)
-        if hasOrigin {
-            do {
-                try await git.run(["fetch", "--quiet", "origin"], in: repoPath)
-            } catch {
-                warnings.append("git fetch failed, so the row starts from local refs: \(error)")
-            }
+        if hasOrigin, let warning = await fetchUnlessFresh(repoPath: repoPath, since: requestedAt) {
+            warnings.append(warning)
         }
 
         let parent = home.worktreesRoot.appending(path: dirName)
@@ -121,6 +128,24 @@ extension Workspace {
             try save()
             await refresh(repoPath: row.repoPath)
         }
+    }
+
+    /// Parallel creates queue behind each other, so a fetch that finished after this request was made
+    /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
+    private func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
+        if let attempt = lastFetch[repoPath], attempt.finishedAt > requestedAt {
+            return attempt.warning
+        }
+        var warning: String?
+        do {
+            try await git.run(["fetch", "--quiet", "origin"], in: repoPath, timeout: fetchTimeout)
+        } catch let error as GitError where error.timedOut {
+            warning = "git fetch timed out, so the row starts from local refs."
+        } catch {
+            warning = "git fetch failed, so the row starts from local refs: \(error)"
+        }
+        lastFetch[repoPath] = FetchAttempt(finishedAt: .now, warning: warning)
+        return warning
     }
 
     func entryIndex(repoPath: String) throws -> Int {

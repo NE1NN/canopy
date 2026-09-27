@@ -5,6 +5,8 @@ import Foundation
 public actor Workspace {
     public nonisolated let home: CanopyHome
     let git: GitRunner
+    let fetchTimeout: Duration
+    var lastFetch: [String: FetchAttempt] = [:]
     let store: StateStore
     let classifier: RowClassifier
     var state = AppState()
@@ -16,9 +18,10 @@ public actor Workspace {
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
 
-    public init(home: CanopyHome, git: GitRunner = GitRunner()) {
+    public init(home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60)) {
         self.home = home
         self.git = git
+        self.fetchTimeout = fetchTimeout
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),

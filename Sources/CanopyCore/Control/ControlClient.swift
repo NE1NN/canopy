@@ -18,7 +18,7 @@ public enum ControlClientError: Error, Equatable, CustomStringConvertible {
         case .connectFailed(let code): "Could not connect to Canopy: \(String(cString: strerror(code)))"
         case .writeFailed(let code): "Could not send to Canopy: \(String(cString: strerror(code)))"
         case .connectionClosed: "Canopy closed the connection before replying."
-        case .timedOut: "Canopy did not reply in time."
+        case .timedOut: "Canopy did not reply in time. The request may still finish; check `canopy row list`."
         }
     }
 }

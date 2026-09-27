@@ -21,4 +21,11 @@ struct JSONValueTests {
         #expect(line.filter { $0 == 0x0A }.count == 1)
         #expect(line.last == 0x0A)
     }
+
+    @Test func writesWaitLongerThanReads() {
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) >= 600)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) >= 600)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.status) <= 60)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList) <= 60)
+    }
 }
