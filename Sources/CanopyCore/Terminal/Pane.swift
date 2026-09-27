@@ -25,12 +25,16 @@ public final class Pane: Identifiable {
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
     @ObservationIgnored private var isClosed = false
 
+    /// The folder the shell starts in, when restored into one other than the row's.
+    public let startDirectory: String?
+
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
-        emulator: any TerminalEmulator
+        emulator: any TerminalEmulator, directory: String? = nil
     ) {
         self.id = id
         self.context = context
+        self.startDirectory = directory
         self.settings = settings
         self.emulator = emulator
         emulator.onInput = { [weak self] in self?.input($0) }
@@ -95,10 +99,16 @@ public final class Pane: Identifiable {
         }
     }
 
-    /// The row's folder, or the home folder if the row's folder is gone.
+    /// The shell's working folder now, so a `cd` is remembered across relaunches.
+    public var currentDirectory: String? {
+        process.flatMap { PtyProcess.currentDirectory(of: $0.pid) }
+    }
+
+    /// The folder it was restored into, or the row's folder, or the home folder if both are gone.
     private var directory: String {
-        FileManager.default.fileExists(atPath: context.rowPath)
-            ? context.rowPath : settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
+        let exists = { FileManager.default.fileExists(atPath: $0) }
+        if let startDirectory, exists(startDirectory) { return startDirectory }
+        return exists(context.rowPath) ? context.rowPath : settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
     }
 
     private func start(_ command: PaneCommand) {

@@ -66,13 +66,25 @@ public enum TabNaming {
 }
 
 public enum BusyTerminals {
-    /// For the quit confirmation, such as "3 terminals are running processes: claude, bun. Quitting stops them."
-    public static func quitWarning(_ names: [String]) -> String {
+    /// For closing a tab, such as "2 terminals in it are running programs: claude, bun."
+    public static func closeWarning(_ names: [String]) -> String {
+        let list = unique(names).joined(separator: ", ")
+        return names.count == 1
+            ? "A terminal in it is running a program: \(list)."
+            : "\(names.count) terminals in it are running programs: \(list)."
+    }
+
+    static func unique(_ names: [String]) -> [String] {
         var unique: [String] = []
         for name in names where !unique.contains(name) {
             unique.append(name)
         }
-        let list = unique.joined(separator: ", ")
+        return unique
+    }
+
+    /// For the quit confirmation, such as "3 terminals are running processes: claude, bun. Quitting stops them."
+    public static func quitWarning(_ names: [String]) -> String {
+        let list = unique(names).joined(separator: ", ")
         return names.count == 1
             ? "1 terminal is running a process: \(list). Quitting stops it."
             : "\(names.count) terminals are running processes: \(list). Quitting stops them."

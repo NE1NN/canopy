@@ -175,6 +175,17 @@ public actor Workspace {
         await refresh(repoPath: state.repos[index].path)
     }
 
+    /// Each row's saved tabs and layouts, from state.json.
+    public var savedTerminals: [String: SavedRowTerminals] {
+        state.terminals
+    }
+
+    public func setSavedTerminals(_ terminals: [String: SavedRowTerminals]) throws {
+        guard state.terminals != terminals else { return }
+        state.terminals = terminals
+        try save()
+    }
+
     public func setSelectedRow(path: String?) throws {
         guard state.selectedRowPath != path else { return }
         state.selectedRowPath = path

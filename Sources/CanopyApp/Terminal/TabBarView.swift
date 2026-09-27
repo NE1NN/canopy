@@ -17,7 +17,7 @@ struct TabBarView: View {
                             tab: tab,
                             isSelected: tab.id == selected,
                             onSelect: { model.terminals.selectTab(tab.id, inRow: row.path) },
-                            onClose: { model.requestClose(tab.pane) },
+                            onClose: { model.requestClose(tab.focused) },
                             onRename: { name in
                                 model.terminals.renameTab(tab.id, inRow: row.path, to: name)
                                 model.focusSelectedTerminal()

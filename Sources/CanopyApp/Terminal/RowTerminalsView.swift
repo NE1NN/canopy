@@ -21,11 +21,11 @@ struct RowTerminalsView: View {
             VStack(spacing: 0) {
                 TabBarView(row: row)
                 PaneView(
-                    pane: tab.pane,
-                    onClose: { model.requestClose(tab.pane) },
+                    pane: tab.focused,
+                    onClose: { model.requestClose(tab.focused) },
                     onSizeChange: { model.terminals.preferredSize = $0 }
                 )
-                .id(tab.pane.id)
+                .id(tab.focused.id)
             }
         } else {
             ContentUnavailableView {

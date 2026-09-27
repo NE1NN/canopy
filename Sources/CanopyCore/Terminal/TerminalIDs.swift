@@ -7,6 +7,12 @@ public struct PaneID: Hashable, Sendable, CustomStringConvertible {
     }
 
     public var description: String { "p\(number)" }
+
+    /// Reads "p12" back, as dragged panes and `canopy term` carry it.
+    public init?(_ text: String) {
+        guard text.hasPrefix("p"), let number = Int(text.dropFirst()), number > 0 else { return nil }
+        self.number = number
+    }
 }
 
 public struct TabID: Hashable, Sendable, CustomStringConvertible {

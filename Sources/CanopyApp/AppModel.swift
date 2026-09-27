@@ -210,14 +210,14 @@ final class AppModel {
     /// ⌘W. Only for the main window itself, so it never closes a terminal behind a sheet or a closed window.
     func closeFocusedPane() {
         guard let window = NSApp.keyWindow, window.sheetParent == nil, window.attachedSheet == nil,
-            let pane = selectedTab?.pane
+            let pane = selectedTab?.focused
         else { return }
         requestClose(pane)
     }
 
     /// Hands the keyboard back to the terminal on screen, as after renaming a tab.
     func focusSelectedTerminal() {
-        (selectedTab?.pane.emulator as? SwiftTermEmulator)?.focus()
+        (selectedTab?.focused.emulator as? SwiftTermEmulator)?.focus()
     }
 
     func selectTab(offset: Int) {

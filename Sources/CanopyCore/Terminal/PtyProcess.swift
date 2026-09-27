@@ -268,6 +268,17 @@ public final class PtyProcess: @unchecked Sendable {
         readSource = nil
     }
 
+    /// The working folder of a process, read from the kernel.
+    public static func currentDirectory(of pid: pid_t) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return path.isEmpty ? nil : path
+    }
+
     static func exitCode(fromWaitStatus status: Int32) -> Int32 {
         let signal = status & 0x7f
         return signal == 0 ? (status >> 8) & 0xff : 128 + signal
