@@ -337,6 +337,8 @@ public actor Workspace {
                 in: repoPath
             )
         else { return }
+        // The repo may have been removed while git answered.
+        guard state.repos.contains(where: { $0.path == repoPath }) else { return }
         let canonicalGitDir = Paths.canonical(gitDir.trimmingCharacters(in: .whitespacesAndNewlines))
         watchers[repoPath] = DirectoryWatcher(paths: [canonicalGitDir]) { [weak self] paths in
             guard paths.contains(where: { GitEventFilter.isRelevant(eventPath: $0, gitDir: canonicalGitDir) }) else {

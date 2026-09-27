@@ -44,3 +44,50 @@ struct DirectoryWatcherTests {
         _ = watcher
     }
 }
+
+final class StopFlag: Sendable {
+    let value = Atomic(false)
+}
+
+struct WatcherLifetimeTests {
+    @Test func removingARepoWhileItIsBeingAddedLeavesNoWatcher() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let started = dir.sub("rev-parse-started")
+        let release = dir.sub("rev-parse-release")
+        let git = try Fixture.git(
+            in: dir,
+            before: """
+                if [[ "$1" == "rev-parse" ]]; then touch "\(started)"; while [[ ! -f "\(release)" ]]; do sleep 0.05; done; fi
+                """)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+
+        let adding = Task { try await workspace.addRepo(path: repo) }
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        try await workspace.removeRepo(path: repo)
+        FileManager.default.createFile(atPath: release, contents: nil)
+        _ = try? await adding.value
+
+        #expect(await workspace.watchers.isEmpty)
+    }
+
+    @Test func releasingAWatcherWhileEventsArriveIsSafe() async throws {
+        let dir = try TempDir()
+        let stop = StopFlag()
+        // A thread of its own: a busy loop on a Swift concurrency thread would starve the test.
+        Thread {
+            var count = 0
+            while !stop.value.load(ordering: .relaxed) {
+                FileManager.default.createFile(atPath: dir.sub("f\(count % 50)"), contents: Data([1]))
+                count += 1
+            }
+        }.start()
+        for _ in 0..<200 {
+            let watcher = DirectoryWatcher(paths: [dir.path], latency: 0) { _ in usleep(200) }
+            try await Task.sleep(for: .milliseconds(Int.random(in: 1...8)))
+            _ = watcher
+        }
+        stop.value.store(true, ordering: .relaxed)
+    }
+}
