@@ -47,8 +47,8 @@ public struct PtySpawnError: Error, Sendable, Equatable, CustomStringConvertible
 }
 
 /// A process running in its own pseudo-terminal. Output, then the exit status, arrive on the main actor.
-/// Output is handed over synchronously, so a program that floods the terminal waits for the screen to
-/// catch up instead of filling an unbounded buffer.
+/// Reading runs at most a few chunks ahead of the screen, so a program that floods the terminal waits for
+/// drawing to catch up instead of filling an unbounded buffer, while reading and drawing still overlap.
 public final class PtyProcess: @unchecked Sendable {
     public typealias OutputHandler = @MainActor @Sendable (Data) -> Void
     public typealias ExitHandler = @MainActor @Sendable (Int32) -> Void
@@ -70,6 +70,8 @@ public final class PtyProcess: @unchecked Sendable {
     private var readSource: DispatchSourceRead?
     private var exitSource: DispatchSourceProcess?
     private var buffer = [UInt8](repeating: 0, count: 65_536)
+    /// Chunks handed to the main actor but not yet shown. Reading runs ahead of drawing by at most this many.
+    private let inFlight = DispatchSemaphore(value: 4)
 
     public init(
         _ launch: TerminalLaunch,
@@ -208,7 +210,12 @@ public final class PtyProcess: @unchecked Sendable {
             }
         }
         if !chunk.isEmpty, let handler = state.withLock({ $0.onOutput }) {
-            DispatchQueue.main.sync { MainActor.assumeIsolated { handler(chunk) } }
+            let output = chunk
+            inFlight.wait()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { handler(output) }
+                self.inFlight.signal()
+            }
         }
         return chunk.count
     }
