@@ -39,7 +39,7 @@ struct WorktreeListParserTests {
         let repo = try await Fixture.repo(in: dir)
         try await Fixture.worktree(repo: repo, branch: "feat/x", at: dir.sub("wt"))
 
-        let output = try await GitRunner().run(["worktree", "list", "--porcelain", "-z"], in: repo)
+        let output = try await Fixture.git.run(["worktree", "list", "--porcelain", "-z"], in: repo)
         let worktrees = WorktreeListParser.parse(output)
 
         #expect(worktrees.map(\.branch) == ["main", "feat/x"])

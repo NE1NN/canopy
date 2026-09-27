@@ -3,7 +3,8 @@ import Foundation
 @testable import CanopyCore
 
 enum Fixture {
-    static let git = GitRunner()
+    /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
+    static let git = GitRunner(environment: ProcessInfo.processInfo.environment)
 
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
@@ -32,7 +33,7 @@ enum Fixture {
         let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        return GitRunner(executable: script)
+        return GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
     }
 
     static func worktree(repo: String, branch: String, at path: String) async throws {

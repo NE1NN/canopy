@@ -15,7 +15,7 @@ final class RecordingUI: ControlUIBridge {
 struct ControlServerTests {
     func startServer(_ dir: TempDir) async throws -> (Workspace, ControlServer, ControlClient, RecordingUI) {
         let home = CanopyHome(path: dir.sub("home"))
-        let workspace = Workspace(home: home)
+        let workspace = Workspace(home: home, git: Fixture.git)
         try await workspace.start()
         let ui = RecordingUI()
         let handler = WorkspaceControlHandler(workspace: workspace, ui: ui)

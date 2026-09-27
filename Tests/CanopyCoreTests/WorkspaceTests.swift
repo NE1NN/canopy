@@ -5,7 +5,7 @@ import Testing
 
 struct WorkspaceTests {
     func makeWorkspace(_ dir: TempDir) async throws -> Workspace {
-        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")))
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
         try await workspace.start()
         return workspace
     }
@@ -123,7 +123,7 @@ struct WorkspaceTests {
     @Test func secondWorkspaceOnTheSameHomeIsRefused() async throws {
         let dir = try TempDir()
         let first = try await makeWorkspace(dir)
-        let second = Workspace(home: CanopyHome(path: dir.sub("home")))
+        let second = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
 
         await #expect(throws: WorkspaceError.homeInUse(dir.sub("home"))) {
             try await second.start()

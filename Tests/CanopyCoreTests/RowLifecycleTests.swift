@@ -4,12 +4,12 @@ import Testing
 @testable import CanopyCore
 
 struct RowLifecycleTests {
-    let git = GitRunner()
+    let git = Fixture.git
 
     /// The caller owns `dir`; releasing it deletes the folder mid-test.
     func setUp(_ dir: TempDir, origin: Bool = true) async throws -> (String, Workspace) {
         let repo = try await Fixture.repo(in: dir, origin: origin)
-        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")))
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
         try await workspace.start()
         try await workspace.addRepo(path: repo)
         return (repo, workspace)
@@ -36,7 +36,7 @@ struct RowLifecycleTests {
         // TempDir paths start with /private/var; /var is a symlink to it. The home folder does not exist yet.
         let aliasedHome = dir.sub("home").replacingOccurrences(of: "/private/var/", with: "/var/")
         #expect(aliasedHome != dir.sub("home"))
-        let workspace = Workspace(home: CanopyHome(path: aliasedHome))
+        let workspace = Workspace(home: CanopyHome(path: aliasedHome), git: Fixture.git)
         try await workspace.start()
         try await workspace.addRepo(path: repo)
 
