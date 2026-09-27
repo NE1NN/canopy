@@ -59,7 +59,7 @@ public final class RowLifecycle {
         }
 
         guard !commands.isEmpty else {
-            let pane = run.map { _ in terminals.openTab(for: context).pane }
+            let pane = run.map { _ in terminals.openTab(for: context).focused }
             let report = SetupReport(status: setup ? .none : .skipped)
             return Task {
                 if let pane, let run { await pane.run(run) }
@@ -68,11 +68,12 @@ public final class RowLifecycle {
         }
 
         let script = SetupScript.render(commands, label: "Setup")
-        let tab = terminals.openTab(for: context, name: "Setup", command: .script(script))
+        // The setup pane, not its tab: the user may split the Setup tab while setup runs.
+        let setupPane = terminals.openTab(for: context, name: "Setup", command: .script(script)).focused
         return Task {
-            let code = await tab.pane.waitForExit()
+            let code = await setupPane.waitForExit()
             guard code == 0 else {
-                let closed = !terminals.tabs(inRow: row.path).contains { $0.id == tab.id }
+                let closed = terminals.tab(containing: setupPane.id) == nil
                 let message =
                     closed
                     ? "Setup stopped because its tab was closed."
@@ -81,11 +82,14 @@ public final class RowLifecycle {
             }
             var pane: Pane?
             if run != nil {
-                pane = terminals.openTab(for: context).pane
-            } else if terminals.tabs(inRow: row.path).count == 1 {
+                pane = terminals.openTab(for: context).focused
+            } else if terminals.tabs(inRow: row.path).count == 1,
+                terminals.tab(containing: setupPane.id)?.1.paneList.count == 1
+            {
                 terminals.openTab(for: context)
             }
-            terminals.closeTab(tab.id, inRow: row.path)
+            // Closes the tab only if setup's pane was all it held.
+            terminals.closePane(setupPane.id)
             if let pane, let run { await pane.run(run) }
             return RowPreparation(setup: SetupReport(status: .succeeded, exitCode: 0), pane: pane?.id)
         }
@@ -143,11 +147,12 @@ public final class RowLifecycle {
         }
         guard !commands.isEmpty else { return }
         let script = SetupScript.render(commands, label: "Teardown")
-        let tab = terminals.openTab(
-            for: PaneContext(row: row, repoName: repoName), name: "Teardown", command: .script(script))
-        let code = await tab.pane.waitForExit()
+        let teardownPane = terminals.openTab(
+            for: PaneContext(row: row, repoName: repoName), name: "Teardown", command: .script(script)
+        ).focused
+        let code = await teardownPane.waitForExit()
         guard code != 0, !force else { return }
-        let closed = !terminals.tabs(inRow: row.path).contains { $0.id == tab.id }
+        let closed = terminals.tab(containing: teardownPane.id) == nil
         throw closed ? WorkspaceError.teardownStopped : WorkspaceError.teardownFailed(code)
     }
 }

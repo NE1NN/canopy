@@ -33,13 +33,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let busy = model.terminals.busyPanes.compactMap(\.foreground?.name)
-        guard !busy.isEmpty else { return .terminateNow }
+        guard busy.isEmpty || confirmQuit(busy) else { return .terminateCancel }
+        // Save layouts with every pane's current folder before the terminals close.
+        Task {
+            await model.saveTerminals()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    private func confirmQuit(_ busy: [String]) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Quit Canopy?"
         alert.informativeText = BusyTerminals.quitWarning(busy)
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -55,6 +64,9 @@ struct TerminalCommands: Commands {
             Button("New Tab", action: model.newTab)
                 .keyboardShortcut("t")
                 .disabled(!model.canOpenTerminal)
+            Button("Split Pane", action: model.splitPane)
+                .keyboardShortcut("d")
+                .disabled(!model.canOpenTerminal)
         }
         // Replacing the save group also drops File > Close, so ⌘W closes a terminal rather than the window.
         CommandGroup(replacing: .saveItem) {
@@ -68,6 +80,15 @@ struct TerminalCommands: Commands {
                 .keyboardShortcut("{", modifiers: .command)
             Button("Show Next Tab") { model.selectTab(offset: 1) }
                 .keyboardShortcut("}", modifiers: .command)
+            Divider()
+            Button("Focus Pane on the Left") { model.focusNeighbor(.left) }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+            Button("Focus Pane on the Right") { model.focusNeighbor(.right) }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+            Button("Focus Pane Above") { model.focusNeighbor(.up) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            Button("Focus Pane Below") { model.focusNeighbor(.down) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
             Divider()
         }
     }

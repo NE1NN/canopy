@@ -25,14 +25,14 @@ struct RootView: View {
             model.refresh()
         }
         .alert(
-            "Close this terminal?",
+            model.pendingClose?.title ?? "",
             isPresented: Binding(get: { model.pendingClose != nil }, set: { if !$0 { model.pendingClose = nil } }),
             presenting: model.pendingClose
         ) { _ in
-            Button("Close Terminal", role: .destructive, action: model.confirmClose)
+            Button("Close", role: .destructive, action: model.confirmClose)
             Button("Cancel", role: .cancel) {}
         } message: { pending in
-            Text("\(pending.program) is still running in it.")
+            Text(pending.message)
         }
         .alert(
             "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",

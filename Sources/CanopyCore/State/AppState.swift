@@ -27,11 +27,17 @@ public struct AppState: Codable, Sendable, Equatable {
     public var version: Int
     public var repos: [RepoEntry]
     public var selectedRowPath: String?
+    /// Each row's tabs and layouts, keyed by row path, rebuilt with fresh shells on launch.
+    public var terminals: [String: SavedRowTerminals]
 
-    public init(version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil) {
+    public init(
+        version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
+        terminals: [String: SavedRowTerminals] = [:]
+    ) {
         self.version = version
         self.repos = repos
         self.selectedRowPath = selectedRowPath
+        self.terminals = terminals
     }
 
     public init(from decoder: any Decoder) throws {
@@ -39,5 +45,7 @@ public struct AppState: Codable, Sendable, Equatable {
         version = try container.decode(Int.self, forKey: .version)
         repos = try container.decodeIfPresent([RepoEntry].self, forKey: .repos) ?? []
         selectedRowPath = try container.decodeIfPresent(String.self, forKey: .selectedRowPath)
+        // Layouts that cannot be read are dropped on their own, so repos and rows still load.
+        terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
     }
 }

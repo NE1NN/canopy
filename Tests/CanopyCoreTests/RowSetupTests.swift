@@ -53,6 +53,20 @@ struct RowSetupTests {
         #expect(await task.value.setup.status == .succeeded)
     }
 
+    @Test func panesSplitOffTheSetupTabOutliveSetup() async throws {
+        let dir = try TempDir()
+        let (repo, rows) = try await setUp(dir, config: #"{"setup": ["sleep 0.5"]}"#)
+        defer { rows.terminals.closeAll() }
+        let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/split").row
+        let task = rows.prepare(row, repoName: "demo", setup: true, run: nil)
+
+        let extra = rows.terminals.addPane(for: PaneContext(row: row, repoName: "demo"), fits: { _ in true })
+        #expect(await task.value.setup.status == .succeeded)
+
+        #expect(extra.status == .running)
+        #expect(rows.terminals.tabs(inRow: row.path).flatMap(\.paneList).map(\.id) == [extra.id])
+    }
+
     @Test func failedSetupStaysOpenAndSkipsRun() async throws {
         let dir = try TempDir()
         let config = #"{"setup": ["exit 5", "touch \"$CANOPY_ROOT_PATH/../never\""]}"#
@@ -83,7 +97,7 @@ struct RowSetupTests {
 
         let pane = try #require(ready.pane)
         #expect(await eventually { read(dir.sub("ran")) == "\(pane)\n" })
-        #expect(rows.terminals.tabs(inRow: row.path).map(\.pane.id) == [pane])
+        #expect(rows.terminals.tabs(inRow: row.path).map(\.focused.id) == [pane])
     }
 
     @Test func runStartsAtOnceWithoutSetupCommands() async throws {
@@ -97,7 +111,7 @@ struct RowSetupTests {
         #expect(rows.terminals.tabs(inRow: row.path).count == 1)
         let ready = await task.value
         #expect(ready.setup.status == .none)
-        #expect(ready.pane == rows.terminals.tabs(inRow: row.path).first?.pane.id)
+        #expect(ready.pane == rows.terminals.tabs(inRow: row.path).first?.focused.id)
     }
 
     @Test func setupCanBeSkipped() async throws {
@@ -173,7 +187,7 @@ struct RowSetupTests {
         let config = #"{"teardown": ["echo \"$CANOPY_ROW\" > \"$CANOPY_ROOT_PATH/../teardown.out\""]}"#
         let (repo, rows) = try await setUp(dir, config: config)
         let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/done").row
-        let shell = try #require(rows.terminals.openTab(for: PaneContext(row: row, repoName: "demo")).pane.pid)
+        let shell = try #require(rows.terminals.openTab(for: PaneContext(row: row, repoName: "demo")).focused.pid)
 
         try await rows.remove(row, repoName: "demo", force: false, deleteBranch: false)
 
@@ -233,7 +247,7 @@ struct RowSetupTests {
         let dir = try TempDir()
         let (repo, rows) = try await setUp(dir, config: nil)
         let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/x").row
-        let shell = try #require(rows.terminals.openTab(for: PaneContext(row: row, repoName: "demo")).pane.pid)
+        let shell = try #require(rows.terminals.openTab(for: PaneContext(row: row, repoName: "demo")).focused.pid)
 
         try await rows.removeRepo(path: repo)
 
@@ -247,13 +261,13 @@ struct RowSetupTests {
         let (repo, rows) = try await setUp(dir, config: nil)
         defer { rows.terminals.closeAll() }
         let main = try #require(await rows.workspace.snapshot.repos.first?.rows.first)
-        let pane = rows.terminals.openTab(for: PaneContext(row: main, repoName: "demo")).pane
+        let pane = rows.terminals.openTab(for: PaneContext(row: main, repoName: "demo")).focused
         #expect(await eventually { pane.foreground?.name == "bash" })
         try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
 
         try await rows.relocateRepo(path: repo, to: dir.sub("moved"))
 
-        #expect(rows.terminals.tabs(inRow: dir.sub("moved")).map(\.pane.id) == [pane.id])
+        #expect(rows.terminals.tabs(inRow: dir.sub("moved")).map(\.focused.id) == [pane.id])
         #expect(pane.context.rowPath == dir.sub("moved"))
         #expect(pane.status == .running)
     }

@@ -59,6 +59,9 @@ final class AppModel {
         if let notice = await workspace.loadNotice {
             show(notice)
         }
+        let saved = await workspace.savedTerminals
+        snapshot = await workspace.snapshot
+        restoreTerminals(saved)
         let updates = await workspace.updates()
         Task { [weak self] in
             for await snapshot in updates {
@@ -172,8 +175,14 @@ final class AppModel {
 
     /// A close waiting for the user to confirm, because a program still runs in the terminal.
     struct PendingClose {
-        let pane: PaneID
-        let program: String
+        enum Target {
+            case pane(PaneID)
+            case tab(TabID, row: String)
+        }
+
+        let target: Target
+        let title: String
+        let message: String
     }
 
     var pendingClose: PendingClose?
@@ -194,30 +203,145 @@ final class AppModel {
     /// Closes a terminal, first asking if a program other than the shell still runs in it.
     func requestClose(_ pane: Pane) {
         if pane.isBusy, let program = pane.foreground?.name {
-            pendingClose = PendingClose(pane: pane.id, program: program)
+            pendingClose = PendingClose(
+                target: .pane(pane.id), title: "Close this terminal?", message: "\(program) is still running in it.")
         } else {
             terminals.closePane(pane.id)
+            focusSelectedTerminal()
+        }
+    }
+
+    /// Closes a tab and all its terminals, first asking if any of them are running programs.
+    func requestCloseTab(_ tab: TerminalTab, inRow path: String) {
+        let busy = tab.paneList.compactMap { $0.isBusy ? $0.foreground?.name : nil }
+        if busy.isEmpty {
+            terminals.closeTab(tab.id, inRow: path)
+        } else {
+            pendingClose = PendingClose(
+                target: .tab(tab.id, row: path), title: "Close \(tab.name)?",
+                message: BusyTerminals.closeWarning(busy))
         }
     }
 
     func confirmClose() {
-        if let pending = pendingClose {
-            terminals.closePane(pending.pane)
+        switch pendingClose?.target {
+        case .pane(let id): terminals.closePane(id)
+        case .tab(let id, let path): terminals.closeTab(id, inRow: path)
+        case nil: break
         }
         pendingClose = nil
+        focusSelectedTerminal()
+    }
+
+    // MARK: Grid
+
+    /// The size of the selected tab's grid, for the add rule and for finding neighbors.
+    var gridSize = CGSize(width: 1000, height: 700)
+    @ObservationIgnored private lazy var config = GlobalConfig.load(from: home.configFile)
+
+    /// The least room a pane may shrink to: 20 columns and 5 rows, plus its padding and header.
+    var minimumPaneSize: CGSize {
+        let cell = SwiftTermEmulator.cellSize
+        let padding = TerminalContainerView.padding
+        return CGSize(
+            width: 20 * cell.width + padding.left + padding.right,
+            height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
+    }
+
+    /// ⌘D. Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
+    func splitPane() {
+        guard let row = selectedRow, !row.isMissing else { return }
+        let padding = TerminalContainerView.padding
+        let minimumWidth =
+            Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + padding.left + padding.right
+        let width = gridSize.width
+        terminals.addPane(for: context(for: row), fits: { width / Double($0) >= minimumWidth })
+        focusSelectedTerminal()
+    }
+
+    /// ⌘⌥ and an arrow.
+    func focusNeighbor(_ direction: Direction) {
+        guard let row = selectedRow else { return }
+        if terminals.focusNeighbor(inRow: row.path, toward: direction, in: CGRect(origin: .zero, size: gridSize))
+            != nil
+        {
+            focusSelectedTerminal()
+        }
+    }
+
+    func resize(_ tab: TerminalTab, divider: DividerID, to position: Double, in rect: CGRect) {
+        terminals.resize(tab, divider: divider, to: position, in: rect, minimum: minimumPaneSize)
+    }
+
+    /// The pane being dragged by its header, so drops only react to Canopy's own pane drags.
+    var draggedPane: PaneID?
+
+    func movePane(_ moved: PaneID, to zone: DropZone, of target: PaneID) {
+        terminals.movePane(moved, to: zone, of: target)
+    }
+
+    // MARK: Saving layouts
+
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Nothing is saved until the saved layouts were restored, or quitting early would erase them.
+    @ObservationIgnored private var terminalsRestored = false
+    /// Saved tabs of rows that were missing at launch, kept and saved again until the row comes back.
+    @ObservationIgnored private var deferredTerminals: [String: SavedRowTerminals] = [:]
+
+    /// Rebuilds the tabs saved for rows that exist. Runs before the first selection, so a restored row does not also
+    /// get a fresh terminal.
+    private func restoreTerminals(_ saved: [String: SavedRowTerminals]) {
+        deferredTerminals = saved
+        restoreDeferredTerminals()
+        terminalsRestored = true
+        terminals.onChange = { [weak self] in self?.scheduleSave() }
+    }
+
+    /// Restores deferred rows that came back, and forgets rows git no longer lists once every repo refreshed cleanly.
+    private func restoreDeferredTerminals() {
+        let allHealthy = snapshot.repos.allSatisfy { !$0.isMissing && $0.error == nil }
+        for (path, rowTerminals) in deferredTerminals {
+            if let row = snapshot.row(path: path) {
+                guard !row.isMissing else { continue }
+                terminals.restore(rowTerminals, for: context(for: row))
+                deferredTerminals[path] = nil
+            } else if allHealthy {
+                deferredTerminals[path] = nil
+            }
+        }
+    }
+
+    /// Saves a second after the last change, so a burst of changes writes state.json once.
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await saveTerminals()
+        }
+    }
+
+    /// Reads each pane's folder now, so a `cd` since the last change is kept too.
+    func saveTerminals() async {
+        guard terminalsRestored else { return }
+        do {
+            try await workspace.setSavedTerminals(terminals.saved().merging(deferredTerminals) { live, _ in live })
+        } catch {
+            show(error)
+        }
     }
 
     /// ⌘W. Only for the main window itself, so it never closes a terminal behind a sheet or a closed window.
     func closeFocusedPane() {
         guard let window = NSApp.keyWindow, window.sheetParent == nil, window.attachedSheet == nil,
-            let pane = selectedTab?.pane
+            let pane = selectedTab?.focused
         else { return }
         requestClose(pane)
     }
 
     /// Hands the keyboard back to the terminal on screen, as after renaming a tab.
     func focusSelectedTerminal() {
-        (selectedTab?.pane.emulator as? SwiftTermEmulator)?.focus()
+        (selectedTab?.focused.emulator as? SwiftTermEmulator)?.focus()
     }
 
     func selectTab(offset: Int) {
@@ -279,6 +403,9 @@ final class AppModel {
     private func apply(_ snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
         terminals.closeRowsGone(from: snapshot)
+        if terminalsRestored, !deferredTerminals.isEmpty {
+            restoreDeferredTerminals()
+        }
         if selectedRowPath == nil, let saved = snapshot.selectedRowPath, snapshot.row(path: saved) != nil {
             selectedRowPath = saved
         } else if let path = selectedRowPath, snapshot.row(path: path) == nil {

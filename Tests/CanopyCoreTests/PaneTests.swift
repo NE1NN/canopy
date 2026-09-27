@@ -12,7 +12,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(row)).pane
+        let pane = terminals.openTab(for: Fixture.context(row)).focused
         await pane.run(#"printf 'ready:%s:%s:%s\n' "$CANOPY_PANE" "$CANOPY_ROW" "$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("ready:p1:feat/x:\(row)") })
@@ -23,7 +23,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
         await pane.run(#"printf '%s|%s\n' "it's" "héllo ✓ $CANOPY_ROW""#)
 
         #expect(await eventually { pane.screen.text.contains("it's|héllo ✓ feat/x") })
@@ -33,7 +33,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
         let firstShell = try #require(pane.pid)
 
         #expect(await eventually { pane.foreground?.name == "bash" })
@@ -57,7 +57,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         pane.screen.onTitle?("my title")
@@ -76,7 +76,7 @@ struct PaneTests {
     @Test func closingEndsTheProcessAndWakesWaiters() async throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 30")).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 30")).focused
         let group = try #require(pane.pid)
         let waiter = Task { await pane.waitForExit() }
         try await Task.sleep(for: .milliseconds(100))
@@ -92,7 +92,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("echo working; exit 4")).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("echo working; exit 4")).focused
 
         #expect(await pane.waitForExit() == 4)
         #expect(pane.screen.text.contains("working"))
@@ -104,7 +104,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.sub("gone"))).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.sub("gone"))).focused
         await pane.run(#"echo "at:$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("at:\(dir.sub("user-home"))") })

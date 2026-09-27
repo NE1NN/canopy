@@ -20,12 +20,8 @@ struct RowTerminalsView: View {
         } else if let tab = model.terminals.selectedTab(inRow: row.path) {
             VStack(spacing: 0) {
                 TabBarView(row: row)
-                PaneView(
-                    pane: tab.pane,
-                    onClose: { model.requestClose(tab.pane) },
-                    onSizeChange: { model.terminals.preferredSize = $0 }
-                )
-                .id(tab.pane.id)
+                GridView(tab: tab)
+                    .id(tab.id)
             }
         } else {
             ContentUnavailableView {
