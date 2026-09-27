@@ -1,7 +1,7 @@
 TEST_FLAGS := $(shell scripts/test-flags.sh)
 SOURCES := Package.swift Sources Tests
 
-.PHONY: build test lint format app release install signing-cert clean
+.PHONY: build test lint format app release install signing-cert e2e clean
 
 build:
 	swift build
@@ -32,6 +32,9 @@ install: release
 
 signing-cert:
 	scripts/make-signing-cert.sh
+
+e2e: app
+	scripts/e2e.sh
 
 clean:
 	rm -rf .build build
