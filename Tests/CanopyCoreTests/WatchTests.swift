@@ -22,6 +22,15 @@ struct GitEventFilterTests {
         #expect(!GitEventFilter.isRelevant(eventPath: "/r/.git/worktrees/fix-a/logs/HEAD", gitDir: gitDir))
         #expect(!GitEventFilter.isRelevant(eventPath: "/r/.gitignore", gitDir: gitDir))
     }
+
+    @Test func remoteRefWritesMeanAPush() {
+        #expect(GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/remotes/origin/feat/x", gitDir: gitDir))
+        #expect(GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/packed-refs", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/remotes/origin/x.lock", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/packed-refs.lock", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/heads/feat/x", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/HEAD", gitDir: gitDir))
+    }
 }
 
 final class EventLog: Sendable {

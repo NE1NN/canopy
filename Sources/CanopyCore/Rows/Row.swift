@@ -27,6 +27,8 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
     public var rowClass: RowClass
     public var externalTag: ExternalTag?
     public var isMissing: Bool
+    /// Looked up only for Canopy and adopted rows on a branch.
+    public var pullRequest: PullRequest?
 
     public var id: String { path }
 
@@ -59,5 +61,6 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
         case rowClass = "class"
         case externalTag = "tag"
         case isMissing = "missing"
+        case pullRequest = "pr"
     }
 }
