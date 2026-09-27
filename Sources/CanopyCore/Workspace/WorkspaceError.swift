@@ -16,6 +16,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case notManaged(String)
     case badConfig(String, reason: String)
     case teardownFailed(Int32)
+    case teardownStopped
     case git(GitError)
 
     public var code: String {
@@ -37,6 +38,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .notManaged: "not_managed"
         case .badConfig: "bad_config"
         case .teardownFailed: "teardown_failed"
+        case .teardownStopped: "teardown_stopped"
         case .git: "git_failed"
         }
     }
@@ -62,6 +64,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .badConfig(let path, let reason): "Could not read \(path): \(reason)"
         case .teardownFailed(let code):
             "Teardown failed with exit code \(code). Its tab shows why. Pass --force to remove the row anyway."
+        case .teardownStopped: "Teardown stopped because its tab was closed. The row was not removed."
         case .git(let error): error.description
         }
     }

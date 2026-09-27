@@ -38,10 +38,11 @@ struct JSONValueTests {
     }
 
     @Test func writesWaitLongerThanReads() {
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) >= 600)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) >= 600)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.status) <= 60)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList) <= 60)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) == nil)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) == nil)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.repoAdd).map { $0 >= 600 } == true)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.status).map { $0 <= 60 } == true)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList).map { $0 <= 60 } == true)
     }
 
     @Test func clientFailuresMapToStableCodes() {

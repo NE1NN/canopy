@@ -22,9 +22,11 @@ extension Workspace {
     }
 
     /// Removes a Canopy row's worktree, or un-adopts an adopted row without touching its files.
-    public func removeRow(path: String, force: Bool = false, deleteBranch: Bool = false) async throws {
+    /// Returns warnings about what failed after the row was gone, such as deleting its branch.
+    @discardableResult
+    public func removeRow(path: String, force: Bool = false, deleteBranch: Bool = false) async throws -> [String] {
         guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
-        try await serialized(repoPath: row.repoPath) {
+        return try await serialized(repoPath: row.repoPath) {
             try await self.removeRowNow(path: path, force: force, deleteBranch: deleteBranch)
         }
     }
@@ -110,7 +112,7 @@ extension Workspace {
         return CreatedRow(row: row, warnings: warnings)
     }
 
-    private func removeRowNow(path: String, force: Bool, deleteBranch: Bool) async throws {
+    private func removeRowNow(path: String, force: Bool, deleteBranch: Bool) async throws -> [String] {
         guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
         switch row.rowClass {
         case .main:
@@ -119,6 +121,7 @@ extension Workspace {
             throw WorkspaceError.notManaged(path)
         case .adopted:
             try await unadopt(path: path)
+            return []
         case .canopy:
             var arguments = ["worktree", "remove"]
             if force { arguments.append("--force") }
@@ -143,10 +146,11 @@ extension Workspace {
             if deleteBranch, let branch = row.branch {
                 do {
                     try await git.run(["branch", "-D", branch], in: row.repoPath)
-                } catch let error as GitError {
-                    throw WorkspaceError.git(error)
+                } catch {
+                    return ["Removed the row, but could not delete branch \(branch): \(error)"]
                 }
             }
+            return []
         }
     }
 

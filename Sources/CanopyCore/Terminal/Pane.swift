@@ -14,7 +14,8 @@ public final class Pane: Identifiable {
     public static let closedExitCode: Int32 = 129
 
     public let id: PaneID
-    public let context: PaneContext
+    /// The row it belongs to. Updated if the repo moves.
+    public internal(set) var context: PaneContext
     public let emulator: any TerminalEmulator
     public private(set) var status = Status.running
     public private(set) var title = ""
@@ -138,6 +139,8 @@ public final class Pane: Identifiable {
     }
 
     private func processExited(_ code: Int32) {
+        // A closed pane already reported its exit. An exit status that was on its way when it closed changes nothing.
+        if isClosed, case .exited = status { return }
         process = nil
         status = .exited(code)
         // Nothing reads input now, so hide the cursor. The soft reset in `restart` shows it again.

@@ -93,7 +93,12 @@ public final class RowLifecycle {
 
     /// Removes a Canopy row once its teardown commands succeed, or un-adopts an adopted row. The row's terminals
     /// close first. With `force`, neither uncommitted changes nor a failing teardown stop the removal.
-    public func remove(_ row: Row, repoName: String, force: Bool, deleteBranch: Bool) async throws {
+    /// `skipTeardown` is for removing anyway after teardown already failed, without discarding changes.
+    /// Returns warnings about what failed after the row was gone.
+    @discardableResult
+    public func remove(
+        _ row: Row, repoName: String, force: Bool, deleteBranch: Bool, skipTeardown: Bool = false
+    ) async throws -> [String] {
         switch row.rowClass {
         case .main:
             throw WorkspaceError.cannotRemoveMain
@@ -108,11 +113,25 @@ public final class RowLifecycle {
                 if !force, try await workspace.hasUncommittedChanges(path: row.path) {
                     throw WorkspaceError.worktreeDirty(row.path)
                 }
-                try await tearDown(row, repoName: repoName, force: force)
+                if !skipTeardown {
+                    try await tearDown(row, repoName: repoName, force: force)
+                }
             }
         }
         terminals.closeRow(path: row.path)
-        try await workspace.removeRow(path: row.path, force: force, deleteBranch: deleteBranch)
+        return try await workspace.removeRow(path: row.path, force: force, deleteBranch: deleteBranch)
+    }
+
+    /// Unregisters a repo and closes the terminals in its rows. Its files stay where they are.
+    public func removeRepo(path: String) async throws {
+        try await workspace.removeRepo(path: path)
+        terminals.closeRows(ofRepo: path)
+    }
+
+    /// Points a missing repo at its new folder. Its terminals follow it.
+    public func relocateRepo(path: String, to newPath: String) async throws {
+        let mainPath = try await workspace.relocateRepo(path: path, to: newPath)
+        terminals.moveRows(ofRepo: path, to: mainPath)
     }
 
     private func tearDown(_ row: Row, repoName: String, force: Bool) async throws {
@@ -127,8 +146,8 @@ public final class RowLifecycle {
         let tab = terminals.openTab(
             for: PaneContext(row: row, repoName: repoName), name: "Teardown", command: .script(script))
         let code = await tab.pane.waitForExit()
-        if code != 0 && !force {
-            throw WorkspaceError.teardownFailed(code)
-        }
+        guard code != 0, !force else { return }
+        let closed = !terminals.tabs(inRow: row.path).contains { $0.id == tab.id }
+        throw closed ? WorkspaceError.teardownStopped : WorkspaceError.teardownFailed(code)
     }
 }

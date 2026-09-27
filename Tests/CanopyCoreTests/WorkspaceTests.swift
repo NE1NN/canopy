@@ -182,7 +182,7 @@ struct WorkspaceTests {
         }
         try FileManager.default.moveItem(atPath: b, toPath: dir.sub("b-moved"))
 
-        async let relocation: Void = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
+        async let relocation = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
         try await Task.sleep(for: .milliseconds(300))
         try await workspace.removeRepo(path: a)
         try await relocation

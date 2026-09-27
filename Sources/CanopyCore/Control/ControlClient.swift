@@ -26,9 +26,10 @@ public enum ControlClientError: Error, Equatable, CustomStringConvertible {
 /// A blocking client for one request at a time. The CLI makes a single call per run.
 public struct ControlClient: Sendable {
     public var socketPath: String
-    public var timeout: TimeInterval
+    /// How long to wait for the reply. Nil waits as long as the app takes.
+    public var timeout: TimeInterval?
 
-    public init(socketPath: String, timeout: TimeInterval = 120) {
+    public init(socketPath: String, timeout: TimeInterval? = 120) {
         self.socketPath = socketPath
         self.timeout = timeout
     }
@@ -43,8 +44,10 @@ public struct ControlClient: Sendable {
         let fd = try Self.connect(to: socketPath)
         defer { close(fd) }
 
-        var receiveTimeout = timeval(tv_sec: Int(timeout), tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
+        if let timeout {
+            var receiveTimeout = timeval(tv_sec: Int(timeout), tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
+        }
 
         let payload = try ControlCodec.encodeLine(request)
         try payload.withUnsafeBytes { raw in

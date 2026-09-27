@@ -145,10 +145,15 @@ final class AppModel {
         case failed(String)
     }
 
-    func removeRow(_ row: Row, force: Bool, deleteBranch: Bool) async -> RemoveOutcome {
+    /// `force` discards uncommitted changes. `skipTeardown` removes anyway after teardown already failed.
+    func removeRow(_ row: Row, force: Bool, skipTeardown: Bool, deleteBranch: Bool) async -> RemoveOutcome {
         do {
             let repoName = snapshot.repo(path: row.repoPath)?.name ?? ""
-            try await rows.remove(row, repoName: repoName, force: force, deleteBranch: deleteBranch)
+            let warnings = try await rows.remove(
+                row, repoName: repoName, force: force, deleteBranch: deleteBranch, skipTeardown: skipTeardown)
+            if let warning = warnings.first {
+                show(warning)
+            }
             return .removed
         } catch WorkspaceError.worktreeDirty {
             return .dirty
@@ -226,12 +231,43 @@ final class AppModel {
         perform { try await $0.addRepo(path: url.path) }
     }
 
+    /// A repo removal waiting for the user to confirm, because programs still run in its terminals.
+    struct PendingRepoRemoval {
+        let repo: RepoSnapshot
+        let busyTerminals: Int
+    }
+
+    var pendingRepoRemoval: PendingRepoRemoval?
+
+    /// Unregisters a repo and closes its terminals, first asking if any of them are running programs.
     func removeRepo(_ repo: RepoSnapshot) {
-        perform { try await $0.removeRepo(path: repo.path) }
+        let busy = repo.allRows.reduce(0) { $0 + terminals.busyPanes(inRow: $1.path).count }
+        if busy > 0 {
+            pendingRepoRemoval = PendingRepoRemoval(repo: repo, busyTerminals: busy)
+        } else {
+            confirmRepoRemoval(repo)
+        }
+    }
+
+    func confirmRepoRemoval(_ repo: RepoSnapshot) {
+        pendingRepoRemoval = nil
+        Task {
+            do {
+                try await rows.removeRepo(path: repo.path)
+            } catch {
+                show(error)
+            }
+        }
     }
 
     func relocateRepo(_ repo: RepoSnapshot, to url: URL) {
-        perform { try await $0.relocateRepo(path: repo.path, to: url.path) }
+        Task {
+            do {
+                try await rows.relocateRepo(path: repo.path, to: url.path)
+            } catch {
+                show(error)
+            }
+        }
     }
 
     func prune(_ repo: RepoSnapshot) {
@@ -242,6 +278,7 @@ final class AppModel {
 
     private func apply(_ snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
+        terminals.closeRowsGone(from: snapshot)
         if selectedRowPath == nil, let saved = snapshot.selectedRowPath, snapshot.row(path: saved) != nil {
             selectedRowPath = saved
         } else if let path = selectedRowPath, snapshot.row(path: path) == nil {

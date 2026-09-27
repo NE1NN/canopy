@@ -237,10 +237,10 @@ struct RowLifecycleTests {
         let created = try await workspace.createRow(repoPath: repo, branch: "feat/stuck")
         try await workspace.setSelectedRow(path: created.row.path)
 
-        await #expect(throws: WorkspaceError.self) {
-            try await workspace.removeRow(path: created.row.path, deleteBranch: true)
-        }
+        let warnings = try await workspace.removeRow(path: created.row.path, deleteBranch: true)
 
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("could not delete branch feat/stuck") == true)
         #expect(await workspace.snapshot.repos.first?.rows.map(\.branch) == ["main"])
         let saved = StateStore(url: home.stateFile).load().state
         #expect(saved.repos.first?.rowOrder == [])

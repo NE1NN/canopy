@@ -59,7 +59,7 @@ public struct WorkspaceControlHandler: Sendable {
         case ControlMethod.repoRemove:
             let params = try request.decodeParams(RepoRemoveParams.self)
             let repo = try TargetResolver.repo(for: TargetHint(repo: params.repo), in: await workspace.snapshot)
-            try await workspace.removeRepo(path: repo.path)
+            try await rows.removeRepo(path: repo.path)
             return try .from(RepoInfo(repo))
 
         case ControlMethod.rowList:
@@ -87,10 +87,10 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(RowRemoveParams.self)
             let snapshot = await workspace.snapshot
             let row = try TargetResolver.row(for: params.target, in: snapshot)
-            try await rows.remove(
+            let warnings = try await rows.remove(
                 row, repoName: snapshot.repo(path: row.repoPath)?.name ?? "", force: params.force,
                 deleteBranch: params.deleteBranch)
-            return try .from(row)
+            return try .from(RowRemoveResult(row: row, warnings: warnings))
 
         case ControlMethod.rowSelect:
             let params = try request.decodeParams(RowRefParams.self)

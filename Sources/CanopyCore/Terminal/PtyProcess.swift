@@ -153,7 +153,8 @@ public final class PtyProcess: @unchecked Sendable {
         }
     }
 
-    /// Hangs up the terminal. No more output or exit status is delivered.
+    /// Hangs up the terminal. Nothing more is delivered, apart from output or an exit status already on its way
+    /// to the main actor.
     public func terminate() {
         state.withLock { state in
             state.onOutput = nil
@@ -231,7 +232,10 @@ public final class PtyProcess: @unchecked Sendable {
             return status
         }
         // Take what the shell wrote before exiting, but stop if something it left behind keeps writing.
-        for _ in 0..<16 where drain() > 0 {}
+        var rounds = 0
+        while rounds < 16, drain() > 0 {
+            rounds += 1
+        }
         stopReading()
         let handler = state.withLock { state in
             defer {

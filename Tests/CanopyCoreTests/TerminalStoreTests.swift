@@ -131,6 +131,52 @@ struct TerminalStoreTests {
         #expect(!idle.isBusy)
     }
 
+    func snapshot(repo: String, rows: [String], error: String? = nil) -> WorkspaceSnapshot {
+        let rows = rows.map { Row(repoPath: repo, path: $0, branch: "b", head: nil, rowClass: .canopy) }
+        return WorkspaceSnapshot(repos: [RepoSnapshot(path: repo, name: "demo", rows: rows, error: error)])
+    }
+
+    @Test func rowsThatLeaveTheirRepoLoseTheirTerminals() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let (kept, gone, fresh) = (dir.sub("kept"), dir.sub("gone"), dir.sub("fresh"))
+        for path in [kept, gone] {
+            terminals.openTab(for: Fixture.context(path, repoPath: "/r/demo"))
+        }
+        terminals.closeRowsGone(from: snapshot(repo: "/r/demo", rows: [kept, gone]))
+        terminals.openTab(for: Fixture.context(fresh, repoPath: "/r/demo"))
+
+        // A failed refresh proves nothing about which rows exist.
+        terminals.closeRowsGone(from: snapshot(repo: "/r/demo", rows: [kept], error: "git failed"))
+        #expect(!terminals.tabs(inRow: gone).isEmpty)
+
+        terminals.closeRowsGone(from: snapshot(repo: "/r/demo", rows: [kept]))
+        #expect(terminals.tabs(inRow: gone).isEmpty)
+        #expect(!terminals.tabs(inRow: kept).isEmpty)
+        // Not in any snapshot yet, as right after it was created, so it stays.
+        #expect(!terminals.tabs(inRow: fresh).isEmpty)
+    }
+
+    @Test func movingARepoMovesItsRowsTerminals() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let main = terminals.openTab(for: Fixture.context("/old/demo", repoPath: "/old/demo")).pane
+        let elsewhere = terminals.openTab(for: Fixture.context(dir.sub("wt"), repoPath: "/old/demo")).pane
+
+        terminals.moveRows(ofRepo: "/old/demo", to: "/new/demo")
+
+        #expect(terminals.tabs(inRow: "/new/demo").map(\.pane.id) == [main.id])
+        #expect(terminals.tabs(inRow: "/old/demo").isEmpty)
+        #expect(main.context.rowPath == "/new/demo")
+        #expect(elsewhere.context.rowPath == dir.sub("wt"))
+        #expect(elsewhere.context.repoPath == "/new/demo")
+
+        terminals.closeRows(ofRepo: "/new/demo")
+        #expect(terminals.panes.isEmpty)
+    }
+
     @Test func newTerminalsStartAtThePreferredSize() throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)

@@ -11,10 +11,12 @@ public enum ControlMethod {
     public static let rowSelect = "row.select"
     public static let rowAdopt = "row.adopt"
 
-    /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo,
-    /// so parallel `row new` calls can take minutes; reads answer from memory.
-    public static func replyTimeout(for method: String) -> TimeInterval {
-        [repoAdd, repoRemove, rowNew, rowRemove, rowAdopt].contains(method) ? 900 : 30
+    /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
+    /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
+    /// a build does and cannot be cancelled, so the CLI waits for them without a limit. Reads answer from memory.
+    public static func replyTimeout(for method: String) -> TimeInterval? {
+        if [rowNew, rowRemove].contains(method) { return nil }
+        return [repoAdd, repoRemove, rowAdopt].contains(method) ? 900 : 30
     }
 }
 
@@ -179,6 +181,12 @@ public struct RowRemoveParams: Codable, Sendable {
         force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
         deleteBranch = try container.decodeIfPresent(Bool.self, forKey: .deleteBranch) ?? false
     }
+}
+
+public struct RowRemoveResult: Codable, Sendable {
+    public var row: Row
+    /// Things that went wrong after the row was already gone, such as a branch that could not be deleted.
+    public var warnings: [String]
 }
 
 public struct RowAdoptParams: Codable, Sendable {

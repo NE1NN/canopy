@@ -123,7 +123,11 @@ struct RowCommand: AsyncParsableCommand {
                 ControlMethod.rowRemove,
                 RowRemoveParams(target: Client.hint(repo: repo, row: row), force: force, deleteBranch: deleteBranch)
             )
-            try client.print(result) { "Removed \(try result.decode(Row.self).displayName)." }
+            let removed = try result.decode(RowRemoveResult.self)
+            for warning in removed.warnings {
+                FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+            }
+            try client.print(result) { "Removed \(removed.row.displayName)." }
         }
     }
 

@@ -112,13 +112,15 @@ public actor Workspace {
         state.repos.remove(at: index)
         watchers[path] = nil
         pendingRefreshes.removeValue(forKey: path)?.cancel()
+        refreshQueues[path] = nil
         repoSnapshots[path] = nil
         try save()
         publish()
     }
 
-    /// Points a missing repo at its new location, keeping its adopted rows and order.
-    public func relocateRepo(path: String, to newPath: String) async throws {
+    /// Points a missing repo at its new location, keeping its adopted rows and order. Returns the new main path.
+    @discardableResult
+    public func relocateRepo(path: String, to newPath: String) async throws -> String {
         guard state.repos.contains(where: { $0.path == path }) else {
             throw WorkspaceError.repoNotFound(path)
         }
@@ -133,10 +135,12 @@ public actor Workspace {
         state.repos[index].path = mainPath
         watchers[path] = nil
         pendingRefreshes.removeValue(forKey: path)?.cancel()
+        refreshQueues[path] = nil
         repoSnapshots[path] = nil
         try save()
         await watch(repoPath: mainPath)
         await refresh(repoPath: mainPath)
+        return mainPath
     }
 
     // MARK: Rows

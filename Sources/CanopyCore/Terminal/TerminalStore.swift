@@ -29,6 +29,9 @@ public final class TerminalStore {
     @ObservationIgnored private let engine: any TerminalEngine
     @ObservationIgnored private var nextPane = 1
     @ObservationIgnored private var nextTab = 1
+    /// Rows seen in a snapshot while they had terminals, so a row created a moment ago is not mistaken for one
+    /// that went away.
+    @ObservationIgnored private var seenRows: Set<String> = []
 
     public init(engine: any TerminalEngine, settings: ShellSettings) {
         self.engine = engine
@@ -133,6 +136,49 @@ public final class TerminalStore {
         }
         tabsByRow[path] = nil
         selectedTabByRow[path] = nil
+        seenRows.remove(path)
+    }
+
+    /// Closes the terminals of rows that are gone from a repo git could list, such as a worktree removed with
+    /// plain git, so they neither keep running out of reach nor come back when a new row reuses the folder.
+    /// Repos that are missing or failed to refresh keep their terminals.
+    public func closeRowsGone(from snapshot: WorkspaceSnapshot) {
+        for (path, tabs) in tabsByRow {
+            guard let repoPath = tabs.first?.pane.context.repoPath,
+                let repo = snapshot.repo(path: repoPath), !repo.isMissing, repo.error == nil
+            else { continue }
+            if repo.allRows.contains(where: { $0.path == path }) {
+                seenRows.insert(path)
+            } else if seenRows.contains(path) {
+                closeRow(path: path)
+            }
+        }
+    }
+
+    /// Closes every terminal in a repo's rows, for when the repo is unregistered.
+    public func closeRows(ofRepo repoPath: String) {
+        for (path, tabs) in tabsByRow where tabs.first?.pane.context.repoPath == repoPath {
+            closeRow(path: path)
+        }
+    }
+
+    /// Follows a repo that moved: rows inside its old folder move with it, and every pane learns its new paths.
+    public func moveRows(ofRepo oldRepoPath: String, to newRepoPath: String) {
+        for (path, tabs) in tabsByRow where tabs.first?.pane.context.repoPath == oldRepoPath {
+            let newPath = Paths.isInside(path, oldRepoPath) ? newRepoPath + path.dropFirst(oldRepoPath.count) : path
+            for tab in tabs {
+                tab.pane.context.repoPath = newRepoPath
+                tab.pane.context.rowPath = newPath
+            }
+            tabsByRow[path] = nil
+            tabsByRow[newPath] = tabs
+            if let selected = selectedTabByRow.removeValue(forKey: path) {
+                selectedTabByRow[newPath] = selected
+            }
+            if seenRows.remove(path) != nil {
+                seenRows.insert(newPath)
+            }
+        }
     }
 
     public func closeAll() {

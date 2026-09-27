@@ -199,6 +199,65 @@ struct RowSetupTests {
         #expect(!FileManager.default.fileExists(atPath: row.path))
     }
 
+    @Test func removingAnywayAfterAFailedTeardownDoesNotRunItAgain() async throws {
+        let dir = try TempDir()
+        let config = #"{"teardown": ["echo ran >> \"$CANOPY_ROOT_PATH/../teardown.log\"; exit 6"]}"#
+        let (repo, rows) = try await setUp(dir, config: config)
+        let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/again").row
+        await #expect(throws: WorkspaceError.teardownFailed(6)) {
+            try await rows.remove(row, repoName: "demo", force: false, deleteBranch: false)
+        }
+
+        try await rows.remove(row, repoName: "demo", force: false, deleteBranch: false, skipTeardown: true)
+
+        #expect(read(dir.sub("teardown.log")) == "ran\n")
+        #expect(!FileManager.default.fileExists(atPath: row.path))
+    }
+
+    @Test func closingTheTeardownTabStopsTheRemoval() async throws {
+        let dir = try TempDir()
+        let (repo, rows) = try await setUp(dir, config: #"{"teardown": ["sleep 30"]}"#)
+        defer { rows.terminals.closeAll() }
+        let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/stop").row
+        let removal = Task { try await rows.remove(row, repoName: "demo", force: false, deleteBranch: false) }
+        #expect(await eventually { rows.terminals.tabs(inRow: row.path).contains { $0.name == "Teardown" } })
+
+        let teardown = try #require(rows.terminals.tabs(inRow: row.path).first { $0.name == "Teardown" })
+        rows.terminals.closeTab(teardown.id, inRow: row.path)
+
+        await #expect(throws: WorkspaceError.teardownStopped) { try await removal.value }
+        #expect(FileManager.default.fileExists(atPath: row.path))
+    }
+
+    @Test func removingARepoClosesItsTerminals() async throws {
+        let dir = try TempDir()
+        let (repo, rows) = try await setUp(dir, config: nil)
+        let row = try await rows.workspace.createRow(repoPath: repo, branch: "feat/x").row
+        let shell = try #require(rows.terminals.openTab(for: PaneContext(row: row, repoName: "demo")).pane.pid)
+
+        try await rows.removeRepo(path: repo)
+
+        #expect(rows.terminals.panes.isEmpty)
+        #expect(await eventually { processGroupEnded(shell) })
+        #expect(FileManager.default.fileExists(atPath: row.path))
+    }
+
+    @Test func relocatingARepoKeepsItsTerminals() async throws {
+        let dir = try TempDir()
+        let (repo, rows) = try await setUp(dir, config: nil)
+        defer { rows.terminals.closeAll() }
+        let main = try #require(await rows.workspace.snapshot.repos.first?.rows.first)
+        let pane = rows.terminals.openTab(for: PaneContext(row: main, repoName: "demo")).pane
+        #expect(await eventually { pane.foreground?.name == "bash" })
+        try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
+
+        try await rows.relocateRepo(path: repo, to: dir.sub("moved"))
+
+        #expect(rows.terminals.tabs(inRow: dir.sub("moved")).map(\.pane.id) == [pane.id])
+        #expect(pane.context.rowPath == dir.sub("moved"))
+        #expect(pane.status == .running)
+    }
+
     @Test func uncommittedChangesStopRemovalBeforeTeardown() async throws {
         let dir = try TempDir()
         let (repo, rows) = try await setUp(dir, config: #"{"teardown": ["touch \"$CANOPY_ROOT_PATH/../torn\""]}"#)

@@ -140,7 +140,9 @@ struct RemoveRowPopover: View {
         isWorking = true
         error = nil
         Task {
-            switch await model.removeRow(row, force: isDirty || teardownCode != nil, deleteBranch: deleteBranch) {
+            switch await model.removeRow(
+                row, force: isDirty, skipTeardown: teardownCode != nil, deleteBranch: deleteBranch)
+            {
             case .removed: isPresented = false
             case .dirty: isDirty = true
             case .teardownFailed(let code): teardownCode = code

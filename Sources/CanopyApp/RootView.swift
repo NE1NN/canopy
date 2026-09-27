@@ -34,6 +34,21 @@ struct RootView: View {
         } message: { pending in
             Text("\(pending.program) is still running in it.")
         }
+        .alert(
+            "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",
+            isPresented: Binding(
+                get: { model.pendingRepoRemoval != nil }, set: { if !$0 { model.pendingRepoRemoval = nil } }),
+            presenting: model.pendingRepoRemoval
+        ) { pending in
+            Button("Remove Repo", role: .destructive) { model.confirmRepoRemoval(pending.repo) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(
+                pending.busyTerminals == 1
+                    ? "A terminal in it is running a program. Removing the repo closes its terminals. Files stay."
+                    : "\(pending.busyTerminals) terminals in it are running programs. Removing the repo closes its terminals. Files stay."
+            )
+        }
     }
 }
 

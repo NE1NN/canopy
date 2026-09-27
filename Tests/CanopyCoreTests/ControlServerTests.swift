@@ -95,9 +95,10 @@ struct ControlServerTests {
             client,
             ControlMethod.rowRemove,
             RowRemoveParams(target: TargetHint(envRepo: "demo", cwd: created.row.path), deleteBranch: true),
-            as: Row.self
+            as: RowRemoveResult.self
         )
-        #expect(removed.path == created.row.path)
+        #expect(removed.row.path == created.row.path)
+        #expect(removed.warnings.isEmpty)
     }
 
     @Test func shortRequestsLikeTheSpecsExampleAreAccepted() async throws {
@@ -134,7 +135,7 @@ struct ControlServerTests {
             client, ControlMethod.rowRemove,
             JSONValue.object([
                 "target": .object(["repo": .string("demo"), "row": .string("fix/x")]), "force": .bool(true),
-            ]), as: Row.self)
+            ]), as: RowRemoveResult.self)
     }
 
     @Test func errorsCarryCodes() async throws {

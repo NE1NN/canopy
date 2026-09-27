@@ -134,6 +134,13 @@ struct PtyProcessTests {
         #expect(await eventually { kill(-group, 0) == -1 && errno == ESRCH })
     }
 
+    @Test func terminalHandlesUTF8Input() async throws {
+        let (_, recorder) = try start(["/bin/stty", "-a"])
+
+        #expect(await eventually { recorder.exitCode != nil })
+        #expect(recorder.text.split(whereSeparator: \.isWhitespace).contains("iutf8"))
+    }
+
     @Test func missingExecutableThrows() {
         #expect(throws: PtySpawnError.self) { try start(["/nonexistent/shell"]) }
     }
