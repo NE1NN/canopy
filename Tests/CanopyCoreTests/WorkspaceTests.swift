@@ -185,7 +185,7 @@ struct WorkspaceTests {
         async let relocation = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
         try await Task.sleep(for: .milliseconds(300))
         try await workspace.removeRepo(path: a)
-        try await relocation
+        _ = try await relocation
 
         #expect(await workspace.snapshot.repos.map(\.path) == [dir.sub("b-moved"), c])
     }
