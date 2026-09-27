@@ -66,6 +66,7 @@ struct RemoveRowPopover: View {
     @Binding var isPresented: Bool
     @State private var deleteBranch = false
     @State private var isDirty = false
+    @State private var teardownCode: Int32?
     @State private var isWorking = false
     @State private var error: String?
 
@@ -90,6 +91,14 @@ struct RemoveRowPopover: View {
                 Label("It has uncommitted changes.", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
+            if let teardownCode {
+                Label(
+                    "Teardown failed with exit code \(teardownCode). Its tab shows why.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if let error {
                 Text(error)
                     .font(.callout)
@@ -100,7 +109,7 @@ struct RemoveRowPopover: View {
                 Spacer()
                 Button("Cancel") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
-                Button(isDirty ? "Force Remove" : isAdopted ? "Hide" : "Remove", role: .destructive, action: remove)
+                Button(buttonTitle, role: .destructive, action: remove)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isWorking)
             }
@@ -109,13 +118,19 @@ struct RemoveRowPopover: View {
         .frame(width: 300)
     }
 
+    private var buttonTitle: String {
+        if isDirty || teardownCode != nil { return "Remove Anyway" }
+        return isAdopted ? "Hide" : "Remove"
+    }
+
     private func remove() {
         isWorking = true
         error = nil
         Task {
-            switch await model.removeRow(row, force: isDirty, deleteBranch: deleteBranch) {
+            switch await model.removeRow(row, force: isDirty || teardownCode != nil, deleteBranch: deleteBranch) {
             case .removed: isPresented = false
             case .dirty: isDirty = true
+            case .teardownFailed(let code): teardownCode = code
             case .failed(let message): error = message
             }
             isWorking = false

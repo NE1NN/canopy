@@ -8,6 +8,8 @@ import Observation
 final class AppModel {
     let home: CanopyHome
     let workspace: Workspace
+    let terminals: TerminalStore
+    let rows: RowLifecycle
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
     var selectedRowPath: String? {
@@ -21,7 +23,20 @@ final class AppModel {
 
     init(home: CanopyHome) {
         self.home = home
-        self.workspace = Workspace(home: home)
+        let workspace = Workspace(home: home)
+        let terminals = TerminalStore(
+            engine: SwiftTermEngine(), settings: .current(home: home, cliDirectory: Self.bundledCLIDirectory()))
+        self.workspace = workspace
+        self.terminals = terminals
+        self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
+    }
+
+    /// The bundle's folder holding `canopy`, which terminals get on their PATH.
+    private static func bundledCLIDirectory() -> String? {
+        guard let bin = Bundle.main.resourceURL?.appending(path: "bin"),
+            FileManager.default.isExecutableFile(atPath: bin.appending(path: "canopy").path)
+        else { return nil }
+        return bin.path
     }
 
     var selectedRow: Row? {
@@ -56,10 +71,11 @@ final class AppModel {
     func shutdown() {
         server?.stop()
         server = nil
+        terminals.closeAll()
     }
 
     private func startControlServer() async {
-        let bridge = AppUIBridge { [weak self] path in self?.selectedRowPath = path }
+        let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
         let handler = WorkspaceControlHandler(workspace: workspace, ui: bridge)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         do {
@@ -95,13 +111,26 @@ final class AppModel {
         Task { await workspace.refreshAll() }
     }
 
-    /// Creates a row and selects it. Returns an error message for the sheet to show, or nil.
+    /// Selects a row once the snapshot has it, so a row created a moment ago gets its terminal.
+    func select(_ path: String) async {
+        apply(await workspace.snapshot)
+        selectedRowPath = path
+    }
+
+    /// Creates a row, starts its setup, and selects it. Returns an error message for the sheet to show, or nil.
     func createRow(in repo: RepoSnapshot, branch: String, base: String?) async -> String? {
         do {
             let created = try await workspace.createRow(repoPath: repo.path, branch: branch, base: base)
-            selectedRowPath = created.row.path
+            let preparing = rows.prepare(created.row, repoName: repo.name, setup: true, run: nil)
+            await select(created.row.path)
             if let warning = created.warnings.first {
                 show(warning)
+            }
+            Task {
+                let ready = await preparing.value
+                if ready.setup.status == .failed, let message = ready.setup.message {
+                    show(message)
+                }
             }
             return nil
         } catch {
@@ -112,18 +141,37 @@ final class AppModel {
     enum RemoveOutcome {
         case removed
         case dirty
+        case teardownFailed(Int32)
         case failed(String)
     }
 
     func removeRow(_ row: Row, force: Bool, deleteBranch: Bool) async -> RemoveOutcome {
         do {
-            try await workspace.removeRow(path: row.path, force: force, deleteBranch: deleteBranch)
+            let repoName = snapshot.repo(path: row.repoPath)?.name ?? ""
+            try await rows.remove(row, repoName: repoName, force: force, deleteBranch: deleteBranch)
             return .removed
         } catch WorkspaceError.worktreeDirty {
             return .dirty
+        } catch WorkspaceError.teardownFailed(let code) {
+            return .teardownFailed(code)
         } catch {
             return .failed((error as? WorkspaceError)?.message ?? "\(error)")
         }
+    }
+
+    // MARK: Terminals
+
+    func context(for row: Row) -> PaneContext {
+        PaneContext(row: row, repoName: snapshot.repo(path: row.repoPath)?.name ?? "")
+    }
+
+    func newTab() {
+        guard let row = selectedRow, !row.isMissing else { return }
+        terminals.openTab(for: context(for: row))
+    }
+
+    func closePane(_ pane: Pane) {
+        terminals.closePane(pane.id)
     }
 
     // MARK: Repos
@@ -161,6 +209,10 @@ final class AppModel {
             perform { _ = try await $0.adopt(path: path) }
         }
         perform { try await $0.setSelectedRow(path: path) }
+        // Selecting a row with no tabs opens one. A row whose tabs were all closed stays empty until then.
+        if let row = selectedRow {
+            terminals.ensureTab(for: context(for: row))
+        }
     }
 
     func perform(_ action: @escaping @Sendable (Workspace) async throws -> Void) {
@@ -189,7 +241,7 @@ final class AppModel {
 }
 
 struct AppUIBridge: ControlUIBridge {
-    let select: @MainActor @Sendable (String) -> Void
+    let select: @MainActor @Sendable (String) async -> Void
 
     func selectRow(path: String) async {
         await select(path)

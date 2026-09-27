@@ -36,20 +36,9 @@ struct RowDetailView: View {
 
     var body: some View {
         if let row = model.selectedRow {
-            VStack(alignment: .leading, spacing: 6) {
-                Label {
-                    Text(row.displayName)
-                } icon: {
-                    BranchIcon()
-                }
-                .font(.title2)
-                Text(row.path)
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle(row.displayName)
+            RowTerminalsView(row: row)
+                .navigationTitle(row.displayName)
+                .navigationSubtitle(model.snapshot.repo(path: row.repoPath)?.name ?? "")
         } else {
             ContentUnavailableView(
                 "No Row Selected",
