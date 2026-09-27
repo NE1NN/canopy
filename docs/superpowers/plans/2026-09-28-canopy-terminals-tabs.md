@@ -4529,3 +4529,17 @@ gh pr checks --watch
 ```
 
 Attach `build/e2e/terminal.png` to the PR.
+
+## After Review
+
+Two commits followed the nine tasks.
+They are on the branch, so the code there is the reference for these parts.
+
+- `perf: let terminal output overlap with drawing`: `PtyProcess` hands output to the main actor with up to four chunks in flight instead of one at a time. A million lines went from 4.5 to 3.7 seconds.
+- `fix: address review of terminals and tabs`, from an independent review of the branch:
+  - `TerminalStore.closeRowsGone(from:)` closes the terminals of rows that leave a repo git could list, for example after a plain `git worktree remove`. Rows not yet seen in any snapshot are left alone, so a row created a moment ago keeps its Setup tab. Removing a repo closes its terminals, asking first in the UI if any run programs, and relocating a repo moves its terminals with it.
+  - "Remove Anyway" after a failed teardown skips teardown without discarding uncommitted changes. The CLI's `--force` still does both.
+  - New terminals get `IUTF8`, as Terminal sets it.
+  - `row new` and `row rm` wait for setup and teardown without a reply timeout, since the app cannot cancel them.
+  - A branch that cannot be deleted comes back as a warning in `RowRemoveResult`, because the row is already gone.
+  - Closing the Teardown tab stops the removal with `teardown_stopped`.
