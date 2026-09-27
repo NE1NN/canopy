@@ -18,6 +18,11 @@ struct SidebarView: View {
         List(selection: $model.selectedRowPath) {
             ForEach(model.snapshot.repos) { repo in
                 Section {
+                    // A header keeps one line, so the warning sits just below it where it can wrap.
+                    if let warning = repo.pullRequestWarning {
+                        RepoWarningView(text: warning)
+                            .selectionDisabled()
+                    }
                     ForEach(repo.rows) { row in
                         RowLineView(row: row, shortcut: model.shortcut(for: row), removable: row.rowClass != .main)
                             .tag(row.path)
@@ -140,7 +145,7 @@ struct RowLineView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            BranchIcon(color: row.isMissing ? .secondary : .green)
+            RowIcon(row: row)
             Text(row.displayName)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -152,6 +157,9 @@ struct RowLineView: View {
                 TagView(text: "missing")
             }
             Spacer(minLength: 4)
+            if let pr = row.pullRequest {
+                PullRequestNumber(pr: pr)
+            }
             if isHovering || isConfirmingRemove {
                 if let shortcut {
                     Text("⌘\(shortcut)")
@@ -177,7 +185,48 @@ struct RowLineView: View {
         }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        // The PR number slides left as the shortcut and remove button come in.
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .help(row.path)
+    }
+}
+
+/// Opens the PR on GitHub. The rest of the row still selects it.
+struct PullRequestNumber: View {
+    let pr: PullRequest
+    @Environment(\.openURL) private var openURL
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        Button {
+            if let url = URL(string: pr.url) { openURL(url) }
+        } label: {
+            Text("#\(pr.number)")
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(pr.state.style(on: prominence))
+        }
+        .buttonStyle(.borderless)
+        .help("\(pr.state.label): \(pr.title)")
+        .accessibilityLabel("Pull request \(pr.number), \(pr.state.label). Opens on GitHub.")
+    }
+}
+
+/// Why a repo shows no PR badges, with the fix. Long messages from gh stop at three lines, with the rest on hover.
+struct RepoWarningView: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+        .help(text)
     }
 }
 
