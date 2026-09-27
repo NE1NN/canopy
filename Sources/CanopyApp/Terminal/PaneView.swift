@@ -4,14 +4,31 @@ import SwiftUI
 /// One terminal with its header, and a strip below it once its shell has exited.
 struct PaneView: View {
     let pane: Pane
+    /// Whether it is its tab's focused pane, which takes the keyboard when the tab comes into view.
+    var isFocusedPane = true
     let onClose: () -> Void
+    var onFocus: () -> Void = {}
+    var onDragStart: () -> Void = {}
     var onSizeChange: (TerminalSize) -> Void = { _ in }
     @State private var isFocused = false
 
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: pane.title, isFocused: isFocused, onClose: onClose)
-            TerminalSurface(pane: pane, onFocusChange: { isFocused = $0 }, onSizeChange: onSizeChange)
+                // The header is the handle for dragging the pane onto another one.
+                .onDrag {
+                    onDragStart()
+                    return NSItemProvider(object: pane.id.description as NSString)
+                }
+            TerminalSurface(
+                pane: pane,
+                takesFocus: isFocusedPane,
+                onFocusChange: { focused in
+                    isFocused = focused
+                    if focused { onFocus() }
+                },
+                onSizeChange: onSizeChange
+            )
             if case .exited(let code) = pane.status {
                 ExitStrip(code: code)
             }
@@ -27,6 +44,8 @@ struct PaneView: View {
 }
 
 struct PaneHeader: View {
+    static let height = 24.0
+
     let title: String
     let isFocused: Bool
     let onClose: () -> Void
@@ -54,7 +73,7 @@ struct PaneHeader: View {
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)
-        .frame(height: 24)
+        .frame(height: Self.height)
         .background(isHighlighted ? Color.accentColor.opacity(0.14) : Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             Rectangle().fill(.separator).frame(height: 1)

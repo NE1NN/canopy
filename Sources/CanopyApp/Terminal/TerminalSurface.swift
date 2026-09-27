@@ -6,6 +6,7 @@ import SwiftUI
 /// The terminal view belongs to the pane, so it keeps its screen while its tab or row is out of view.
 struct TerminalSurface: NSViewRepresentable {
     let pane: Pane
+    var takesFocus = true
     var onFocusChange: (Bool) -> Void = { _ in }
     var onSizeChange: (TerminalSize) -> Void = { _ in }
 
@@ -15,6 +16,7 @@ struct TerminalSurface: NSViewRepresentable {
     }
 
     func updateNSView(_ container: TerminalContainerView, context: Context) {
+        container.takesFocus = takesFocus
         container.onFocusChange = onFocusChange
         container.onSizeChange = onSizeChange
     }
@@ -28,6 +30,7 @@ final class TerminalContainerView: NSView {
     static let padding = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 4)
 
     private let emulator: SwiftTermEmulator
+    var takesFocus = true
     var onFocusChange: (Bool) -> Void = { _ in }
     var onSizeChange: (TerminalSize) -> Void = { _ in }
     private var focusObservation: NSKeyValueObservation?
@@ -70,8 +73,10 @@ final class TerminalContainerView: NSView {
                 self.onFocusChange(window.firstResponder === self.emulator.view)
             }
         }
-        // A terminal that comes into view takes the keyboard.
-        window?.makeFirstResponder(emulator.view)
+        // The tab's focused terminal takes the keyboard when it comes into view.
+        if takesFocus {
+            window?.makeFirstResponder(emulator.view)
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {

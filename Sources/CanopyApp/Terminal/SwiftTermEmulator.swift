@@ -8,6 +8,12 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
     static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     static let scrollback = 10_000
 
+    /// The size of one character cell in the terminal font.
+    static let cellSize: CGSize = {
+        let width = ("M" as NSString).size(withAttributes: [.font: font]).width
+        return CGSize(width: width, height: ceil(font.ascender - font.descender + font.leading))
+    }()
+
     /// Terminal.app's ANSI colors, which read well on light and dark backgrounds alike.
     private static let palette: [SwiftTerm.Color] = [
         (0, 0, 0), (194, 54, 33), (37, 188, 36), (173, 173, 39),
