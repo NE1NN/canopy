@@ -152,10 +152,16 @@ extension Workspace {
         prTimer = Task { [weak self, interval = prTiming.interval] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
-                guard !Task.isCancelled, let self else { return }
-                await self.refreshAllPullRequests()
+                guard let self else { return }
+                await self.refreshOnTimer()
             }
         }
+    }
+
+    /// Checks for cancellation on the actor, so a tick already on its way in when `stop()` ran looks nothing up.
+    private func refreshOnTimer() async {
+        guard !Task.isCancelled else { return }
+        await refreshAllPullRequests()
     }
 
     /// A push moved a remote-tracking branch. Another push in the window extends it.

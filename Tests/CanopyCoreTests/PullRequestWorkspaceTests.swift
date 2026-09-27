@@ -146,30 +146,34 @@ struct PullRequestWorkspaceTests {
         try await Fixture.worktree(repo: repo, branch: "feat/c", at: dir.sub("home/worktrees/demo/feat-c"))
         await workspace.refresh(repoPath: repo)
 
-        let lookedUp = await eventually { gh.calls.last?.contains(#"headRefName: "feat/c""#) == true }
+        let lookedUp = await eventually(timeout: .seconds(20)) {
+            gh.calls.last?.contains(#"headRefName: "feat/c""#) == true
+        }
         #expect(lookedUp)
         _ = workspace
     }
 
     @Test func aPushRefreshesOftenForAWhile() async throws {
         let dir = try TempDir()
+        // A loaded CI runner fits only a few lookups into a second, so the window is long and the waits generous.
         let timing = PRTiming(
-            interval: .seconds(3600), focusGap: .seconds(3600), afterPushInterval: .milliseconds(100),
-            afterPushDuration: .milliseconds(800))
+            interval: .seconds(3600), focusGap: .seconds(3600), afterPushInterval: .milliseconds(50),
+            afterPushDuration: .seconds(4))
         let (workspace, gh, repo) = try await setUp(dir, timing: timing)
         await workspace.refreshPullRequests(repoPath: repo)
         let before = gh.calls.count
+        // FSEvents only reports writes made after its stream starts.
         try await Task.sleep(for: .milliseconds(300))
 
         try await Fixture.git.run(["update-ref", "refs/remotes/origin/feat/a", "HEAD"], in: repo)
 
-        let refreshed = await eventually { gh.calls.count >= before + 3 }
-        #expect(refreshed)
-        try await Task.sleep(for: .milliseconds(1200))
+        let refreshed = await eventually(timeout: .seconds(20)) { gh.calls.count >= before + 3 }
+        #expect(refreshed, "\(gh.calls.count - before) lookups after the push")
+        let ended = await eventually(timeout: .seconds(20)) { await workspace.afterPush[repo] == nil }
+        #expect(ended)
         let settled = gh.calls.count
         try await Task.sleep(for: .milliseconds(500))
         #expect(gh.calls.count == settled)
-        _ = workspace
     }
 
     @Test func focusRefreshesAtMostOncePerGap() async throws {
@@ -196,13 +200,13 @@ struct PullRequestWorkspaceTests {
         await workspace.refreshPullRequests(repoPath: repo)
         let before = gh.calls.count
 
-        let refreshed = await eventually { gh.calls.count >= before + 3 }
+        let refreshed = await eventually(timeout: .seconds(20)) { gh.calls.count >= before + 3 }
 
-        #expect(refreshed)
+        #expect(refreshed, "\(gh.calls.count - before) lookups on the timer")
         await workspace.stop()
-        try await Task.sleep(for: .milliseconds(300))
+        await workspace.prQueues[repo]?.value
         let stopped = gh.calls.count
-        try await Task.sleep(for: .milliseconds(400))
+        try await Task.sleep(for: .milliseconds(500))
         #expect(gh.calls.count == stopped)
     }
 

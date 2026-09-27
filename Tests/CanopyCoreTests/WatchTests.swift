@@ -73,7 +73,7 @@ struct WatcherLifetimeTests {
         try await workspace.start()
 
         let adding = Task { try await workspace.addRepo(path: repo) }
-        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        #expect(await eventually(timeout: .seconds(20)) { FileManager.default.fileExists(atPath: started) })
         try await workspace.removeRepo(path: repo)
         FileManager.default.createFile(atPath: release, contents: nil)
         _ = try? await adding.value
