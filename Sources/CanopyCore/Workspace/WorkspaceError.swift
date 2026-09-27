@@ -9,10 +9,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case ambiguousRow(String, repos: [String])
     case missingTarget(flag: String)
     case invalidBranch(String)
+    case invalidBase(String)
     case branchCheckedOut(String)
     case worktreeDirty(String)
     case cannotRemoveMain
     case notManaged(String)
+    case badConfig(String, reason: String)
+    case teardownFailed(Int32)
+    case teardownStopped
     case git(GitError)
 
     public var code: String {
@@ -27,10 +31,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .ambiguousRow: "ambiguous_row"
         case .missingTarget: "missing_target"
         case .invalidBranch: "invalid_branch"
+        case .invalidBase: "invalid_base"
         case .branchCheckedOut: "branch_checked_out"
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
         case .notManaged: "not_managed"
+        case .badConfig: "bad_config"
+        case .teardownFailed: "teardown_failed"
+        case .teardownStopped: "teardown_stopped"
         case .git: "git_failed"
         }
     }
@@ -48,10 +56,15 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "\"\(name)\" exists in several repos (\(repos.joined(separator: ", "))). Pass --repo."
         case .missingTarget(let flag): "Could not tell which one you mean. Pass \(flag)."
         case .invalidBranch(let name): "Not a valid branch name: \(name)"
+        case .invalidBase(let ref): "No commit matches --from \(ref)."
         case .branchCheckedOut(let name): "Branch \(name) is already checked out in another worktree."
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
         case .notManaged(let path): "\(path) belongs to another tool. Adopt it first."
+        case .badConfig(let path, let reason): "Could not read \(path): \(reason)"
+        case .teardownFailed(let code):
+            "Teardown failed with exit code \(code). Its tab shows why. Pass --force to remove the row anyway."
+        case .teardownStopped: "Teardown stopped because its tab was closed. The row was not removed."
         case .git(let error): error.description
         }
     }

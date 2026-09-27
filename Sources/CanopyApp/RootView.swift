@@ -21,12 +21,33 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.toast)
-        .task { await model.start() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            model.shutdown()
+        .alert(
+            "Close this terminal?",
+            isPresented: Binding(get: { model.pendingClose != nil }, set: { if !$0 { model.pendingClose = nil } }),
+            presenting: model.pendingClose
+        ) { _ in
+            Button("Close Terminal", role: .destructive, action: model.confirmClose)
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text("\(pending.program) is still running in it.")
+        }
+        .alert(
+            "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",
+            isPresented: Binding(
+                get: { model.pendingRepoRemoval != nil }, set: { if !$0 { model.pendingRepoRemoval = nil } }),
+            presenting: model.pendingRepoRemoval
+        ) { pending in
+            Button("Remove Repo", role: .destructive) { model.confirmRepoRemoval(pending.repo) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(
+                pending.busyTerminals == 1
+                    ? "A terminal in it is running a program. Removing the repo closes its terminals. Files stay."
+                    : "\(pending.busyTerminals) terminals in it are running programs. Removing the repo closes its terminals. Files stay."
+            )
         }
     }
 }
@@ -36,20 +57,9 @@ struct RowDetailView: View {
 
     var body: some View {
         if let row = model.selectedRow {
-            VStack(alignment: .leading, spacing: 6) {
-                Label {
-                    Text(row.displayName)
-                } icon: {
-                    BranchIcon()
-                }
-                .font(.title2)
-                Text(row.path)
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle(row.displayName)
+            RowTerminalsView(row: row)
+                .navigationTitle(row.displayName)
+                .navigationSubtitle(model.snapshot.repo(path: row.repoPath)?.name ?? "")
         } else {
             ContentUnavailableView(
                 "No Row Selected",

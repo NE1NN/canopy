@@ -66,10 +66,14 @@ struct RemoveRowPopover: View {
     @Binding var isPresented: Bool
     @State private var deleteBranch = false
     @State private var isDirty = false
+    @State private var teardownCode: Int32?
     @State private var isWorking = false
     @State private var error: String?
 
     private var isAdopted: Bool { row.rowClass == .adopted }
+
+    /// Read while the popover lays itself out, so its height includes the note.
+    private var busyTerminals: Int { model.terminals.busyPanes(inRow: row.path).count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -86,9 +90,25 @@ struct RemoveRowPopover: View {
             if !isAdopted, let branch = row.branch {
                 Toggle("Also delete branch \(branch)", isOn: $deleteBranch)
             }
+            if busyTerminals > 0 {
+                NoteLine(
+                    systemImage: "apple.terminal",
+                    text: busyTerminals == 1
+                        ? "A terminal in this row is running a program. Removing stops it."
+                        : "\(busyTerminals) terminals in this row are running programs. Removing stops them.",
+                    color: .secondary
+                )
+            }
             if isDirty {
-                Label("It has uncommitted changes.", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                NoteLine(
+                    systemImage: "exclamationmark.triangle.fill", text: "It has uncommitted changes.", color: .orange)
+            }
+            if let teardownCode {
+                NoteLine(
+                    systemImage: "exclamationmark.triangle.fill",
+                    text: "Teardown failed with exit code \(teardownCode). Its tab shows why.",
+                    color: .orange
+                )
             }
             if let error {
                 Text(error)
@@ -100,25 +120,51 @@ struct RemoveRowPopover: View {
                 Spacer()
                 Button("Cancel") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
-                Button(isDirty ? "Force Remove" : isAdopted ? "Hide" : "Remove", role: .destructive, action: remove)
+                Button(buttonTitle, role: .destructive, action: remove)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isWorking)
             }
         }
         .padding(14)
         .frame(width: 300)
+        // The popover inherits the sidebar row's one-line limit.
+        .lineLimit(nil)
+    }
+
+    private var buttonTitle: String {
+        if isDirty || teardownCode != nil { return "Remove Anyway" }
+        return isAdopted ? "Hide" : "Remove"
     }
 
     private func remove() {
         isWorking = true
         error = nil
         Task {
-            switch await model.removeRow(row, force: isDirty, deleteBranch: deleteBranch) {
+            switch await model.removeRow(
+                row, force: isDirty, skipTeardown: teardownCode != nil, deleteBranch: deleteBranch)
+            {
             case .removed: isPresented = false
             case .dirty: isDirty = true
+            case .teardownFailed(let code): teardownCode = code
             case .failed(let message): error = message
             }
             isWorking = false
         }
+    }
+}
+
+/// An icon and a sentence that wraps, for notes in narrow popovers.
+struct NoteLine: View {
+    let systemImage: String
+    let text: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: systemImage)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(color)
     }
 }

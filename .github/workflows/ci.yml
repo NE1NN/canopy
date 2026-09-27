@@ -23,4 +23,4 @@ jobs:
       - run: swift --version
       - run: make lint
       - run: make build
-      - run: make test
+      - run: scripts/ci-test.sh

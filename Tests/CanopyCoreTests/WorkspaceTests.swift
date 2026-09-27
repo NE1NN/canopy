@@ -182,10 +182,10 @@ struct WorkspaceTests {
         }
         try FileManager.default.moveItem(atPath: b, toPath: dir.sub("b-moved"))
 
-        async let relocation: Void = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
+        async let relocation = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
         try await Task.sleep(for: .milliseconds(300))
         try await workspace.removeRepo(path: a)
-        try await relocation
+        _ = try await relocation
 
         #expect(await workspace.snapshot.repos.map(\.path) == [dir.sub("b-moved"), c])
     }
@@ -218,6 +218,69 @@ struct WorkspaceTests {
         let relocated = try #require(await workspace.snapshot.repos.first)
         #expect(relocated.path == dir.sub("moved"))
         #expect(!relocated.isMissing)
+    }
+
+    @Test func staleRefreshDoesNotReplaceNewerRows() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let marker = dir.sub("slow-once")
+        // With the marker present, the next worktree list is read at once, then the marker is removed,
+        // and the list is returned a second later.
+        let script = dir.sub("slow-git")
+        try """
+        #!/bin/bash
+        if [[ "$1 $2" == "worktree list" && -f "\(marker)" ]]; then
+            out=$(mktemp)
+            /usr/bin/git "$@" > "$out"
+            status=$?
+            rm "\(marker)"
+            sleep 1
+            cat "$out"
+            rm "$out"
+            exit $status
+        fi
+        exec /usr/bin/git "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let git = GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        FileManager.default.createFile(atPath: marker, contents: nil)
+        async let stale: Void = workspace.refresh(repoPath: repo)
+        #expect(await eventually { !FileManager.default.fileExists(atPath: marker) })
+        try await Fixture.worktree(repo: repo, branch: "feat/new", at: dir.sub("new"))
+        await workspace.refresh(repoPath: repo)
+        await stale
+
+        #expect(await workspace.snapshot.repos.first?.external.map(\.branch) == ["feat/new"])
+    }
+
+    @Test func failedRefreshKeepsRowsAndShowsTheError() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        try await Fixture.worktree(repo: repo, branch: "feat/kept", at: dir.sub("kept"))
+        let marker = dir.sub("fail")
+        let git = try Fixture.git(
+            in: dir,
+            before:
+                #"[[ "$1 $2" == "worktree list" && -f "\#(marker)" ]] && { echo "fatal: simulated" >&2; exit 128; }"#
+        )
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        FileManager.default.createFile(atPath: marker, contents: nil)
+        await workspace.refresh(repoPath: repo)
+
+        let failed = try #require(await workspace.snapshot.repos.first)
+        #expect(failed.rows.map(\.branch) == ["main"])
+        #expect(failed.external.map(\.branch) == ["feat/kept"])
+        #expect(failed.error?.contains("simulated") == true)
+        try FileManager.default.removeItem(atPath: marker)
+        await workspace.refresh(repoPath: repo)
+        #expect(await workspace.snapshot.repos.first?.error == nil)
     }
 
     @Test func updatesStreamYieldsChanges() async throws {

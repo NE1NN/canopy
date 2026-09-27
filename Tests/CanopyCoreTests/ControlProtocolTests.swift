@@ -5,10 +5,25 @@ import Testing
 
 struct JSONValueTests {
     @Test func roundTripsTypedValues() throws {
-        let params = RowNewParams(target: TargetHint(repo: "web"), branch: "fix/a", base: nil, select: true)
+        let params = RowNewParams(target: TargetHint(repo: "web"), branch: "fix/a", select: true, run: "claude")
         let decoded = try JSONValue.from(params).decode(RowNewParams.self)
         #expect(decoded.branch == "fix/a")
         #expect(decoded.select)
+        #expect(decoded.run == "claude")
+    }
+
+    @Test func paramsDefaultWhatIsLeftOut() throws {
+        let new = try JSONValue.object(["branch": .string("fix/x")]).decode(RowNewParams.self)
+        #expect(new.target == TargetHint())
+        #expect(!new.select)
+        #expect(new.setup)
+        #expect(new.run == nil)
+
+        let remove = try JSONValue.object([:]).decode(RowRemoveParams.self)
+        #expect(!remove.force && !remove.deleteBranch)
+        #expect(try JSONValue.object([:]).decode(RowListParams.self).all == false)
+        #expect(try JSONValue.object([:]).decode(RowRefParams.self).target == TargetHint())
+        #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(RowNewParams.self) }
     }
 
     @Test func keepsIntegersIntegral() throws {
@@ -23,10 +38,11 @@ struct JSONValueTests {
     }
 
     @Test func writesWaitLongerThanReads() {
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) >= 600)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) >= 600)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.status) <= 60)
-        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList) <= 60)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) == nil)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) == nil)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.repoAdd).map { $0 >= 600 } == true)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.status).map { $0 <= 60 } == true)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList).map { $0 <= 60 } == true)
     }
 
     @Test func clientFailuresMapToStableCodes() {

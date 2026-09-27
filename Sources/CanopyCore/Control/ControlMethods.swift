@@ -11,10 +11,12 @@ public enum ControlMethod {
     public static let rowSelect = "row.select"
     public static let rowAdopt = "row.adopt"
 
-    /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo,
-    /// so parallel `row new` calls can take minutes; reads answer from memory.
-    public static func replyTimeout(for method: String) -> TimeInterval {
-        [repoAdd, repoRemove, rowNew, rowRemove, rowAdopt].contains(method) ? 900 : 30
+    /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
+    /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
+    /// a build does and cannot be cancelled, so the CLI waits for them without a limit. Reads answer from memory.
+    public static func replyTimeout(for method: String) -> TimeInterval? {
+        if [rowNew, rowRemove].contains(method) { return nil }
+        return [repoAdd, repoRemove, rowAdopt].contains(method) ? 900 : 30
     }
 }
 
@@ -46,6 +48,8 @@ public struct TargetHint: Codable, Sendable, Equatable {
 }
 
 public struct StatusResult: Codable, Sendable, Equatable {
+    /// Always true here. The CLI prints `"running": false` itself when it cannot connect.
+    public var running = true
     public var version: String
     public var home: String
     public var pid: Int32
@@ -84,15 +88,24 @@ public struct RepoRemoveParams: Codable, Sendable {
     }
 }
 
+// Params decode with defaults for everything but what a method cannot do without, so agents can send
+// short requests such as {"branch": "fix/x", "run": "claude"}.
+
 public struct RowListParams: Codable, Sendable {
     /// Limits the list to one repo. Lists every repo when nil.
     public var repo: String?
     /// Includes external worktrees.
     public var all: Bool
 
-    public init(repo: String?, all: Bool) {
+    public init(repo: String? = nil, all: Bool = false) {
         self.repo = repo
         self.all = all
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        repo = try container.decodeIfPresent(String.self, forKey: .repo)
+        all = try container.decodeIfPresent(Bool.self, forKey: .all) ?? false
     }
 }
 
@@ -101,38 +114,79 @@ public struct RowNewParams: Codable, Sendable {
     public var branch: String
     public var base: String?
     public var select: Bool
+    /// Runs the repo's setup commands. Off with `--no-setup`.
+    public var setup: Bool
+    /// A command to type into a new terminal once setup succeeds.
+    public var run: String?
 
-    public init(target: TargetHint, branch: String, base: String?, select: Bool) {
+    public init(
+        target: TargetHint = TargetHint(), branch: String, base: String? = nil, select: Bool = false,
+        setup: Bool = true, run: String? = nil
+    ) {
         self.target = target
         self.branch = branch
         self.base = base
         self.select = select
+        self.setup = setup
+        self.run = run
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        branch = try container.decode(String.self, forKey: .branch)
+        base = try container.decodeIfPresent(String.self, forKey: .base)
+        select = try container.decodeIfPresent(Bool.self, forKey: .select) ?? false
+        setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
+        run = try container.decodeIfPresent(String.self, forKey: .run)
     }
 }
 
 public struct RowNewResult: Codable, Sendable {
     public var row: Row
     public var warnings: [String]
+    public var setup: SetupReport
+    /// The terminal started for `run`, such as "p12".
+    public var pane: String?
 }
 
 public struct RowRefParams: Codable, Sendable {
     public var target: TargetHint
 
-    public init(target: TargetHint) {
+    public init(target: TargetHint = TargetHint()) {
         self.target = target
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
     }
 }
 
 public struct RowRemoveParams: Codable, Sendable {
     public var target: TargetHint
+    /// Removes the row even with uncommitted changes or a failing teardown.
     public var force: Bool
     public var deleteBranch: Bool
 
-    public init(target: TargetHint, force: Bool, deleteBranch: Bool) {
+    public init(target: TargetHint = TargetHint(), force: Bool = false, deleteBranch: Bool = false) {
         self.target = target
         self.force = force
         self.deleteBranch = deleteBranch
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        deleteBranch = try container.decodeIfPresent(Bool.self, forKey: .deleteBranch) ?? false
+    }
+}
+
+public struct RowRemoveResult: Codable, Sendable {
+    public var row: Row
+    /// Things that went wrong after the row was already gone, such as a branch that could not be deleted.
+    public var warnings: [String]
 }
 
 public struct RowAdoptParams: Codable, Sendable {

@@ -92,12 +92,46 @@ struct RowLifecycleTests {
         let dir = try TempDir()
         let (repo, workspace) = try await setUp(dir)
 
-        await #expect(throws: WorkspaceError.invalidBranch("bad name")) {
-            try await workspace.createRow(repoPath: repo, branch: "bad name")
+        for name in ["bad name", "@{-1}", "-x", "HEAD", "feat/x.lock"] {
+            await #expect(throws: WorkspaceError.invalidBranch(name)) {
+                try await workspace.createRow(repoPath: repo, branch: name)
+            }
         }
         await #expect(throws: WorkspaceError.branchCheckedOut("main")) {
             try await workspace.createRow(repoPath: repo, branch: "main")
         }
+    }
+
+    @Test func rejectsBasesThatAreNotCommits() async throws {
+        let dir = try TempDir()
+        let (repo, workspace) = try await setUp(dir)
+
+        for base in ["-q", "nope", "main:missing"] {
+            await #expect(throws: WorkspaceError.invalidBase(base)) {
+                try await workspace.createRow(repoPath: repo, branch: "feat/based", base: base)
+            }
+        }
+    }
+
+    @Test func missingRepoFolderSaysSo() async throws {
+        let dir = try TempDir()
+        let (repo, workspace) = try await setUp(dir)
+        try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
+
+        await #expect(throws: WorkspaceError.pathNotFound(repo)) {
+            try await workspace.createRow(repoPath: repo, branch: "feat/x")
+        }
+    }
+
+    @Test func slugSkipsFolderOfDeletedWorktree() async throws {
+        let dir = try TempDir()
+        let (repo, workspace) = try await setUp(dir)
+        let gone = try await workspace.createRow(repoPath: repo, branch: "feat/gone")
+        try FileManager.default.removeItem(atPath: gone.row.path)
+
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat-gone")
+
+        #expect(created.row.path == dir.sub("home/worktrees/demo/feat-gone-2"))
     }
 
     @Test func slugCollisionGetsSuffix() async throws {
@@ -189,6 +223,38 @@ struct RowLifecycleTests {
         #expect(!FileManager.default.fileExists(atPath: created.row.path))
         #expect(!(await git.succeeds(["show-ref", "--verify", "--quiet", "refs/heads/feat/done"], in: repo)))
         #expect(await workspace.snapshot.repos.first?.rows.map(\.branch) == ["main"])
+    }
+
+    @Test func failedBranchDeletionStillRemovesTheRow() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let git = try Fixture.git(
+            in: dir, before: #"[[ "$1" == "branch" && "$2" == "-D" ]] && { echo "error: simulated" >&2; exit 1; }"#)
+        let home = CanopyHome(path: dir.sub("home"))
+        let workspace = Workspace(home: home, git: git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat/stuck")
+        try await workspace.setSelectedRow(path: created.row.path)
+
+        let warnings = try await workspace.removeRow(path: created.row.path, deleteBranch: true)
+
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("could not delete branch feat/stuck") == true)
+        #expect(await workspace.snapshot.repos.first?.rows.map(\.branch) == ["main"])
+        let saved = StateStore(url: home.stateFile).load().state
+        #expect(saved.repos.first?.rowOrder == [])
+        #expect(saved.selectedRowPath == nil)
+    }
+
+    @Test func reportsUncommittedChanges() async throws {
+        let dir = try TempDir()
+        let (repo, workspace) = try await setUp(dir)
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat/check")
+
+        #expect(try await workspace.hasUncommittedChanges(path: created.row.path) == false)
+        try "x".write(toFile: created.row.path + "/new.txt", atomically: true, encoding: .utf8)
+        #expect(try await workspace.hasUncommittedChanges(path: created.row.path) == true)
     }
 
     @Test func dirtyRowNeedsForce() async throws {

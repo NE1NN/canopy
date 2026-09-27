@@ -9,11 +9,16 @@ let package = Package(
         .executable(name: "canopy", targets: ["CanopyCLI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
     ],
     targets: [
-        .target(name: "CanopyCore"),
-        .executableTarget(name: "CanopyApp", dependencies: ["CanopyCore"]),
+        .target(name: "CPty"),
+        .target(name: "CanopyCore", dependencies: ["CPty"]),
+        .executableTarget(
+            name: "CanopyApp",
+            dependencies: ["CanopyCore", .product(name: "SwiftTerm", package: "SwiftTerm")]
+        ),
         .executableTarget(
             name: "CanopyCLI",
             dependencies: [

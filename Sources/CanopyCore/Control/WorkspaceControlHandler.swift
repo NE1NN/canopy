@@ -6,13 +6,15 @@ public protocol ControlUIBridge: Sendable {
 }
 
 public struct WorkspaceControlHandler: Sendable {
-    let workspace: Workspace
+    let rows: RowLifecycle
     let ui: any ControlUIBridge
 
-    public init(workspace: Workspace, ui: any ControlUIBridge) {
-        self.workspace = workspace
+    public init(rows: RowLifecycle, ui: any ControlUIBridge) {
+        self.rows = rows
         self.ui = ui
     }
+
+    var workspace: Workspace { rows.workspace }
 
     public func handle(_ request: ControlRequest) async -> ControlResponse {
         guard request.v == ControlCodec.version else {
@@ -57,7 +59,7 @@ public struct WorkspaceControlHandler: Sendable {
         case ControlMethod.repoRemove:
             let params = try request.decodeParams(RepoRemoveParams.self)
             let repo = try TargetResolver.repo(for: TargetHint(repo: params.repo), in: await workspace.snapshot)
-            try await workspace.removeRepo(path: repo.path)
+            try await rows.removeRepo(path: repo.path)
             return try .from(RepoInfo(repo))
 
         case ControlMethod.rowList:
@@ -72,16 +74,23 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(RowNewParams.self)
             let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
             let created = try await workspace.createRow(repoPath: repo.path, branch: params.branch, base: params.base)
+            let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
             if params.select {
                 await select(created.row.path)
             }
-            return try .from(RowNewResult(row: created.row, warnings: created.warnings))
+            let ready = await preparing.value
+            return try .from(
+                RowNewResult(
+                    row: created.row, warnings: created.warnings, setup: ready.setup, pane: ready.pane?.description))
 
         case ControlMethod.rowRemove:
             let params = try request.decodeParams(RowRemoveParams.self)
-            let row = try TargetResolver.row(for: params.target, in: await workspace.snapshot)
-            try await workspace.removeRow(path: row.path, force: params.force, deleteBranch: params.deleteBranch)
-            return try .from(row)
+            let snapshot = await workspace.snapshot
+            let row = try TargetResolver.row(for: params.target, in: snapshot)
+            let warnings = try await rows.remove(
+                row, repoName: snapshot.repo(path: row.repoPath)?.name ?? "", force: params.force,
+                deleteBranch: params.deleteBranch)
+            return try .from(RowRemoveResult(row: row, warnings: warnings))
 
         case ControlMethod.rowSelect:
             let params = try request.decodeParams(RowRefParams.self)

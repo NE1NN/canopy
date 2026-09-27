@@ -43,6 +43,9 @@ struct RowCommand: AsyncParsableCommand {
             discussion: """
                 An existing local branch is checked out. A branch that only exists on origin is tracked. \
                 Anything else is created from --from, which defaults to origin's default branch.
+
+                The repo's setup commands from .canopy/config.json then run in the row's Setup tab, and this \
+                waits for them. If setup fails, the row stays, --run is skipped, and this exits 1.
                 """
         )
 
@@ -52,6 +55,10 @@ struct RowCommand: AsyncParsableCommand {
         var repo: String?
         @Option(name: .customLong("from"), help: "Start point for a new branch.")
         var base: String?
+        @Option(name: .customLong("run"), help: "Command to type into a new terminal once setup succeeds.")
+        var command: String?
+        @Flag(name: .customLong("no-setup"), help: "Skip the repo's setup commands.")
+        var noSetup = false
         @Flag(help: "Switch the Canopy window to the new row.")
         var select = false
         @OptionGroup var output: OutputOptions
@@ -60,27 +67,51 @@ struct RowCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let result = client.call(
                 ControlMethod.rowNew,
-                RowNewParams(target: Client.hint(repo: repo), branch: branch, base: base, select: select)
+                RowNewParams(
+                    target: Client.hint(repo: repo), branch: branch, base: base, select: select, setup: !noSetup,
+                    run: command)
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
                 FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
             }
-            try client.print(result) { "Created \(created.row.displayName) at \(created.row.path)." }
+            try client.print(result) { summary(of: created) }
+            if created.setup.status == .failed {
+                fflush(stdout)
+                FileHandle.standardError.write(Data("error: \(created.setup.message ?? "Setup failed.")\n".utf8))
+                throw ExitCode(1)
+            }
+        }
+
+        private func summary(of created: RowNewResult) -> String {
+            var lines = ["Created \(created.row.displayName) at \(created.row.path)."]
+            switch created.setup.status {
+            case .succeeded: lines.append("Setup finished.")
+            case .skipped: lines.append("Skipped setup.")
+            case .none, .failed: break
+            }
+            if let pane = created.pane, let command {
+                lines.append("Running \(command) in \(pane).")
+            }
+            return lines.joined(separator: "\n")
         }
     }
 
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "rm",
-            abstract: "Remove a row's worktree, or hide an adopted row."
+            abstract: "Remove a row's worktree, or hide an adopted row.",
+            discussion: """
+                The repo's teardown commands from .canopy/config.json run first in the row's Teardown tab, \
+                then the row's terminals close and the worktree is removed.
+                """
         )
 
         @Argument(help: "Branch or path. Defaults to the row you are in.")
         var row: String?
         @Option(help: "Repo name or path, when the branch exists in several repos.")
         var repo: String?
-        @Flag(help: "Remove even with uncommitted changes.")
+        @Flag(help: "Remove even with uncommitted changes or a failing teardown.")
         var force = false
         @Flag(help: "Also delete the branch.")
         var deleteBranch = false
@@ -92,7 +123,11 @@ struct RowCommand: AsyncParsableCommand {
                 ControlMethod.rowRemove,
                 RowRemoveParams(target: Client.hint(repo: repo, row: row), force: force, deleteBranch: deleteBranch)
             )
-            try client.print(result) { "Removed \(try result.decode(Row.self).displayName)." }
+            let removed = try result.decode(RowRemoveResult.self)
+            for warning in removed.warnings {
+                FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+            }
+            try client.print(result) { "Removed \(removed.row.displayName)." }
         }
     }
 

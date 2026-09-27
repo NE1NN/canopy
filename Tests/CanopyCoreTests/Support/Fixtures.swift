@@ -54,7 +54,12 @@ func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async thro
 }
 
 /// Polls until `condition` holds or the timeout passes. Returns whether it held.
-func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
+/// The condition runs on the caller's actor, so main-actor tests can read main-actor state.
+func eventually(
+    timeout: Duration = .seconds(5),
+    isolation: isolated (any Actor)? = #isolation,
+    _ condition: () async -> Bool
+) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while clock.now < deadline {
