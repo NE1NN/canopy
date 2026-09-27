@@ -12,7 +12,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")
     ],
     targets: [
-        .target(name: "CanopyCore"),
+        .target(name: "CPty"),
+        .target(name: "CanopyCore", dependencies: ["CPty"]),
         .executableTarget(name: "CanopyApp", dependencies: ["CanopyCore"]),
         .executableTarget(
             name: "CanopyCLI",
