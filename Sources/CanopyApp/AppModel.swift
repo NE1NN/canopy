@@ -165,13 +165,59 @@ final class AppModel {
         PaneContext(row: row, repoName: snapshot.repo(path: row.repoPath)?.name ?? "")
     }
 
+    /// A close waiting for the user to confirm, because a program still runs in the terminal.
+    struct PendingClose {
+        let pane: PaneID
+        let program: String
+    }
+
+    var pendingClose: PendingClose?
+
+    var selectedTab: TerminalTab? {
+        selectedRow.flatMap { terminals.selectedTab(inRow: $0.path) }
+    }
+
+    var canOpenTerminal: Bool {
+        selectedRow.map { !$0.isMissing } ?? false
+    }
+
     func newTab() {
         guard let row = selectedRow, !row.isMissing else { return }
         terminals.openTab(for: context(for: row))
     }
 
-    func closePane(_ pane: Pane) {
-        terminals.closePane(pane.id)
+    /// Closes a terminal, first asking if a program other than the shell still runs in it.
+    func requestClose(_ pane: Pane) {
+        if pane.isBusy, let program = pane.foreground?.name {
+            pendingClose = PendingClose(pane: pane.id, program: program)
+        } else {
+            terminals.closePane(pane.id)
+        }
+    }
+
+    func confirmClose() {
+        if let pending = pendingClose {
+            terminals.closePane(pending.pane)
+        }
+        pendingClose = nil
+    }
+
+    /// ⌘W. Only for the main window itself, so it never closes a terminal behind a sheet or a closed window.
+    func closeFocusedPane() {
+        guard let window = NSApp.keyWindow, window.sheetParent == nil, window.attachedSheet == nil,
+            let pane = selectedTab?.pane
+        else { return }
+        requestClose(pane)
+    }
+
+    /// Hands the keyboard back to the terminal on screen, as after renaming a tab.
+    func focusSelectedTerminal() {
+        (selectedTab?.pane.emulator as? SwiftTermEmulator)?.focus()
+    }
+
+    func selectTab(offset: Int) {
+        guard let row = selectedRow else { return }
+        terminals.selectTab(offset: offset, inRow: row.path)
     }
 
     // MARK: Repos

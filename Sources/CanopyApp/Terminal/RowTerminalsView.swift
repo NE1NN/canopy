@@ -1,7 +1,7 @@
 import CanopyCore
 import SwiftUI
 
-/// The detail area for a row: its selected tab's terminal.
+/// The detail area for a row: its tab bar and the selected tab's terminal.
 struct RowTerminalsView: View {
     @Environment(AppModel.self) private var model
     let row: Row
@@ -18,17 +18,20 @@ struct RowTerminalsView: View {
                 }
             }
         } else if let tab = model.terminals.selectedTab(inRow: row.path) {
-            PaneView(
-                pane: tab.pane,
-                onClose: { model.closePane(tab.pane) },
-                onSizeChange: { model.terminals.preferredSize = $0 }
-            )
-            .id(tab.pane.id)
+            VStack(spacing: 0) {
+                TabBarView(row: row)
+                PaneView(
+                    pane: tab.pane,
+                    onClose: { model.requestClose(tab.pane) },
+                    onSizeChange: { model.terminals.preferredSize = $0 }
+                )
+                .id(tab.pane.id)
+            }
         } else {
             ContentUnavailableView {
                 Label("No Terminals", systemImage: "apple.terminal")
             } description: {
-                Text("Open one to work in \(row.displayName).")
+                Text("Press ⌘T to open one in \(row.displayName).")
             } actions: {
                 Button("New Terminal") { model.newTab() }
             }

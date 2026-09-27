@@ -21,12 +21,18 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.toast)
-        .task { await model.start() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-            model.shutdown()
+        .alert(
+            "Close this terminal?",
+            isPresented: Binding(get: { model.pendingClose != nil }, set: { if !$0 { model.pendingClose = nil } }),
+            presenting: model.pendingClose
+        ) { _ in
+            Button("Close Terminal", role: .destructive, action: model.confirmClose)
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text("\(pending.program) is still running in it.")
         }
     }
 }

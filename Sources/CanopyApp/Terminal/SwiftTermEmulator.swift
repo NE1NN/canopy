@@ -39,6 +39,11 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         return TerminalSize(columns: terminal.cols, rows: terminal.rows)
     }
 
+    /// Gives the terminal the keyboard, if it is on screen.
+    func focus() {
+        view.window?.makeFirstResponder(view)
+    }
+
     func feed(_ data: Data) {
         terminalView.feed(byteArray: [UInt8](data)[...])
     }
