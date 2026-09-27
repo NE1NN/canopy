@@ -6,6 +6,7 @@ struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @State private var folderRequest = FolderRequest.addRepo
     @State private var isChoosingFolder = false
+    @State private var newRowRepo: RepoSnapshot?
 
     enum FolderRequest {
         case addRepo
@@ -18,7 +19,7 @@ struct SidebarView: View {
             ForEach(model.snapshot.repos) { repo in
                 Section {
                     ForEach(repo.rows) { row in
-                        RowLineView(row: row, shortcut: model.shortcut(for: row))
+                        RowLineView(row: row, shortcut: model.shortcut(for: row), removable: row.rowClass != .main)
                             .tag(row.path)
                             .contextMenu {
                                 if row.isMissing {
@@ -29,14 +30,18 @@ struct SidebarView: View {
                     if !repo.external.isEmpty {
                         DisclosureGroup("Other worktrees (\(repo.external.count))") {
                             ForEach(repo.external) { row in
-                                RowLineView(row: row, shortcut: nil)
+                                RowLineView(row: row, shortcut: nil, removable: false)
                                     .tag(row.path)
                             }
                         }
                         .foregroundStyle(.secondary)
                     }
                 } header: {
-                    RepoHeaderView(repo: repo) { chooseFolder(for: .locate(repo)) }
+                    RepoHeaderView(
+                        repo: repo,
+                        onNewRow: { newRowRepo = repo },
+                        onLocate: { chooseFolder(for: .locate(repo)) }
+                    )
                 }
             }
         }
@@ -59,6 +64,9 @@ struct SidebarView: View {
             .buttonStyle(.borderless)
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(item: $newRowRepo) { repo in
+            NewRowSheet(repo: repo)
         }
         // SwiftUI resets isPresented before calling the completion, so the request lives in its own state.
         .fileImporter(isPresented: $isChoosingFolder, allowedContentTypes: [.folder]) { result in
@@ -83,7 +91,9 @@ struct SidebarView: View {
 struct RepoHeaderView: View {
     @Environment(AppModel.self) private var model
     let repo: RepoSnapshot
+    let onNewRow: () -> Void
     let onLocate: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -96,11 +106,26 @@ struct RepoHeaderView: View {
                     .foregroundStyle(.yellow)
                     .help(error)
             }
+            Spacer(minLength: 4)
+            if !repo.isMissing {
+                Button(action: onNewRow) {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("New row in \(repo.name)")
+                .opacity(isHovering ? 1 : 0)
+            }
         }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
         .contextMenu {
+            if !repo.isMissing {
+                Button("New Row…", action: onNewRow)
+            }
             if repo.isMissing {
                 Button("Locate…", action: onLocate)
             }
+            Divider()
             Button("Remove Repo from Canopy") { model.removeRepo(repo) }
         }
     }
@@ -109,7 +134,9 @@ struct RepoHeaderView: View {
 struct RowLineView: View {
     let row: Row
     let shortcut: Int?
+    let removable: Bool
     @State private var isHovering = false
+    @State private var isConfirmingRemove = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -125,11 +152,27 @@ struct RowLineView: View {
                 TagView(text: "missing")
             }
             Spacer(minLength: 4)
-            if isHovering, let shortcut {
-                Text("⌘\(shortcut)")
-                    .font(.callout)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
+            if isHovering || isConfirmingRemove {
+                if let shortcut {
+                    Text("⌘\(shortcut)")
+                        .font(.callout)
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                if removable {
+                    Button {
+                        isConfirmingRemove = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help(row.rowClass == .adopted ? "Hide from Canopy" : "Remove row")
+                    .popover(isPresented: $isConfirmingRemove, arrowEdge: .trailing) {
+                        RemoveRowPopover(row: row, isPresented: $isConfirmingRemove)
+                    }
+                }
             }
         }
         .contentShape(Rectangle())

@@ -3,7 +3,8 @@ import Foundation
 @testable import CanopyCore
 
 enum Fixture {
-    static let git = GitRunner()
+    /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
+    static let git = GitRunner(environment: ProcessInfo.processInfo.environment)
 
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
@@ -25,12 +26,30 @@ enum Fixture {
         return Paths.canonical(path)
     }
 
+    /// A GitRunner whose git first runs `before` (bash, with the arguments in "$@"), then the real git.
+    /// Use it to stall or count specific git commands.
+    static func git(in dir: TempDir, before: String) throws -> GitRunner {
+        let script = dir.sub("git-wrapper-\(UUID().uuidString.prefix(6))")
+        let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
+        try body.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        return GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+    }
+
     static func worktree(repo: String, branch: String, at path: String) async throws {
         try FileManager.default.createDirectory(
             atPath: (path as NSString).deletingLastPathComponent,
             withIntermediateDirectories: true
         )
         try await git.run(["worktree", "add", "--quiet", "-b", branch, path], in: repo)
+    }
+}
+
+/// Runs blocking work (socket reads, lock waits) on its own thread. On a Swift concurrency thread it would
+/// hold one of the few threads the server needs to answer it, and a small CI machine deadlocks.
+func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        Thread { continuation.resume(with: Result { try work() }) }.start()
     }
 }
 

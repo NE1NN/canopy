@@ -5,6 +5,8 @@ import Foundation
 public actor Workspace {
     public nonisolated let home: CanopyHome
     let git: GitRunner
+    let fetchTimeout: Duration
+    var lastFetch: [String: FetchAttempt] = [:]
     let store: StateStore
     let classifier: RowClassifier
     var state = AppState()
@@ -12,12 +14,14 @@ public actor Workspace {
     var watchers: [String: DirectoryWatcher] = [:]
     var pendingRefreshes: [String: Task<Void, Never>] = [:]
     var gitQueues: [String: Task<Void, Never>] = [:]
+    var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
 
-    public init(home: CanopyHome, git: GitRunner = GitRunner()) {
+    public init(home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60)) {
         self.home = home
         self.git = git
+        self.fetchTimeout = fetchTimeout
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),
@@ -25,8 +29,14 @@ public actor Workspace {
         )
     }
 
+    /// Takes the home's app lock first: two instances would each save their own state.json over the other's.
     public func start() async throws {
         try home.ensureExists()
+        do {
+            instanceLock = try InstanceLock(path: home.appLockPath)
+        } catch InstanceLockError.heldElsewhere {
+            throw WorkspaceError.homeInUse(home.root.path)
+        }
         let result = store.load()
         state = result.state
         if case .recovered(_, let backup) = result {
@@ -37,6 +47,20 @@ public actor Workspace {
             await watch(repoPath: entry.path)
         }
         await refreshAll()
+    }
+
+    /// Stops watching and releases the home for another instance.
+    public func stop() {
+        watchers.removeAll()
+        for task in pendingRefreshes.values {
+            task.cancel()
+        }
+        pendingRefreshes.removeAll()
+        for subscriber in subscribers.values {
+            subscriber.finish()
+        }
+        subscribers.removeAll()
+        instanceLock = nil
     }
 
     public var snapshot: WorkspaceSnapshot {
@@ -94,13 +118,20 @@ public actor Workspace {
 
     /// Points a missing repo at its new location, keeping its adopted rows and order.
     public func relocateRepo(path: String, to newPath: String) async throws {
-        guard let index = state.repos.firstIndex(where: { $0.path == path }) else {
+        guard state.repos.contains(where: { $0.path == path }) else {
             throw WorkspaceError.repoNotFound(path)
         }
         let mainPath = try await mainCheckout(for: newPath)
+        try requireUnregistered(mainPath, except: path)
         _ = try? await git.run(["worktree", "repair"], in: mainPath)
+        // The awaits above let other calls add or remove repos, so look everything up again.
+        guard let index = state.repos.firstIndex(where: { $0.path == path }) else {
+            throw WorkspaceError.repoNotFound(path)
+        }
+        try requireUnregistered(mainPath, except: path)
         state.repos[index].path = mainPath
         watchers[path] = nil
+        pendingRefreshes.removeValue(forKey: path)?.cancel()
         repoSnapshots[path] = nil
         try save()
         await watch(repoPath: mainPath)
@@ -238,6 +269,12 @@ public actor Workspace {
         }
         gitQueues[repoPath] = Task { _ = try? await task.value }
         return try await task.value
+    }
+
+    private func requireUnregistered(_ path: String, except current: String) throws {
+        if path != current, state.repos.contains(where: { $0.path == path }) {
+            throw WorkspaceError.alreadyRegistered(path)
+        }
     }
 
     func save() throws {

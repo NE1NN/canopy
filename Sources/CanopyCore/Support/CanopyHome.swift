@@ -37,6 +37,10 @@ public struct CanopyHome: Sendable, Equatable {
     public var configFile: URL { root.appending(path: "config.json") }
     public var worktreesRoot: URL { root.appending(path: "worktrees") }
     public var socketPath: String { root.appending(path: "canopy.sock").path }
+    /// Held by the one app instance that owns this home.
+    public var appLockPath: String { root.appending(path: "app.lock").path }
+    /// Held by a CLI while it launches the app, so parallel calls launch it once.
+    public var launchLockPath: String { root.appending(path: "launch.lock").path }
 
     public func ensureExists() throws {
         let manager = FileManager.default

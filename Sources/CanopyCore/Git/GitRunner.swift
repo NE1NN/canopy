@@ -1,12 +1,13 @@
 import Foundation
-import Synchronization
 
 public struct GitError: Error, Sendable, Equatable, CustomStringConvertible {
     public var arguments: [String]
     public var exitCode: Int32
     public var stderr: String
+    public var timedOut = false
 
     public var description: String {
+        if timedOut { return "git \(arguments.first ?? "") timed out" }
         let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "git \(arguments.joined(separator: " ")) exited with \(exitCode)" : message
     }
@@ -14,16 +15,24 @@ public struct GitError: Error, Sendable, Equatable, CustomStringConvertible {
 
 public struct GitRunner: Sendable {
     public var executable: String
+    private let baseEnvironment: [String: String]?
 
-    public init(executable: String = "/usr/bin/git") {
+    /// With no environment, git gets this process's environment with the user's login PATH,
+    /// resolved on the first run rather than here, so creating a runner never blocks.
+    public init(executable: String = "/usr/bin/git", environment: [String: String]? = nil) {
         self.executable = executable
+        self.baseEnvironment = environment
     }
 
+    /// Runs git off the Swift concurrency pool. With a timeout, git and everything it started are killed
+    /// when it expires, and the error has `timedOut` set.
     @discardableResult
-    public func run(_ arguments: [String], in directory: String? = nil) async throws -> String {
+    public func run(_ arguments: [String], in directory: String? = nil, timeout: Duration? = nil) async throws
+        -> String
+    {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global().async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory) })
+                continuation.resume(with: Result { try runBlocking(arguments, in: directory, timeout: timeout) })
             }
         }
     }
@@ -33,42 +42,24 @@ public struct GitRunner: Sendable {
         (try? await run(arguments, in: directory)) != nil
     }
 
-    private func runBlocking(_ arguments: [String], in directory: String?) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let directory {
-            process.currentDirectoryURL = URL(fileURLWithPath: directory)
+    private func runBlocking(_ arguments: [String], in directory: String?, timeout: Duration?) throws -> String {
+        let result: SubprocessResult
+        do {
+            let environment =
+                baseEnvironment.map { GitEnvironment.build(base: $0, loginPath: nil) } ?? GitEnvironment.current
+            result = try Subprocess.run(
+                executable, arguments, environment: environment, directory: directory, timeout: timeout)
+        } catch let error as SubprocessError {
+            throw GitError(arguments: arguments, exitCode: -1, stderr: error.description)
         }
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        environment["LC_ALL"] = "C"
-        process.environment = environment
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-
-        let errorData = Mutex(Data())
-        let group = DispatchGroup()
-        DispatchQueue.global().async(group: group) {
-            let data = stderr.fileHandleForReading.readDataToEndOfFile()
-            errorData.withLock { $0 = data }
-        }
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
-        group.wait()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
+        guard result.status == 0, !result.timedOut else {
             throw GitError(
                 arguments: arguments,
-                exitCode: process.terminationStatus,
-                stderr: String(decoding: errorData.withLock { $0 }, as: UTF8.self)
+                exitCode: result.status,
+                stderr: String(decoding: result.stderr, as: UTF8.self),
+                timedOut: result.timedOut
             )
         }
-        return String(decoding: outputData, as: UTF8.self)
+        return String(decoding: result.stdout, as: UTF8.self)
     }
 }
