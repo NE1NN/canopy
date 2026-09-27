@@ -1,7 +1,7 @@
 # Canopy v1 design
 
 Date: 2026-09-27
-Status: draft, awaiting review
+Status: approved 2026-09-27
 
 ## Summary
 
@@ -68,13 +68,16 @@ One Swift package with three targets.
 - **`CanopyCore`** (library): all logic, no UI.
   Git access, worktree discovery and classification, repo config, PR lookup, port scanning, grid layout math, state storage, the activity log, and the control protocol types.
   Most tests live here.
-- **`Canopy`** (app executable): the UI and the control server.
+- **`CanopyApp`** (app executable, renamed `Canopy` inside the bundle): the UI and the control server.
   SwiftUI draws the sidebar, tab bar, and window chrome.
   AppKit draws the terminal grid, because drag, drop, and resize need view-level control.
   SwiftTerm runs behind the `TerminalEngine` interface.
-- **`canopy`** (CLI executable): a thin client that sends requests to the app over a Unix socket.
+- **`CanopyCLI`** (CLI executable, product `canopy`): a thin client that sends requests to the app over a Unix socket.
 
-`make app` builds a release, assembles `Canopy.app` with its `Info.plist`, places the CLI inside the bundle, and signs it.
+The targets are not named `Canopy` and `canopy` because the default macOS file system ignores case, so the two build products would overwrite each other.
+
+`make app` builds `Canopy Dev.app` and `make release` builds `Canopy.app`.
+Both assemble the bundle with its `Info.plist`, place the CLI at `Contents/Resources/bin/canopy`, and sign it.
 Signing uses a local self-signed certificate named "Canopy Dev" rather than ad hoc signing.
 A stable signing identity keeps macOS privacy permissions from resetting on every rebuild.
 `make signing-cert` creates the certificate in the login keychain once, and `make app` fails with a pointer to it if the certificate is missing.
@@ -565,8 +568,8 @@ PRs are squash-merged by the author after review.
 1. `docs`: this spec and the implementation plan.
 2. `chore`: package scaffold, `make app`, signing, CI, and lint.
 3. `feat`: repos and rows in the sidebar, with discovery, classification, adoption, and `⌘1` to `⌘9`.
-4. `feat`: control socket, `canopy repo` and `canopy row` commands, and setup and teardown.
-5. `feat`: terminals and tabs.
+4. `feat`: control socket, and the `canopy repo` and `canopy row` commands.
+5. `feat`: terminals and tabs, plus setup and teardown, which run in a visible terminal tab.
 6. `feat`: the grid, with the add rule, drag, resize, and restore on relaunch.
 7. `feat`: `canopy term` commands and `canopy agent-guide`.
 8. `feat`: PR badges.
