@@ -16,6 +16,7 @@ final class AppModel {
     }
     private var started = false
     private var toastTask: Task<Void, Never>?
+    private var server: ControlServer?
 
     init(home: CanopyHome) {
         self.home = home
@@ -44,6 +45,24 @@ final class AppModel {
                 self?.apply(snapshot)
             }
         }
+        await startControlServer()
+    }
+
+    func shutdown() {
+        server?.stop()
+        server = nil
+    }
+
+    private func startControlServer() async {
+        let bridge = AppUIBridge { [weak self] path in self?.selectedRowPath = path }
+        let handler = WorkspaceControlHandler(workspace: workspace, ui: bridge)
+        let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
+        do {
+            try await server.start()
+            self.server = server
+        } catch {
+            show("The canopy CLI is unavailable: \(error)")
+        }
     }
 
     // MARK: Rows
@@ -69,6 +88,37 @@ final class AppModel {
 
     func refresh() {
         Task { await workspace.refreshAll() }
+    }
+
+    /// Creates a row and selects it. Returns an error message for the sheet to show, or nil.
+    func createRow(in repo: RepoSnapshot, branch: String, base: String?) async -> String? {
+        do {
+            let created = try await workspace.createRow(repoPath: repo.path, branch: branch, base: base)
+            selectedRowPath = created.row.path
+            if let warning = created.warnings.first {
+                show(warning)
+            }
+            return nil
+        } catch {
+            return (error as? WorkspaceError)?.message ?? "\(error)"
+        }
+    }
+
+    enum RemoveOutcome {
+        case removed
+        case dirty
+        case failed(String)
+    }
+
+    func removeRow(_ row: Row, force: Bool, deleteBranch: Bool) async -> RemoveOutcome {
+        do {
+            try await workspace.removeRow(path: row.path, force: force, deleteBranch: deleteBranch)
+            return .removed
+        } catch WorkspaceError.worktreeDirty {
+            return .dirty
+        } catch {
+            return .failed((error as? WorkspaceError)?.message ?? "\(error)")
+        }
     }
 
     // MARK: Repos
@@ -130,5 +180,13 @@ final class AppModel {
             guard !Task.isCancelled else { return }
             toast = nil
         }
+    }
+}
+
+struct AppUIBridge: ControlUIBridge {
+    let select: @MainActor @Sendable (String) -> Void
+
+    func selectRow(path: String) async {
+        await select(path)
     }
 }
