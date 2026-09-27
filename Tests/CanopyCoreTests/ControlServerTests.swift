@@ -1,0 +1,147 @@
+import Foundation
+import Synchronization
+import Testing
+
+@testable import CanopyCore
+
+final class RecordingUI: ControlUIBridge {
+    let selected = Mutex<[String]>([])
+
+    func selectRow(path: String) async {
+        selected.withLock { $0.append(path) }
+    }
+}
+
+struct ControlServerTests {
+    func startServer(_ dir: TempDir) async throws -> (Workspace, ControlServer, ControlClient, RecordingUI) {
+        let home = CanopyHome(path: dir.sub("home"))
+        let workspace = Workspace(home: home)
+        try await workspace.start()
+        let ui = RecordingUI()
+        let handler = WorkspaceControlHandler(workspace: workspace, ui: ui)
+        let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
+        try await server.start()
+        return (workspace, server, ControlClient(socketPath: home.socketPath, timeout: 10), ui)
+    }
+
+    func call<T: Decodable>(_ client: ControlClient, _ method: String, _ params: some Encodable, as: T.Type) throws -> T
+    {
+        let response = try client.send(ControlRequest(method: method, params: try .from(params)))
+        if let error = response.error { throw error }
+        return try #require(response.result).decode(T.self)
+    }
+
+    @Test func socketIsPrivateAndRejectsSecondServer() async throws {
+        let dir = try TempDir()
+        let (_, server, _, _) = try await startServer(dir)
+        defer { server.stop() }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: dir.sub("home/canopy.sock"))
+        #expect((attributes[.posixPermissions] as? Int) == 0o600)
+        let second = ControlServer(socketPath: dir.sub("home/canopy.sock")) { _ in .success(id: "", result: .null) }
+        await #expect(throws: ControlServerError.alreadyRunning(dir.sub("home/canopy.sock"))) {
+            try await second.start()
+        }
+    }
+
+    @Test func replacesStaleSocketFile() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        FileManager.default.createFile(atPath: home.socketPath, contents: Data())
+
+        let server = ControlServer(socketPath: home.socketPath) { .success(id: $0.id, result: .bool(true)) }
+        try await server.start()
+        defer { server.stop() }
+
+        let response = try ControlClient(socketPath: home.socketPath).send(ControlRequest(method: "ping"))
+        #expect(response.result == .bool(true))
+    }
+
+    @Test func repoAndRowFlowOverTheSocket() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let (_, server, client, ui) = try await startServer(dir)
+        defer { server.stop() }
+
+        let status = try call(client, ControlMethod.status, JSONValue.null, as: StatusResult.self)
+        #expect(status.pid == ProcessInfo.processInfo.processIdentifier)
+
+        let added = try call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        #expect(added.name == "demo")
+
+        let created = try call(
+            client,
+            ControlMethod.rowNew,
+            RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", base: nil, select: true),
+            as: RowNewResult.self
+        )
+        #expect(created.row.branch == "feat/cli")
+        #expect(ui.selected.withLock { $0 } == [created.row.path])
+
+        let rows = try call(client, ControlMethod.rowList, RowListParams(repo: nil, all: false), as: [Row].self)
+        #expect(rows.map(\.branch) == ["main", "feat/cli"])
+
+        let removed = try call(
+            client,
+            ControlMethod.rowRemove,
+            RowRemoveParams(
+                target: TargetHint(envRepo: "demo", cwd: created.row.path), force: false, deleteBranch: true),
+            as: Row.self
+        )
+        #expect(removed.path == created.row.path)
+    }
+
+    @Test func errorsCarryCodes() async throws {
+        let dir = try TempDir()
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+
+        let unknown = try client.send(ControlRequest(method: "nope"))
+        #expect(unknown.error?.code == "unknown_method")
+
+        let badVersion = try client.send(ControlRequest(method: ControlMethod.status, v: 99))
+        #expect(badVersion.error?.code == "version_mismatch")
+
+        let missingRepo = try client.send(
+            ControlRequest(method: ControlMethod.repoAdd, params: try .from(RepoAddParams(path: dir.sub("nope")))))
+        #expect(missingRepo.error?.code == "path_not_found")
+
+        let badParams = try client.send(ControlRequest(method: ControlMethod.repoAdd, params: .string("x")))
+        #expect(badParams.error?.code == "bad_params")
+    }
+
+    @Test func malformedLineGetsBadRequest() async throws {
+        let dir = try TempDir()
+        let (_, server, _, _) = try await startServer(dir)
+        defer { server.stop() }
+
+        let fd = try ControlClient.connect(to: dir.sub("home/canopy.sock"))
+        defer { close(fd) }
+        _ = "not json\n".withCString { write(fd, $0, strlen($0)) }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let count = read(fd, &buffer, buffer.count)
+        let response = try ControlCodec.decode(
+            ControlResponse.self, from: Data(buffer[0..<max(count, 0)].prefix { $0 != 0x0A }))
+        #expect(response.error?.code == "bad_request")
+    }
+
+    @Test func socketPathOverTheLimitFailsClearly() {
+        let path = "/tmp/" + String(repeating: "x", count: 120) + "/canopy.sock"
+        #expect(throws: ControlClientError.socketPathTooLong(path)) {
+            try ControlClient(socketPath: path).send(ControlRequest(method: ControlMethod.status))
+        }
+    }
+
+    @Test func clientReportsAppNotRunning() {
+        do {
+            _ = try ControlClient(socketPath: "/tmp/canopy-definitely-missing.sock").send(
+                ControlRequest(method: "status"))
+            Issue.record("expected failure")
+        } catch let error as ControlClientError {
+            #expect(error.isAppNotRunning)
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+    }
+}
