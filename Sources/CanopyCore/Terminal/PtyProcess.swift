@@ -222,15 +222,28 @@ public final class PtyProcess: @unchecked Sendable {
     }
 
     private func finish() {
-        guard let exitSource else { return }
-        exitSource.cancel()
-        self.exitSource = nil
-        let status = state.withLock { state -> Int32 in
+        guard exitSource != nil else { return }
+        // Reap without blocking. The exit event can arrive before the process has really exited, as on GitHub's
+        // macOS runners, and a blocking wait would then hang until an idle shell exits, which it never does.
+        let reaped = state.withLock { state -> Int32? in
             var status: Int32 = 0
-            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+            var result: pid_t
+            var code: Int32 = 0
+            repeat {
+                result = waitpid(pid, &status, WNOHANG)
+                code = errno
+            } while result == -1 && code == EINTR
+            // ECHILD means something else already reaped it, so it is gone all the same.
+            guard result == pid || (result == -1 && code == ECHILD) else { return nil }
             state.exited = true
             return status
         }
+        guard let status = reaped else {
+            readQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { self.finish() }
+            return
+        }
+        exitSource?.cancel()
+        exitSource = nil
         // Take what the shell wrote before exiting, but stop if something it left behind keeps writing.
         var rounds = 0
         while rounds < 16, drain() > 0 {
