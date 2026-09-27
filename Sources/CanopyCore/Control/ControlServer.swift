@@ -4,10 +4,12 @@ import Synchronization
 
 public enum ControlServerError: Error, Equatable, CustomStringConvertible {
     case alreadyRunning(String)
+    case socketPathTooLong(String)
 
     public var description: String {
         switch self {
         case .alreadyRunning(let path): "Another Canopy is already listening on \(path)."
+        case .socketPathTooLong(let path): "Socket path is longer than macOS allows: \(path)"
         }
     }
 }
@@ -27,6 +29,8 @@ public final class ControlServer: Sendable {
     }
 
     public func start() async throws {
+        // sockaddr_un holds 104 bytes including the terminator. A longer path would bind somewhere else.
+        guard socketPath.utf8.count < 104 else { throw ControlServerError.socketPathTooLong(socketPath) }
         if FileManager.default.fileExists(atPath: socketPath) {
             if ControlClient.canConnect(socketPath: socketPath) {
                 throw ControlServerError.alreadyRunning(socketPath)
@@ -81,10 +85,15 @@ private final class ResumeOnce: Sendable {
 }
 
 private final class ControlConnection: Sendable {
+    /// A line longer than this is not a request anyone meant to send.
+    static let maximumLine = 1 << 20
+
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let handler: ControlServer.Handler
     private let buffer = Mutex(Data())
+    /// The last reply in line. Requests are handled at once but answered in the order they came.
+    private let lastReply = Mutex<Task<Void, Never>?>(nil)
 
     init(connection: NWConnection, queue: DispatchQueue, handler: @escaping ControlServer.Handler) {
         self.connection = connection
@@ -103,7 +112,12 @@ private final class ControlConnection: Sendable {
                 self.consume(data)
             }
             if isComplete || error != nil {
-                self.connection.cancel()
+                // The client may close its side right after sending, so answer what came in before closing.
+                let pending = self.lastReply.withLock { $0 }
+                Task {
+                    await pending?.value
+                    self.connection.cancel()
+                }
             } else {
                 self.receive()
             }
@@ -120,19 +134,51 @@ private final class ControlConnection: Sendable {
             }
             return lines
         }
+        if buffer.withLock({ $0.count > Self.maximumLine }) {
+            reply(
+                ControlResponse.failure(
+                    id: "", error: ControlError(code: "bad_request", message: "Request is too long.")))
+            let pending = lastReply.withLock { $0 }
+            Task {
+                await pending?.value
+                self.connection.cancel()
+            }
+            return
+        }
         for line in lines where !line.isEmpty {
-            Task { await self.respond(to: line) }
+            let response = Task { await self.response(to: line) }
+            lastReply.withLock { last in
+                let previous = last
+                last = Task {
+                    await previous?.value
+                    await self.send(await response.value)
+                }
+            }
         }
     }
 
-    private func respond(to line: Data) async {
-        let response: ControlResponse
-        if let request = try? ControlCodec.decode(ControlRequest.self, from: line) {
-            response = await handler(request)
-        } else {
-            response = .failure(id: "", error: ControlError(code: "bad_request", message: "Request is not valid JSON."))
+    private func reply(_ response: ControlResponse) {
+        lastReply.withLock { last in
+            let previous = last
+            last = Task {
+                await previous?.value
+                await self.send(response)
+            }
         }
+    }
+
+    private func response(to line: Data) async -> ControlResponse {
+        guard let request = try? ControlCodec.decode(ControlRequest.self, from: line) else {
+            return .failure(id: "", error: ControlError(code: "bad_request", message: "Request is not valid JSON."))
+        }
+        return await handler(request)
+    }
+
+    /// Returns once the reply has left, so closing the connection afterwards cannot drop it.
+    private func send(_ response: ControlResponse) async {
         guard let data = try? ControlCodec.encodeLine(response) else { return }
-        connection.send(content: data, completion: .contentProcessed { _ in })
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            connection.send(content: data, completion: .contentProcessed { _ in continuation.resume() })
+        }
     }
 }

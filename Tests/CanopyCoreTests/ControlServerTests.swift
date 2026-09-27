@@ -178,6 +178,84 @@ struct ControlServerTests {
         #expect(response.error?.code == "bad_request")
     }
 
+    /// Sends `payload` on a raw connection, optionally closes the write side, and reads until `lines` replies arrive.
+    func exchange(_ socketPath: String, _ payload: Data, halfClose: Bool = false, lines: Int = 1) async throws
+        -> [String]
+    {
+        try await offPool {
+            let fd = try ControlClient.connect(to: socketPath)
+            defer { close(fd) }
+            var timeout = timeval(tv_sec: 10, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            _ = payload.withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+            if halfClose { shutdown(fd, SHUT_WR) }
+            var received = Data()
+            var chunk = [UInt8](repeating: 0, count: 65_536)
+            while received.filter({ $0 == 0x0A }).count < lines {
+                let count = read(fd, &chunk, chunk.count)
+                guard count > 0 else { break }
+                received.append(contentsOf: chunk[0..<count])
+            }
+            return String(decoding: received, as: UTF8.self).split(separator: "\n").map(String.init)
+        }
+    }
+
+    @Test func halfClosedConnectionsStillGetTheirReply() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { request in
+            try? await Task.sleep(for: .milliseconds(200))
+            return .success(id: request.id, result: .bool(true))
+        }
+        try await server.start()
+        defer { server.stop() }
+
+        let replies = try await exchange(
+            home.socketPath, try ControlCodec.encodeLine(ControlRequest(method: "slow", id: "a")), halfClose: true)
+
+        #expect(replies.count == 1)
+        #expect(replies.first?.contains(#""id":"a""#) == true)
+    }
+
+    @Test func repliesComeInRequestOrder() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { request in
+            if request.id == "first" { try? await Task.sleep(for: .milliseconds(300)) }
+            return .success(id: request.id, result: .null)
+        }
+        try await server.start()
+        defer { server.stop() }
+        var payload = try ControlCodec.encodeLine(ControlRequest(method: "x", id: "first"))
+        payload.append(try ControlCodec.encodeLine(ControlRequest(method: "x", id: "second")))
+
+        let replies = try await exchange(home.socketPath, payload, lines: 2)
+
+        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false])
+    }
+
+    @Test func overLongLinesAreRejected() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { .success(id: $0.id, result: .null) }
+        try await server.start()
+        defer { server.stop() }
+
+        let replies = try await exchange(home.socketPath, Data(repeating: 0x61, count: (1 << 20) + 10))
+
+        #expect(replies.first?.contains("bad_request") == true)
+    }
+
+    @Test func serverRejectsASocketPathOverTheLimit() async {
+        let path = "/tmp/" + String(repeating: "x", count: 120) + "/canopy.sock"
+        await #expect(throws: ControlServerError.socketPathTooLong(path)) {
+            try await ControlServer(socketPath: path) { .success(id: $0.id, result: .null) }.start()
+        }
+    }
+
     @Test func socketPathOverTheLimitFailsClearly() {
         let path = "/tmp/" + String(repeating: "x", count: 120) + "/canopy.sock"
         #expect(throws: ControlClientError.socketPathTooLong(path)) {

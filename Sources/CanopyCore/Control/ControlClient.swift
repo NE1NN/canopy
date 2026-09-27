@@ -54,6 +54,7 @@ public struct ControlClient: Sendable {
             var offset = 0
             while offset < raw.count {
                 let written = write(fd, raw.baseAddress! + offset, raw.count - offset)
+                if written < 0 && errno == EINTR { continue }
                 if written < 0 { throw ControlClientError.writeFailed(errno: errno) }
                 offset += written
             }
@@ -64,6 +65,7 @@ public struct ControlClient: Sendable {
         while !received.contains(0x0A) {
             let count = read(fd, &chunk, chunk.count)
             if count == 0 { throw ControlClientError.connectionClosed }
+            if count < 0 && errno == EINTR { continue }
             if count < 0 {
                 throw errno == EAGAIN ? ControlClientError.timedOut : ControlClientError.connectionClosed
             }
