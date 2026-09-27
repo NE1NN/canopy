@@ -148,6 +148,41 @@ struct WorkspaceTests {
         #expect(await workspace.snapshot.repos.first?.rows.map(\.branch) == ["main"])
     }
 
+    @Test func relocateSurvivesARepoRemovedMeanwhile() async throws {
+        let dir = try TempDir()
+        let a = try await Fixture.repo(in: dir, name: "a")
+        let b = try await Fixture.repo(in: dir, name: "b")
+        let c = try await Fixture.repo(in: dir, name: "c")
+        let git = try Fixture.git(in: dir, before: #"[[ "$*" == "worktree repair" ]] && sleep 1"#)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+        for repo in [a, b, c] {
+            try await workspace.addRepo(path: repo)
+        }
+        try FileManager.default.moveItem(atPath: b, toPath: dir.sub("b-moved"))
+
+        async let relocation: Void = workspace.relocateRepo(path: b, to: dir.sub("b-moved"))
+        try await Task.sleep(for: .milliseconds(300))
+        try await workspace.removeRepo(path: a)
+        try await relocation
+
+        #expect(await workspace.snapshot.repos.map(\.path) == [dir.sub("b-moved"), c])
+    }
+
+    @Test func relocateRefusesARepoThatIsAlreadyRegistered() async throws {
+        let dir = try TempDir()
+        let a = try await Fixture.repo(in: dir, name: "a")
+        let b = try await Fixture.repo(in: dir, name: "b")
+        let workspace = try await makeWorkspace(dir)
+        try await workspace.addRepo(path: a)
+        try await workspace.addRepo(path: b)
+
+        await #expect(throws: WorkspaceError.alreadyRegistered(b)) {
+            try await workspace.relocateRepo(path: a, to: b)
+        }
+        #expect(await workspace.snapshot.repos.map(\.path) == [a, b])
+    }
+
     @Test func missingRepoFolderIsFlagged() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)

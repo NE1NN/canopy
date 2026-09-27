@@ -25,6 +25,16 @@ enum Fixture {
         return Paths.canonical(path)
     }
 
+    /// A GitRunner whose git first runs `before` (bash, with the arguments in "$@"), then the real git.
+    /// Use it to stall or count specific git commands.
+    static func git(in dir: TempDir, before: String) throws -> GitRunner {
+        let script = dir.sub("git-wrapper-\(UUID().uuidString.prefix(6))")
+        let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
+        try body.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        return GitRunner(executable: script)
+    }
+
     static func worktree(repo: String, branch: String, at path: String) async throws {
         try FileManager.default.createDirectory(
             atPath: (path as NSString).deletingLastPathComponent,

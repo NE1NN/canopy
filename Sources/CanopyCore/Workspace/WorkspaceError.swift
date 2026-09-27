@@ -3,6 +3,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case notAGitRepo(String)
     case bareRepo(String)
     case repoNotFound(String)
+    case alreadyRegistered(String)
     case rowNotFound(String)
     case ambiguousRow(String, repos: [String])
     case missingTarget(flag: String)
@@ -19,6 +20,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .notAGitRepo: "not_a_git_repo"
         case .bareRepo: "bare_repo"
         case .repoNotFound: "repo_not_found"
+        case .alreadyRegistered: "already_registered"
         case .rowNotFound: "row_not_found"
         case .ambiguousRow: "ambiguous_row"
         case .missingTarget: "missing_target"
@@ -37,6 +39,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .notAGitRepo(let path): "Not a git repository: \(path)"
         case .bareRepo(let path): "Bare repositories have no checkout to show: \(path)"
         case .repoNotFound(let name): "No registered repo matches \"\(name)\". Run `canopy repo list`."
+        case .alreadyRegistered(let path): "\(path) is already registered."
         case .rowNotFound(let name): "No row matches \"\(name)\". Run `canopy row list`."
         case .ambiguousRow(let name, let repos):
             "\"\(name)\" exists in several repos (\(repos.joined(separator: ", "))). Pass --repo."

@@ -94,13 +94,20 @@ public actor Workspace {
 
     /// Points a missing repo at its new location, keeping its adopted rows and order.
     public func relocateRepo(path: String, to newPath: String) async throws {
-        guard let index = state.repos.firstIndex(where: { $0.path == path }) else {
+        guard state.repos.contains(where: { $0.path == path }) else {
             throw WorkspaceError.repoNotFound(path)
         }
         let mainPath = try await mainCheckout(for: newPath)
+        try requireUnregistered(mainPath, except: path)
         _ = try? await git.run(["worktree", "repair"], in: mainPath)
+        // The awaits above let other calls add or remove repos, so look everything up again.
+        guard let index = state.repos.firstIndex(where: { $0.path == path }) else {
+            throw WorkspaceError.repoNotFound(path)
+        }
+        try requireUnregistered(mainPath, except: path)
         state.repos[index].path = mainPath
         watchers[path] = nil
+        pendingRefreshes.removeValue(forKey: path)?.cancel()
         repoSnapshots[path] = nil
         try save()
         await watch(repoPath: mainPath)
@@ -238,6 +245,12 @@ public actor Workspace {
         }
         gitQueues[repoPath] = Task { _ = try? await task.value }
         return try await task.value
+    }
+
+    private func requireUnregistered(_ path: String, except current: String) throws {
+        if path != current, state.repos.contains(where: { $0.path == path }) {
+            throw WorkspaceError.alreadyRegistered(path)
+        }
     }
 
     func save() throws {
