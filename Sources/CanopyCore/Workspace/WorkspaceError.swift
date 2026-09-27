@@ -20,6 +20,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case paneNotFound(String)
     case paneBusy(String, program: String)
     case paneExited(String)
+    case noPullRequestLookup(String)
+    case notOnGitHub(String)
+    case ghUnavailable(String)
+    case ghFailed(String)
     case git(GitError)
 
     public var code: String {
@@ -45,6 +49,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound: "pane_not_found"
         case .paneBusy: "pane_busy"
         case .paneExited: "pane_exited"
+        case .noPullRequestLookup: "no_pr_lookup"
+        case .notOnGitHub: "not_github"
+        case .ghUnavailable: "gh_unavailable"
+        case .ghFailed: "gh_failed"
         case .git: "git_failed"
         }
     }
@@ -74,6 +82,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound(let id): "No terminal \(id). Run `canopy term list --all`."
         case .paneBusy(let id, let program): "\(program) is still running in \(id). Pass --force to close it anyway."
         case .paneExited(let id): "The shell in \(id) has exited. Close it, or restart it from the window."
+        case .noPullRequestLookup(let name):
+            "Canopy only looks up PRs for its own and adopted rows on a branch, and \(name) is not one."
+        case .notOnGitHub(let repo): "\(repo)'s origin is not on GitHub, so its rows have no PRs."
+        case .ghUnavailable(let warning): warning
+        case .ghFailed(let message): "Pull requests did not load: \(message)"
         case .git(let error): error.description
         }
     }

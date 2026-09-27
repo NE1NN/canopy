@@ -166,6 +166,36 @@ wait_for_text sent-text || fail "term send did not reach the terminal"
 if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
 "$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
 
+step "canopy pr says when a repo's origin is not on GitHub"
+if "$cli" pr feat/term --repo demo --json > "$work/pr-local.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"not_github"' "$work/pr-local.json" || fail "missing not_github"
+"$cli" agent-guide | grep -q "canopy pr" || fail "agent-guide is missing canopy pr"
+
+step "canopy pr finds a real PR through gh"
+# Looks up the newest merged PR of this checkout's own GitHub repo, with the user's gh login.
+if merged=$(gh pr list --state merged --limit 1 --json number,headRefName --jq '.[0] | "\(.number) \(.headRefName)"' \
+    2>/dev/null) && [[ -n "$merged" ]]; then
+    read -r number branch <<< "$merged"
+    git init -q -b main "$work/ghdemo"
+    git -C "$work/ghdemo" -c user.email=e2e@example.com -c user.name=e2e commit -q --allow-empty -m init
+    git -C "$work/ghdemo" remote add origin "$(git remote get-url origin)"
+    "$cli" repo add "$work/ghdemo" >/dev/null
+    git -C "$work/ghdemo" worktree add -q -b "$branch" "$CANOPY_HOME/worktrees/ghdemo/merged"
+    for _ in $(seq 1 30); do
+        "$cli" row list --repo ghdemo | grep -q "$branch" && break
+        sleep 0.1
+    done
+    "$cli" pr "$branch" --repo ghdemo --refresh --json > "$work/pr.json"
+    grep -q "\"number\" : $number" "$work/pr.json" || fail "canopy pr did not find PR $number"
+    grep -q '"state" : "merged"' "$work/pr.json" || fail "PR $number is not shown as merged"
+    "$cli" row select "$branch" --repo ghdemo >/dev/null
+    sleep 1
+    swift scripts/window-shot.swift "$(app_pid)" "$shots/pr.png"
+    echo "saved $shots/pr.png"
+else
+    echo "skipped: needs gh logged in and an origin on GitHub with a merged PR"
+fi
+
 step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"invalid_branch"' "$work/err.json" || fail "missing error code"

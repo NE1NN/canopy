@@ -215,4 +215,62 @@ struct PullRequestWorkspaceTests {
 
         #expect(await workspace.pullRequests[repo] == nil)
     }
+
+    @Test func askingForARowsPullRequestLooksItUpIfNeeded() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, _) = try await setUp(dir)
+        let row = try #require(await workspace.snapshot.row(path: dir.sub("home/worktrees/demo/feat-a")))
+
+        #expect(try await workspace.pullRequest(for: row, refresh: false)?.number == 5)
+
+        gh.answer([0: (5, "MERGED")])
+        #expect(try await workspace.pullRequest(for: row, refresh: false)?.state == .open)
+        #expect(try await workspace.pullRequest(for: row, refresh: true)?.state == .merged)
+    }
+
+    @Test func mainRowsHaveNoPullRequestLookup() async throws {
+        let dir = try TempDir()
+        let (workspace, _, repo) = try await setUp(dir)
+        let main = try #require(await workspace.snapshot.row(path: repo))
+
+        await #expect(throws: WorkspaceError.noPullRequestLookup("main")) {
+            try await workspace.pullRequest(for: main, refresh: false)
+        }
+    }
+
+    @Test func lookupsSayWhyTheyCannotAnswer() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, _) = try await setUp(dir)
+        let row = try #require(await workspace.snapshot.row(path: dir.sub("home/worktrees/demo/feat-a")))
+        _ = try await workspace.pullRequest(for: row, refresh: true)
+
+        gh.fail(exitCode: 1, "gh: error connecting to api.github.com")
+        #expect(try await workspace.pullRequest(for: row, refresh: false)?.number == 5)
+        await #expect(throws: WorkspaceError.ghFailed("error connecting to api.github.com")) {
+            try await workspace.pullRequest(for: row, refresh: true)
+        }
+
+        gh.fail(exitCode: 4, "To get started with GitHub CLI, please run:  gh auth login")
+        await #expect {
+            try await workspace.pullRequest(for: row, refresh: true)
+        } throws: { error in
+            guard case WorkspaceError.ghUnavailable(let message) = error else { return false }
+            return message.contains("gh auth login")
+        }
+    }
+
+    @Test func reposOffGitHubSaySo() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        try await Fixture.worktree(repo: repo, branch: "feat/a", at: dir.sub("home/worktrees/demo/feat-a"))
+        let workspace = Workspace(
+            home: CanopyHome(path: dir.sub("home")), git: Fixture.git, github: try FakeGH(dir).cli)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+        let row = try #require(await workspace.snapshot.row(path: dir.sub("home/worktrees/demo/feat-a")))
+
+        await #expect(throws: WorkspaceError.notOnGitHub("demo")) {
+            try await workspace.pullRequest(for: row, refresh: false)
+        }
+    }
 }

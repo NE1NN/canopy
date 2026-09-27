@@ -8,7 +8,9 @@ struct CanopyCLI: AsyncParsableCommand {
         commandName: "canopy",
         abstract: "Drive Canopy from the command line.",
         version: CanopyVersion.current,
-        subcommands: [Status.self, RepoCommand.self, RowCommand.self, TermCommand.self, AgentGuide.self]
+        subcommands: [
+            Status.self, RepoCommand.self, RowCommand.self, TermCommand.self, PRCommand.self, AgentGuide.self,
+        ]
     )
 }
 

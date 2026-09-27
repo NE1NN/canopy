@@ -13,9 +13,11 @@ final class RecordingUI: ControlUIBridge {
 }
 
 struct ControlServerTests {
-    func startServer(_ dir: TempDir) async throws -> (Workspace, ControlServer, ControlClient, RecordingUI) {
+    func startServer(_ dir: TempDir, github: GitHubCLI = GitHubCLI()) async throws
+        -> (Workspace, ControlServer, ControlClient, RecordingUI)
+    {
         let home = CanopyHome(path: dir.sub("home"))
-        let workspace = Workspace(home: home, git: Fixture.git)
+        let workspace = Workspace(home: home, git: Fixture.git, github: github)
         try await workspace.start()
         let ui = RecordingUI()
         let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
@@ -194,6 +196,29 @@ struct ControlServerTests {
             try client.send(ControlRequest(method: TermMethod.read, params: try .from(TermReadParams(pane: "p999"))))
         }
         #expect(missing.error?.code == "pane_not_found")
+    }
+
+    @Test func prShowAnswersOverTheSocket() async throws {
+        let dir = try TempDir()
+        let gh = try FakeGH(dir)
+        gh.answer([0: (5, "OPEN")])
+        let (workspace, server, client, _) = try await startServer(dir, github: gh.cli)
+        defer { server.stop() }
+        let repo = try await Fixture.repo(in: dir)
+        try await Fixture.git.run(["remote", "add", "origin", "https://github.com/NE1NN/canopy.git"], in: repo)
+        try await Fixture.worktree(repo: repo, branch: "feat/a", at: dir.sub("home/worktrees/demo/feat-a"))
+        try await workspace.addRepo(path: repo)
+
+        let shown = try await call(
+            client, ControlMethod.prShow, PRShowParams(target: TargetHint(row: "feat/a")), as: PRShowResult.self)
+
+        #expect(shown.pr?.number == 5)
+        #expect(shown.branch == "feat/a")
+        #expect(shown.repo == "demo")
+        let request = ControlRequest(
+            method: ControlMethod.prShow, params: .object(["target": .object(["row": .string("main")])]))
+        let main = try await offPool { try client.send(request) }
+        #expect(main.error?.code == "no_pr_lookup")
     }
 
     @Test func errorsCarryCodes() async throws {

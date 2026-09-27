@@ -79,6 +79,27 @@ extension Workspace {
         }
     }
 
+    /// The row's PR, looked up first when asked to or when its branch has not been looked up yet.
+    public func pullRequest(for row: Row, refresh: Bool) async throws -> PullRequest? {
+        guard Self.looksUpPullRequest(row), let branch = row.branch else {
+            throw WorkspaceError.noPullRequestLookup(row.displayName)
+        }
+        if refresh || pullRequests[row.repoPath]?.branches.contains(branch) != true {
+            await refreshPullRequests(repoPath: row.repoPath)
+        }
+        guard let entry = pullRequests[row.repoPath] else { throw WorkspaceError.rowNotFound(row.path) }
+        switch entry.source {
+        case .notGitHub:
+            throw WorkspaceError.notOnGitHub(snapshot.repo(path: row.repoPath)?.name ?? row.repoPath)
+        case .ghMissing, .notLoggedIn:
+            throw WorkspaceError.ghUnavailable(entry.warning ?? "")
+        case .failed(let message) where refresh || !entry.branches.contains(branch):
+            throw WorkspaceError.ghFailed(message)
+        case .github, .failed:
+            return entry.found[branch]
+        }
+    }
+
     public func applicationBecameActive() async {
         let now = ContinuousClock.now
         if let last = lastFocusRefresh, now - last < prTiming.focusGap { return }

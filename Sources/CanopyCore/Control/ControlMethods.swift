@@ -10,12 +10,15 @@ public enum ControlMethod {
     public static let rowRemove = "row.remove"
     public static let rowSelect = "row.select"
     public static let rowAdopt = "row.adopt"
+    public static let prShow = "pr.show"
 
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
-    /// a build does and cannot be cancelled, so the CLI waits for them without a limit. Reads answer from memory.
+    /// a build does and cannot be cancelled, so the CLI waits for them without a limit. A PR lookup can queue
+    /// behind one already asking GitHub, and each may take 30 seconds. Other reads answer from memory.
     public static func replyTimeout(for method: String) -> TimeInterval? {
         if [rowNew, rowRemove].contains(method) { return nil }
+        if method == prShow { return 90 }
         return [repoAdd, repoRemove, rowAdopt].contains(method) ? 900 : 30
     }
 }
@@ -195,4 +198,29 @@ public struct RowAdoptParams: Codable, Sendable {
     public init(path: String) {
         self.path = path
     }
+}
+
+public struct PRShowParams: Codable, Sendable {
+    public var target: TargetHint
+    /// Asks GitHub now instead of answering with the last lookup.
+    public var refresh: Bool
+
+    public init(target: TargetHint = TargetHint(), refresh: Bool = false) {
+        self.target = target
+        self.refresh = refresh
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        refresh = try container.decodeIfPresent(Bool.self, forKey: .refresh) ?? false
+    }
+}
+
+public struct PRShowResult: Codable, Sendable {
+    public var repo: String
+    public var branch: String
+    public var path: String
+    /// Nil when the branch has no PR.
+    public var pr: PullRequest?
 }

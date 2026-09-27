@@ -102,6 +102,16 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(RowAdoptParams.self)
             return try .from(try await workspace.adopt(path: params.path))
 
+        case ControlMethod.prShow:
+            let params = try request.decodeParams(PRShowParams.self)
+            let snapshot = await workspace.snapshot
+            let row = try TargetResolver.row(for: params.target, in: snapshot)
+            let pr = try await workspace.pullRequest(for: row, refresh: params.refresh)
+            return try .from(
+                PRShowResult(
+                    repo: snapshot.repo(path: row.repoPath)?.name ?? "", branch: row.displayName, path: row.path,
+                    pr: pr))
+
         case TermMethod.list:
             let params = try request.decodeParams(TermListParams.self)
             let snapshot = await workspace.snapshot
