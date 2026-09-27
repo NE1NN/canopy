@@ -1,3 +1,4 @@
+import AppKit
 import CanopyCore
 import Foundation
 import Observation
@@ -32,6 +33,10 @@ final class AppModel {
         started = true
         do {
             try await workspace.start()
+        } catch WorkspaceError.homeInUse {
+            // Launched with `open -n` while another instance already owns this home; that one serves the CLI.
+            NSApplication.shared.terminate(nil)
+            return
         } catch {
             show(error)
             return

@@ -1,4 +1,5 @@
 public enum WorkspaceError: Error, Sendable, Equatable {
+    case homeInUse(String)
     case pathNotFound(String)
     case notAGitRepo(String)
     case bareRepo(String)
@@ -16,6 +17,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
 
     public var code: String {
         switch self {
+        case .homeInUse: "home_in_use"
         case .pathNotFound: "path_not_found"
         case .notAGitRepo: "not_a_git_repo"
         case .bareRepo: "bare_repo"
@@ -35,6 +37,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
 
     public var message: String {
         switch self {
+        case .homeInUse(let path): "Another Canopy is already using \(path)."
         case .pathNotFound(let path): "No such folder: \(path)"
         case .notAGitRepo(let path): "Not a git repository: \(path)"
         case .bareRepo(let path): "Bare repositories have no checkout to show: \(path)"

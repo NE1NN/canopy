@@ -12,6 +12,7 @@ public actor Workspace {
     var watchers: [String: DirectoryWatcher] = [:]
     var pendingRefreshes: [String: Task<Void, Never>] = [:]
     var gitQueues: [String: Task<Void, Never>] = [:]
+    var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
 
@@ -25,8 +26,14 @@ public actor Workspace {
         )
     }
 
+    /// Takes the home's app lock first: two instances would each save their own state.json over the other's.
     public func start() async throws {
         try home.ensureExists()
+        do {
+            instanceLock = try InstanceLock(path: home.appLockPath)
+        } catch InstanceLockError.heldElsewhere {
+            throw WorkspaceError.homeInUse(home.root.path)
+        }
         let result = store.load()
         state = result.state
         if case .recovered(_, let backup) = result {
@@ -37,6 +44,20 @@ public actor Workspace {
             await watch(repoPath: entry.path)
         }
         await refreshAll()
+    }
+
+    /// Stops watching and releases the home for another instance.
+    public func stop() {
+        watchers.removeAll()
+        for task in pendingRefreshes.values {
+            task.cancel()
+        }
+        pendingRefreshes.removeAll()
+        for subscriber in subscribers.values {
+            subscriber.finish()
+        }
+        subscribers.removeAll()
+        instanceLock = nil
     }
 
     public var snapshot: WorkspaceSnapshot {

@@ -112,11 +112,32 @@ struct WorkspaceTests {
         _ = try await first.adopt(path: dir.sub("elsewhere"))
         try await first.setSelectedRow(path: dir.sub("elsewhere"))
 
+        await first.stop()
         let second = try await makeWorkspace(dir)
 
         let snapshot = await second.snapshot
         #expect(snapshot.repos.first?.rows.map(\.branch) == ["main", "feat/other"])
         #expect(snapshot.selectedRowPath == dir.sub("elsewhere"))
+    }
+
+    @Test func secondWorkspaceOnTheSameHomeIsRefused() async throws {
+        let dir = try TempDir()
+        let first = try await makeWorkspace(dir)
+        let second = Workspace(home: CanopyHome(path: dir.sub("home")))
+
+        await #expect(throws: WorkspaceError.homeInUse(dir.sub("home"))) {
+            try await second.start()
+        }
+        _ = first
+    }
+
+    @Test func stoppedWorkspaceFreesItsHome() async throws {
+        let dir = try TempDir()
+        let first = try await makeWorkspace(dir)
+
+        await first.stop()
+
+        _ = try await makeWorkspace(dir)
     }
 
     @Test func newRowsAppendToTheEnd() async throws {

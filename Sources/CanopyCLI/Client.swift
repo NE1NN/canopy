@@ -32,13 +32,23 @@ struct Client {
         do {
             response = try client.send(request)
         } catch let error as ControlClientError where error.isAppNotRunning && launchIfNeeded {
-            try AppLocator.launch(home: home)
+            try launchOnce()
             response = try client.send(request)
         }
         if let error = response.error {
             fail(error)
         }
         return response.result ?? .null
+    }
+
+    /// Parallel CLI calls take turns here, so only the first one launches the app.
+    private func launchOnce() throws {
+        try home.ensureExists()
+        let lock = try InstanceLock.waiting(path: home.launchLockPath, timeout: 30)
+        defer { _ = lock }
+        if !ControlClient.canConnect(socketPath: home.socketPath) {
+            try AppLocator.launch(home: home)
+        }
     }
 
     /// Prints the raw result with --json, or the human summary otherwise.

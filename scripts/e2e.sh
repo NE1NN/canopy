@@ -33,7 +33,18 @@ git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q --a
 git -C "$work/demo" push -q origin main
 git -C "$work/demo" remote set-head origin main
 
-step "CLI launches the app and registers the repo"
+count_apps() { { pgrep -f "Canopy Dev.app/Contents/MacOS/Canopy" || true; } | wc -l; }
+
+step "two CLI calls at once launch exactly one app"
+running_before=$(count_apps)
+"$cli" repo list >/dev/null &
+"$cli" repo list >/dev/null &
+wait
+sleep 2
+running_after=$(count_apps)
+(( running_after - running_before == 1 )) || fail "expected 1 new app, got $((running_after - running_before))"
+
+step "CLI registers the repo"
 "$cli" repo add "$work/demo" --json
 [[ -n "$(app_pid)" ]] || fail "app did not start"
 
