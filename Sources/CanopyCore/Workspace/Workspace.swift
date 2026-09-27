@@ -13,6 +13,7 @@ public actor Workspace {
     var repoSnapshots: [String: RepoSnapshot] = [:]
     var watchers: [String: DirectoryWatcher] = [:]
     var pendingRefreshes: [String: Task<Void, Never>] = [:]
+    var refreshQueues: [String: Task<Void, Never>] = [:]
     var gitQueues: [String: Task<Void, Never>] = [:]
     var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
@@ -196,7 +197,19 @@ public actor Workspace {
         }
     }
 
+    /// Refreshes of one repo run one after another, so a slow worktree list can never land after a newer one,
+    /// and the snapshot reflects git as of this call once it returns.
     public func refresh(repoPath: String) async {
+        let previous = refreshQueues[repoPath]
+        let task = Task {
+            await previous?.value
+            await self.refreshNow(repoPath: repoPath)
+        }
+        refreshQueues[repoPath] = task
+        await task.value
+    }
+
+    private func refreshNow(repoPath: String) async {
         guard let entry = state.repos.first(where: { $0.path == repoPath }) else { return }
         guard FileManager.default.fileExists(atPath: entry.path) else {
             repoSnapshots[entry.path] = RepoSnapshot(path: entry.path, name: "", isMissing: true)
@@ -207,7 +220,11 @@ public actor Workspace {
         do {
             output = try await git.run(["worktree", "list", "--porcelain", "-z"], in: entry.path)
         } catch {
-            repoSnapshots[entry.path] = RepoSnapshot(path: entry.path, name: "", error: "\(error)")
+            // Keep the last known rows, so a passing git failure does not close the view onto them.
+            var failed = repoSnapshots[entry.path] ?? RepoSnapshot(path: entry.path, name: "")
+            failed.isMissing = false
+            failed.error = "\(error)"
+            repoSnapshots[entry.path] = failed
             publish()
             return
         }

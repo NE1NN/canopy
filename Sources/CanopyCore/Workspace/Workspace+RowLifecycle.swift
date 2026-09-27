@@ -39,7 +39,13 @@ extension Workspace {
         let dirName = state.repos[index].dirName
         var warnings: [String] = []
 
-        guard await git.succeeds(["check-ref-format", "--branch", branch], in: repoPath) else {
+        guard FileManager.default.fileExists(atPath: repoPath) else {
+            throw WorkspaceError.pathNotFound(repoPath)
+        }
+        // `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
+        guard !branch.hasPrefix("-"), branch != "HEAD",
+            await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
+        else {
             throw WorkspaceError.invalidBranch(branch)
         }
         if snapshot.repo(path: repoPath)?.allRows.contains(where: { $0.branch == branch }) == true {
@@ -51,9 +57,14 @@ extension Workspace {
             warnings.append(warning)
         }
 
+        // A worktree whose folder was deleted keeps its path until it is pruned, so git would refuse to reuse it.
+        await refresh(repoPath: repoPath)
+        let registered = Set(snapshot.repo(path: repoPath)?.allRows.map(\.path) ?? [])
         let parent = home.worktreesRoot.appending(path: dirName)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        let folder = BranchSlug.folder(for: branch, in: parent) { FileManager.default.fileExists(atPath: $0.path) }
+        let folder = BranchSlug.folder(for: branch, in: parent) {
+            registered.contains(Paths.canonical($0.path)) || FileManager.default.fileExists(atPath: $0.path)
+        }
 
         var arguments = ["worktree", "add"]
         if await git.succeeds(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repoPath) {
@@ -65,6 +76,11 @@ extension Workspace {
         } else {
             let start: String
             if let base {
+                guard !base.hasPrefix("-"),
+                    await git.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"], in: repoPath)
+                else {
+                    throw WorkspaceError.invalidBase(base)
+                }
                 start = base
             } else {
                 start = await defaultBase(repoPath: repoPath, hasOrigin: hasOrigin)
@@ -115,13 +131,6 @@ extension Workspace {
                 }
                 throw WorkspaceError.git(error)
             }
-            if deleteBranch, let branch = row.branch {
-                do {
-                    try await git.run(["branch", "-D", branch], in: row.repoPath)
-                } catch let error as GitError {
-                    throw WorkspaceError.git(error)
-                }
-            }
             if let index = try? entryIndex(repoPath: row.repoPath) {
                 state.repos[index].rowOrder.removeAll { $0 == path }
             }
@@ -130,6 +139,23 @@ extension Workspace {
             }
             try save()
             await refresh(repoPath: row.repoPath)
+            // Last, so a branch that cannot be deleted still leaves the row fully removed.
+            if deleteBranch, let branch = row.branch {
+                do {
+                    try await git.run(["branch", "-D", branch], in: row.repoPath)
+                } catch let error as GitError {
+                    throw WorkspaceError.git(error)
+                }
+            }
+        }
+    }
+
+    /// Whether `git worktree remove` would refuse the row without `--force`: modified or untracked files.
+    public func hasUncommittedChanges(path: String) async throws -> Bool {
+        do {
+            return !(try await git.run(["status", "--porcelain", "-z"], in: path)).isEmpty
+        } catch let error as GitError {
+            throw WorkspaceError.git(error)
         }
     }
 

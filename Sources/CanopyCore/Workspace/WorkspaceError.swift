@@ -9,6 +9,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case ambiguousRow(String, repos: [String])
     case missingTarget(flag: String)
     case invalidBranch(String)
+    case invalidBase(String)
     case branchCheckedOut(String)
     case worktreeDirty(String)
     case cannotRemoveMain
@@ -27,6 +28,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .ambiguousRow: "ambiguous_row"
         case .missingTarget: "missing_target"
         case .invalidBranch: "invalid_branch"
+        case .invalidBase: "invalid_base"
         case .branchCheckedOut: "branch_checked_out"
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
@@ -48,6 +50,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "\"\(name)\" exists in several repos (\(repos.joined(separator: ", "))). Pass --repo."
         case .missingTarget(let flag): "Could not tell which one you mean. Pass \(flag)."
         case .invalidBranch(let name): "Not a valid branch name: \(name)"
+        case .invalidBase(let ref): "No commit matches --from \(ref)."
         case .branchCheckedOut(let name): "Branch \(name) is already checked out in another worktree."
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
