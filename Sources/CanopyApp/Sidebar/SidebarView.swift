@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
-    @State private var folderRequest: FolderRequest?
+    @State private var folderRequest = FolderRequest.addRepo
+    @State private var isChoosingFolder = false
 
     enum FolderRequest {
         case addRepo
@@ -35,7 +36,7 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                     }
                 } header: {
-                    RepoHeaderView(repo: repo) { folderRequest = .locate(repo) }
+                    RepoHeaderView(repo: repo) { chooseFolder(for: .locate(repo)) }
                 }
             }
         }
@@ -51,7 +52,7 @@ struct SidebarView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Button {
-                folderRequest = .addRepo
+                chooseFolder(for: .addRepo)
             } label: {
                 Label("Add Repo", systemImage: "plus")
             }
@@ -59,16 +60,23 @@ struct SidebarView: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .fileImporter(
-            isPresented: Binding(get: { folderRequest != nil }, set: { if !$0 { folderRequest = nil } }),
-            allowedContentTypes: [.folder]
-        ) { result in
-            guard case .success(let url) = result, let request = folderRequest else { return }
-            switch request {
-            case .addRepo: model.addRepo(url)
-            case .locate(let repo): model.relocateRepo(repo, to: url)
+        // SwiftUI resets isPresented before calling the completion, so the request lives in its own state.
+        .fileImporter(isPresented: $isChoosingFolder, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url):
+                switch folderRequest {
+                case .addRepo: model.addRepo(url)
+                case .locate(let repo): model.relocateRepo(repo, to: url)
+                }
+            case .failure(let error):
+                model.show(error)
             }
         }
+    }
+
+    private func chooseFolder(for request: FolderRequest) {
+        folderRequest = request
+        isChoosingFolder = true
     }
 }
 
