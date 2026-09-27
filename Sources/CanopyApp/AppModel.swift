@@ -76,7 +76,7 @@ final class AppModel {
 
     private func startControlServer() async {
         let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
-        let handler = WorkspaceControlHandler(workspace: workspace, ui: bridge)
+        let handler = WorkspaceControlHandler(rows: rows, ui: bridge)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         do {
             try await server.start()

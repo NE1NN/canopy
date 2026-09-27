@@ -18,7 +18,8 @@ struct ControlServerTests {
         let workspace = Workspace(home: home, git: Fixture.git)
         try await workspace.start()
         let ui = RecordingUI()
-        let handler = WorkspaceControlHandler(workspace: workspace, ui: ui)
+        let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
+        let handler = WorkspaceControlHandler(rows: rows, ui: ui)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         try await server.start()
         return (workspace, server, ControlClient(socketPath: home.socketPath, timeout: 10), ui)
@@ -71,6 +72,7 @@ struct ControlServerTests {
 
         let status = try await call(client, ControlMethod.status, JSONValue.null, as: StatusResult.self)
         #expect(status.pid == ProcessInfo.processInfo.processIdentifier)
+        #expect(status.running)
 
         let added = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
         #expect(added.name == "demo")
@@ -78,23 +80,61 @@ struct ControlServerTests {
         let created = try await call(
             client,
             ControlMethod.rowNew,
-            RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", base: nil, select: true),
+            RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", select: true),
             as: RowNewResult.self
         )
         #expect(created.row.branch == "feat/cli")
+        #expect(created.setup.status == .none)
+        #expect(created.pane == nil)
         #expect(ui.selected.withLock { $0 } == [created.row.path])
 
-        let rows = try await call(client, ControlMethod.rowList, RowListParams(repo: nil, all: false), as: [Row].self)
+        let rows = try await call(client, ControlMethod.rowList, RowListParams(), as: [Row].self)
         #expect(rows.map(\.branch) == ["main", "feat/cli"])
 
         let removed = try await call(
             client,
             ControlMethod.rowRemove,
-            RowRemoveParams(
-                target: TargetHint(envRepo: "demo", cwd: created.row.path), force: false, deleteBranch: true),
+            RowRemoveParams(target: TargetHint(envRepo: "demo", cwd: created.row.path), deleteBranch: true),
             as: Row.self
         )
         #expect(removed.path == created.row.path)
+    }
+
+    @Test func shortRequestsLikeTheSpecsExampleAreAccepted() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+
+        // Without a target the app cannot tell which repo is meant, but the params themselves are fine.
+        let untargeted = try await offPool {
+            try client.send(
+                ControlRequest(
+                    method: ControlMethod.rowNew,
+                    params: .object(["branch": .string("fix/x"), "run": .string("echo hi")])))
+        }
+        #expect(untargeted.error?.code == "missing_target")
+
+        let created = try await call(
+            client, ControlMethod.rowNew,
+            JSONValue.object([
+                "branch": .string("fix/x"), "run": .string(#"echo "$CANOPY_PANE" > "$CANOPY_ROOT_PATH/../ran""#),
+                "target": .object(["repo": .string("demo")]),
+            ]),
+            as: RowNewResult.self
+        )
+        let pane = try #require(created.pane)
+        #expect(
+            await eventually { (try? String(contentsOfFile: dir.sub("ran"), encoding: .utf8)) == "\(pane)\n" })
+
+        let rows = try await call(client, ControlMethod.rowList, JSONValue.object([:]), as: [Row].self)
+        #expect(rows.map(\.branch) == ["main", "fix/x"])
+        _ = try await call(
+            client, ControlMethod.rowRemove,
+            JSONValue.object([
+                "target": .object(["repo": .string("demo"), "row": .string("fix/x")]), "force": .bool(true),
+            ]), as: Row.self)
     }
 
     @Test func errorsCarryCodes() async throws {
