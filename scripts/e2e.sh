@@ -147,6 +147,25 @@ done
 [[ ! -d "$CANOPY_HOME/worktrees/demo/feat-self" ]] || fail "the row's own agent could not remove it"
 grep -qx feat/self "$work/teardown.log" || fail "teardown did not run for the self-removed row"
 
+step "canopy term opens, types into, reads, lists, and closes terminals"
+"$cli" row new feat/term --repo demo --no-setup >/dev/null
+pane=$("$cli" term new --repo demo --row feat/term --run 'echo from-term' --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+wait_for_text() {
+    for _ in $(seq 1 100); do
+        "$cli" term read "$pane" | grep -q "$1" && return 0
+        sleep 0.1
+    done
+    return 1
+}
+wait_for_text from-term || fail "term read did not show the --run output"
+"$cli" term send "$pane" 'echo sent-text' --enter >/dev/null
+wait_for_text sent-text || fail "term send did not reach the terminal"
+"$cli" term list --repo demo --row feat/term --json | grep -q "\"$pane\"" || fail "term list is missing $pane"
+"$cli" term close "$pane" >/dev/null
+if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
+"$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
+
 step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"invalid_branch"' "$work/err.json" || fail "missing error code"
