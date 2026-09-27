@@ -172,9 +172,11 @@ grep -q '"not_github"' "$work/pr-local.json" || fail "missing not_github"
 "$cli" agent-guide | grep -q "canopy pr" || fail "agent-guide is missing canopy pr"
 
 step "canopy pr finds a real PR through gh"
-# Looks up the newest merged PR of this checkout's own GitHub repo, with the user's gh login.
-if merged=$(gh pr list --state merged --limit 1 --json number,headRefName --jq '.[0] | "\(.number) \(.headRefName)"' \
-    2>/dev/null) && [[ -n "$merged" ]]; then
+# The newest merged PR of this checkout's own GitHub repo whose branch has no other PR, so it is the row's PR.
+pick='group_by(.headRefName) | map(select(length == 1 and .[0].state == "MERGED") | .[0]) | max_by(.number)
+    | if . == null then empty else "\(.number) \(.headRefName)" end'
+if merged=$(gh pr list --state all --limit 100 --json number,headRefName,state --jq "$pick" 2>/dev/null) &&
+    [[ -n "$merged" ]]; then
     read -r number branch <<< "$merged"
     git init -q -b main "$work/ghdemo"
     git -C "$work/ghdemo" -c user.email=e2e@example.com -c user.name=e2e commit -q --allow-empty -m init

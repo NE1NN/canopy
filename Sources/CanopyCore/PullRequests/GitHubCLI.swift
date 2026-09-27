@@ -13,6 +13,7 @@ public struct GitHubCLI: Sendable {
     private let environment: [String: String]?
     private let timeout: Duration
     private let fallbackFolders: [String]
+    private let sshConfigFile: String?
 
     /// Where Homebrew puts gh, searched after PATH for when the login PATH could not be read.
     public static let homebrewFolders = ["/opt/homebrew/bin", "/usr/local/bin"]
@@ -20,11 +21,25 @@ public struct GitHubCLI: Sendable {
     /// With no environment, gh gets this process's environment with the user's login PATH.
     public init(
         environment: [String: String]? = nil, timeout: Duration = .seconds(30),
-        fallbackFolders: [String] = homebrewFolders
+        fallbackFolders: [String] = homebrewFolders, sshConfigFile: String? = nil
     ) {
         self.environment = environment
         self.timeout = timeout
         self.fallbackFolders = fallbackFolders
+        self.sshConfigFile = sshConfigFile
+    }
+
+    /// The GitHub repo behind a remote, following SSH host aliases the way git would.
+    public func repo(forRemote url: String) async -> GitHubRepo? {
+        let environment = environment ?? ProcessInfo.processInfo.environment
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(
+                    returning: GitHubRepo(remoteURL: url) {
+                        SSHConfig.hostName(for: $0, configFile: sshConfigFile, environment: environment)
+                    })
+            }
+        }
     }
 
     public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
@@ -64,7 +79,7 @@ public struct GitHubCLI: Sendable {
             return .failed(line.hasPrefix("gh: ") ? String(line.dropFirst(4)) : line)
         }
         do {
-            return .found(try PRQuery.parse(result.stdout, repo: repo, branches: branches))
+            return .found(try PRQuery.parse(result.stdout, branches: branches))
         } catch {
             return .failed("gh returned a reply Canopy could not read.")
         }

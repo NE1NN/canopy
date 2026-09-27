@@ -11,10 +11,11 @@ public enum GitEventFilter {
         return relative.count == 3 && ["HEAD", "gitdir", "locked"].contains(relative[2])
     }
 
-    /// Whether a write in the git folder updated a remote-tracking branch, which is what `git push` leaves behind.
-    public static func isRemoteRefChange(eventPath: String, gitDir: String) -> Bool {
+    /// Whether the event is a write to a remote-tracking branch's reflog, where git records pushes and fetches.
+    /// `GitReflog.lastEntryIsPush` tells which one it was.
+    public static func isRemoteRefLog(eventPath: String, gitDir: String) -> Bool {
         guard Paths.isInside(eventPath, gitDir), !eventPath.hasSuffix(".lock") else { return false }
         let relative = eventPath.dropFirst(gitDir.count).split(separator: "/")
-        return relative == ["packed-refs"] || (relative.count > 2 && relative.starts(with: ["refs", "remotes"]))
+        return relative.count > 4 && relative.starts(with: ["logs", "refs", "remotes"])
     }
 }

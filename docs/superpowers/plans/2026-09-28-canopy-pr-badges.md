@@ -19,7 +19,9 @@ Watcher minors 10 and 11 from the PR 2 to 4 review are fixed first, since the pu
 - Only PRs whose head repository is the repo itself count, so forks with the same branch name are ignored.
 - A row's PR is its open PR if there is one, otherwise its most recently updated PR. An open draft shows as draft.
 - Colors: green for open, gray for draft, purple for merged, red for closed.
-- Refresh every 60 seconds; when the app comes to the front, at most once every 15 seconds; every 10 seconds for two minutes after a push is seen in `.git/refs/remotes/` or `.git/packed-refs`; and on `canopy pr --refresh`.
+- Refresh every 60 seconds; when the app comes to the front, at most once every 15 seconds; every 10 seconds for two minutes after a push; and on `canopy pr --refresh`.
+  Tasks 2 and 3 detect a push from writes under `.git/refs/remotes/` and `.git/packed-refs`.
+  After Review narrows that to reflog entries git writes as `update by push`.
 - `gh` missing or logged out hides badges, and the repo shows a warning with the fix. An origin that is not on GitHub shows no badges and no warning.
 - Clicking the PR number opens the PR. Clicking anywhere else on the row selects it.
 - Never block a Swift concurrency thread: `gh` runs through `Subprocess` on a dispatch queue, like git.
@@ -1923,3 +1925,30 @@ Launch with `GH_CONFIG_DIR` pointing at an empty folder: badges hide, and each G
 git add Sources
 git commit -m "feat: PR badges in the sidebar"
 ```
+
+## After Review
+
+CI failed once on `aPushRefreshesOftenForAWhile`, which needed three lookups inside 0.8 seconds.
+Running the suite under `taskpolicy -b` with every core busy reproduced it every time, and turned up three older tests with the same kind of tight wait.
+Two commits fix them: `test: keep the PR timing tests steady on a slow runner` and `test: give slow runners room in the older tests too`.
+Waits now default to 20 seconds, which costs nothing when the condition holds, and the suite passed five throttled runs in a row.
+A timer tick already on its way into the workspace when `stop()` ran could still start a lookup, so ticks check for cancellation on the actor.
+
+An independent review found no blockers.
+One commit, `fix: address review of PR badges`, fixes what it found, and the branch is the reference for it:
+- Forks are told apart by `isCrossRepository` instead of by name, so a renamed repo, which GitHub answers for under its new name, keeps its badges.
+- Each branch asks for 100 PRs rather than 10, so forks using a common branch name cannot push the repo's own PR off the page.
+  The rate-limit cost is the same.
+- A push is detected from the remote-tracking branch's reflog, where git writes `update by push`.
+  Any write to `refs/remotes` also fired on every fetch and pull, which would have spent the user's `gh` rate budget, and `packed-refs` does not change on a push at all.
+  The spec says so now.
+- Remotes with a user name or port, `ssh.github.com`, and SSH host aliases such as `github-work` are read as GitHub.
+  An alias resolves through `ssh -G`, which prints ssh's settings without connecting.
+- `stop()` stops every source of lookups, a missing repo shows no `gh` warning, and `canopy pr --json` prints `"pr": null` when there is none.
+- New tests pin a fork's open PR next to the repo's closed one, an answer arriving for a repo removed meanwhile, and all of the above.
+  The e2e picks a merged PR whose branch has no other PR.
+
+One suggestion was not taken: throttling the watcher stress test's writer.
+With even a 50 microsecond pause, the old watcher survived a third of runs, so the test would stop guarding the fix.
+The longer waits keep the other watcher tests steady beside it.
+

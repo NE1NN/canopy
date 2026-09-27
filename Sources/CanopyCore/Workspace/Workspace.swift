@@ -30,6 +30,8 @@ public actor Workspace {
     var prTimer: Task<Void, Never>?
     var afterPush: [String: (until: ContinuousClock.Instant, task: Task<Void, Never>)] = [:]
     var lastFocusRefresh: ContinuousClock.Instant?
+    /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
+    var prStopped = false
 
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
@@ -61,11 +63,11 @@ public actor Workspace {
             loadNotice =
                 "state.json could not be read. It was moved to \(backup.lastPathComponent) and Canopy started fresh."
         }
+        startPullRequests()
         for entry in state.repos {
             await watch(repoPath: entry.path)
         }
         await refreshAll()
-        startPullRequestTimer()
     }
 
     /// Stops watching and releases the home for another instance.
@@ -367,7 +369,10 @@ public actor Workspace {
         let canonicalGitDir = Paths.canonical(gitDir.trimmingCharacters(in: .whitespacesAndNewlines))
         watchers[repoPath] = DirectoryWatcher(paths: [canonicalGitDir]) { [weak self] paths in
             let worktrees = paths.contains { GitEventFilter.isRelevant(eventPath: $0, gitDir: canonicalGitDir) }
-            let pushed = paths.contains { GitEventFilter.isRemoteRefChange(eventPath: $0, gitDir: canonicalGitDir) }
+            let pushed = paths.contains {
+                GitEventFilter.isRemoteRefLog(eventPath: $0, gitDir: canonicalGitDir)
+                    && GitReflog.lastEntryIsPush(atPath: $0)
+            }
             guard worktrees || pushed else { return }
             Task {
                 if worktrees { await self?.scheduleRefresh(repoPath: repoPath) }

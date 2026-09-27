@@ -10,12 +10,12 @@ struct FakeGH {
     private let replyFile: String
     private let failureFile: String
 
-    init(_ dir: TempDir) throws {
+    init(_ dir: TempDir, sshConfigFile: String? = nil) throws {
         callsFile = dir.sub("gh-calls")
         replyFile = dir.sub("gh-reply")
         failureFile = dir.sub("gh-failure")
         cli = try Fixture.gh(
-            in: dir,
+            in: dir, sshConfigFile: sshConfigFile,
             """
             printf '%s\\n' "$4" >> "\(callsFile)"
             if [[ -f "\(failureFile)" ]]; then { read -r code; cat >&2; } < "\(failureFile)"; exit "$code"; fi
@@ -26,7 +26,7 @@ struct FakeGH {
     /// Answers with these PRs, keyed by the position of their branch in the query.
     func answer(_ prs: [Int: (number: Int, state: String)]) {
         let fields = prs.map { index, pr in
-            #""b\#(index)": {"nodes": [{"number": \#(pr.number), "title": "PR \#(pr.number)", "url": "https://github.com/NE1NN/canopy/pull/\#(pr.number)", "state": "\#(pr.state)", "isDraft": false, "updatedAt": "2026-09-28T00:00:00Z", "headRepository": {"nameWithOwner": "NE1NN/canopy"}}]}"#
+            #""b\#(index)": {"nodes": [{"number": \#(pr.number), "title": "PR \#(pr.number)", "url": "https://github.com/NE1NN/canopy/pull/\#(pr.number)", "state": "\#(pr.state)", "isDraft": false, "updatedAt": "2026-09-28T00:00:00Z", "isCrossRepository": false}]}"#
         }
         let json = #"{"data": {"repository": {"# + fields.joined(separator: ", ") + "}}}"
         try? FileManager.default.removeItem(atPath: failureFile)
@@ -82,6 +82,24 @@ struct PullRequestWorkspaceTests {
         #expect(!query.contains(#"headRefName: "main""#))
     }
 
+    @Test func originsThroughAnSSHAliasAreLookedUp() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        try await Fixture.git.run(["remote", "add", "origin", "git@github-work:NE1NN/canopy.git"], in: repo)
+        try await Fixture.worktree(repo: repo, branch: "feat/a", at: dir.sub("home/worktrees/demo/feat-a"))
+        try "Host github-work\n  HostName github.com\n".write(
+            toFile: dir.sub("ssh_config"), atomically: true, encoding: .utf8)
+        let gh = try FakeGH(dir, sshConfigFile: dir.sub("ssh_config"))
+        gh.answer([0: (5, "OPEN")])
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git, github: gh.cli)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        #expect(await pullRequest(workspace, dir.sub("home/worktrees/demo/feat-a"))?.number == 5)
+    }
+
     @Test func reposOffGitHubAreNotLookedUp() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir, origin: true)
@@ -107,6 +125,19 @@ struct PullRequestWorkspaceTests {
 
         #expect(await pullRequest(workspace, dir.sub("home/worktrees/demo/feat-a")) == nil)
         #expect(await workspace.snapshot.repos.first?.pullRequestWarning?.contains("gh auth login") == true)
+    }
+
+    @Test func aMissingRepoOnlySaysItIsMissing() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        gh.fail(exitCode: 4, "To get started with GitHub CLI, please run:  gh auth login")
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
+        await workspace.refresh(repoPath: repo)
+
+        #expect(await workspace.snapshot.repos.first?.isMissing == true)
+        #expect(await workspace.snapshot.repos.first?.pullRequestWarning == nil)
     }
 
     @Test func missingGHSaysHowToInstallIt() async throws {
@@ -146,7 +177,7 @@ struct PullRequestWorkspaceTests {
         try await Fixture.worktree(repo: repo, branch: "feat/c", at: dir.sub("home/worktrees/demo/feat-c"))
         await workspace.refresh(repoPath: repo)
 
-        let lookedUp = await eventually(timeout: .seconds(20)) {
+        let lookedUp = await eventually {
             gh.calls.last?.contains(#"headRefName: "feat/c""#) == true
         }
         #expect(lookedUp)
@@ -160,16 +191,18 @@ struct PullRequestWorkspaceTests {
             interval: .seconds(3600), focusGap: .seconds(3600), afterPushInterval: .milliseconds(50),
             afterPushDuration: .seconds(4))
         let (workspace, gh, repo) = try await setUp(dir, timing: timing)
+        try await Fixture.git.run(["init", "--quiet", "--bare", dir.sub("mirror.git")])
+        try await Fixture.git.run(["remote", "add", "mirror", dir.sub("mirror.git")], in: repo)
         await workspace.refreshPullRequests(repoPath: repo)
         let before = gh.calls.count
         // FSEvents only reports writes made after its stream starts.
         try await Task.sleep(for: .milliseconds(300))
 
-        try await Fixture.git.run(["update-ref", "refs/remotes/origin/feat/a", "HEAD"], in: repo)
+        try await Fixture.git.run(["push", "--quiet", "mirror", "feat/a"], in: repo)
 
-        let refreshed = await eventually(timeout: .seconds(20)) { gh.calls.count >= before + 3 }
+        let refreshed = await eventually { gh.calls.count >= before + 3 }
         #expect(refreshed, "\(gh.calls.count - before) lookups after the push")
-        let ended = await eventually(timeout: .seconds(20)) { await workspace.afterPush[repo] == nil }
+        let ended = await eventually { await workspace.afterPush[repo] == nil }
         #expect(ended)
         let settled = gh.calls.count
         try await Task.sleep(for: .milliseconds(500))
@@ -200,7 +233,7 @@ struct PullRequestWorkspaceTests {
         await workspace.refreshPullRequests(repoPath: repo)
         let before = gh.calls.count
 
-        let refreshed = await eventually(timeout: .seconds(20)) { gh.calls.count >= before + 3 }
+        let refreshed = await eventually { gh.calls.count >= before + 3 }
 
         #expect(refreshed, "\(gh.calls.count - before) lookups on the timer")
         await workspace.stop()
@@ -208,6 +241,46 @@ struct PullRequestWorkspaceTests {
         let stopped = gh.calls.count
         try await Task.sleep(for: .milliseconds(500))
         #expect(gh.calls.count == stopped)
+    }
+
+    @Test func nothingIsLookedUpAfterStop() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        await workspace.refreshPullRequests(repoPath: repo)
+        let before = gh.calls.count
+
+        await workspace.stop()
+        await workspace.refreshOftenAfterPush(repoPath: repo)
+        try await Fixture.worktree(repo: repo, branch: "feat/c", at: dir.sub("home/worktrees/demo/feat-c"))
+        await workspace.refresh(repoPath: repo)
+        await workspace.refreshPullRequests(repoPath: repo)
+        await workspace.prQueues[repo]?.value
+
+        #expect(await workspace.afterPush[repo] == nil)
+        #expect(gh.calls.count == before)
+    }
+
+    @Test func anAnswerForARepoRemovedMeanwhileIsDropped() async throws {
+        let dir = try TempDir()
+        let ghDir = try TempDir()
+        let started = ghDir.sub("started")
+        let release = ghDir.sub("release")
+        let github = try Fixture.gh(
+            in: ghDir,
+            """
+            touch "\(started)"
+            while [[ ! -f "\(release)" ]]; do sleep 0.05; done
+            echo '{"data": {"repository": {"b0": {"nodes": [{"number": 5, "title": "t", "url": "u", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28", "isCrossRepository": false}]}}}}'
+            """)
+        let (workspace, _, repo) = try await setUp(dir, github: github)
+        let lookup = Task { await workspace.refreshPullRequests(repoPath: repo) }
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+
+        try await workspace.removeRepo(path: repo)
+        FileManager.default.createFile(atPath: release, contents: nil)
+        await lookup.value
+
+        #expect(await workspace.pullRequests[repo] == nil)
     }
 
     @Test func removingARepoForgetsItsPullRequests() async throws {

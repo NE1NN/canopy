@@ -51,7 +51,7 @@ struct AgentGuide: ParsableCommand {
 
         Canopy looks up PRs with your `gh` login for its own and adopted rows, about once a minute and more often
         right after a push. `--refresh` asks GitHub now, for example right after `gh pr create`.
-        `row list --json` also carries each row's PR as "pr".
+        `row list --json` also carries each row's PR as "pr" when it has one.
 
         ## Examples
 

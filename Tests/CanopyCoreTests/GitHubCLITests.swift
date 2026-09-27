@@ -12,7 +12,7 @@ struct GitHubCLITests {
             in: dir,
             """
             printf '%s\\n' "$@" > "\(dir.sub("args"))"
-            echo '{"data": {"repository": {"b0": {"nodes": [{"number": 3, "title": "Fix it", "url": "https://x/3", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28T01:00:00Z", "headRepository": {"nameWithOwner": "NE1NN/canopy"}}]}}}}'
+            echo '{"data": {"repository": {"b0": {"nodes": [{"number": 3, "title": "Fix it", "url": "https://x/3", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28T01:00:00Z", "isCrossRepository": false}]}}}}'
             """)
 
         let lookup = await gh.pullRequests(repo: repo, branches: ["fix/it"])

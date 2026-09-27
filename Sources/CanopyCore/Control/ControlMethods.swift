@@ -223,4 +223,13 @@ public struct PRShowResult: Codable, Sendable {
     public var path: String
     /// Nil when the branch has no PR.
     public var pr: PullRequest?
+
+    /// Writes `"pr": null` rather than leaving the key out, so "no PR" reads plainly.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(repo, forKey: .repo)
+        try container.encode(branch, forKey: .branch)
+        try container.encode(path, forKey: .path)
+        try container.encode(pr, forKey: .pr)
+    }
 }

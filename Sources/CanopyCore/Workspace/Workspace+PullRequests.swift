@@ -46,8 +46,10 @@ struct RepoPullRequests: Equatable {
         }
     }
 
-    /// A failed lookup keeps the last badges. They only go when gh cannot be used at all.
+    /// A failed lookup keeps the last badges. They only go when gh cannot be used at all. A missing repo has no rows
+    /// to badge, and "missing" says all there is to say.
     func apply(to repo: inout RepoSnapshot) {
+        guard !repo.isMissing else { return }
         repo.pullRequestWarning = warning
         for index in repo.rows.indices where Workspace.looksUpPullRequest(repo.rows[index]) {
             repo.rows[index].pullRequest = repo.rows[index].branch.flatMap { found[$0] }
@@ -110,6 +112,7 @@ extension Workspace {
     /// Lookups of one repo run one after another, so an older answer never replaces a newer one.
     /// A lookup that is queued but not started yet already covers anyone asking now, so they share it.
     func queuePullRequestRefresh(repoPath: String) -> Task<Void, Never> {
+        guard !prStopped else { return Task {} }
         prBranchesRequested[repoPath] = pullRequestBranches(repoPath: repoPath)
         if let pending = prPending[repoPath] { return pending }
         let previous = prQueues[repoPath]
@@ -129,8 +132,8 @@ extension Workspace {
         let branches = pullRequestBranches(repoPath: repoPath)
         let origin = try? await git.run(["remote", "get-url", "origin"], in: repoPath)
         var lookup: PRLookup?
-        if let github = origin.flatMap(GitHubRepo.init(remoteURL:)) {
-            lookup = branches.isEmpty ? .found([:]) : await self.github.pullRequests(repo: github, branches: branches)
+        if let origin, let gitHubRepo = await github.repo(forRemote: origin) {
+            lookup = branches.isEmpty ? .found([:]) : await github.pullRequests(repo: gitHubRepo, branches: branches)
         }
         // The repo may have been removed while gh answered.
         guard state.repos.contains(where: { $0.path == repoPath }) else { return }
@@ -147,7 +150,8 @@ extension Workspace {
         publish()
     }
 
-    func startPullRequestTimer() {
+    func startPullRequests() {
+        prStopped = false
         prTimer?.cancel()
         prTimer = Task { [weak self, interval = prTiming.interval] in
             while !Task.isCancelled {
@@ -166,7 +170,7 @@ extension Workspace {
 
     /// A push moved a remote-tracking branch. Another push in the window extends it.
     func refreshOftenAfterPush(repoPath: String) {
-        guard state.repos.contains(where: { $0.path == repoPath }) else { return }
+        guard !prStopped, state.repos.contains(where: { $0.path == repoPath }) else { return }
         let until = ContinuousClock.now + prTiming.afterPushDuration
         if let running = afterPush[repoPath] {
             afterPush[repoPath] = (until, running.task)
@@ -197,6 +201,7 @@ extension Workspace {
     }
 
     func stopPullRequestRefreshes() {
+        prStopped = true
         prTimer?.cancel()
         prTimer = nil
         for entry in afterPush.values {

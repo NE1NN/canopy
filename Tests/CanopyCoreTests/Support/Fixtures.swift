@@ -37,12 +37,16 @@ enum Fixture {
     }
 
     /// A GitHubCLI whose `gh` is a bash script running `body`, alone on PATH.
-    static func gh(in dir: TempDir, _ body: String, timeout: Duration = .seconds(30)) throws -> GitHubCLI {
+    static func gh(
+        in dir: TempDir, sshConfigFile: String? = nil, _ body: String, timeout: Duration = .seconds(30)
+    ) throws -> GitHubCLI {
         let bin = dir.sub("gh-bin")
         try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
         try "#!/bin/bash\n\(body)\n".write(toFile: bin + "/gh", atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/gh")
-        return GitHubCLI(environment: ["PATH": bin + ":/usr/bin:/bin", "HOME": dir.path], timeout: timeout)
+        return GitHubCLI(
+            environment: ["PATH": bin + ":/usr/bin:/bin", "HOME": dir.path], timeout: timeout,
+            sshConfigFile: sshConfigFile)
     }
 
     static func worktree(repo: String, branch: String, at path: String) async throws {

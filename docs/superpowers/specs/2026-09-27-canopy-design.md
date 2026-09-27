@@ -380,7 +380,8 @@ Refresh triggers:
 - every 60 seconds
 - when the window gains focus, at most once every 15 seconds
 - every 10 seconds for two minutes after a push is detected.
-  Canopy watches `.git/refs/remotes/` and `.git/packed-refs`, which change when a branch is pushed.
+  Canopy watches the reflogs of remote-tracking branches in `.git/logs/refs/remotes/`, where git records each push as `update by push`.
+  Fetches and pulls move the same branches but are not pushes, so they do not count.
 - `canopy pr --refresh`
 
 If `gh` is missing or not logged in, badges are hidden and the repo header shows a warning with the fix, such as `gh auth login`.

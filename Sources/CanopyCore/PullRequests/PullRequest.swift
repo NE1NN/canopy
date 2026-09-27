@@ -27,18 +27,42 @@ public struct GitHubRepo: Sendable, Equatable {
 
     public var nameWithOwner: String { "\(owner)/\(name)" }
 
-    /// Reads https, ssh, and scp-style GitHub remotes. Anything else has no GitHub repo.
-    public init?(remoteURL: String) {
-        var path = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefixes = ["git@github.com:", "https://github.com/", "http://github.com/", "ssh://git@github.com/"]
-        guard let prefix = prefixes.first(where: { path.hasPrefix($0) }) else { return nil }
-        path = String(path.dropFirst(prefix.count))
+    static let hosts: Set<String> = ["github.com", "www.github.com", "ssh.github.com"]
+
+    /// Reads https, ssh, and scp-style GitHub remotes. `sshHostName` says which host an SSH alias, such as the
+    /// github-work people set up for a second account, connects to. Anything else has no GitHub repo.
+    public init?(remoteURL: String, sshHostName: (String) -> String? = { _ in nil }) {
+        guard let remote = Self.split(remoteURL) else { return nil }
+        let host =
+            Self.hosts.contains(remote.host) || !remote.isSSH ? remote.host : sshHostName(remote.host)?.lowercased()
+        guard let host, Self.hosts.contains(host) else { return nil }
+        var path = remote.path
         if path.hasSuffix("/") { path.removeLast() }
         if path.hasSuffix(".git") { path.removeLast(4) }
-        let parts = path.split(separator: "/")
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
         owner = String(parts[0])
         name = String(parts[1])
+    }
+
+    /// The host and path of a URL remote, `scheme://[user@]host[:port]/path`, or an scp-style one, `[user@]host:path`.
+    private static func split(_ remoteURL: String) -> (host: String, path: String, isSSH: Bool)? {
+        let url = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let separator = url.range(of: "://") {
+            let scheme = url[..<separator.lowerBound].lowercased()
+            let rest = url[separator.upperBound...]
+            guard let slash = rest.firstIndex(of: "/") else { return nil }
+            var host = rest[..<slash]
+            if let at = host.lastIndex(of: "@") { host = host[host.index(after: at)...] }
+            if let colon = host.firstIndex(of: ":") { host = host[..<colon] }
+            let path = String(rest[rest.index(after: slash)...])
+            return (host.lowercased(), path, scheme == "ssh" || scheme == "git+ssh")
+        }
+        // A colon after a slash is part of a local path, like ./a:b.
+        guard let colon = url.firstIndex(of: ":"), !url[..<colon].contains("/") else { return nil }
+        var host = url[..<colon]
+        if let at = host.lastIndex(of: "@") { host = host[host.index(after: at)...] }
+        return (host.lowercased(), String(url[url.index(after: colon)...]), true)
     }
 }
 
@@ -47,9 +71,9 @@ public enum PRQuery {
     public static func build(repo: GitHubRepo, branches: [String]) -> String {
         let fields = branches.enumerated().map { index, branch in
             """
-            b\(index): pullRequests(headRefName: \(literal(branch)), first: 10, \
+            b\(index): pullRequests(headRefName: \(literal(branch)), first: 100, \
             orderBy: {field: UPDATED_AT, direction: DESC}) \
-            { nodes { number title url state isDraft updatedAt headRepository { nameWithOwner } } }
+            { nodes { number title url state isDraft updatedAt isCrossRepository } }
             """
         }
         return "query { repository(owner: \(literal(repo.owner)), name: \(literal(repo.name))) { "
@@ -57,17 +81,17 @@ public enum PRQuery {
     }
 
     /// Each branch's PR: its open PR if there is one, otherwise its most recently updated. PRs from forks that
-    /// happen to use the same branch name are ignored.
-    public static func parse(_ data: Data, repo: GitHubRepo, branches: [String]) throws -> [String: PullRequest] {
+    /// happen to use the same branch name are ignored. Comparing names instead would drop every PR of a repo that was
+    /// renamed, since GitHub answers for the old name with the new one.
+    public static func parse(_ data: Data, branches: [String]) throws -> [String: PullRequest] {
         struct Node: Decodable {
-            struct Head: Decodable { var nameWithOwner: String }
             var number: Int
             var title: String
             var url: String
             var state: String
             var isDraft: Bool
             var updatedAt: String
-            var headRepository: Head?
+            var isCrossRepository: Bool
         }
         struct Connection: Decodable { var nodes: [Node] }
         struct Response: Decodable {
@@ -77,9 +101,7 @@ public enum PRQuery {
         let found = try JSONDecoder().decode(Response.self, from: data).data?.repository ?? [:]
         var result: [String: PullRequest] = [:]
         for (index, branch) in branches.enumerated() {
-            let nodes = (found["b\(index)"]?.nodes ?? []).filter {
-                $0.headRepository?.nameWithOwner.lowercased() == repo.nameWithOwner.lowercased()
-            }
+            let nodes = (found["b\(index)"]?.nodes ?? []).filter { !$0.isCrossRepository }
             guard
                 let chosen = nodes.first(where: { $0.state == "OPEN" })
                     ?? nodes.max(by: { $0.updatedAt < $1.updatedAt })

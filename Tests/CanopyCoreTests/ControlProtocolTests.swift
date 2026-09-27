@@ -27,6 +27,12 @@ struct JSONValueTests {
         #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(RowNewParams.self) }
     }
 
+    @Test func aRowWithNoPullRequestSaysNull() throws {
+        let shown = PRShowResult(repo: "demo", branch: "feat/x", path: "/x", pr: nil)
+
+        #expect(String(decoding: try JSONEncoder().encode(shown), as: UTF8.self).contains(#""pr":null"#))
+    }
+
     @Test func keepsIntegersIntegral() throws {
         let data = try JSONEncoder().encode(JSONValue.number(42))
         #expect(String(decoding: data, as: UTF8.self) == "42")

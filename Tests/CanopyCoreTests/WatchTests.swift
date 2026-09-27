@@ -23,13 +23,34 @@ struct GitEventFilterTests {
         #expect(!GitEventFilter.isRelevant(eventPath: "/r/.gitignore", gitDir: gitDir))
     }
 
-    @Test func remoteRefWritesMeanAPush() {
-        #expect(GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/remotes/origin/feat/x", gitDir: gitDir))
-        #expect(GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/packed-refs", gitDir: gitDir))
-        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/remotes/origin/x.lock", gitDir: gitDir))
-        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/packed-refs.lock", gitDir: gitDir))
-        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/refs/heads/feat/x", gitDir: gitDir))
-        #expect(!GitEventFilter.isRemoteRefChange(eventPath: "/r/.git/HEAD", gitDir: gitDir))
+    @Test func remoteTrackingReflogsArePickedOut() {
+        #expect(GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/logs/refs/remotes/origin/feat/x", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/logs/refs/remotes/origin/x.lock", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/logs/refs/remotes/origin", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/refs/remotes/origin/feat/x", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/logs/refs/heads/feat/x", gitDir: gitDir))
+        #expect(!GitEventFilter.isRemoteRefLog(eventPath: "/r/.git/packed-refs", gitDir: gitDir))
+    }
+}
+
+struct GitReflogTests {
+    @Test func tellsAPushFromAFetch() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let other = dir.sub("other")
+        try await Fixture.git.run(["clone", "--quiet", dir.sub("demo-origin.git"), other])
+        let log = repo + "/.git/logs/refs/remotes/origin/main"
+
+        #expect(GitReflog.lastEntryIsPush(atPath: log))
+
+        try await Fixture.git.run(
+            ["-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "--quiet", "--allow-empty", "-m", "2"],
+            in: other)
+        try await Fixture.git.run(["push", "--quiet", "origin", "main"], in: other)
+        try await Fixture.git.run(["fetch", "--quiet"], in: repo)
+
+        #expect(!GitReflog.lastEntryIsPush(atPath: log))
+        #expect(!GitReflog.lastEntryIsPush(atPath: dir.sub("missing")))
     }
 }
 
@@ -73,7 +94,7 @@ struct WatcherLifetimeTests {
         try await workspace.start()
 
         let adding = Task { try await workspace.addRepo(path: repo) }
-        #expect(await eventually(timeout: .seconds(20)) { FileManager.default.fileExists(atPath: started) })
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
         try await workspace.removeRepo(path: repo)
         FileManager.default.createFile(atPath: release, contents: nil)
         _ = try? await adding.value
@@ -84,7 +105,9 @@ struct WatcherLifetimeTests {
     @Test func releasingAWatcherWhileEventsArriveIsSafe() async throws {
         let dir = try TempDir()
         let stop = StopFlag()
-        // A thread of its own: a busy loop on a Swift concurrency thread would starve the test.
+        defer { stop.value.store(true, ordering: .relaxed) }
+        // A thread of its own: a busy loop on a Swift concurrency thread would starve the test. Even a 50 microsecond
+        // pause between writes let the old watcher survive a third of runs, so the loop does not pause.
         Thread {
             var count = 0
             while !stop.value.load(ordering: .relaxed) {
@@ -97,6 +120,5 @@ struct WatcherLifetimeTests {
             try await Task.sleep(for: .milliseconds(Int.random(in: 1...8)))
             _ = watcher
         }
-        stop.value.store(true, ordering: .relaxed)
     }
 }
