@@ -17,6 +17,21 @@ final class FakeEmulator: TerminalEmulator {
         shown.append(data)
     }
 
+    /// What a terminal would show, roughly: escape sequences removed and lines split on newlines.
+    var lines: [String] {
+        let plain = text.replacingOccurrences(of: "\u{1b}\\[[0-9;?!]*[A-Za-z]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\r", with: "")
+        return TerminalText.trimmingTrailingBlankLines(plain.components(separatedBy: "\n"))
+    }
+
+    func screenText() -> String {
+        lines.suffix(size.rows).joined(separator: "\n")
+    }
+
+    func recentText(lines count: Int) -> String {
+        lines.suffix(count).joined(separator: "\n")
+    }
+
     func type(_ text: String) {
         onInput?(Data(text.utf8))
     }

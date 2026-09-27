@@ -180,9 +180,15 @@ public actor Workspace {
         state.terminals
     }
 
-    public func setSavedTerminals(_ terminals: [String: SavedRowTerminals]) throws {
-        guard state.terminals != terminals else { return }
+    public var savedNextPane: Int {
+        state.nextPane
+    }
+
+    public func setSavedTerminals(_ terminals: [String: SavedRowTerminals], nextPane: Int? = nil) throws {
+        let nextPane = max(nextPane ?? state.nextPane, state.nextPane)
+        guard state.terminals != terminals || state.nextPane != nextPane else { return }
         state.terminals = terminals
+        state.nextPane = nextPane
         try save()
     }
 

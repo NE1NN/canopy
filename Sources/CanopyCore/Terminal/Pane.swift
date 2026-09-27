@@ -19,11 +19,16 @@ public final class Pane: Identifiable {
     public let emulator: any TerminalEmulator
     public private(set) var status = Status.running
     public private(set) var title = ""
+    /// A title given with `canopy term new --title`. It wins over what the program sets.
+    public var fixedTitle: String? {
+        didSet { refreshTitle() }
+    }
     @ObservationIgnored private let settings: ShellSettings
     @ObservationIgnored private var process: PtyProcess?
     @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
     @ObservationIgnored private var isClosed = false
+    @ObservationIgnored private var isScript = false
 
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
@@ -50,6 +55,8 @@ public final class Pane: Identifiable {
 
     /// True while something other than the shell holds the terminal, such as `claude` or `bun dev`.
     public var isBusy: Bool {
+        // A setup or teardown script is busy until it ends, even though zsh runs its last command in its own place.
+        if isScript, case .running = status { return true }
         guard let process, let foreground = process.foreground else { return false }
         return foreground.pid != process.pid
     }
@@ -68,6 +75,12 @@ public final class Pane: Identifiable {
             try? await Task.sleep(for: .milliseconds(50))
         }
         process?.write(command + "\r")
+    }
+
+    /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
+    public func type(_ text: String) {
+        guard case .running = status else { return }
+        process?.write(text)
     }
 
     /// Starts a new shell in the same folder after the last one exited.
@@ -92,6 +105,10 @@ public final class Pane: Identifiable {
     /// Reads the foreground process again. The app calls it while the pane is on screen.
     /// A pane whose process exited keeps its last title.
     public func refreshTitle() {
+        if let fixedTitle {
+            title = fixedTitle
+            return
+        }
         guard let process else { return }
         let resolved = PaneTitle.resolve(programTitle, foreground: process.foreground)
         if !resolved.isEmpty {
@@ -112,6 +129,7 @@ public final class Pane: Identifiable {
     }
 
     private func start(_ command: PaneCommand) {
+        if case .script = command { isScript = true } else { isScript = false }
         let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
         let launch =
             switch command {

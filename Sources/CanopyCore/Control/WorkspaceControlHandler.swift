@@ -102,6 +102,42 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(RowAdoptParams.self)
             return try .from(try await workspace.adopt(path: params.path))
 
+        case TermMethod.list:
+            let params = try request.decodeParams(TermListParams.self)
+            let snapshot = await workspace.snapshot
+            // Every row's terminals with --all, or when no row resolves.
+            var row: Row?
+            if !params.all {
+                do {
+                    row = try TargetResolver.row(for: params.target, in: snapshot)
+                } catch WorkspaceError.missingTarget {
+                    row = nil
+                }
+            }
+            let names = Dictionary(snapshot.repos.map { ($0.path, $0.name) }, uniquingKeysWith: { first, _ in first })
+            return try .from(await rows.terminalInfo(rowPath: row?.path, repoNames: names))
+
+        case TermMethod.new:
+            let params = try request.decodeParams(TermNewParams.self)
+            let snapshot = await workspace.snapshot
+            let row = try TargetResolver.row(for: params.target, in: snapshot)
+            guard !row.isMissing else { throw WorkspaceError.pathNotFound(row.path) }
+            let repoName = snapshot.repo(path: row.repoPath)?.name ?? ""
+            return try .from(await rows.newTerminal(row, repoName: repoName, params))
+
+        case TermMethod.send:
+            let params = try request.decodeParams(TermSendParams.self)
+            try await rows.sendToTerminal(params)
+            return .object(["pane": .string(params.pane)])
+
+        case TermMethod.read:
+            return try .from(try await rows.readTerminal(request.decodeParams(TermReadParams.self)))
+
+        case TermMethod.close:
+            let params = try request.decodeParams(TermCloseParams.self)
+            try await rows.closeTerminal(params)
+            return .object(["pane": .string(params.pane)])
+
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
         }

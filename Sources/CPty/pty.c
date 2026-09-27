@@ -1,9 +1,10 @@
 #include "CPty.h"
 
 #include <fcntl.h>
+#include <libproc.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/ioctl.h>
-#include <sys/resource.h>
 #include <sys/ttydefaults.h>
 #include <termios.h>
 #include <unistd.h>
@@ -41,10 +42,25 @@ pid_t canopy_pty_spawn(
     attributes.c_cc[VSTATUS] = CSTATUS;
     cfsetispeed(&attributes, TTYDEF_SPEED);
     cfsetospeed(&attributes, TTYDEF_SPEED);
-    struct rlimit limit;
+    // Sweep just past the highest descriptor open now, rather than to the limit, which CI runners set near a
+    // million, making every terminal slow to start. Descriptors are handed out lowest first, so one opened by
+    // another thread before the fork lands below the margin.
     int highest = 10240;
-    if (getrlimit(RLIMIT_NOFILE, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY && limit.rlim_cur < 1048576) {
-        highest = (int)limit.rlim_cur;
+    int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, NULL, 0);
+    if (bytes > 0) {
+        int capacity = bytes / PROC_PIDLISTFD_SIZE + 64;
+        struct proc_fdinfo *open_fds = malloc((size_t)capacity * PROC_PIDLISTFD_SIZE);
+        if (open_fds) {
+            int filled = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, open_fds, capacity * PROC_PIDLISTFD_SIZE);
+            if (filled > 0) {
+                highest = 3;
+                for (int index = 0; index < filled / PROC_PIDLISTFD_SIZE; index++) {
+                    if (open_fds[index].proc_fd >= highest) highest = open_fds[index].proc_fd + 1;
+                }
+                highest += 64;
+            }
+            free(open_fds);
+        }
     }
     int fd = -1;
     pid_t pid = forkpty(&fd, NULL, &attributes, &size);

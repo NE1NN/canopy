@@ -125,6 +125,18 @@ struct GridStoreTests {
         #expect(await eventually { pane.currentDirectory == dir.path })
     }
 
+    @Test func paneNumbersContinueFromWhereTheyLeftOff() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        terminals.continueNumbering(from: 40)
+
+        #expect(terminals.openTab(for: Fixture.context(dir.path)).focused.id == PaneID(40))
+        #expect(terminals.nextPaneNumber == 41)
+        terminals.continueNumbering(from: 5)
+        #expect(terminals.nextPaneNumber == 41)
+    }
+
     @Test func changesAreReported() throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)

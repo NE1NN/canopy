@@ -60,6 +60,7 @@ final class AppModel {
             show(notice)
         }
         let saved = await workspace.savedTerminals
+        terminals.continueNumbering(from: await workspace.savedNextPane)
         snapshot = await workspace.snapshot
         restoreTerminals(saved)
         let updates = await workspace.updates()
@@ -236,7 +237,9 @@ final class AppModel {
     // MARK: Grid
 
     /// The size of the selected tab's grid, for the add rule and for finding neighbors.
-    var gridSize = CGSize(width: 1000, height: 700)
+    var gridSize = CGSize(width: 1000, height: 700) {
+        didSet { terminals.fits = addRuleFits() }
+    }
     @ObservationIgnored private lazy var config = GlobalConfig.load(from: home.configFile)
 
     /// The least room a pane may shrink to: 20 columns and 5 rows, plus its padding and header.
@@ -251,12 +254,17 @@ final class AppModel {
     /// ⌘D. Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
     func splitPane() {
         guard let row = selectedRow, !row.isMissing else { return }
+        terminals.addPane(for: context(for: row), fits: addRuleFits())
+        focusSelectedTerminal()
+    }
+
+    /// Whether a line of that many panes keeps each at least `minPaneColumns` wide in the current grid.
+    private func addRuleFits() -> (Int) -> Bool {
         let padding = TerminalContainerView.padding
         let minimumWidth =
             Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + padding.left + padding.right
         let width = gridSize.width
-        terminals.addPane(for: context(for: row), fits: { width / Double($0) >= minimumWidth })
-        focusSelectedTerminal()
+        return { width / Double($0) >= minimumWidth }
     }
 
     /// ⌘⌥ and an arrow.
@@ -325,7 +333,8 @@ final class AppModel {
     func saveTerminals() async {
         guard terminalsRestored else { return }
         do {
-            try await workspace.setSavedTerminals(terminals.saved().merging(deferredTerminals) { live, _ in live })
+            try await workspace.setSavedTerminals(
+                terminals.saved().merging(deferredTerminals) { live, _ in live }, nextPane: terminals.nextPaneNumber)
         } catch {
             show(error)
         }

@@ -45,6 +45,34 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         return TerminalSize(columns: terminal.cols, rows: terminal.rows)
     }
 
+    /// The live screen, whatever the user has scrolled to.
+    func screenText() -> String {
+        TerminalText.trimmingTrailingBlankLines(lastLines(terminalView.getTerminal().rows)).joined(separator: "\n")
+    }
+
+    func recentText(lines count: Int) -> String {
+        TerminalText.trimmingTrailingBlankLines(lastLines(max(count, 0))).joined(separator: "\n")
+    }
+
+    /// The last `count` lines of the buffer, scrollback included. Only those lines are turned into text.
+    private func lastLines(_ count: Int) -> [String] {
+        let terminal = terminalView.getTerminal()
+        let first = terminal.buffer.totalLinesTrimmed
+        var end = first
+        while terminal.getScrollInvariantLine(row: end) != nil {
+            end += 1
+        }
+        return (max(first, end - count)..<end).map { row in
+            // Map cells through the terminal so wide and combined characters survive and empty cells read as spaces.
+            terminal.getScrollInvariantLine(row: row)?.translateToString(
+                trimRight: true, skipNullCellsFollowingWide: true
+            ) { cell in
+                let character = terminal.getCharacter(for: cell)
+                return character == "\0" ? " " : character
+            } ?? ""
+        }
+    }
+
     /// Gives the terminal the keyboard, if it is on screen.
     func focus() {
         view.window?.makeFirstResponder(view)

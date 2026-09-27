@@ -45,6 +45,9 @@ public final class TerminalStore {
     public var preferredSize = TerminalSize.standard
     /// Called after any change worth saving: tabs, names, layouts, focus, or selection.
     @ObservationIgnored public var onChange: () -> Void = {}
+    /// The add rule's width check for panes added without the window's help, as by `canopy term new`.
+    /// The app keeps it in step with the grid's width.
+    @ObservationIgnored public var fits: (Int) -> Bool = { $0 <= 2 }
     @ObservationIgnored public let settings: ShellSettings
     @ObservationIgnored private let engine: any TerminalEngine
     @ObservationIgnored private var nextPane = 1
@@ -56,6 +59,13 @@ public final class TerminalStore {
     public init(engine: any TerminalEngine, settings: ShellSettings) {
         self.engine = engine
         self.settings = settings
+    }
+
+    /// The number the next pane gets, saved so IDs keep counting up across launches.
+    public var nextPaneNumber: Int { nextPane }
+
+    public func continueNumbering(from number: Int) {
+        nextPane = max(nextPane, number)
     }
 
     public func tabs(inRow path: String) -> [TerminalTab] {
@@ -88,7 +98,8 @@ public final class TerminalStore {
     /// Opens a tab with one pane at the end of the row's tab bar and selects it.
     @discardableResult
     public func openTab(
-        for context: PaneContext, name: String? = nil, command: PaneCommand = .shell, directory: String? = nil
+        for context: PaneContext, name: String? = nil, command: PaneCommand = .shell, directory: String? = nil,
+        select: Bool = true
     ) -> TerminalTab {
         let tabs = tabs(inRow: context.rowPath)
         let tab = TerminalTab(
@@ -96,7 +107,9 @@ public final class TerminalStore {
             pane: makePane(context, command: command, directory: directory))
         nextTab += 1
         tabsByRow[context.rowPath] = tabs + [tab]
-        selectedTabByRow[context.rowPath] = tab.id
+        if select || selectedTabByRow[context.rowPath] == nil {
+            selectedTabByRow[context.rowPath] = tab.id
+        }
         onChange()
         return tab
     }
@@ -157,10 +170,28 @@ public final class TerminalStore {
         guard let tab = selectedTab(inRow: context.rowPath) else {
             return openTab(for: context).focused
         }
+        return addPane(to: tab, for: context, fits: fits)
+    }
+
+    /// Opens a terminal where `canopy term new` asks: in a new tab, in the tab with `name` (opening it if the row
+    /// has none by that name), or in the row's selected tab. It never changes which tab or pane the user is on.
+    public func openTerminal(for context: PaneContext, tabNamed name: String?, newTab: Bool) -> (TerminalTab, Pane) {
+        let named = name.flatMap { name in tabs(inRow: context.rowPath).first { $0.name == name } }
+        if newTab || (name != nil && named == nil) || selectedTab(inRow: context.rowPath) == nil {
+            let tab = openTab(for: context, name: name, select: false)
+            return (tab, tab.focused)
+        }
+        let tab = named ?? selectedTab(inRow: context.rowPath)!
+        return (tab, addPane(to: tab, for: context, fits: fits, focus: false))
+    }
+
+    private func addPane(
+        to tab: TerminalTab, for context: PaneContext, fits: (Int) -> Bool, focus: Bool = true
+    ) -> Pane {
         let pane = makePane(context, command: .shell, directory: nil)
         tab.panes[pane.id] = pane
         tab.layout = tab.layout.adding(pane.id, fits: fits)
-        tab.focusedPaneID = pane.id
+        if focus { tab.focusedPaneID = pane.id }
         onChange()
         return pane
     }

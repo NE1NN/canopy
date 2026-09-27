@@ -138,6 +138,64 @@ struct ControlServerTests {
             ]), as: RowRemoveResult.self)
     }
 
+    @Test func termCommandsDriveTerminals() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let target = TargetHint(repo: "demo", row: "main")
+        func read(_ pane: String) async -> String {
+            (try? await call(client, TermMethod.read, TermReadParams(pane: pane), as: TermReadResult.self))?.text ?? ""
+        }
+
+        let first = try await call(
+            client, TermMethod.new, TermNewParams(target: target, title: "Server"), as: TermNewResult.self)
+        let second = try await call(
+            client, TermMethod.new, TermNewParams(target: target, run: "echo from-second"), as: TermNewResult.self)
+        #expect(first.tab == second.tab)
+        #expect(await eventually { await read(second.pane).contains("from-second") })
+
+        _ = try await call(
+            client, TermMethod.send, TermSendParams(pane: first.pane, text: "echo typed-in", enter: true),
+            as: JSONValue.self)
+        #expect(await eventually { await read(first.pane).contains("typed-in") })
+
+        let listed = try await call(client, TermMethod.list, TermListParams(target: target), as: [TermInfo].self)
+        #expect(listed.map(\.pane) == [first.pane, second.pane])
+        #expect(listed.first?.title == "Server")
+        #expect(listed.first?.folder == repo)
+
+        _ = try await call(
+            client, TermMethod.send, TermSendParams(pane: second.pane, text: "sleep 30", enter: true),
+            as: JSONValue.self)
+        #expect(
+            await eventually {
+                let panes = try? await call(client, TermMethod.list, TermListParams(all: true), as: [TermInfo].self)
+                return panes?.last?.foreground == "sleep"
+            })
+        await #expect(throws: ControlError.self) {
+            try await call(client, TermMethod.close, TermCloseParams(pane: second.pane), as: JSONValue.self)
+        }
+        for pane in [first.pane, second.pane] {
+            _ = try await call(client, TermMethod.close, TermCloseParams(pane: pane, force: true), as: JSONValue.self)
+        }
+        #expect(try await call(client, TermMethod.list, TermListParams(all: true), as: [TermInfo].self).isEmpty)
+
+        let typo = try await offPool {
+            try client.send(
+                ControlRequest(
+                    method: TermMethod.list,
+                    params: try .from(TermListParams(target: TargetHint(repo: "demo", row: "fix/nope")))))
+        }
+        #expect(typo.error?.code == "row_not_found")
+
+        let missing = try await offPool {
+            try client.send(ControlRequest(method: TermMethod.read, params: try .from(TermReadParams(pane: "p999"))))
+        }
+        #expect(missing.error?.code == "pane_not_found")
+    }
+
     @Test func errorsCarryCodes() async throws {
         let dir = try TempDir()
         let (_, server, client, _) = try await startServer(dir)
@@ -176,6 +234,84 @@ struct ControlServerTests {
         }
         let response = try ControlCodec.decode(ControlResponse.self, from: reply)
         #expect(response.error?.code == "bad_request")
+    }
+
+    /// Sends `payload` on a raw connection, optionally closes the write side, and reads until `lines` replies arrive.
+    func exchange(_ socketPath: String, _ payload: Data, halfClose: Bool = false, lines: Int = 1) async throws
+        -> [String]
+    {
+        try await offPool {
+            let fd = try ControlClient.connect(to: socketPath)
+            defer { close(fd) }
+            var timeout = timeval(tv_sec: 10, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            _ = payload.withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+            if halfClose { shutdown(fd, SHUT_WR) }
+            var received = Data()
+            var chunk = [UInt8](repeating: 0, count: 65_536)
+            while received.filter({ $0 == 0x0A }).count < lines {
+                let count = read(fd, &chunk, chunk.count)
+                guard count > 0 else { break }
+                received.append(contentsOf: chunk[0..<count])
+            }
+            return String(decoding: received, as: UTF8.self).split(separator: "\n").map(String.init)
+        }
+    }
+
+    @Test func halfClosedConnectionsStillGetTheirReply() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { request in
+            try? await Task.sleep(for: .milliseconds(200))
+            return .success(id: request.id, result: .bool(true))
+        }
+        try await server.start()
+        defer { server.stop() }
+
+        let replies = try await exchange(
+            home.socketPath, try ControlCodec.encodeLine(ControlRequest(method: "slow", id: "a")), halfClose: true)
+
+        #expect(replies.count == 1)
+        #expect(replies.first?.contains(#""id":"a""#) == true)
+    }
+
+    @Test func repliesComeInRequestOrder() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { request in
+            if request.id == "first" { try? await Task.sleep(for: .milliseconds(300)) }
+            return .success(id: request.id, result: .null)
+        }
+        try await server.start()
+        defer { server.stop() }
+        var payload = try ControlCodec.encodeLine(ControlRequest(method: "x", id: "first"))
+        payload.append(try ControlCodec.encodeLine(ControlRequest(method: "x", id: "second")))
+
+        let replies = try await exchange(home.socketPath, payload, lines: 2)
+
+        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false])
+    }
+
+    @Test func overLongLinesAreRejected() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { .success(id: $0.id, result: .null) }
+        try await server.start()
+        defer { server.stop() }
+
+        let replies = try await exchange(home.socketPath, Data(repeating: 0x61, count: (1 << 20) + 10))
+
+        #expect(replies.first?.contains("bad_request") == true)
+    }
+
+    @Test func serverRejectsASocketPathOverTheLimit() async {
+        let path = "/tmp/" + String(repeating: "x", count: 120) + "/canopy.sock"
+        await #expect(throws: ControlServerError.socketPathTooLong(path)) {
+            try await ControlServer(socketPath: path) { .success(id: $0.id, result: .null) }.start()
+        }
     }
 
     @Test func socketPathOverTheLimitFailsClearly() {
