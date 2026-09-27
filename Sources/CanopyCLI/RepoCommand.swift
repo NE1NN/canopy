@@ -17,7 +17,7 @@ struct RepoCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(ControlMethod.repoAdd, RepoAddParams(path: Client.absolutePath(path)))
+            let result = client.call(ControlMethod.repoAdd, RepoAddParams(path: Client.absolutePath(path)))
             try client.print(result) {
                 let repo = try result.decode(RepoInfo.self)
                 return "Added \(repo.name) (\(repo.path))."
@@ -32,7 +32,7 @@ struct RepoCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(ControlMethod.repoList, JSONValue.null)
+            let result = client.call(ControlMethod.repoList, JSONValue.null)
             try client.print(result) {
                 let repos = try result.decode([RepoInfo].self)
                 return Table.render(
@@ -57,7 +57,7 @@ struct RepoCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(
+            let result = client.call(
                 ControlMethod.repoRemove,
                 RepoRemoveParams(repo: Client.absolutePathIfRelative(repo))
             )

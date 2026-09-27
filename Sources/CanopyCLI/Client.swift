@@ -25,7 +25,22 @@ struct Client {
         self.json = json
     }
 
-    func call(_ method: String, _ params: some Encodable, launchIfNeeded: Bool = true) throws -> JSONValue {
+    /// Every failure, whether it happens here or in the app, ends in `fail`, so `--json` always prints an error object.
+    func call(_ method: String, _ params: some Encodable, launchIfNeeded: Bool = true) -> JSONValue {
+        do {
+            return try send(method, params, launchIfNeeded: launchIfNeeded)
+        } catch let error as ControlError {
+            fail(error)
+        } catch let error as ControlClientError {
+            fail(ControlError(error))
+        } catch let error as CLIError {
+            fail(ControlError(code: "app_unavailable", message: error.description))
+        } catch {
+            fail(ControlError(code: "internal", message: "\(error)"))
+        }
+    }
+
+    private func send(_ method: String, _ params: some Encodable, launchIfNeeded: Bool) throws -> JSONValue {
         let request = ControlRequest(method: method, params: try .from(params))
         let client = ControlClient(socketPath: home.socketPath, timeout: ControlMethod.replyTimeout(for: method))
         let response: ControlResponse
@@ -36,7 +51,7 @@ struct Client {
             response = try client.send(request)
         }
         if let error = response.error {
-            fail(error)
+            throw error
         }
         return response.result ?? .null
     }
@@ -44,7 +59,9 @@ struct Client {
     /// Parallel CLI calls take turns here, so only the first one launches the app.
     private func launchOnce() throws {
         try home.ensureExists()
-        let lock = try InstanceLock.waiting(path: home.launchLockPath, timeout: 30)
+        guard let lock = try? InstanceLock.waiting(path: home.launchLockPath, timeout: 30) else {
+            throw CLIError("Another canopy command has been launching Canopy for 30 seconds. Try again.")
+        }
         defer { _ = lock }
         if !ControlClient.canConnect(socketPath: home.socketPath) {
             try AppLocator.launch(home: home)

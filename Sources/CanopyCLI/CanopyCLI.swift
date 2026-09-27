@@ -27,7 +27,7 @@ struct Status: AsyncParsableCommand {
             }
             throw ExitCode(1)
         }
-        let result = try client.call(ControlMethod.status, JSONValue.null, launchIfNeeded: false)
+        let result = client.call(ControlMethod.status, JSONValue.null, launchIfNeeded: false)
         try client.print(result) {
             let status = try result.decode(StatusResult.self)
             return "Canopy \(status.version) is running (pid \(status.pid), home: \(status.home))."

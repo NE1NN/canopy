@@ -83,5 +83,11 @@ step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"invalid_branch"' "$work/err.json" || fail "missing error code"
 
+step "errors before any reply are machine-readable too"
+if CANOPY_APP=/nonexistent CANOPY_HOME="$work/nobody" "$cli" row list --json > "$work/err2.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"app_unavailable"' "$work/err2.json" || fail "no JSON error when the app cannot be launched"
+
 echo
 echo "e2e passed"

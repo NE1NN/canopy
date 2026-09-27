@@ -28,4 +28,14 @@ struct JSONValueTests {
         #expect(ControlMethod.replyTimeout(for: ControlMethod.status) <= 60)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList) <= 60)
     }
+
+    @Test func clientFailuresMapToStableCodes() {
+        #expect(ControlError(ControlClientError.socketPathTooLong("/x")).code == "socket_path_too_long")
+        #expect(ControlError(ControlClientError.connectFailed(errno: ENOENT)).code == "app_unavailable")
+        #expect(ControlError(ControlClientError.connectFailed(errno: EACCES)).code == "connect_failed")
+        #expect(ControlError(ControlClientError.connectionClosed).code == "connection_closed")
+        #expect(ControlError(ControlClientError.writeFailed(errno: EPIPE)).code == "connection_closed")
+        #expect(ControlError(ControlClientError.timedOut).code == "timeout")
+        #expect(ControlError(ControlClientError.timedOut).message.contains("may still finish"))
+    }
 }

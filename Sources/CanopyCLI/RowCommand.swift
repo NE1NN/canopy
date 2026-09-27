@@ -20,7 +20,7 @@ struct RowCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(
+            let result = client.call(
                 ControlMethod.rowList,
                 RowListParams(repo: repo.map(Client.absolutePathIfRelative), all: all)
             )
@@ -58,7 +58,7 @@ struct RowCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(
+            let result = client.call(
                 ControlMethod.rowNew,
                 RowNewParams(target: Client.hint(repo: repo), branch: branch, base: base, select: select)
             )
@@ -88,7 +88,7 @@ struct RowCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(
+            let result = client.call(
                 ControlMethod.rowRemove,
                 RowRemoveParams(target: Client.hint(repo: repo, row: row), force: force, deleteBranch: deleteBranch)
             )
@@ -107,7 +107,7 @@ struct RowCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(
+            let result = client.call(
                 ControlMethod.rowSelect, RowRefParams(target: Client.hint(repo: repo, row: row)))
             try client.print(result) { "Selected \(try result.decode(Row.self).displayName)." }
         }
@@ -124,7 +124,7 @@ struct RowCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = try client.call(ControlMethod.rowAdopt, RowAdoptParams(path: Client.absolutePath(path)))
+            let result = client.call(ControlMethod.rowAdopt, RowAdoptParams(path: Client.absolutePath(path)))
             try client.print(result) { "Adopted \(try result.decode(Row.self).displayName)." }
         }
     }
