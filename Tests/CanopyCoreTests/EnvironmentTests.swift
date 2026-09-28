@@ -25,17 +25,19 @@ struct EnvironmentTests {
         #expect(GitEnvironment.build(base: ["PATH": "/usr/bin"], loginPath: nil)["PATH"] == "/usr/bin")
     }
 
-    @Test func loginPathComesFromTheShellEvenWithNoisyStartupFiles() throws {
+    @Test func loginPathComesFromTheShellEvenWithNoisyStartupFiles() async throws {
         let dir = try TempDir()
         let shell = dir.sub("fake-shell")
         try "#!/bin/bash\necho 'welcome to your shell'\nexport PATH=/opt/fake/bin:/usr/bin:/bin\neval \"$2\"\n"
             .write(toFile: shell, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell)
 
-        #expect(ShellEnvironment.loginPath(shell: shell, timeout: .seconds(5)) == "/opt/fake/bin:/usr/bin:/bin")
+        // A loaded machine can take seconds to start a shell. A passing run returns as soon as it has.
+        let path = try await offPool { ShellEnvironment.loginPath(shell: shell, timeout: .seconds(30)) }
+        #expect(path == "/opt/fake/bin:/usr/bin:/bin")
     }
 
-    @Test func slowShellGivesUpInsteadOfBlocking() throws {
+    @Test func slowShellGivesUpInsteadOfBlocking() async throws {
         let dir = try TempDir()
         let shell = dir.sub("slow-shell")
         try "#!/bin/bash\nsleep 30\n".write(toFile: shell, atomically: true, encoding: .utf8)
@@ -43,7 +45,7 @@ struct EnvironmentTests {
         let clock = ContinuousClock()
         let start = clock.now
 
-        #expect(ShellEnvironment.loginPath(shell: shell, timeout: .milliseconds(300)) == nil)
+        #expect(try await offPool { ShellEnvironment.loginPath(shell: shell, timeout: .milliseconds(300)) } == nil)
         #expect(clock.now - start < .seconds(5))
     }
 
