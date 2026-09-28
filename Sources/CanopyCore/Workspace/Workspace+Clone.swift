@@ -14,9 +14,9 @@ extension Workspace {
         let destination = Paths.canonical(try folder ?? source.defaultFolder(in: home))
         let handle = SubprocessHandle()
         return try await withTaskCancellationHandler {
-            try await serialized(repoPath: destination) {
+            try await cloneQueues.enqueue(destination) {
                 try await self.clone(source, to: destination, handle: handle, progress: progress)
-            }
+            }.value
         } onCancel: {
             handle.cancel()
         }
@@ -27,12 +27,12 @@ extension Workspace {
         await github.viewerRepos()
     }
 
-    /// Stops every clone under way and deletes what they wrote, without waiting, for quitting.
+    /// Stops every clone under way and deletes what they wrote, for quitting.
     public nonisolated func stopClones() {
         runningClones.stopAll()
     }
 
-    /// Clones into a hidden folder beside the destination and renames it into place once git is done, so the
+    /// Clones into a hidden folder beside the destination and moves it into place once git is done, so the
     /// destination only ever holds a whole clone.
     private func clone(
         _ source: CloneSource, to destination: String, handle: SubprocessHandle,
@@ -56,9 +56,8 @@ extension Workspace {
         do {
             try await fetch(source, into: staging, handle: handle, progress: progress)
             guard !handle.isCancelled else { throw WorkspaceError.cloneCancelled }
-            // rename(2) replaces an empty folder and refuses a full one.
-            if rename(staging, destination) != 0 {
-                let reason = String(cString: strerror(errno))
+            if let code = Self.moveIntoPlace(staging, destination) {
+                let reason = String(cString: strerror(code))
                 try? FileManager.default.removeItem(atPath: staging)
                 if try await holdsClone(of: source, at: destination) {
                     return try await addRepo(path: destination)
@@ -132,10 +131,41 @@ extension Workspace {
         guard let first = origins.first else {
             throw WorkspaceError.folderTaken(folder, holding: "a repo with no origin")
         }
+        // A URL through an SSH host alias, such as git@github-work:acme/app, is still a GitHub repo.
+        var sourceRepo: GitHubRepo?
+        if source.github == nil, let url = source.url {
+            sourceRepo = await github.repo(forRemote: url)
+        }
         for origin in origins {
-            if source.isSameRepo(asOrigin: origin, gitHubRepo: await github.repo(forRemote: origin)) { return true }
+            let originRepo = await github.repo(forRemote: origin)
+            if source.isSameRepo(asOrigin: origin, gitHubRepo: originRepo, sourceRepo: sourceRepo) { return true }
         }
         throw WorkspaceError.folderTaken(folder, holding: "a clone of \(first)")
+    }
+
+    /// Puts the finished clone at `destination`, and returns errno when something else got there first. A folder that
+    /// is already there and empty stays, and takes the clone's contents, so a shell sitting in it still is.
+    private static func moveIntoPlace(_ staging: String, _ destination: String) -> Int32? {
+        guard FileManager.default.fileExists(atPath: destination) else {
+            return rename(staging, destination) == 0 ? nil : errno
+        }
+        guard (try? FileManager.default.contentsOfDirectory(atPath: destination))?.isEmpty == true,
+            let entries = try? FileManager.default.contentsOfDirectory(atPath: staging)
+        else { return ENOTEMPTY }
+        // .git goes last, so the folder never looks like a clone before it holds all of one.
+        var moved: [String] = []
+        for entry in entries.sorted(by: { $0 != ".git" && $1 == ".git" }) {
+            guard renamex_np("\(staging)/\(entry)", "\(destination)/\(entry)", UInt32(RENAME_EXCL)) == 0 else {
+                let code = errno
+                for entry in moved.reversed() {
+                    _ = renamex_np("\(destination)/\(entry)", "\(staging)/\(entry)", UInt32(RENAME_EXCL))
+                }
+                return code
+            }
+            moved.append(entry)
+        }
+        rmdir(staging)
+        return nil
     }
 
     /// Creates `path` and any folders above it, and returns the ones it created, outermost first.
@@ -176,6 +206,13 @@ final class RunningClones: Sendable {
         }
         for clone in stopping {
             clone.handle.cancel()
+        }
+        // A killed git may still be writing for a moment, so wait until each is gone before deleting what it wrote.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while stopping.contains(where: { $0.handle.isRunning }), ContinuousClock.now < deadline {
+            usleep(10_000)
+        }
+        for clone in stopping {
             Self.delete(clone.folder, created: clone.created)
         }
     }

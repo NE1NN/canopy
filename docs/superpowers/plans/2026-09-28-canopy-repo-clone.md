@@ -37,11 +37,14 @@ The author approved this on 2026-09-28:
 1. `CloneSource` reads the argument.
    `owner/repo` is a GitHub repo.
    Anything with `://`, an scp-style `host:path`, or a leading `/` is a URL git can clone, and it is also a GitHub repo when its host is GitHub.
+   A github.com page, such as `…/acme/app/tree/main`, stands for its repo.
+   A leading `-` and git's `transport::address` helper syntax are refused.
    The CLI turns `./x` and `../x` into absolute paths first, as it does for `repo add`.
 2. The destination is `--into`, or `CANOPY_HOME/repos/<owner>/<name>`.
    For a URL that is not on GitHub, the owner is the folder above the repo in the URL's path, so `file:///srv/git/acme/app.git` goes to `repos/acme/app`.
    An owner or name of `.` or `..` is refused, so no source can reach outside the repos folder.
 3. Clones of one destination run one at a time, so a second clone of the same repo waits and then finds the first one's folder.
+   They queue apart from the repo's other git work, so cloning a repo that is already registered never waits behind a fetch.
 4. The destination is checked:
    - missing, or an empty folder: clone.
    - the top of a git checkout whose `origin` is the same repo: register it and stop.
@@ -49,14 +52,16 @@ The author approved this on 2026-09-28:
      Other URLs match once `.git` and trailing slashes are dropped, and local paths match by their resolved path.
    - anything else: `folder_taken`, naming what the folder holds.
 5. The clone goes into a hidden sibling, `.<name>.canopy-clone-<random>`, and is renamed onto the destination when it is whole.
-   `rename(2)` replaces an empty folder and refuses a full one, so a folder filled meanwhile is checked again as in step 4.
+   An empty folder already there stays, and the clone's entries move into it with `RENAME_EXCL`, `.git` last, so a shell sitting in it is still in it.
+   A folder filled meanwhile is checked again as in step 4.
 6. Which command runs:
    - a GitHub repo with gh found: `gh repo clone <owner/repo or the URL as given> <folder> -- --progress`.
    - gh missing or logged out: a URL falls back to `git clone --progress <url> <folder>`, and `owner/repo` fails with `gh_unavailable` and the fix.
    - any other URL: `git clone --progress`, since gh only clones from GitHub.
 7. Progress comes from the tail of the clone's stderr, read every 200 ms while it runs: the phase git names, such as "Receiving objects", and its percent.
 8. On failure or cancel, the hidden folder and any parent folders the clone created are deleted.
-   Quitting the app kills clones still running and deletes their hidden folders.
+   Quitting the app kills clones still running, waits up to 2 seconds for them to die, and deletes their hidden folders.
+   A failure reports git's or gh's reason: the last `fatal:` or `error:` line, skipping gh's `failed to run git` line, and the line above "Could not read from remote repository.", where ssh or the server says why.
 9. On success, `addRepo` registers the destination and logs `repo.added` with `data.clonedFrom` set to the source as given.
    The control API also logs the call as `cli.call`.
 
@@ -122,6 +127,8 @@ Each of these has a test in the task that owns the code.
     It kills the clone and deletes the partial folder, and the clone can be run again.
 12. **Stale hidden folders from a crash are not swept.**
     They start with a dot, and sweeping could delete another Canopy's clone in progress.
+13. **A github.com page stands for its repo.**
+    Pasting `https://github.com/acme/app/tree/main` or a pull request's URL clones `acme/app` from `https://github.com/acme/app`.
 
 ## File Structure
 
@@ -2929,3 +2936,54 @@ Expected: PASS, and `make lint` and `swift build` print no warnings.
 git add -A
 git commit -m "docs: cloning in the spec, with an e2e case and fixture support"
 ```
+
+## After Review
+
+An independent opus reviewer read `git diff main...feat/repo-clone` against the spec and this plan.
+It found no critical issues. Everything below is fixed in one commit with tests, except where it says otherwise.
+
+1. **Major: the failure reason came from the wrong line.**
+   With real gh, a failing git is followed by gh's own `failed to run git: exit status 128`, and a failing remote ends with git's advice ("and the repository exists.").
+   `ToolOutput.reason` now takes git's last `fatal:` or `error:` line, skips gh's line, and when git only says it could not read from the remote, takes the line above it, where ssh or the server says why.
+   The tests use stderr captured from gh 2.101 and git 2.50.
+2. **Minor: the sheet truncated git's percent**, so 58% showed as 57%.
+   `CloneProgress` now keeps git's integer percent.
+3. **Minor: cloning into an existing empty folder replaced it**, which left a shell sitting in it inside a deleted folder.
+   The clone's entries now move into the folder with `RENAME_EXCL`, `.git` last, and move back if anything is in the way.
+   A test checks the folder's inode is unchanged.
+4. **Minor: a source through an SSH host alias never matched an existing clone.**
+   The source's URL is now resolved through the SSH config before comparing, like the folder's origin.
+5. **Minor: quitting could delete a hidden folder while a killed git was still writing to it.**
+   Quitting now waits up to 2 seconds for killed clones to exit before deleting, through a new `SubprocessHandle.isRunning`.
+   Not changed: the delete still runs on the main thread during quit, which only costs time when quitting mid-clone.
+6. **Minor: sheet errors told the user to pass `--into`, which the sheet does not have, and showed backticks as text.**
+   The sheet now words those errors itself, pointing at `canopy repo clone <source> --into <folder>` set as code, and renders gh's fix as Markdown.
+   git's and gh's own words stay plain text, so a path or URL in them is never turned into formatting or a link.
+7. **Minor: git's `transport::address` syntax got through**, where only git's default `protocol.allow` stood between a crafted source and a remote helper.
+   `CloneSource` now refuses `::`.
+8. **Minor: in logged-out mode, the UI fixture's sheet could fall back to a real `git clone` from GitHub.**
+   The reviewer suggested an `insteadOf` rule, but that also rewrites what `git remote get-url` reports, which hid the fixture's PR badges and stopped `ui-fixture.sh` at its `canopy pr --refresh`.
+   Both `ui-fixture.sh` and the e2e clone section now start the app with `GIT_ALLOW_PROTOCOL=file`, so any clone that falls back to plain git fails at once instead of reaching the network.
+
+Test gaps the reviewer listed, all now covered:
+a failing gh does not fall back to git, an origin that only matches after an `insteadOf` rule, `stopClones` kills the process, a CLI that disconnects does not stop its clone (decision 6), and cancelling a clone queued behind another leaves the first alone.
+
+Nits, all fixed:
+- A github.com page URL such as `…/tree/main` stands for its repo (decision 13).
+- The sheet keeps one size, and the list gives way to the progress bar or an error.
+  An empty field shows a hint in the destination line instead of a blank one.
+- The field takes focus back after a failed clone.
+- Repo lines read their description and push date to VoiceOver, and the title is a header.
+- Clones queue apart from the repo's other git work (`KeyedQueue`), so re-cloning a registered repo never waits behind a `row new` fetch.
+- This plan's tasks are filled in.
+- `ui-fixture.sh stop` only kills its pid while that pid is still a `Canopy Dev.app` process.
+
+The reviewer confirmed option injection is refused, `.` and `..` cannot escape the repos folder, the handle never touches a reused pid or fd, cancellation reaches the queued task, the control server never cancels a clone when the CLI goes away, and the e2e stand-in stays local.
+
+## UI checks
+
+The release Canopy hosts the agent's terminal, so macOS treats it as the app posting events, and it has no Accessibility permission.
+`scripts/ui.swift` could therefore not open the `+` menu or the sheet in the dev app, so the window shots cover the cloned repo in the sidebar, in dark and light, through the CLI.
+The sheet's own views (the repo list and its lines, the gh notes, progress, and errors) were rendered offscreen from the committed source in every state, in dark and light, and checked by eye.
+The `+` menu, File > Clone Repo…, and the sheet in the live app are hand checks in the PR.
+

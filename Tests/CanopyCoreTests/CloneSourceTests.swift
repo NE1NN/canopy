@@ -36,6 +36,19 @@ struct CloneSourceTests {
     }
 
     @Test(arguments: [
+        "https://github.com/acme/app/tree/main", "https://github.com/acme/app/pull/12",
+        "https://www.github.com/acme/app/blob/main/README.md",
+    ])
+    func readsGitHubPagesAsTheirRepo(url: String) throws {
+        let source = try CloneSource(url)
+
+        #expect(source.github?.nameWithOwner == "acme/app")
+        #expect(source.url == "https://github.com/acme/app")
+        #expect(source.owner == "acme")
+        #expect(source.name == "app")
+    }
+
+    @Test(arguments: [
         ("https://gitlab.com/group/team/tool.git", "team", "tool"),
         ("git@example.com:team/tool.git", "team", "tool"),
         ("file:///srv/git/acme/lib.git", "acme", "lib"),
@@ -55,7 +68,7 @@ struct CloneSourceTests {
     @Test(arguments: [
         "", "   ", "canopy", "acme/app/extra", "acme/..", "../app", "acme/.", "https://example.com/acme/..",
         "https://example.com/../app.git", "https://example.com/", "file:///srv/acme/.git", "-acme/app",
-        "--upload-pack=touch:pwned",
+        "--upload-pack=touch:pwned", "ext::sh -c touch% /tmp/pwned",
     ])
     func refusesAnythingElse(text: String) {
         #expect(throws: WorkspaceError.invalidCloneSource(text.trimmingCharacters(in: .whitespacesAndNewlines))) {
@@ -88,6 +101,16 @@ struct CloneSourceTests {
                 asOrigin: "https://github.com/acme/other",
                 gitHubRepo: GitHubRepo(remoteURL: "https://github.com/acme/other")))
         #expect(!source.isSameRepo(asOrigin: "https://example.com/acme/app", gitHubRepo: nil))
+    }
+
+    @Test func matchesASourceBehindAnSSHAliasOnceItIsResolved() throws {
+        let source = try CloneSource("git@github-work:acme/app.git")
+        let origin = "https://github.com/acme/app.git"
+        let resolved = GitHubRepo(remoteURL: "https://github.com/acme/app")
+
+        #expect(source.github == nil)
+        #expect(!source.isSameRepo(asOrigin: origin, gitHubRepo: GitHubRepo(remoteURL: origin)))
+        #expect(source.isSameRepo(asOrigin: origin, gitHubRepo: GitHubRepo(remoteURL: origin), sourceRepo: resolved))
     }
 
     @Test func matchesOtherOriginsWithoutTheirGitSuffixOrTrailingSlash() throws {

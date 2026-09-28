@@ -138,6 +138,7 @@ A repo can also be cloned and registered in one step, from the window or with `c
 The clone runs in the app, and the CLI waits for it with no timeout.
 
 - `owner/repo` and GitHub URLs clone with `gh repo clone`, which uses the author's gh login and preferred git protocol.
+  A github.com page, such as a branch or a pull request, stands for its repo.
   When gh is missing or logged out, a URL clones with `git clone` instead, and `owner/repo` fails with the fix, such as `gh auth login`.
 - Other URLs, including `file://` URLs and local paths, clone with `git clone`, since gh only clones from GitHub.
 - The clone goes in `CANOPY_HOME/repos/<owner>/<name>` unless `--into` names a folder.
@@ -147,6 +148,7 @@ The clone runs in the app, and the CLI waits for it with no timeout.
   A GitHub repo is the same whatever the protocol, SSH host alias, or letter case of the folder's `origin`.
   A folder holding anything else fails with `folder_taken`.
 - git writes into a hidden folder beside the destination, which is renamed into place once the clone is whole.
+  An empty folder already at the destination stays, and takes the clone's contents.
   A clone that fails, is cancelled, or is still running when Canopy quits leaves nothing behind.
 - Clones of the same folder run one at a time, so a second one finds the first one's result.
 - Stopping `canopy repo clone` with Ctrl-C does not stop the clone, which finishes and registers the repo.

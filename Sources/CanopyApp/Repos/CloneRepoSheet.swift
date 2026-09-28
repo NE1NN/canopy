@@ -13,6 +13,7 @@ struct CloneRepoSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Clone Repo")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 5) {
                 TextField("Repo", text: $clone.source, prompt: Text("owner/repo or URL"))
                     .textFieldStyle(.roundedBorder)
@@ -20,18 +21,19 @@ struct CloneRepoSheet: View {
                     .focused($isFieldFocused)
                     .onSubmit(start)
                     .disabled(clone.isCloning)
-                // Kept at one line even when empty, so the list does not jump as it appears.
-                Text(destination ?? " ")
+                // Always one line, so the list does not jump when a destination appears.
+                Text(destination ?? hint)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             GitHubRepoList(
-                listing: clone.listing, repos: clone.repos, chosen: clone.source,
+                listing: clone.listing, repos: clone.repos, chosen: clone.source, canClone: destination != nil,
                 pick: { clone.source = $0.nameWithOwner }
             )
-            .frame(height: 260)
+            // Gives way to the progress bar or an error, so the sheet keeps its size.
+            .frame(maxHeight: .infinity)
             .disabled(clone.isCloning)
             if clone.isCloning {
                 CloneProgressView(source: clone.source, progress: clone.progress)
@@ -56,10 +58,22 @@ struct CloneRepoSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 500)
+        .frame(width: 500, height: 480)
         .task { await clone.load(from: model) }
         .onAppear { isFieldFocused = true }
+        .onChange(of: clone.isCloning) {
+            if !clone.isCloning { isFieldFocused = true }
+        }
         .onDisappear { clone.cancel() }
+    }
+
+    /// owner/repo needs gh, so without it only a URL will do.
+    private var hint: String {
+        switch clone.listing {
+        case .success: "Pick one of your repos below, or type any owner/repo or URL."
+        case .failure(.ghMissing), .failure(.notLoggedIn): "Paste the repo's URL."
+        case .failure, nil: "Type owner/repo or a URL."
+        }
     }
 
     private var destination: String? {
@@ -80,7 +94,7 @@ final class CloneRepoState {
     private(set) var listing: Result<[GitHubRepoSummary], GHFailure>?
     private(set) var isCloning = false
     private(set) var progress: CloneProgress?
-    private(set) var error: String?
+    private(set) var error: AttributedString?
     @ObservationIgnored private var cloning: Task<Void, Never>?
 
     var repos: [GitHubRepoSummary] {
@@ -110,10 +124,38 @@ final class CloneRepoState {
             } catch WorkspaceError.cloneCancelled {
                 // Cancel closed the sheet already.
             } catch {
-                self.error = (error as? WorkspaceError)?.message ?? "\(error)"
+                self.error = Self.message(for: error, source: text)
             }
             isCloning = false
         }
+    }
+
+    /// The sheet has no `--into`, so errors that suggest it point at the CLI instead, with the command set as code.
+    /// Everything else, including git's and gh's own words, is shown as it is.
+    static func message(for error: any Error, source: String) -> AttributedString {
+        let into = code("canopy repo clone \(source) --into <folder>")
+        switch error as? WorkspaceError {
+        case .folderTaken(let path, let holding)?:
+            let what = holding.map { "already holds \($0)" } ?? "is already there and not empty"
+            let folder = (path as NSString).abbreviatingWithTildeInPath
+            return AttributedString("\(folder) \(what), so Canopy left it alone. To clone somewhere else, run ") + into
+                + AttributedString(".")
+        case .cloneNeedsFolder?:
+            return AttributedString("Canopy cannot tell which folder \(source) goes in. Run ") + into
+                + AttributedString(".")
+        case .ghUnavailable(let fix)?:
+            return (try? AttributedString(markdown: fix)) ?? AttributedString(fix)
+        case let other?:
+            return AttributedString(other.message)
+        case nil:
+            return AttributedString("\(error)")
+        }
+    }
+
+    private static func code(_ text: String) -> AttributedString {
+        var code = AttributedString(text)
+        code.inlinePresentationIntent = .code
+        return code
     }
 
     /// Stops a clone under way, which deletes what it wrote.
@@ -127,6 +169,8 @@ struct GitHubRepoList: View {
     let listing: Result<[GitHubRepoSummary], GHFailure>?
     let repos: [GitHubRepoSummary]
     let chosen: String
+    /// Whether what was typed can be cloned, so an empty list can say Return still works.
+    let canClone: Bool
     let pick: (GitHubRepoSummary) -> Void
 
     var body: some View {
@@ -155,8 +199,10 @@ struct GitHubRepoList: View {
             .foregroundStyle(.secondary)
             .padding(24)
         case .success where repos.isEmpty:
-            Text("No repos match.")
+            Text(canClone ? "None of your repos match. Press Return to clone it anyway." : "None of your repos match.")
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(24)
         case .success:
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -211,8 +257,18 @@ struct GitHubRepoLine: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .accessibilityLabel(repo.isPrivate ? "\(repo.nameWithOwner), private" : repo.nameWithOwner)
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isChosen ? .isSelected : [])
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [repo.nameWithOwner]
+        if repo.isPrivate { parts.append("private") }
+        if let description = repo.description, !description.isEmpty { parts.append(description) }
+        if let pushedAt = repo.pushedAt {
+            parts.append("pushed \(pushedAt.formatted(.relative(presentation: .named)))")
+        }
+        return parts.joined(separator: ", ")
     }
 
     /// The owner dimmed before the repo's own name.
@@ -240,7 +296,7 @@ struct CloneProgressView: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
                 if let progress {
-                    Text(verbatim: "\(progress.phase) \(Int(progress.fraction * 100))%")
+                    Text(verbatim: "\(progress.phase) \(progress.percent)%")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }

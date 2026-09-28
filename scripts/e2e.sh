@@ -291,7 +291,9 @@ printf 'export PATH="%s/bin:$PATH"\n' "$work" > "$work/zdot/.zshrc"
 for repo in acme/app other/app team/lib; do
     git clone -q --bare "$work/demo" "$work/remotes/$repo.git"
 done
-(ZDOTDIR="$work/zdot" SHELL=/bin/zsh exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
+# git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
+(ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file \
+    exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
 for _ in $(seq 1 100); do
     [[ -n "$(app_pid)" ]] && break
     sleep 0.1

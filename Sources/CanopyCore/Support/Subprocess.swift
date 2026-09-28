@@ -33,6 +33,11 @@ public final class SubprocessHandle: Sendable {
         state.withLock { $0.cancelled }
     }
 
+    /// True from when the process starts until it has exited.
+    public var isRunning: Bool {
+        state.withLock { $0.pid != nil }
+    }
+
     /// Kills the process and everything it started. One that has not started yet is killed as it starts.
     public func cancel() {
         state.withLock { state in

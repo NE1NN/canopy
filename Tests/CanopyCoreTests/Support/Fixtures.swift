@@ -100,12 +100,12 @@ enum Fixture {
 
     /// A GitRunner that fetches https://github.com/ URLs from `<dir>/remotes` instead, so plain git clones of GitHub
     /// URLs stay on this machine.
-    static func gitRedirectingGitHub(to dir: TempDir) -> GitRunner {
+    static func gitRedirectingGitHub(to dir: TempDir, executable: String = "/usr/bin/git") -> GitRunner {
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_CONFIG_COUNT"] = "1"
         environment["GIT_CONFIG_KEY_0"] = "url.file://\(dir.sub("remotes"))/.insteadOf"
         environment["GIT_CONFIG_VALUE_0"] = "https://github.com/"
-        return GitRunner(environment: environment)
+        return GitRunner(executable: executable, environment: environment)
     }
 
     static func worktree(repo: String, branch: String, at path: String) async throws {

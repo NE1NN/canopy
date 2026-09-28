@@ -13,20 +13,27 @@ struct CloneProgressTests {
             """
 
         #expect(
-            CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Receiving objects", fraction: 0.46))
+            CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Receiving objects", percent: 46))
     }
 
     @Test func dropsTheRemotePrefix() {
         let output = "remote: Compressing objects:  50% (5/10)\r"
 
         #expect(
-            CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Compressing objects", fraction: 0.5))
+            CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Compressing objects", percent: 50))
     }
 
     @Test func skipsALineStillBeingWritten() {
         let output = "Resolving deltas:  75% (3/4)\rResolving del"
 
-        #expect(CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Resolving deltas", fraction: 0.75))
+        #expect(CloneProgress.latest(in: Data(output.utf8)) == CloneProgress(phase: "Resolving deltas", percent: 75))
+    }
+
+    @Test func keepsGitsPercentExactly() {
+        let progress = CloneProgress.latest(in: Data("Receiving objects:  58% (58/100)\r".utf8))
+
+        #expect(progress?.percent == 58)
+        #expect(progress?.fraction == 0.58)
     }
 
     @Test func isNilBeforeAnyPercent() {

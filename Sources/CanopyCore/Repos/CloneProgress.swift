@@ -4,12 +4,14 @@ import Foundation
 public struct CloneProgress: Sendable, Equatable {
     /// What git is doing, such as "Receiving objects" or "Resolving deltas".
     public var phase: String
-    /// From 0 to 1, for this phase.
-    public var fraction: Double
+    /// From 0 to 100, for this phase, as git wrote it.
+    public var percent: Int
 
-    public init(phase: String, fraction: Double) {
+    public var fraction: Double { Double(percent) / 100 }
+
+    public init(phase: String, percent: Int) {
         self.phase = phase
-        self.fraction = fraction
+        self.percent = percent
     }
 
     /// The last complete progress line so far. git rewrites a line with `\r` as it goes, and gh passes git's through.
@@ -31,6 +33,6 @@ public struct CloneProgress: Sendable, Equatable {
         guard let percent = rest.firstIndex(of: "%"), let value = Int(rest[..<percent]), (0...100).contains(value),
             !phase.isEmpty
         else { return nil }
-        return CloneProgress(phase: String(phase), fraction: Double(value) / 100)
+        return CloneProgress(phase: String(phase), percent: value)
     }
 }

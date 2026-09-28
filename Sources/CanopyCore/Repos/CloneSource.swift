@@ -15,18 +15,30 @@ public struct CloneSource: Sendable, Equatable {
     public init(_ text: String) throws {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         self.text = text
-        // Anything starting with a dash would reach gh or git as an option.
-        guard !text.isEmpty, !text.hasPrefix("-") else { throw WorkspaceError.invalidCloneSource(text) }
+        // A leading dash would reach gh or git as an option, and `transport::address` runs a git remote helper.
+        guard !text.isEmpty, !text.hasPrefix("-"), !text.contains("::") else {
+            throw WorkspaceError.invalidCloneSource(text)
+        }
         if let location = Self.locate(text) {
-            let parts = location.path.split(separator: "/").map(String.init)
+            var parts = location.path.split(separator: "/").map(String.init)
+            var url = text
+            var github = GitHubRepo(remoteURL: text)
+            // A page on github.com, such as a branch or a pull request, names its repo first.
+            if github == nil, text.lowercased().hasPrefix("http"), parts.count > 2,
+                ["github.com", "www.github.com"].contains(location.host?.lowercased() ?? "")
+            {
+                parts = Array(parts.prefix(2))
+                url = "https://github.com/\(parts[0])/\(parts[1])"
+                github = GitHubRepo(remoteURL: url)
+            }
             var name = parts.last ?? ""
             if name.hasSuffix(".git") { name.removeLast(4) }
             let owner = parts.count > 1 ? parts[parts.count - 2] : location.host
             guard Self.isFolderName(name), owner.map(Self.isFolderName) ?? true else {
                 throw WorkspaceError.invalidCloneSource(text)
             }
-            github = GitHubRepo(remoteURL: text)
-            url = text
+            self.github = github
+            self.url = url
             self.owner = github?.owner ?? owner
             self.name = github?.name ?? name
         } else {
@@ -54,9 +66,10 @@ public struct CloneSource: Sendable, Equatable {
     }
 
     /// Whether a checkout whose origin is `origin` holds this repo. `gitHubRepo` is the GitHub repo behind `origin`,
-    /// found the way PR lookups find it, so SSH host aliases count. GitHub repos match by owner and name in any case.
-    public func isSameRepo(asOrigin origin: String, gitHubRepo: GitHubRepo?) -> Bool {
-        if let github {
+    /// found the way PR lookups find it, so SSH host aliases count. `sourceRepo` is the same for this source's URL, for
+    /// a source that reaches GitHub through an alias. GitHub repos match by owner and name in any case.
+    public func isSameRepo(asOrigin origin: String, gitHubRepo: GitHubRepo?, sourceRepo: GitHubRepo? = nil) -> Bool {
+        if let github = github ?? sourceRepo {
             guard let gitHubRepo else { return false }
             return github.owner.lowercased() == gitHubRepo.owner.lowercased()
                 && github.name.lowercased() == gitHubRepo.name.lowercased()

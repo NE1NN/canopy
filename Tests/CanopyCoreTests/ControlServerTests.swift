@@ -337,6 +337,29 @@ struct ControlServerTests {
         #expect(events[1].data["params"] == .object(["source": .string("acme/app")]))
     }
 
+    @Test func aCloneKeepsGoingWhenTheCLIGoesAway() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let started = dir.sub("started")
+        let gh = try Fixture.cloningGH(in: dir, before: "touch '\(started)'; sleep 1")
+        let (workspace, server, _, _) = try await startServer(dir, github: gh)
+        defer { server.stop() }
+
+        // Like Ctrl-C on `canopy repo clone`: the request goes out, and the connection closes before the reply.
+        let request = ControlRequest(
+            method: ControlMethod.repoClone, params: try .from(RepoCloneParams(source: "acme/app")))
+        let socketPath = CanopyHome(path: dir.sub("home")).socketPath
+        try await offPool {
+            let fd = try ControlClient.connect(to: socketPath)
+            _ = try ControlCodec.encodeLine(request).withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+            let deadline = Date().addingTimeInterval(20)
+            while !FileManager.default.fileExists(atPath: started), Date() < deadline { usleep(20_000) }
+            close(fd)
+        }
+
+        #expect(await eventually { await workspace.snapshot.repos.map(\.name) == ["app"] })
+    }
+
     @Test func repoCloneErrorsCarryCodes() async throws {
         let dir = try TempDir()
         let taken = try await Fixture.repo(in: dir, name: "taken")

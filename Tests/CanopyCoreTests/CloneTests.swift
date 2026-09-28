@@ -59,15 +59,24 @@ struct CloneTests {
         #expect(repo.name == "my-lib")
     }
 
-    @Test func clonesIntoAnEmptyFolder() async throws {
+    @Test func clonesIntoAnEmptyFolderWithoutReplacingIt() async throws {
         let dir = try TempDir()
         let bare = try await Fixture.remote(in: dir, "team/lib")
-        try FileManager.default.createDirectory(atPath: dir.sub("empty"), withIntermediateDirectories: true)
+        let folder = dir.sub("empty")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        // A shell sitting in the folder must still be in it afterwards, so it has to be the same folder.
+        func inode() throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: folder)[.systemFileNumber] as? Int
+        }
+        let before = try inode()
         let workspace = try await makeWorkspace(dir, github: Fixture.noGH(in: dir))
 
-        let repo = try await workspace.cloneRepo(bare, into: dir.sub("empty"))
+        let repo = try await workspace.cloneRepo(bare, into: folder)
 
-        #expect(repo.path == dir.sub("empty"))
+        #expect(repo.path == folder)
+        #expect(try inode() == before)
+        #expect(contents(folder)?.contains(".git") == true)
+        #expect(contents(dir.path)?.contains { $0.contains("canopy-clone") } == false)
     }
 
     @Test func tellsHowTheCloneIsGoing() async throws {
@@ -79,7 +88,7 @@ struct CloneTests {
 
         try await workspace.cloneRepo("acme/app") { progress in heard.withLock { $0.append(progress) } }
 
-        #expect(heard.withLock { $0.first } == CloneProgress(phase: "Receiving objects", fraction: 0.5))
+        #expect(heard.withLock { $0.first } == CloneProgress(phase: "Receiving objects", percent: 50))
     }
 
     @Test func logsWhereTheRepoWasClonedFrom() async throws {
@@ -120,6 +129,18 @@ struct CloneTests {
         let repo = try await workspace.cloneRepo("https://github.com/acme/app")
 
         #expect(repo.rows.map(\.branch) == ["main"])
+    }
+
+    @Test func aFailingGHDoesNotFallBackToGit() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let gh = try Fixture.gh(in: dir, "echo 'fatal: repository not found' >&2; exit 1")
+        let workspace = try await makeWorkspace(dir, github: gh, git: Fixture.gitRedirectingGitHub(to: dir))
+
+        await #expect(
+            throws: WorkspaceError.cloneFailed("https://github.com/acme/app", reason: "repository not found")
+        ) { try await workspace.cloneRepo("https://github.com/acme/app") }
+        #expect(contents(dir.sub("home/repos")) == nil)
     }
 
     @Test func ownerSlashRepoNeedsGHAndSaysHowToGetIt() async throws {
@@ -169,6 +190,36 @@ struct CloneTests {
         let workspace = try await makeWorkspace(dir, github: gh)
 
         let repo = try await workspace.cloneRepo("acme/app")
+
+        #expect(repo.path == folder)
+    }
+
+    @Test func recognizesTheSameRepoWhenTheSourceIsAnSSHAlias() async throws {
+        let dir = try TempDir()
+        let sshConfig = dir.sub("ssh_config")
+        try "Host github-work\n  HostName github.com\n".write(toFile: sshConfig, atomically: true, encoding: .utf8)
+        let folder = dir.sub("home/repos/acme/app")
+        try FileManager.default.createDirectory(atPath: dir.sub("home/repos/acme"), withIntermediateDirectories: true)
+        try await Fixture.repo(in: dir, name: "home/repos/acme/app")
+        try await Fixture.git.run(["remote", "add", "origin", "https://github.com/acme/app.git"], in: folder)
+        // Cloning would reach the network through the alias, so git refuses to.
+        let git = try Fixture.git(in: dir, before: #"[[ "$1" == clone ]] && exit 128"#)
+        let workspace = try await makeWorkspace(
+            dir, github: try Fixture.gh(in: dir, sshConfigFile: sshConfig, "exit 1"), git: git)
+
+        let repo = try await workspace.cloneRepo("git@github-work:acme/app.git")
+
+        #expect(repo.path == folder)
+    }
+
+    @Test func recognizesAnOriginThatOnlyMatchesAfterAnInsteadOfRule() async throws {
+        let dir = try TempDir()
+        let folder = try await Fixture.repo(in: dir, name: "short")
+        try await Fixture.git.run(["config", "url.https://github.com/.insteadOf", "gh:"], in: folder)
+        try await Fixture.git.run(["remote", "add", "origin", "gh:acme/app"], in: folder)
+        let workspace = try await makeWorkspace(dir, github: try Fixture.gh(in: dir, "exit 1"))
+
+        let repo = try await workspace.cloneRepo("acme/app", into: folder)
 
         #expect(repo.path == folder)
     }
@@ -279,16 +330,20 @@ struct CloneTests {
     @Test func stoppingClonesDeletesWhatTheyWroteAtOnce() async throws {
         let dir = try TempDir()
         try await Fixture.remote(in: dir, "acme/app")
-        let started = dir.sub("started")
-        let gh = try Fixture.cloningGH(in: dir, before: "mkdir -p \"$4\"; touch \"$4/half\" '\(started)'; sleep 30")
+        let sleeper = dir.sub("sleeper.pid")
+        let gh = try Fixture.cloningGH(
+            in: dir, before: "mkdir -p \"$4\"; touch \"$4/half\"; sleep 30 & echo $! > '\(sleeper)'; wait")
         let workspace = try await makeWorkspace(dir, github: gh)
 
         let clone = Task { try await workspace.cloneRepo("acme/app") }
-        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        #expect(await eventually { FileManager.default.fileExists(atPath: sleeper) })
         workspace.stopClones()
 
         #expect(contents(dir.sub("home/repos")) == nil)
         await #expect(throws: WorkspaceError.cloneCancelled) { try await clone.value }
+        let pid = try #require(
+            Int32(String(contentsOfFile: sleeper, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(await eventually { kill(pid, 0) != 0 })
     }
 
     // MARK: Racing
@@ -307,6 +362,47 @@ struct CloneTests {
         #expect(paths == [dir.sub("home/repos/acme/app"), dir.sub("home/repos/acme/app")])
         #expect(try String(contentsOfFile: calls, encoding: .utf8) == "x\n")
         #expect(await workspace.snapshot.repos.count == 1)
+    }
+
+    @Test func cancellingAQueuedCloneLeavesTheOneAheadAlone() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let (started, go) = (dir.sub("started"), dir.sub("go"))
+        let gh = try Fixture.cloningGH(
+            in: dir, before: "touch '\(started)'; while [[ ! -e '\(go)' ]]; do sleep 0.05; done")
+        let workspace = try await makeWorkspace(dir, github: gh)
+
+        let first = Task { try await workspace.cloneRepo("acme/app") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        let second = Task { try await workspace.cloneRepo("acme/app") }
+        try await Task.sleep(for: .milliseconds(200))
+        second.cancel()
+        FileManager.default.createFile(atPath: go, contents: nil)
+
+        let repo = try await first.value
+        await #expect(throws: WorkspaceError.cloneCancelled) { try await second.value }
+        #expect(await workspace.snapshot.repos.map(\.path) == [repo.path])
+        #expect(contents(dir.sub("home/repos/acme")) == ["app"])
+    }
+
+    @Test func aCloneDoesNotWaitBehindTheRepositorysOtherGitWork() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let fetching = dir.sub("fetching")
+        let wrapper = try Fixture.git(in: dir, before: #"[[ "$1" == fetch ]] && { touch "\#(fetching)"; sleep 5; }"#)
+        let git = Fixture.gitRedirectingGitHub(to: dir, executable: wrapper.executable)
+        let workspace = try await makeWorkspace(dir, github: try Fixture.cloningGH(in: dir), git: git)
+        let repo = try await workspace.cloneRepo("acme/app")
+
+        let creating = Task { try await workspace.createRow(repoPath: repo.path, branch: "feat/x") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: fetching) })
+        let clock = ContinuousClock()
+        let start = clock.now
+        let again = try await workspace.cloneRepo("acme/app")
+
+        #expect(clock.now - start < .seconds(3))
+        #expect(again.path == repo.path)
+        _ = try await creating.value
     }
 
     @Test func aFolderFilledWithTheSameRepoDuringTheCloneIsRegistered() async throws {

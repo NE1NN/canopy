@@ -20,7 +20,10 @@ if [[ "${1:-}" == stop ]]; then
     [[ -f "$state" ]] || exit 0
     # shellcheck source=/dev/null
     source "$state"
-    kill "$pid" 2>/dev/null || true
+    # Only the dev build this script started: a pid can be reused once that app has quit.
+    if [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *"Canopy Dev.app/Contents/MacOS/Canopy" ]]; then
+        kill "$pid" 2>/dev/null || true
+    fi
     # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
     if [[ "$(basename "$work")" != cnp.* || ! -x "$work/bin/gh" || ! -d "$work/zdot" ]]; then
         echo "not deleting $work: it does not look like a fixture folder" >&2
@@ -112,7 +115,9 @@ done
 
 # Either appearance, whatever the Mac is set to.
 if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES); else args=(-AppleInterfaceStyle Dark); fi
-(ZDOTDIR="$work/zdot" SHELL=/bin/zsh exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
+# git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
+(ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file \
+    exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
 # Written at once, so `stop` can clean up even if a later step fails. The subshell execs, so $! is the app.
 printf 'pid=%s\nwork=%s\n' "$!" "$work" > "$state"
 for _ in $(seq 1 100); do

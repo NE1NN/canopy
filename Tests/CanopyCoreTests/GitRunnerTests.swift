@@ -119,10 +119,13 @@ struct GitRunnerTests {
         let seen = await eventually {
             String(decoding: handle.errorOutput(), as: UTF8.self).contains("Receiving objects:  50%")
         }
+        let wasRunning = handle.isRunning
         handle.cancel()
         _ = try? await run.value
 
         #expect(seen)
+        #expect(wasRunning)
+        #expect(!handle.isRunning)
         #expect(handle.errorOutput().isEmpty)
     }
 }

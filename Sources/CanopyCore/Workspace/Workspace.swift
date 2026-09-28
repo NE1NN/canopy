@@ -15,7 +15,9 @@ public actor Workspace {
     var watchers: [String: DirectoryWatcher] = [:]
     var pendingRefreshes: [String: Task<Void, Never>] = [:]
     var refreshQueues: [String: Task<Void, Never>] = [:]
-    var gitQueues: [String: Task<Void, Never>] = [:]
+    var gitQueues = KeyedQueue()
+    /// Clones of each destination folder, apart from the git work of the repo that folder may already hold.
+    var cloneQueues = KeyedQueue()
     var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
@@ -455,13 +457,7 @@ public actor Workspace {
         repoPath: String,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let previous = gitQueues[repoPath]
-        let task = Task {
-            await previous?.value
-            return try await operation()
-        }
-        gitQueues[repoPath] = Task { _ = try? await task.value }
-        return try await task.value
+        try await gitQueues.enqueue(repoPath, operation).value
     }
 
     private func requireUnregistered(_ path: String, except current: String) throws {
@@ -516,5 +512,23 @@ public actor Workspace {
             guard !Task.isCancelled else { return }
             await self?.refresh(repoPath: repoPath)
         }
+    }
+}
+
+/// Work that runs one at a time per key, in the order it was queued.
+struct KeyedQueue {
+    private var last: [String: Task<Void, Never>] = [:]
+
+    /// Starts `operation` once everything queued before it under `key` has finished.
+    mutating func enqueue<T: Sendable>(
+        _ key: String, _ operation: @escaping @Sendable () async throws -> T
+    ) -> Task<T, any Error> {
+        let previous = last[key]
+        let task = Task {
+            await previous?.value
+            return try await operation()
+        }
+        last[key] = Task { _ = try? await task.value }
+        return task
     }
 }
