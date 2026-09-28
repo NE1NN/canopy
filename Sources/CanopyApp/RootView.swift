@@ -39,6 +39,9 @@ struct RootView: View {
         }
         .animation(.snappy, value: model.toast)
         .fileImporter(isPresented: $model.isChoosingFolder, allowedContentTypes: [.folder]) { model.folderChosen($0) }
+        .sheet(isPresented: $model.isShowingCloneSheet) {
+            CloneRepoSheet()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }

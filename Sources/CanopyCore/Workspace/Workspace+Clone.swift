@@ -22,6 +22,11 @@ extension Workspace {
         }
     }
 
+    /// The user's GitHub repos and their organizations', for picking one to clone.
+    public nonisolated func gitHubRepos() async -> Result<[GitHubRepoSummary], GHFailure> {
+        await github.viewerRepos()
+    }
+
     /// Stops every clone under way and deletes what they wrote, without waiting, for quitting.
     public nonisolated func stopClones() {
         runningClones.stopAll()

@@ -18,6 +18,28 @@ public struct GitHubRepoSummary: Sendable, Equatable, Identifiable {
     }
 }
 
+extension GitHubRepoSummary {
+    /// The repos whose `owner/name` holds what was typed, ignoring case. A pasted GitHub URL matches its own repo.
+    public static func filter(_ repos: [GitHubRepoSummary], by typed: String) -> [GitHubRepoSummary] {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return repos }
+        let wanted = (try? CloneSource(text))?.github?.nameWithOwner ?? text
+        return repos.filter { $0.nameWithOwner.localizedCaseInsensitiveContains(wanted) }
+    }
+}
+
+extension GHFailure {
+    /// What the clone sheet shows in place of the repo list, with the fix.
+    public var repoListNote: String {
+        switch self {
+        case .ghMissing:
+            "Install gh to see your repos here: `brew install gh`, then `gh auth login`. You can still paste a URL."
+        case .notLoggedIn: "Run `gh auth login` to see your repos here. You can still paste a URL."
+        case .failed(let message): "Your repos did not load: \(message)"
+        }
+    }
+}
+
 /// The user's own repos and those of their organizations, the 100 most recently pushed.
 enum RepoListQuery {
     static let text = """

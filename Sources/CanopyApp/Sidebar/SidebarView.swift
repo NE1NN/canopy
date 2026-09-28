@@ -43,8 +43,9 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !model.snapshot.repos.isEmpty {
                     SectionLabel(title: "Repos") {
-                        IconButton(title: "Add Repo…", systemImage: "plus", shortcut: "⇧⌘O") {
-                            model.chooseFolder(for: .addRepo)
+                        IconMenu(title: "Add Repo", systemImage: "plus") {
+                            Button("Add Local Repo…") { model.chooseFolder(for: .addRepo) }
+                            Button("Clone from GitHub…", action: model.showCloneSheet)
                         }
                     }
                 }
@@ -191,24 +192,11 @@ struct RepoHeaderView: View {
 struct RepoMenu: View {
     let repo: RepoSnapshot
     let onNewRow: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
-        Menu {
+        IconMenu(title: "More for \(repo.name)", systemImage: "ellipsis") {
             RepoMenuItems(repo: repo, onNewRow: onNewRow)
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .frame(width: 22, height: 22)
-        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
-        .foregroundStyle(isHovering ? .primary : .secondary)
-        .onHover { isHovering = $0 }
-        .help("More for \(repo.name)")
-        .accessibilityLabel("More for \(repo.name)")
     }
 }
 
