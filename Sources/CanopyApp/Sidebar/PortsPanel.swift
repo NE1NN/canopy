@@ -62,7 +62,7 @@ struct PortGroupView: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 8) {
                 Button {
-                    model.selectedRowPath = group.rowPath
+                    model.reveal(group.rowPath)
                 } label: {
                     HStack(spacing: 8) {
                         Group {

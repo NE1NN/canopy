@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots:
-# three repos, rows with open, draft, merged, and closed PRs, other worktrees, running programs, listening ports,
-# and a split tab. Nothing outside the throwaway folder is touched.
+# three repos, rows with open, draft, merged, and closed PRs, two groups, other worktrees, running programs,
+# listening ports, and a split tab. Nothing outside the throwaway folder is touched.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -129,13 +129,20 @@ for repo in web-app api-server docs; do "$cli" repo add "$work/$repo" >/dev/null
 "$cli" row new feat/onboarding-flow --repo web-app >/dev/null
 "$cli" row new fix/login-redirect --repo web-app >/dev/null
 "$cli" row new feat/checkout-redesign --repo web-app >/dev/null
+"$cli" row new chore/bump-deps --repo web-app >/dev/null
 "$cli" row new feat/rate-limits --repo api-server >/dev/null
+"$cli" group new Review --repo web-app >/dev/null
+"$cli" group new Later --repo web-app >/dev/null
+"$cli" row move feat/checkout-redesign --repo web-app --group Review >/dev/null
+"$cli" row move feat/onboarding-flow --repo web-app --group Review >/dev/null
+"$cli" row move chore/bump-deps --repo web-app --group Later >/dev/null
 git -C "$work/web-app" worktree add -q -b hotfix/cart-total "$work/elsewhere/cart-total"
 git -C "$work/web-app" worktree add -q -b spike/new-parser "$work/elsewhere/new-parser"
 # Remotes come after the rows, so creating the rows does not fetch. The stand-in gh answers for them.
 git -C "$work/web-app" remote add origin https://github.com/acme/web-app.git
 git -C "$work/api-server" remote add origin https://github.com/acme/api-server.git
 "$cli" pr feat/onboarding-flow --repo web-app --refresh >/dev/null
+"$cli" pr feat/rate-limits --repo api-server --refresh >/dev/null || true
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 sleep 1
 

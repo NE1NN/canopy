@@ -5,6 +5,7 @@ struct NewRowSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let repo: RepoSnapshot
+    @State var group: String?
     @State private var branch = ""
     @State private var base = ""
     @State private var isCreating = false
@@ -17,6 +18,15 @@ struct NewRowSheet: View {
             Form {
                 TextField("Branch", text: $branch, prompt: Text("feat/my-change"))
                 TextField("Start from", text: $base, prompt: Text("origin's default branch"))
+                if !repo.groups.isEmpty {
+                    Picker("Group", selection: $group) {
+                        Text("No Group").tag(String?.none)
+                        Divider()
+                        ForEach(repo.groups) { group in
+                            Text(group.name).tag(Optional(group.name))
+                        }
+                    }
+                }
             }
             .formStyle(.columns)
             .disabled(isCreating)
@@ -51,7 +61,8 @@ struct NewRowSheet: View {
         error = nil
         let base = base.trimmingCharacters(in: .whitespaces)
         Task {
-            error = await model.createRow(in: repo, branch: trimmedBranch, base: base.isEmpty ? nil : base)
+            error = await model.createRow(
+                in: repo, branch: trimmedBranch, base: base.isEmpty ? nil : base, group: group)
             isCreating = false
             if error == nil {
                 dismiss()

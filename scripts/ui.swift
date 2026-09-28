@@ -7,7 +7,11 @@
 //   ui type <pid> <text>
 //   ui move <pid> <x> <y>                   points from the window's top-left, as in a window shot divided by 2
 //   ui click <pid> <x> <y> [count]
+//   ui rightclick <pid> <x> <y>             opens a context menu
 //   ui drag <pid> <x1> <y1> <x2> <y2>
+//   ui down <pid> <x> <y>                   press the button and keep it held, for a shot in the middle of a drag
+//   ui drag-to <pid> <x> <y>                move there with the button held, from wherever the pointer is
+//   ui up <pid> <x> <y>                     let go there
 //   ui scroll <pid> <x> <y> <lines>         positive lines scroll up, into the scrollback
 //
 // Keys and text go to the app alone. Pointer events go through the system, so they refuse to run unless the app is
@@ -63,8 +67,8 @@ func post(_ event: CGEvent) {
     usleep(15_000)
 }
 
-func mouse(_ type: CGEventType, at point: CGPoint, clickCount: Int64 = 1) {
-    let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)!
+func mouse(_ type: CGEventType, at point: CGPoint, clickCount: Int64 = 1, button: CGMouseButton = .left) {
+    let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button)!
     event.setIntegerValueField(.mouseEventClickState, value: clickCount)
     event.post(tap: .cghidEventTap)
     usleep(20_000)
@@ -121,6 +125,30 @@ case "click":
         mouse(.leftMouseDown, at: point, clickCount: Int64(click))
         mouse(.leftMouseUp, at: point, clickCount: Int64(click))
     }
+case "rightclick":
+    requireFrontmost()
+    let point = windowPoint(2)
+    mouse(.mouseMoved, at: point)
+    mouse(.rightMouseDown, at: point, button: .right)
+    mouse(.rightMouseUp, at: point, button: .right)
+case "down":
+    requireFrontmost()
+    let point = windowPoint(2)
+    mouse(.mouseMoved, at: point)
+    mouse(.leftMouseDown, at: point)
+case "drag-to":
+    requireFrontmost()
+    let from = CGEvent(source: nil)?.location ?? windowPoint(2)
+    let to = windowPoint(2)
+    for step in 1...20 {
+        let t = Double(step) / 20
+        mouse(.leftMouseDragged, at: CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
+    }
+case "up":
+    requireFrontmost()
+    let point = windowPoint(2)
+    mouse(.leftMouseDragged, at: point)
+    mouse(.leftMouseUp, at: point)
 case "drag":
     requireFrontmost()
     let from = windowPoint(2)
