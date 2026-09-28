@@ -253,7 +253,7 @@ struct WorkspaceTests {
         exec /usr/bin/git "$@"
         """.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        let git = GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+        let git = GitRunner(executable: script, environment: Fixture.environment)
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
         try await workspace.start()
         try await workspace.addRepo(path: repo)

@@ -4,8 +4,13 @@ import Testing
 @testable import CanopyCore
 
 enum Fixture {
+    /// This process's environment without the SDKROOT that `swift test` adds, which the app never has. /usr/bin/git asks
+    /// xcrun which git to run, and xcrun caches its answer per SDKROOT. On a fresh CI runner every git in the first wave
+    /// of tests missed that cache and started xcodebuild, a hundred at once on three CPUs.
+    static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
+
     /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
-    static let git = GitRunner(environment: ProcessInfo.processInfo.environment)
+    static let git = GitRunner(environment: environment)
 
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
@@ -34,7 +39,7 @@ enum Fixture {
         let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        return GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+        return GitRunner(executable: script, environment: environment)
     }
 
     /// A GitHubCLI whose `gh` is a bash script running `body`, alone on PATH.
