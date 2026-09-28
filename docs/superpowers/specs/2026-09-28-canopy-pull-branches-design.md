@@ -75,7 +75,7 @@ Agents that mean to pick up someone else's work pass `--existing`.
 |---|---|
 | The local branch is only behind `origin/<branch>` | Fast-forwards it before checking it out, the way `gh pr checkout` runs `merge --ff-only`, and notes how many commits it moved. |
 | The local branch is only ahead | Checks it out as it is and notes the unpushed commits. |
-| The local branch has diverged | Checks it out as it is and warns with both counts and the two ways to fix it: `git pull --rebase` to keep the local commits, or `git reset --hard origin/<branch>` to drop them. Canopy never resets on its own. |
+| The local branch has diverged | Checks it out as it is and warns with both counts and the two ways to fix it: `git rebase origin/<branch>` to keep the local commits on top, or `git reset --hard origin/<branch>` to drop them. Canopy never resets on its own. |
 | The branch exists locally but not on origin | Checks it out as it is. If its upstream is set but gone from origin, warns that it was probably merged and deleted. If the fetch failed, keeps the warning that the row starts from local refs. |
 | The branch already has a Canopy or adopted row | Fails with `branch_checked_out`, naming the row's path and `canopy row select`. |
 | The branch is checked out in the main checkout | Fails with `branch_checked_out`, naming the main checkout. |
