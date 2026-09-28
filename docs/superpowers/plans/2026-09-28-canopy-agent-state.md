@@ -60,8 +60,7 @@ Found while building; the spec was corrected where it said otherwise.
    A SwiftUI `PhaseAnimator` pulse kept the dev app at about 9% CPU with four agents working, against 0.3% idle.
    The layer animation, which the window server runs, measured 0.3 to 0.5%.
 5. **The CLI passes `CLAUDE_CONFIG_DIR` to an app it launches**, so the install offer finds the same Claude Code settings as the caller, and `make e2e` keeps the offer off the real file.
-6. **`term send --enter` presses Return once the program has read the text** (Task 10), which the spec did not cover.
-7. **The UI fixture puts agents in every state** with `canopy term state`, gives the app its own `CLAUDE_CONFIG_DIR`, and with `UI_FIXTURE_HOOKS_OFFER=1` shows the install offer.
+6. **The UI fixture puts agents in every state** with `canopy term state`, gives the app its own `CLAUDE_CONFIG_DIR`, and with `UI_FIXTURE_HOOKS_OFFER=1` shows the install offer.
 
 ## Decisions to Review
 
@@ -4607,182 +4606,6 @@ make format && make lint
 git add -A && git commit -m "feat: a collapsed group's header shows its rows' agent dot"
 ```
 
-## Task 10: `term send --enter` presses Return once the program has read the text
-
-Found in the real Claude Code check.
-`term send` wrote the text and Return together, and Claude Code takes text and Return that arrive in one read as a paste, so a long prompt was never submitted.
-A 31-character prompt went through, and a 120-character one did not.
-The spec's `term send` then `term wait` flow for agents depends on this, and so does any agent answering another through `term send`.
-A fixed pause before Return is a guess that fails when the machine is busy, so `send` waits until the program has read the text.
-On macOS, FIONREAD on a terminal's master side counts the input its program has not read yet, which a small C probe confirmed: it read 5 after writing `hello`, and 0 once the other side read it.
-
-**Files:**
-- Modify: `Sources/CPty/pty.c`, `Sources/CPty/include/CPty.h`, `Sources/CanopyCore/Terminal/PtyProcess.swift`, `Sources/CanopyCore/Terminal/Pane.swift`, `Sources/CanopyCore/Rows/RowLifecycle+Terminals.swift`
-- Test: `Tests/CanopyCoreTests/PaneTests.swift`
-
-**Interfaces:**
-- Produces: `canopy_pty_unread_input(int master)`, `PtyProcess.waitUntilInputIsRead(timeout:) async`, `Pane.send(_:enter:) async`, and `RowLifecycle.sendToTerminal(_:)` now `async`.
-
-- [ ] **Step 1: Write the failing test**
-
-A Python program reads the terminal raw and prints each chunk it gets.
-It prints its ready marker as `"raw-"+"ready"`, so the wait matches its output rather than the command line the shell echoed; matching the echoed line sent the text before the program was reading, and the test failed under load for that reason alone.
-
-`Tests/CanopyCoreTests/PaneTests.swift`:
-
-```diff
-@@ -29,6 +29,28 @@ struct PaneTests {
-         #expect(await eventually { pane.screen.text.contains("it's|héllo ✓ feat/x") })
-     }
- 
-+    @Test func sendingWithEnterPressesReturnOnItsOwn() async throws {
-+        let dir = try TempDir()
-+        let terminals = Fixture.terminals(dir)
-+        defer { terminals.closeAll() }
-+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
-+        // Reads the terminal raw and prints each chunk it gets, until one holds Return.
-+        let reader = #"""
-+            python3 -c 'import os,sys,tty,termios;fd=0;old=termios.tcgetattr(fd);tty.setraw(fd);print("raw-"+"ready",end="\r\n",flush=True);c=[]
-+            while not c or b"\r" not in c[-1]: c.append(os.read(fd,4096))
-+            termios.tcsetattr(fd,termios.TCSADRAIN,old);print("chunks:"+"|".join(x.decode() for x in c).replace("\r","<CR>"))'
-+            """#
-+        await pane.run(reader)
-+        // Matches the program's output, not the command line the shell echoed.
-+        #expect(await eventually { pane.screen.text.contains("raw-ready") })
-+
-+        // A program such as Claude Code takes text and Return in one read as a paste, and does not submit it.
-+        await pane.send("a prompt long enough to look pasted", enter: true)
-+
-+        #expect(await eventually { pane.screen.text.contains("chunks:a prompt long enough to look pasted|<CR>") })
-+        print("SCREEN>>>", pane.screen.text.suffix(500), "<<<")
-+    }
-+
-     @Test func exitShowsItsCodeAndReturnRestarts() async throws {
-         let dir = try TempDir()
-         let terminals = Fixture.terminals(dir)
-```
-
-- [ ] **Step 2: Run it to see it fail**
-
-With `send` first written the way `term send` worked, `type(text + "\r")`, the program prints `chunks:a prompt long enough to look pasted<CR>`, one chunk, and the test fails.
-
-- [ ] **Step 3: Wait for the program to read the text**
-
-`Sources/CPty/include/CPty.h`:
-
-```diff
-@@ -14,4 +14,8 @@ pid_t canopy_pty_spawn(
- /// Sets the terminal size the child sees. Returns 0, or -1 with errno set.
- int canopy_pty_resize(int master, unsigned short columns, unsigned short rows);
- 
-+/// How many bytes of input the child has not read yet. On macOS, FIONREAD on the master side counts the child's
-+/// unread input rather than output waiting for the master. Returns -1 with errno set on failure.
-+int canopy_pty_unread_input(int master);
-+
- #endif
-```
-
-`Sources/CPty/pty.c`:
-
-```diff
-@@ -95,3 +95,11 @@ int canopy_pty_resize(int master, unsigned short columns, unsigned short rows)
-     struct winsize size = {.ws_row = rows, .ws_col = columns};
-     return ioctl(master, TIOCSWINSZ, &size);
- }
-+
-+int canopy_pty_unread_input(int master) {
-+    int count = 0;
-+    if (ioctl(master, FIONREAD, &count) != 0) {
-+        return -1;
-+    }
-+    return count;
-+}
-```
-
-`Sources/CanopyCore/Terminal/PtyProcess.swift`:
-
-```diff
-@@ -127,6 +127,19 @@ public final class PtyProcess: @unchecked Sendable {
-         write(Data(text.utf8))
-     }
- 
-+    /// Returns once the program has read what was written so far, or after `timeout`.
-+    public func waitUntilInputIsRead(timeout: Duration) async {
-+        await withCheckedContinuation { continuation in
-+            writeQueue.async { continuation.resume() }
-+        }
-+        let deadline = ContinuousClock.now + timeout
-+        while ContinuousClock.now < deadline {
-+            let unread = state.withLock { $0.fd >= 0 ? canopy_pty_unread_input($0.fd) : 0 }
-+            if unread <= 0 { return }
-+            try? await Task.sleep(for: .milliseconds(10))
-+        }
-+    }
-+
-     public func resize(_ size: TerminalSize) {
-         state.withLock { state in
-             guard state.fd >= 0 else { return }
-```
-
-`Sources/CanopyCore/Terminal/Pane.swift`:
-
-```diff
-@@ -115,7 +115,18 @@ public final class Pane: Identifiable {
-         process?.write(command + "\r")
-     }
- 
--    /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
-+    /// `canopy term send`: types the text, then Return once the program has read the text. A program such as Claude
-+    /// Code takes text and Return that arrive in one read as a paste, and does not submit it.
-+    public func send(_ text: String, enter: Bool) async {
-+        type(text)
-+        guard enter else { return }
-+        if !text.isEmpty {
-+            await process?.waitUntilInputIsRead(timeout: .seconds(1))
-+        }
-+        type("\r")
-+    }
-+
-+    /// Sends text as if typed. An exited pane ignores it.
-     public func type(_ text: String) {
-         guard case .running = status else { return }
-         process?.write(text)
-```
-
-`Sources/CanopyCore/Rows/RowLifecycle+Terminals.swift`:
-
-```diff
-@@ -31,10 +31,10 @@ extension RowLifecycle {
-         return TermNewResult(pane: pane.id.description, tab: tab.name)
-     }
- 
--    public func sendToTerminal(_ params: TermSendParams) throws {
-+    public func sendToTerminal(_ params: TermSendParams) async throws {
-         let pane = try terminal(params.pane)
-         guard case .running = pane.status else { throw WorkspaceError.paneExited(params.pane) }
--        pane.type(params.text + (params.enter ? "\r" : ""))
-+        await pane.send(params.text, enter: params.enter)
-     }
- 
-     public func readTerminal(_ params: TermReadParams) throws -> TermReadResult {
-```
-
-- [ ] **Step 4: Run the tests under load**
-
-Run: `for i in 1 2 3 4; do LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(scripts/test-flags.sh) --filter "PaneTests|ControlServerTests|PaneAgentStateTests|TerminalStoreAgentTests|CommandLoggingTests"; done`
-Expected: every run passes.
-
-- [ ] **Step 5: Check it with Claude Code**
-
-In a pane of the dev fixture running `claude`, one `canopy term send <pane> "<a 120-character prompt>" --enter` submits the prompt, where before it sat in the input box.
-
-- [ ] **Step 6: Commit**
-
-```bash
-make format && make lint
-git add -A && git commit -m "fix: term send presses Return once the program has read the text"
-```
-
 ## Checks
 
 ### Every commit on its own
@@ -4801,7 +4624,6 @@ Each commit was checked out alone and run through `make lint`, `swift build`, an
 | feat: canopy term state, term wait, hooks, and agent-hook | clean | 0 | 485 pass |
 | feat: agent dots in the sidebar, tabs, and panes, with sounds and the hooks offer | clean | 0 | 490 pass |
 | feat: a collapsed group's header shows its rows' agent dot | clean | 0 | 491, the same flake once, then 2 clean runs |
-| fix: term send presses Return once the program has read the text | clean | 0 | 492 pass |
 
 ### UI
 
@@ -4835,9 +4657,58 @@ Claude Code 2.1.283 ran in a pane of the dev fixture as `claude --settings "$wor
 | `/exit` | cleared (`SessionEnd`) |
 | `claude -p` | working, done, then cleared, so the inline `Stop` arrived before it exited |
 
-Before Task 10, text and Return sent in one `term send --enter` landed in Claude Code as a paste, so the steps sent the text and then Return on their own.
-After it, one `term send --enter` submitted a 95-character prompt and the 120-character one that had failed, and `/exit` cleared the pane.
+Text and Return sent in one `term send --enter` land in Claude Code as a paste: a 31-character prompt was submitted, and a 120-character one sat in the input box.
+The steps sent the text and then Return on its own.
+The `fix/term-send-enter` row fixes `term send` itself, so this PR leaves it alone.
 
 ## After Review
 
-Filled in after the independent review.
+An independent Opus reviewer read `git diff origin/main...HEAD` with the spec and this plan.
+It found nothing high severity.
+The fixes are in `fix: review findings for agent state`, each with a test.
+
+1. **Terminal reports counted as typed input** (medium).
+   Focus changes, mouse reports, and replies to terminal queries reach `Pane.input` like keys, so clicking into a finished pane made its done stale and a later `term wait` blocked.
+   Fixed: `PaneAgent.isTerminalReport` leaves them out, and only keys and `term send` text move the input time.
+   Tests: `whatTheTerminalSendsOnItsOwnIsNotAKey`, `focusAndMouseReportsDoNotMakeAStateStale`.
+2. **Every keystroke redrew the dots** (low to medium).
+   The input time lived in the observed `agent`.
+   Fixed: it is `Pane.lastInput`, outside observation, and `Pane.agentIsFresh` reads it.
+3. **A `term wait` whose client went away kept waiting** (medium).
+   Fixed in part: the wait now ends with `CancellationError` when its task is cancelled, and the timeout is capped at a year.
+   Not changed: the control server does not cancel a request when its client closes, because it cannot tell a killed client from one that half-closed and still wants the reply, which `halfClosedConnectionsStillGetTheirReply` relies on.
+   An abandoned wait therefore holds one observer and one sleeping task until its timeout.
+   Test: `aCancelledWaitEndsAndStopsWatching`.
+4. **`agent_completed` meant done** (medium).
+   It reports a background session finishing, so it could turn a pane green, with Glass, while its own agent waited on a prompt.
+   Fixed: it maps to nothing, the hook matcher leaves it out, and the spec says why.
+   Test: `otherNotificationsAndEventsMapToNothing`.
+5. **One odd field dropped a whole hook event** (low).
+   A `Stop` whose `background_tasks` changed shape would leave a pane working.
+   Fixed: only `hook_event_name` must decode, and other fields read as missing when they do not fit.
+   Test: `aFieldThatChangedShapeReadsAsMissing`.
+6. **A huge timeout crashed the app** (low).
+   `Int64(timeout * 1000)` trapped past 9.2e15 seconds from a raw socket client.
+   Fixed with the one-year cap; test in `agentRequestsFailWithCodes`.
+7. **An exit nobody saw kept its dot** (low).
+   The state clears on the busy-to-idle edge, which no refresh sees while the window is hidden.
+   Fixed: a report that arrives while a program runs sets the baseline at once.
+   Test: `anExitWhileNoRefreshRanStillClearsTheState`.
+8. **A repeated key in the settings file** (low).
+   `OrderedJSON` read the first, where `JSON.parse` reads the last.
+   Fixed; test `aRepeatedKeyIsReadAsItsLastOne`.
+   Not changed: `status` compares handlers with their key order, so a file rewritten with sorted keys shows as outdated until the next install fixes it; and the rename keeps permissions but not extended attributes, ACLs, or hard links.
+9. **Spec and code disagreed** (low).
+   The spec now lists `term.state`'s `question`, `takesOver`, and `releases`, says keys sent with `term send` log `cli`, says every `hooks` command warns about `disableAllHooks`, and adds a risk: the author's own `PermissionRequest` or `Stop` hooks can change what Claude Code does after Canopy's hook reported.
+10. **`term send --enter` was no longer atomic** (low).
+    It no longer applies: the `term send` fix left this branch, since the `fix/term-send-enter` row fixes it more fully, with bracketed paste.
+
+The whole suite then passed, 497 of 497.
+
+**A flake from `main`.**
+`ControlServerTests` fails about once in five full runs with "Canopy closed the connection before replying", in tests from `main` such as `repoCloneAnswersLikeRepoAddAndIsLogged` and in this branch's `agentRequestsFailWithCodes`.
+With logging added, the client's `read` got EBADF (errno 9) on its socket, fd 448, during a `repo.clone` call, and the server logged no receive error.
+So something in the test process closes the client's descriptor number while the client still uses it.
+Nothing in `Sources` or the tests closes a descriptor twice: `Subprocess`, `InstanceLock`, `ActivityLog`, the pty's cancel handler, and the tests' own sockets each close once.
+PR 10's spy interposed `close` only, and so would miss `close$NOCANCEL` and guarded closes inside system libraries.
+The `fix/control-socket-flake` row is working on it, so this PR leaves it there.
