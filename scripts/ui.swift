@@ -1,7 +1,8 @@
 // Drives a running Canopy for UI checks, alongside window-shot.swift. Build it once, since `swift` takes seconds to
 // start: swiftc -O -o build/ui scripts/ui.swift
 //
-//   ui activate <pid>                       bring the app to the front
+//   ui activate <pid>                       bring the app to the front, clicking its window's empty title strip
+//                                           when asking is not enough
 //   ui frame <pid>                          print the main window's frame in screen points
 //   ui key <pid> <keycode> [cmd] [shift] [opt] [ctrl]
 //   ui type <pid> <text>
@@ -55,6 +56,19 @@ func windowPoint(_ xIndex: Int) -> CGPoint {
     return CGPoint(x: frame.minX + number(xIndex), y: frame.minY + number(xIndex + 1))
 }
 
+/// The app whose window a click at `point` would land on: the frontmost on-screen window there, of any layer.
+func windowOwner(at point: CGPoint) -> pid_t? {
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    for window in windows {
+        guard let bounds = window[kCGWindowBounds as String],
+            let frame = CGRect(dictionaryRepresentation: bounds as! CFDictionary), frame.contains(point),
+            (window[kCGWindowAlpha as String] as? Double ?? 1) > 0
+        else { continue }
+        return window[kCGWindowOwnerPID as String] as? pid_t
+    }
+    return nil
+}
+
 func requireFrontmost() {
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
         FileHandle.standardError.write(Data("refusing to \(args[0]): the app is not frontmost\n".utf8))
@@ -92,6 +106,18 @@ switch args[0] {
 case "activate":
     NSRunningApplication(processIdentifier: pid)?.activate()
     usleep(300_000)
+    // Since macOS 14 an app in the background cannot hand the front to another, but a click on a window still brings
+    // its app forward. The sidebar's title strip, right of the window buttons, does nothing else when clicked.
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid {
+        let frame = windowFrame()
+        let point = CGPoint(x: frame.minX + 200, y: frame.minY + 12)
+        if windowOwner(at: point) == pid {
+            mouse(.mouseMoved, at: point)
+            mouse(.leftMouseDown, at: point)
+            mouse(.leftMouseUp, at: point)
+            usleep(300_000)
+        }
+    }
     print(NSWorkspace.shared.frontmostApplication?.processIdentifier == pid ? "front" : "not front")
 case "frame":
     print(windowFrame())

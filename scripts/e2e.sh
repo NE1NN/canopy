@@ -560,15 +560,16 @@ author switch -q -c feat/fork main
 author commit -q --allow-empty -m "a fix from a fork"
 author push -q "$work/remotes/someone/shop.git" feat/fork
 author push -q origin feat/fork:refs/pull/22/head
-write_pr() { # number, head branch, head owner, maintainerCanModify
-    /usr/bin/python3 - "$work/prs/$1.json" "$1" "$2" "$3" "$4" "$(author rev-parse "$2")" <<'EOF'
+write_pr() { # number, head branch, head owner, maintainerCanModify, state (default OPEN)
+    /usr/bin/python3 - "$work/prs/$1.json" "$1" "$2" "$3" "$4" "${5:-OPEN}" "$(author rev-parse "$2")" <<'EOF'
 import json, sys
-path, number, branch, owner, editable, oid = sys.argv[1:]
+path, number, branch, owner, editable, state, oid = sys.argv[1:]
 json.dump({"number": int(number), "title": f"PR {number}", "url": f"https://github.com/acme/shop/pull/{number}",
-           "state": "OPEN", "isDraft": False, "updatedAt": "2026-09-28T00:00:00Z", "headRefName": branch,
+           "state": state, "isDraft": False, "updatedAt": f"2026-09-28T00:00:{number}Z", "headRefName": branch,
            "headRefOid": oid, "headRef": {"name": branch}, "baseRefName": "main",
            "isCrossRepository": owner != "acme", "maintainerCanModify": editable == "true",
-           "headRepository": {"name": "shop"}, "headRepositoryOwner": {"login": owner}}, open(path, "w"))
+           "headRepository": {"name": "shop"}, "headRepositoryOwner": {"login": owner},
+           "author": {"login": owner}}, open(path, "w"))
 EOF
 }
 write_pr 21 feat/checkout acme false
@@ -592,6 +593,13 @@ if "maintainerCanModify" in query:
 def node(pr):
     return {key: pr[key] for key in ("number", "title", "url", "state", "isDraft", "updatedAt", "isCrossRepository")}
 everything = [load(name[:-5]) for name in os.listdir(prs)]
+if "pullRequests(states:" in query:
+    states = re.search(r"pullRequests\(states: \[([A-Z, ]*)\]", query).group(1).split(", ")
+    nodes = [dict(node(pr), headRefName=pr["headRefName"], author=pr["author"])
+             for pr in everything if pr["state"] in states]
+    nodes.sort(key=lambda n: n["updatedAt"], reverse=True)
+    print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": nodes}}}}))
+    sys.exit(0)
 repo = {}
 for alias, number in re.findall(r"(b\d+): pullRequest\(number: (\d+)\)", query):
     if load(number) is None:
@@ -619,7 +627,7 @@ git clone -q "$work/remotes/acme/shop.git" "$work/shop"
 git -C "$work/shop" remote set-url origin https://github.com/acme/shop.git
 "$cli" repo add "$work/shop" >/dev/null
 field() { /usr/bin/python3 -c 'import json, sys; v = json.load(open(sys.argv[1]))
-for key in sys.argv[2].split("."): v = v[key]
+for key in sys.argv[2].split("."): v = v[int(key)] if isinstance(v, list) else v[key]
 print(v)' "$@"; }
 "$cli" group new Review --repo shop >/dev/null
 "$cli" row new --pr 21 --repo shop --group Review --no-setup --json > "$work/pr21.json"
@@ -651,6 +659,50 @@ if "$cli" row new feat/typo --repo shop --existing --json > "$work/typo.json" 2>
 grep -q '"branch_not_found"' "$work/typo.json" || fail "missing branch_not_found"
 if git -C "$work/shop" show-ref --verify --quiet refs/heads/feat/typo; then fail "--existing created a branch"; fi
 "$cli" agent-guide | grep -q "row new --pr" || fail "agent-guide is missing row new --pr"
+
+step "pr list shows the repo's PRs and the row that has each"
+author switch -q -c fix/old main
+author commit -q --allow-empty -m "an old fix"
+author push -q origin fix/old fix/old:refs/pull/23/head
+write_pr 23 fix/old acme false CLOSED
+"$cli" pr list --repo shop --json > "$work/prs.json"
+/usr/bin/python3 - "$work/prs.json" "$row21" <<'EOF' || fail "pr list is wrong"
+import json, sys
+prs, row21 = json.load(open(sys.argv[1])), sys.argv[2]
+assert [pr["number"] for pr in prs] == [22, 21], prs
+assert prs[1]["row"]["path"] == row21 and prs[1]["row"]["class"] == "canopy", prs[1]
+assert prs[0]["fork"] and prs[0]["row"]["branch"] == "feat/fork" and prs[0]["author"] == "someone", prs[0]
+EOF
+"$cli" pr list --repo shop | grep -Eq '^#21 +open .* in row +PR 21$' || fail "pr list printed $("$cli" pr list --repo shop)"
+"$cli" pr list --repo shop --query SOMEONE --json > "$work/someone.json"
+[[ "$(field "$work/someone.json" 0.number)" == 22 ]] || fail "pr list --query did not find PR 22 by its author"
+"$cli" pr list --repo shop --closed --json | grep -q '"number" : 23' || fail "pr list --closed is missing PR 23"
+if "$cli" pr list --repo shop --json | grep -q '"number" : 23'; then fail "pr list shows the closed PR 23"; fi
+"$cli" pr list --repo shop --query '#23' --json > "$work/pr23.json"
+[[ "$(field "$work/pr23.json" 0.state)" == closed && "$(field "$work/pr23.json" 0.row)" == None ]] ||
+    fail "pr list --query '#23' did not look up the closed PR"
+
+step "pr show is the default of canopy pr"
+"$cli" pr show feat/checkout --repo shop --json > "$work/show.json"
+[[ "$(field "$work/show.json" pr.number)" == 21 ]] || fail "pr show did not show PR 21"
+"$cli" pr feat/checkout --repo shop --json > "$work/show-default.json"
+[[ "$(field "$work/show-default.json" pr.number)" == 21 ]] || fail "canopy pr alone did not show PR 21"
+
+step "branch list shows local and origin branches, and fetches first"
+author push -q origin main:refs/heads/feat/just-pushed
+if "$cli" branch list --repo shop --no-fetch | grep -q feat/just-pushed; then fail "branch list --no-fetch fetched"; fi
+"$cli" branch list --repo shop --json > "$work/branches.json"
+/usr/bin/python3 - "$work/branches.json" "$row21" <<'EOF' || fail "branch list is wrong"
+import json, sys
+branches, row21 = {b["name"]: b for b in json.load(open(sys.argv[1]))}, sys.argv[2]
+assert branches["feat/just-pushed"]["where"] == "origin" and branches["feat/just-pushed"]["row"] is None, branches
+assert branches["feat/checkout"]["where"] == "both" and branches["feat/checkout"]["row"]["path"] == row21, branches
+assert branches["feat/local"]["where"] == "local" and branches["feat/local"]["row"]["class"] == "canopy", branches
+assert branches["main"]["row"]["class"] == "main", branches
+EOF
+"$cli" branch list --repo shop --query "just push" | grep -Eq '^feat/just-pushed +origin ' ||
+    fail "branch list --query printed $("$cli" branch list --repo shop --query "just push")"
+"$cli" agent-guide | grep -q "canopy branch list" || fail "agent-guide is missing branch list"
 
 echo
 echo "e2e passed"
