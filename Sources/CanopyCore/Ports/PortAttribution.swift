@@ -1,11 +1,23 @@
 import Darwin
 
+/// A port in a row and every process listening on it: usually one, or a server and the workers sharing its socket.
+public struct RowPort: Sendable, Equatable, Hashable {
+    public var port: UInt16
+    /// Sorted by pid.
+    public var processes: [ListeningPort]
+
+    public init(port: UInt16, processes: [ListeningPort]) {
+        self.port = port
+        self.processes = processes
+    }
+}
+
 /// A row's ports, sorted by number.
 public struct PortGroup: Sendable, Equatable {
     public var rowPath: String
-    public var ports: [ListeningPort]
+    public var ports: [RowPort]
 
-    public init(rowPath: String, ports: [ListeningPort]) {
+    public init(rowPath: String, ports: [RowPort]) {
         self.rowPath = rowPath
         self.ports = ports
     }
@@ -33,7 +45,12 @@ public enum PortAttribution {
             if let row { byRow[row, default: []].append(port) }
         }
         return rows.compactMap { row in
-            byRow[row].map { PortGroup(rowPath: row, ports: $0.sorted { ($0.port, $0.pid) < ($1.port, $1.pid) }) }
+            byRow[row].map { found in
+                let ports = Dictionary(grouping: found, by: \.port).map { port, processes in
+                    RowPort(port: port, processes: processes.sorted { $0.pid < $1.pid })
+                }
+                return PortGroup(rowPath: row, ports: ports.sorted { $0.port < $1.port })
+            }
         }
     }
 

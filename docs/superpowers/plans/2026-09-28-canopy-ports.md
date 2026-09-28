@@ -1503,3 +1503,22 @@ Expected, in dark and light mode: each row's ports under its branch, wrapping, s
 git add Sources Tests
 git commit -m "feat: the ports panel"
 ```
+
+## After Review
+
+An independent review found no blockers.
+One commit, `fix: address review of ports`, fixes what it found, and the branch is the reference for it:
+- Ports in the system's random range, 49152 and up by default, are left out.
+  Every agent session runs MCP servers on such ports, so each agent's row showed extra badges, and a row's `x` would have stopped them mid-task.
+  The spec says so now.
+- A port is one entry however many processes share its socket, such as a server's workers, and stopping it stops all of them.
+- The panel stops what a fresh scan finds on a row's ports at click time, not the pids it last saw, so a server that restarted is still the one stopped and a reused pid is never signalled.
+  The app also rescans as soon as it comes back into view.
+- `canopy ports stop` resolves the caller's row and refuses a port in another row with `port_in_other_row`, unless given that `--row` or `--all`.
+  Two servers can hold one port number on different addresses, and an agent should not stop another agent's server.
+- Stopping sends SIGCONT after SIGTERM, so a server paused with Ctrl-Z runs its shutdown handler instead of being killed.
+- Badge tooltips are plain strings, since SwiftUI formats numbers in string literals ("PID 12,345").
+- The panel reads its collapsed state before it first draws, shows nothing rather than "Nothing is listening" before the first scan, keeps only the newest scan's result, and disables a row's `x` while its ports stop.
+- The scanner test now accepts its connection, so it fails if the listening-state filter goes, and the stopper tests clean up their processes.
+
+Two test commits give slow machines room: the socket test reader retries interrupted reads like the client does, and the 200,000-line terminal test gets 60 seconds.

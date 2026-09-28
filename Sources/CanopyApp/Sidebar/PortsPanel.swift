@@ -5,7 +5,7 @@ import SwiftUI
 struct PortsPanel: View {
     @Environment(AppModel.self) private var model
 
-    private var count: Int { model.ports.reduce(0) { $0 + $1.ports.count } }
+    private var count: Int { (model.ports ?? []).reduce(0) { $0 + $1.ports.count } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -32,15 +32,15 @@ struct PortsPanel: View {
             .buttonStyle(.plain)
             .help(model.portsCollapsed ? "Show ports" : "Hide ports")
 
-            if !model.portsCollapsed {
-                if model.ports.isEmpty {
+            if !model.portsCollapsed, let groups = model.ports {
+                if groups.isEmpty {
                     Text("Nothing is listening in your rows.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 10) {
-                            ForEach(model.ports, id: \.rowPath) { group in
+                            ForEach(groups, id: \.rowPath) { group in
                                 PortGroupView(group: group)
                             }
                         }
@@ -61,6 +61,8 @@ struct PortGroupView: View {
 
     private var name: String { model.snapshot.row(path: group.rowPath)?.displayName ?? group.rowPath }
 
+    private var isStopping: Bool { group.ports.allSatisfy { model.isStopping($0, inRow: group.rowPath) } }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
@@ -71,19 +73,20 @@ struct PortGroupView: View {
                     .help("Show \(name)")
                 Spacer(minLength: 4)
                 Button {
-                    model.stop(group.ports)
+                    model.stop(group.ports, inRow: group.rowPath)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption2.weight(.semibold))
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+                .disabled(isStopping)
                 .help(group.ports.count == 1 ? "Stop what listens here" : "Stop everything listening here")
             }
             .font(.callout)
             FlowLayout(spacing: 4) {
-                ForEach(group.ports, id: \.self) { port in
-                    PortBadge(port: port)
+                ForEach(group.ports, id: \.port) { port in
+                    PortBadge(port: port, rowPath: group.rowPath)
                 }
             }
         }
@@ -93,9 +96,10 @@ struct PortGroupView: View {
 struct PortBadge: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
-    let port: ListeningPort
+    let port: RowPort
+    let rowPath: String
 
-    private var isStopping: Bool { model.stoppingPorts.contains(port) }
+    private var isStopping: Bool { model.isStopping(port, inRow: rowPath) }
 
     var body: some View {
         HStack(spacing: 3) {
@@ -106,9 +110,9 @@ struct PortBadge: View {
                     .monospacedDigit()
             }
             .buttonStyle(.plain)
-            .help("\(port.process) (PID \(port.pid)). Opens http://localhost:\(port.port).")
+            .help(openHelp)
             Button {
-                model.stop([port])
+                model.stop([port], inRow: rowPath)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
@@ -126,13 +130,25 @@ struct PortBadge: View {
         .disabled(isStopping)
     }
 
-    /// Stopping the process closes every port it holds, so the tooltip says which.
+    // Tooltips are built as plain strings: in a string literal, SwiftUI would format the numbers, as in "3,000".
+
+    /// The processes holding the port, such as "node (PID 812)" or "gunicorn (PIDs 90, 91, 92)".
+    private var holders: String {
+        let names = Set(port.processes.map(\.process)).sorted().joined(separator: ", ")
+        let pids = port.processes.map { String($0.pid) }.joined(separator: ", ")
+        return "\(names) (\(port.processes.count == 1 ? "PID" : "PIDs") \(pids))"
+    }
+
+    private var openHelp: String {
+        "\(holders). Opens http://localhost:\(port.port)."
+    }
+
+    /// Stopping the processes closes every port they hold, so the tooltip says which.
     private var stopHelp: String {
-        let others = model.otherPorts(of: port).map { "\($0)" }
-        let base = "Stop \(port.process) (PID \(port.pid))"
-        guard !others.isEmpty else { return base + "." }
-        return base
-            + ". Its other \(others.count == 1 ? "port" : "ports"), \(others.joined(separator: ", ")), close too."
+        let others = model.otherPorts(of: port).map { String($0) }
+        guard !others.isEmpty else { return "Stop \(holders)." }
+        return "Stop \(holders). Its other \(others.count == 1 ? "port" : "ports"), \(others.joined(separator: ", ")), "
+            + "close too."
     }
 }
 

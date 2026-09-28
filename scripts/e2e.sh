@@ -167,7 +167,8 @@ if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed termin
 "$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
 
 step "canopy ports lists a server started in a row's terminal, and stops it"
-listen='my $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 0) or die; sleep 300'
+# A free port below the system's random range, where Canopy looks for servers.
+listen='my $s; for (1..200) { $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 20000 + int(rand(20000))) and last } $s or die; sleep 300'
 server=$("$cli" term new --repo demo --row feat/term --run "cd / && perl -MIO::Socket::INET -e '$listen'" --json |
     /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
 port=""

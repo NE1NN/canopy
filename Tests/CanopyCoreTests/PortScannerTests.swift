@@ -87,6 +87,10 @@ struct PortScannerTests {
             }
         }
         #expect(connected == 0)
+        // The accepted socket has the listener's port as its local port, but it is not listening.
+        let accepted = accept(try #require(listener?.fd), nil, nil)
+        defer { close(accepted) }
+        #expect(accepted >= 0)
         #expect(mine(port).count == 1)
 
         listener = nil

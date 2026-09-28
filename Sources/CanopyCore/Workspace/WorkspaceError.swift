@@ -25,6 +25,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case ghUnavailable(String)
     case ghFailed(String)
     case portNotFound(Int)
+    case portInOtherRow(Int, row: String)
     case git(GitError)
 
     public var code: String {
@@ -55,6 +56,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .ghUnavailable: "gh_unavailable"
         case .ghFailed: "gh_failed"
         case .portNotFound: "port_not_found"
+        case .portInOtherRow: "port_in_other_row"
         case .git: "git_failed"
         }
     }
@@ -91,6 +93,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .ghFailed(let message): "Pull requests did not load: \(message)"
         case .portNotFound(let port):
             "No row's process listens on port \(port). Run `canopy ports --all`; Canopy only stops its rows' ports."
+        case .portInOtherRow(let port, let row):
+            "Port \(port) belongs to \(row), not to this row. Pass --row \(row), or --all to stop it anywhere."
         case .git(let error): error.description
         }
     }

@@ -114,19 +114,13 @@ public struct WorkspaceControlHandler: Sendable {
 
         case PortMethod.list:
             let params = try request.decodeParams(PortsListParams.self)
-            // Every row's ports with --all, or when no row resolves.
-            var row: Row?
-            if !params.all {
-                do {
-                    row = try TargetResolver.row(for: params.target, in: await workspace.snapshot)
-                } catch WorkspaceError.missingTarget {
-                    row = nil
-                }
-            }
+            let row = try await rowUnlessAll(params.target, all: params.all)
             return try .from(await rows.portInfo(rowPath: row?.path))
 
         case PortMethod.stop:
-            return try .from(try await rows.stopPort(request.decodeParams(PortsStopParams.self).port))
+            let params = try request.decodeParams(PortsStopParams.self)
+            let row = try await rowUnlessAll(params.target, all: params.all)
+            return try .from(try await rows.stopPort(params.port, rowPath: row?.path))
 
         case TermMethod.list:
             let params = try request.decodeParams(TermListParams.self)
@@ -166,6 +160,16 @@ public struct WorkspaceControlHandler: Sendable {
 
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
+        }
+    }
+
+    /// The resolved row, or nil for every row with `all` or when no row resolves.
+    private func rowUnlessAll(_ target: TargetHint, all: Bool) async throws -> Row? {
+        guard !all else { return nil }
+        do {
+            return try TargetResolver.row(for: target, in: await workspace.snapshot)
+        } catch WorkspaceError.missingTarget {
+            return nil
         }
     }
 

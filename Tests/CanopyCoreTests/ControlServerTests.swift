@@ -231,14 +231,16 @@ struct ControlServerTests {
         defer { server.stop() }
         _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
         // Started in the main row's terminal but working in /, so only the terminal ties it to the row.
-        let listener =
-            #"cd / && perl -MIO::Socket::INET -e 'my $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 0) or die; sleep 120'"#
+        let listener = "cd / && perl -MIO::Socket::INET -e '\(ListeningChild.bindSparePort) sleep 120'"
         let pane = try await call(
             client, TermMethod.new, TermNewParams(target: TargetHint(repo: "demo", row: "main"), run: listener),
             as: TermNewResult.self)
         // Started outside Canopy, in the feature row's folder.
         let outside = try await ListeningChild.start(in: feature)
         defer { outside.process.terminate() }
+        // A port from the system's random range, like an agent's MCP server, is not something to open or stop.
+        let tool = try await ListeningChild.start(in: feature, anyPort: true)
+        defer { tool.process.terminate() }
 
         var all: [PortInfo] = []
         #expect(
@@ -253,9 +255,22 @@ struct ControlServerTests {
             client, PortMethod.list, PortsListParams(target: TargetHint(repo: "demo", row: "feat/web")),
             as: [PortInfo].self)
         #expect(featureOnly.map(\.pid) == [outside.port.pid])
+        #expect(!all.contains { $0.pid == tool.port.pid })
+        // An agent in the main row stopping the feature row's port is refused, unless it asks for any row.
+        let fromMain = try await offPool {
+            try client.send(
+                ControlRequest(
+                    method: PortMethod.stop,
+                    params: try .from(
+                        PortsStopParams(port: Int(outside.port.port), target: TargetHint(repo: "demo", row: "main")))))
+        }
+        #expect(fromMain.error?.code == "port_in_other_row")
+        #expect(fromMain.error?.message.contains("feat/web") == true)
 
         let stopped = try await call(
-            client, PortMethod.stop, PortsStopParams(port: Int(outside.port.port)), as: PortsStopResult.self)
+            client, PortMethod.stop,
+            PortsStopParams(port: Int(outside.port.port), target: TargetHint(repo: "demo", row: "main"), all: true),
+            as: PortsStopResult.self)
 
         #expect(stopped.stopped.map(\.pid) == [outside.port.pid])
         #expect(stopped.killed.isEmpty)

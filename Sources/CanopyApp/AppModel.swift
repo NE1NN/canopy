@@ -59,6 +59,7 @@ final class AppModel {
         if let notice = await workspace.loadNotice {
             show(notice)
         }
+        portsCollapsed = await workspace.portsCollapsed
         let saved = await workspace.savedTerminals
         terminals.continueNumbering(from: await workspace.savedNextPane)
         snapshot = await workspace.snapshot
@@ -70,7 +71,6 @@ final class AppModel {
             }
         }
         await startControlServer()
-        portsCollapsed = await workspace.portsCollapsed
         startScanningPorts()
     }
 
@@ -173,9 +173,10 @@ final class AppModel {
 
     // MARK: Ports
 
-    private(set) var ports: [PortGroup] = []
-    /// Ports whose processes are being stopped, shown dimmed until they close.
-    private(set) var stoppingPorts: Set<ListeningPort> = []
+    /// Nil until the first scan, so the panel never says nothing is listening before it has looked.
+    private(set) var ports: [PortGroup]?
+    /// Ports being stopped, shown dimmed until they close.
+    private(set) var stoppingPorts: Set<StoppingPort> = []
     var portsCollapsed = false {
         didSet {
             guard portsCollapsed != oldValue else { return }
@@ -184,8 +185,16 @@ final class AppModel {
         }
     }
     @ObservationIgnored private var portsTask: Task<Void, Never>?
+    @ObservationIgnored private var occlusionObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var portScansStarted = 0
+    @ObservationIgnored private var portScanShown = 0
 
-    /// Scans every 2 seconds while any part of the window can be seen.
+    struct StoppingPort: Hashable {
+        let rowPath: String
+        let port: UInt16
+    }
+
+    /// Scans every 2 seconds while any part of the window can be seen, and at once when it comes back into view.
     private func startScanningPorts() {
         portsTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -195,27 +204,50 @@ final class AppModel {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard NSApp.occlusionState.contains(.visible) else { return }
+                Task { await self?.refreshPorts() }
+            }
+        }
     }
 
+    /// A scan that started before a stop can finish after the one that follows it, so only newer results are shown.
     func refreshPorts() async {
+        portScansStarted += 1
+        let scan = portScansStarted
         let groups = await rows.portGroups()
+        guard scan > portScanShown else { return }
+        portScanShown = scan
         if groups != ports {
             ports = groups
         }
     }
 
-    func stop(_ ports: [ListeningPort]) {
-        stoppingPorts.formUnion(ports)
+    func stop(_ ports: [RowPort], inRow path: String) {
+        let stopping = ports.map { StoppingPort(rowPath: path, port: $0.port) }
+        stoppingPorts.formUnion(stopping)
         Task {
-            _ = await PortStopper().stop(ports)
+            await rows.stopPorts(Set(ports.map(\.port)), inRow: path)
             await refreshPorts()
-            stoppingPorts.subtract(ports)
+            stoppingPorts.subtract(stopping)
         }
     }
 
-    /// The other ports a port's process listens on, which stopping it closes too.
-    func otherPorts(of port: ListeningPort) -> [UInt16] {
-        ports.flatMap(\.ports).filter { $0.pid == port.pid && $0.port != port.port }.map(\.port)
+    func isStopping(_ port: RowPort, inRow path: String) -> Bool {
+        stoppingPorts.contains(StoppingPort(rowPath: path, port: port.port))
+    }
+
+    /// The other ports a port's processes listen on, which stopping them closes too.
+    func otherPorts(of port: RowPort) -> [UInt16] {
+        let pids = Set(port.processes.map(\.pid))
+        let all = (ports ?? []).flatMap(\.ports)
+        let others = all.filter { other in
+            other.port != port.port && other.processes.contains { pids.contains($0.pid) }
+        }
+        return Set(others.map(\.port)).sorted()
     }
 
     // MARK: Terminals

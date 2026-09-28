@@ -26,6 +26,8 @@ struct JSONValueTests {
         #expect(try JSONValue.object([:]).decode(PRShowParams.self).refresh == false)
         #expect(try JSONValue.object([:]).decode(PortsListParams.self).all == false)
         #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(PortsStopParams.self) }
+        let stop = try JSONValue.object(["port": .number(3000)]).decode(PortsStopParams.self)
+        #expect(stop.target == TargetHint() && !stop.all)
         #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(RowNewParams.self) }
     }
 

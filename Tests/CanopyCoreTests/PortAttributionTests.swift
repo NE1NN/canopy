@@ -25,7 +25,7 @@ struct PortAttributionTests {
 
         let groups = table.assign([port(3000, 300)], rows: ["/w/a", "/w/b"], shells: ["/w/a": [100]])
 
-        #expect(groups == [PortGroup(rowPath: "/w/a", ports: [port(3000, 300)])])
+        #expect(groups == [PortGroup(rowPath: "/w/a", ports: [RowPort(port: 3000, processes: [port(3000, 300)])])])
     }
 
     @Test func aShellListeningItselfBelongsToItsRow() {
@@ -44,11 +44,8 @@ struct PortAttributionTests {
         let groups = table.assign(
             [port(4000, 500), port(4001, 501), port(4002, 502)], rows: ["/r/main", "/r/main/.claude/worktrees/x"])
 
-        #expect(
-            groups == [
-                PortGroup(rowPath: "/r/main", ports: [port(4001, 501), port(4002, 502)]),
-                PortGroup(rowPath: "/r/main/.claude/worktrees/x", ports: [port(4000, 500)]),
-            ])
+        #expect(groups.map(\.rowPath) == ["/r/main", "/r/main/.claude/worktrees/x"])
+        #expect(groups.map { $0.ports.map(\.port) } == [[4001, 4002], [4000]])
     }
 
     @Test func portsOutsideEveryRowAreLeftOut() {
@@ -65,6 +62,17 @@ struct PortAttributionTests {
 
         #expect(groups.map(\.rowPath) == ["/w/a", "/w/b"])
         #expect(groups.last?.ports.map(\.port) == [3000, 3001])
+    }
+
+    /// Servers like gunicorn fork workers that share the listening socket, and all of them show up holding it.
+    @Test func workersSharingASocketMakeOnePort() {
+        let table = FakeProcesses(
+            parents: [800: 1, 801: 800, 802: 800], folders: [800: "/w/a", 801: "/w/a", 802: "/w/a"])
+
+        let groups = table.assign([port(8000, 802), port(8000, 800), port(8000, 801)], rows: ["/w/a"])
+
+        #expect(groups.first?.ports.map(\.port) == [8000])
+        #expect(groups.first?.ports.first?.processes.map(\.pid) == [800, 801, 802])
     }
 
     @Test func aLoopInTheParentsEnds() {

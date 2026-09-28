@@ -38,20 +38,24 @@ struct PortsCommand: AsyncParsableCommand {
 
     struct Stop: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Stop the process listening on a port.",
+            abstract: "Stop the process listening on a port in the row you are in.",
             discussion: """
                 Sends SIGTERM, then SIGKILL if the port is still listening after 3 seconds. Any other ports the \
-                process holds close too.
+                process holds close too. A port in another row is refused unless you pass that --row, or --all.
                 """
         )
 
         @Argument(help: "The port, for example 3000.")
         var port: Int
+        @OptionGroup var rowOptions: TermCommand.RowOptions
+        @Flag(help: "Stop the port in whichever row has it.")
+        var all = false
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(PortMethod.stop, PortsStopParams(port: port))
+            let result = client.call(
+                PortMethod.stop, PortsStopParams(port: port, target: rowOptions.hint, all: all))
             try client.print(result) {
                 let stopped = try result.decode(PortsStopResult.self)
                 return stopped.stopped.map { info in

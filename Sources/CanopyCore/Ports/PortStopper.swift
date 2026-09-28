@@ -24,6 +24,8 @@ public struct PortStopper: Sendable {
         let targets = ports.filter { $0.pid > 1 && $0.pid != getpid() }
         for pid in Set(targets.map(\.pid)) {
             kill(pid, SIGTERM)
+            // A server paused with Ctrl-Z would only take SIGTERM once resumed, as shells know.
+            kill(pid, SIGCONT)
         }
         let deadline = ContinuousClock.now + grace
         var holding = await stillListening(targets)

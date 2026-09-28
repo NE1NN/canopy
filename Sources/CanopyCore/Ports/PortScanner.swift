@@ -27,6 +27,19 @@ public enum PortScanner {
         return found.sorted { ($0.port, $0.pid) < ($1.port, $1.pid) }
     }
 
+    /// The ports the system hands out to programs that ask for any free one. Listeners there are tools talking to
+    /// each other, such as agents' MCP servers and debuggers, rather than servers to open in a browser.
+    public static func randomPortRange() -> ClosedRange<UInt16> {
+        func value(_ name: String) -> Int32? {
+            var value: Int32 = 0
+            var size = MemoryLayout<Int32>.size
+            return sysctlbyname(name, &value, &size, nil, 0) == 0 ? value : nil
+        }
+        let first = value("net.inet.ip.portrange.first").map { UInt16(clamping: $0) } ?? 49152
+        let last = value("net.inet.ip.portrange.last").map { UInt16(clamping: $0) } ?? 65535
+        return first <= last ? first...last : 49152...65535
+    }
+
     static func processes(of uid: uid_t) -> [pid_t] {
         let bytes = proc_listpids(UInt32(PROC_UID_ONLY), uid, nil, 0)
         guard bytes > 0 else { return [] }

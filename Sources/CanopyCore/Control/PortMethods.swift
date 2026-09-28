@@ -32,9 +32,21 @@ public struct PortsListParams: Codable, Sendable {
 
 public struct PortsStopParams: Codable, Sendable {
     public var port: Int
+    /// Limits the stop to the port in this row. Every row's with `all`, or when no row resolves.
+    public var target: TargetHint
+    public var all: Bool
 
-    public init(port: Int) {
+    public init(port: Int, target: TargetHint = TargetHint(), all: Bool = false) {
         self.port = port
+        self.target = target
+        self.all = all
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        port = try container.decode(Int.self, forKey: .port)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        all = try container.decodeIfPresent(Bool.self, forKey: .all) ?? false
     }
 }
 
