@@ -177,11 +177,14 @@ In `ZshCommandLoggingTests`:
         let terminals = try Fixture.zshTerminals(
             dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, zdotdir: zdot)
         defer { terminals.closeAll() }
-        let script = #"print -r -- "check:$LOADED:${ZDOTDIR-unset}""#
+        // To a file, not the screen, so the check waits for the script to end rather than for its output to arrive.
+        let script = #"print -r -- "$LOADED:${ZDOTDIR-unset}" > "$HOME/check""#
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused
 
+        #expect(await pane.waitForExit() == 0)
         let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
-        #expect(await eventually { pane.screen.text.contains("check:\(loaded):\(zdot)") })
+        let check = try String(contentsOfFile: dir.sub("user-home/check"), encoding: .utf8)
+        #expect(check == "\(loaded):\(zdot)\n")
     }
 ```
 
@@ -464,3 +467,31 @@ Its findings, and what changed:
    Fixed: `sessionVariable` takes the program to run, and `asksLaunchctlForTheLoginSessionsValue` checks a value, no output, and a failure with real processes.
 6. **Docs:** the start-up cost (10 to 20 ms, not about 20 ms), how the login session gets a `ZDOTDIR`, and the spec's claim that the kept variables are the login session's.
    Fixed, and the spec's table of terminal variables now matches `PaneEnvironment.build`, which it had drifted from before this change.
+
+### After the rebase onto PR 17
+
+Rebased onto PR 17, CI failed `setupScriptsReadTheLoginSessionsZDOTDIR`: its one 20 s wait for the script's output on the pane ran out after 24 s.
+PR 17 changes no terminal code, but it adds 62 tests, and every real-zsh test got 1.6 to 2 times slower on CI: 11 to 27 s, where the run before the rebase had 9 to 14 s.
+The interactive tests passed because `pane.run` waits up to 10 s for a prompt before their own 20 s wait starts.
+
+Where the time goes, from a throttled local run (`taskpolicy -b`) that timed each step:
+
+- zsh started reading `.zshenv` 1.9 s after the pane spawned it, and printed at 2.4 s.
+- The pane saw that output at 8.6 s.
+- In a full throttled run, every zsh test's first output arrived at 16.8 to 17.6 s, all at nearly the same moment.
+
+A pane gets its output through `DispatchQueue.main.async`, so it waits behind everything else on the main thread.
+A `sample` of the test process in the suite's first seconds found the main thread busy 93% of the time, and 1211 of its 1799 samples inside `canopy_pty_spawn`.
+Every new pane runs `forkpty` on the main actor, which forks the whole test process, and under load each fork spends hundreds of milliseconds in the atfork handlers' locks.
+With dozens of pane tests starting at once, their output waits seconds behind those forks.
+
+Fixed in the tests, in `test: stop the zsh tests racing pane output while the suite starts`:
+
+- `setupScriptsReadTheLoginSessionsZDOTDIR` has the script write its check to a file, waits for the script to exit, and compares the file exactly, like the other script-pane tests.
+  It no longer depends on when output reaches the pane, and a failure shows which files zsh read.
+- The zsh tests' `run` and `barrier` helpers wait up to 60 s for a prompt, `promptWait`, instead of 10 s, so their 20 s output wait starts after the forks, not during them.
+  The wait ends as soon as the prompt shows, so it costs nothing when the runner is quiet.
+
+Two throttled full runs passed afterwards, with the zsh tests at 4 to 24 s.
+Spawning panes off the main actor would remove the cause, in the app too, where each new terminal forks the app on its main thread.
+That changes `Pane` and `PtyProcess`, so it is left for a follow-up.

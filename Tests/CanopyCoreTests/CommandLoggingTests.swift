@@ -80,9 +80,14 @@ struct ZshCommandLoggingTests {
         await logged(terminals, "term").filter { $0.type == ActivityType.termCommand }
     }
 
-    /// Types `command`, then waits for its output to show `marker`, which must differ from the typed line zsh echoes.
+    /// How long to wait for zsh's first prompt. While the suite starts, every new pane forks the test process on the
+    /// main thread, which delivers pane output too, so a prompt can take many seconds on a loaded runner.
+    static let promptWait: Duration = .seconds(60)
+
+    /// Types `command` at a prompt, then waits for its output to show `marker`, which must differ from the typed line
+    /// zsh echoes.
     func run(_ pane: Pane, _ command: String, until marker: String) async -> Bool {
-        await pane.run(command)
+        await pane.run(command, timeout: Self.promptWait)
         return await eventually { pane.screen.text.contains(marker) }
     }
 
@@ -102,7 +107,7 @@ struct ZshCommandLoggingTests {
 
     /// Runs a last command and waits until it is logged, so every command before it is too.
     func barrier(_ pane: Pane, _ terminals: TerminalStore) async -> Bool {
-        await pane.run(Self.barrier)
+        await pane.run(Self.barrier, timeout: Self.promptWait)
         return await eventually { await commands(terminals).last?.data["cmd"] == .string(Self.barrier) }
     }
 
@@ -209,11 +214,14 @@ struct ZshCommandLoggingTests {
         let terminals = try Fixture.zshTerminals(
             dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, zdotdir: zdot)
         defer { terminals.closeAll() }
-        let script = #"print -r -- "check:$LOADED:${ZDOTDIR-unset}""#
+        // To a file, not the screen, so the check waits for the script to end rather than for its output to arrive.
+        let script = #"print -r -- "$LOADED:${ZDOTDIR-unset}" > "$HOME/check""#
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused
 
+        #expect(await pane.waitForExit() == 0)
         let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
-        #expect(await eventually { pane.screen.text.contains("check:\(loaded):\(zdot)") })
+        let check = try String(contentsOfFile: dir.sub("user-home/check"), encoding: .utf8)
+        #expect(check == "\(loaded):\(zdot)\n")
     }
 
     @Test func theUsersOwnHooksKeepRunningWhateverTheirOptions() async throws {
