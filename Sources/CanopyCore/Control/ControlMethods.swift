@@ -119,8 +119,13 @@ public struct RowListParams: Codable, Sendable {
 
 public struct RowNewParams: Codable, Sendable {
     public var target: TargetHint
-    public var branch: String
+    /// The branch to check out or create. With `pr`, the local name for the PR's branch.
+    public var branch: String?
+    /// A pull request to start from: its number, `#number`, or URL. JSON may send the number as a number.
+    public var pr: String?
     public var base: String?
+    /// Fails with branch_not_found rather than create a branch that is neither local nor on origin.
+    public var existing: Bool
     public var select: Bool
     /// Runs the repo's setup commands. Off with `--no-setup`.
     public var setup: Bool
@@ -128,12 +133,14 @@ public struct RowNewParams: Codable, Sendable {
     public var run: String?
 
     public init(
-        target: TargetHint = TargetHint(), branch: String, base: String? = nil, select: Bool = false,
-        setup: Bool = true, run: String? = nil
+        target: TargetHint = TargetHint(), branch: String? = nil, pr: String? = nil, base: String? = nil,
+        existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil
     ) {
         self.target = target
         self.branch = branch
+        self.pr = pr
         self.base = base
+        self.existing = existing
         self.select = select
         self.setup = setup
         self.run = run
@@ -142,8 +149,14 @@ public struct RowNewParams: Codable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
-        branch = try container.decode(String.self, forKey: .branch)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        if let number = try? container.decodeIfPresent(Int.self, forKey: .pr) {
+            pr = String(number)
+        } else {
+            pr = try container.decodeIfPresent(String.self, forKey: .pr)
+        }
         base = try container.decodeIfPresent(String.self, forKey: .base)
+        existing = try container.decodeIfPresent(Bool.self, forKey: .existing) ?? false
         select = try container.decodeIfPresent(Bool.self, forKey: .select) ?? false
         setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
         run = try container.decodeIfPresent(String.self, forKey: .run)
@@ -152,6 +165,14 @@ public struct RowNewParams: Codable, Sendable {
 
 public struct RowNewResult: Codable, Sendable {
     public var row: Row
+    public var source: BranchSource
+    /// Where a new branch started, such as origin/main.
+    public var base: String?
+    /// The pull request the row was started from.
+    public var pr: PullRequest?
+    /// What Canopy did along the way, such as fast-forwarding the branch.
+    public var notes: [String]
+    /// What may need fixing, such as a branch that has diverged from origin.
     public var warnings: [String]
     public var setup: SetupReport
     /// The terminal started for `run`, such as "p12".

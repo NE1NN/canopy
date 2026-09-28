@@ -28,7 +28,32 @@ struct JSONValueTests {
         #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(PortsStopParams.self) }
         let stop = try JSONValue.object(["port": .number(3000)]).decode(PortsStopParams.self)
         #expect(stop.target == TargetHint() && !stop.all)
-        #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(RowNewParams.self) }
+        #expect(!new.existing && new.pr == nil)
+    }
+
+    @Test func rowNewTakesAPullRequestAsANumberOrAString() throws {
+        let number = try JSONValue.object(["pr": .number(7)]).decode(RowNewParams.self)
+        #expect(number.pr == "7" && number.branch == nil)
+
+        let text = try JSONValue.object(["pr": .string("#7"), "branch": .string("mine")]).decode(RowNewParams.self)
+        #expect(text.pr == "#7" && text.branch == "mine")
+
+        let existing = try JSONValue.object(["branch": .string("feat/x"), "existing": .bool(true)])
+            .decode(RowNewParams.self)
+        #expect(existing.existing)
+        #expect(throws: DecodingError.self) { try JSONValue.object(["pr": .bool(true)]).decode(RowNewParams.self) }
+    }
+
+    @Test func rowNewResultsLeaveOutWhatDoesNotApply() throws {
+        let row = Row(repoPath: "/r", path: "/r/x", branch: "feat/x", head: nil, rowClass: .canopy)
+        let result = RowNewResult(
+            row: row, source: .origin, base: nil, pr: nil, notes: [], warnings: [], setup: SetupReport(status: .none),
+            pane: nil)
+
+        let json = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+
+        #expect(json.contains(#""source":"origin""#))
+        #expect(!json.contains(#""base""#) && !json.contains(#""pr""#))
     }
 
     @Test func aRowWithNoPullRequestSaysNull() throws {
