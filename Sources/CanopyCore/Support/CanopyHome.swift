@@ -36,6 +36,8 @@ public struct CanopyHome: Sendable, Equatable {
     public var stateFile: URL { root.appending(path: "state.json") }
     public var configFile: URL { root.appending(path: "config.json") }
     public var worktreesRoot: URL { root.appending(path: "worktrees") }
+    /// One JSON Lines file of activity events per local day.
+    public var activityFolder: URL { root.appending(path: "activity") }
     public var socketPath: String { root.appending(path: "canopy.sock").path }
     /// Held by the one app instance that owns this home.
     public var appLockPath: String { root.appending(path: "app.lock").path }

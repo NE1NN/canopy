@@ -52,3 +52,17 @@ public enum JSONValue: Codable, Sendable, Equatable {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(self))
     }
 }
+
+extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral {
+    public init(stringLiteral value: String) {
+        self = .string(value)
+    }
+
+    public init(integerLiteral value: Int) {
+        self = .number(Double(value))
+    }
+
+    public init(booleanLiteral value: Bool) {
+        self = .bool(value)
+    }
+}
