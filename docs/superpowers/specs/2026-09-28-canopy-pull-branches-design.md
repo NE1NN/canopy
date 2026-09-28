@@ -1,7 +1,8 @@
 # Canopy rows from a PR or an existing branch
 
 Date: 2026-09-28
-Status: approved 2026-09-28, from the spike's recommendation and its decisions
+Status: approved 2026-09-28, from the spike's recommendation and its decisions.
+PR A merged as #17, and PR B builds the sheet and the list commands.
 
 ## Summary
 
@@ -160,15 +161,26 @@ GitHub fails the whole query over one PR number it cannot find, so a binding to 
 These are read-only and back the sheet's lists.
 
 - `canopy pr list [--query <text>] [--closed] [--json]` lists PRs with their state, number, title, author, head branch, a fork flag, the time of their last update, and the row that has each one.
+  It shows the 100 most recently updated open PRs, or PRs in any state with `--closed`, from one `gh api graphql` call.
 - `canopy pr show [row]` is today's `canopy pr [row]`, which stays its default subcommand.
-- `canopy branch list [--query <text>] [--json]` lists local and origin branches.
+- `canopy branch list [--query <text>] [--no-fetch] [--json]` lists local and origin branches.
   Each shows where it exists (local, origin, or both), how far it is ahead of or behind origin, its last commit date, and the row or worktree that has it checked out.
+  It runs `git fetch --prune origin` first in the repo's git queue, with the same freshness guard as `row new`, unless `--no-fetch` asks for what the repo already has.
+  A failed fetch lists local refs and warns on stderr.
+- `--query` keeps the items holding each of its words, ignoring case: in a PR's number, title, head branch, or author, and in a branch's name.
+  A PR number, `#number`, or PR URL looks that one PR up in any state instead, which is how the sheet finds a closed PR.
+  A branch named exactly what was typed, in any case, comes first.
 - `row new` with no argument stays an error.
   One command that lists sometimes and creates other times is harder for agents to use correctly.
 
+In `--json`, each PR carries `number`, `title`, `url`, `state`, `author`, `headBranch`, `fork`, `updatedAt`, and `row`, and each branch carries `name`, `where`, `ahead`, `behind`, `committedAt`, and `row`.
+`row` is `{path, branch, class}`, or null, and `class` is `external` for another tool's worktree.
+A PR's row is the row on a branch bound to it, or for a PR from the repo itself, the row on its head branch, as the badges find it.
+A worktree whose folder was deleted holds nothing, since `row new` takes its branch back.
+
 ## The New Row sheet
 
-- It opens from the same places as today: the `+` next to a repo.
+- It opens from the same places as today: the `+` next to a repo, and a group's `+`, which picks that group.
 - One focused field, with the placeholder "Branch, PR number, or new branch name".
   The Start from field moves into the "New branch" line, since it only matters there.
 - One list with two sections.
@@ -184,8 +196,15 @@ These are read-only and back the sheet's lists.
   A background `git fetch --prune origin` then refreshes it, using the fetch freshness guard so typing does not fetch again.
   PRs come from gh, and while gh is unavailable that section shows the sidebar's warning.
 - Arrows move, Return runs the selected item's action, and Esc cancels.
-  A selected item that already has a row shows "Open row" in place of Create.
-  An item in another tool's worktree offers Adopt.
+  A click selects an item and a double click runs it.
+  Nothing is selected until something is typed, and then the first item is.
+  A selection stays put while answers that arrive later add items above it.
+  A selected item that already has a row shows "Open Row" in place of Create Row, and one in another tool's worktree offers Adopt.
+  Opening or adopting leaves the row where it is, so the Group picker is off for them.
+- A PR number not among the open PRs is looked up a quarter second after typing stops.
+  A lookup that has started finishes and is kept, so an older answer never stands in for newer text.
+- The "New branch" line needs a valid branch name that no local or origin branch has in any case, and text starting with `#` means a PR.
+- A branch that got a row after the list was made opens that row when picked, as `branch_checked_out` names it.
 
 Each action in the sheet maps to exactly one command:
 
@@ -197,6 +216,8 @@ Each action in the sheet maps to exactly one command:
 | an item that already has a row | `canopy row select feat/x` |
 | adopt an item in another tool's worktree | `canopy row adopt <path>` |
 | the two lists | `canopy pr list --json`, `canopy branch list --json` |
+
+The primary button's help shows the command for the selected item.
 
 ## Control API
 
@@ -227,6 +248,9 @@ The result:
 ```
 
 `base` is present only for a new branch, and `pr` only with `--pr`.
+
+`pr.list` takes `query` and `closed` and answers with the PRs, and `branch.list` takes `query` and `fetch` (default true) and answers with `{branches, defaultBase, warnings}`.
+Both resolve the repo like `row.new`, and neither is written to the activity log.
 
 New error codes:
 
