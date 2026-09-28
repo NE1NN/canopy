@@ -65,10 +65,10 @@ enum Fixture {
             sshConfigFile: sshConfigFile)
     }
 
-    /// A bash line for a stand-in script that holds until the test creates `path`. It gives up after `limit` and goes
-    /// on, so a stand-in whose test was killed ends by itself rather than polling forever.
-    static func waitForFile(_ path: String, limit: Duration = .seconds(60)) -> String {
-        "stand_in_deadline=$((SECONDS + \(limit.components.seconds)))\n"
+    /// Bash lines for a stand-in script that holds until the test creates `path`. It gives up and goes on after about
+    /// `seconds`, as bash counts whole seconds, so a stand-in whose test was killed ends by itself.
+    static func waitForFile(_ path: String, seconds: Int = 60) -> String {
+        "stand_in_deadline=$((SECONDS + \(seconds)))\n"
             + "until [[ -e '\(path)' ]] || ((SECONDS >= stand_in_deadline)); do sleep 0.05; done"
     }
 
