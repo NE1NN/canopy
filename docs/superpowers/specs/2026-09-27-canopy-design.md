@@ -267,6 +267,8 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
 - A detached HEAD shows the short commit hash in place of a branch name.
 - External worktrees fold into a "3 other worktrees" row under their repo's rows.
 
+Rows can be gathered into named groups that fold away within their repo, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
+
 ## Terminals
 
 ### Engine interface
