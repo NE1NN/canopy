@@ -275,7 +275,7 @@ With `--json`, `group list` prints an array of groups, and `group new`, `group r
 
 `rows` holds rows in the same form as `row list --json`.
 `group rm` prints the group as it was just before, with the rows it let go of.
-`row move --json` prints the moved row.
+`row move --json` prints the moved row alone.
 
 In text, the commands confirm what they did:
 
@@ -310,7 +310,7 @@ canopy row list --json | jq -r '.[] | select(.group == "Review") | .branch'
 | `group.new` | `target`, `name` | the group |
 | `group.rename` | `target`, `name`, `newName` | the group |
 | `group.remove` | `target`, `name` | the group as it was |
-| `row.move` | `target`, and exactly one of `group`, `noGroup: true`, `before`, `after` | the row |
+| `row.move` | `target`, and exactly one of `group`, `noGroup: true`, `before`, `after` | `row`, `moved`, false for a move that changed nothing, and `from`, the group it was in |
 | `row.new` | gains `group` | as before, its row carrying the group |
 
 `target` is the usual target hint.

@@ -182,6 +182,7 @@ Canopy and adopted rows follow, in the order Canopy first saw them, so new rows 
 That order is saved in `state.json`.
 External rows sit in a collapsed "Other worktrees (N)" group at the bottom of the repo.
 Clicking an external row adopts it and selects it.
+Canopy and adopted rows can also be gathered into named groups after the ungrouped rows, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
 
 ### Creating a row
 
@@ -531,6 +532,7 @@ Every command exits non-zero on failure.
 | `canopy row rm <branch> [--force] [--delete-branch]` | remove or un-adopt a row |
 | `canopy row select <branch>` | select a row in the UI |
 | `canopy row adopt <path>` | adopt an external worktree |
+| `canopy row move`, `canopy group list\|new\|rename\|rm` | arrange rows in groups, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes |
 | `canopy term list [--all]` | list panes with ID, row, tab, title, folder, and foreground process |
 | `canopy term new [--tab <name> \| --new-tab] [--run <cmd>] [--title <t>]` | add a pane using the add rule and optionally run a command |
 | `canopy term send <id> <text> [--enter]` | write text to a pane, optionally followed by Enter |
@@ -582,6 +584,7 @@ Readers skip a trailing partial line and any line they cannot read.
 | `term.opened`, `term.exited` | a pane's shell starts, including a restart, or exits | `pane`, `code` |
 | `term.command` | a command finishes in a zsh pane | `pane`, `cmd`, `cwd`, `exit`, `durationMs` |
 | `cli.call` | a `canopy` request changes something | `method`, `params`, `error` when it failed |
+| `group.created`, `group.renamed`, `group.removed`, `row.moved` | groups change, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes | |
 
 Row and PR changes are found by comparing each worktree list and each PR lookup with the one before.
 The first one after launching or adding a repo only sets the baseline, so what already existed is not logged.
