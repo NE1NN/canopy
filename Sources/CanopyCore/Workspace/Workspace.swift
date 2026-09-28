@@ -28,6 +28,8 @@ public actor Workspace {
     let github: GitHubCLI
     let prTiming: PRTiming
     var pullRequests: [String: RepoPullRequests] = [:]
+    /// Each repo's last lookup GitHub answered, which the next one is compared with to log PRs opening and changing.
+    var prBaselines: [String: RepoPullRequests] = [:]
     /// The branches each repo's latest lookup asked about, set when it is queued.
     var prBranchesRequested: [String: [String]] = [:]
     var prQueues: [String: Task<Void, Never>] = [:]

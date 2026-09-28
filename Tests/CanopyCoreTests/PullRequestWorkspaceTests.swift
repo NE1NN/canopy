@@ -350,4 +350,71 @@ struct PullRequestWorkspaceTests {
             try await workspace.pullRequest(for: row, refresh: false)
         }
     }
+
+    @Test func openingAndStateChangesAreLogged() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        gh.answer([0: (5, "MERGED"), 1: (7, "OPEN")])
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        let events = await logged(workspace, "pr")
+        try #require(events.map(\.type) == ["pr.state_changed", "pr.opened"])
+        #expect(events.allSatisfy { $0.source == .git && $0.repo == "demo" })
+        #expect(events.map(\.row) == ["feat/a", "feat/b"])
+        #expect(events.map(\.path) == [dir.sub("home/worktrees/demo/feat-a"), dir.sub("home/worktrees/demo/feat-b")])
+        #expect(
+            events[0].data == [
+                "number": 5, "from": "open", "to": "merged", "url": "https://github.com/NE1NN/canopy/pull/5",
+            ])
+        #expect(
+            events[1].data == [
+                "number": 7, "title": "PR 7", "state": "open", "url": "https://github.com/NE1NN/canopy/pull/7",
+            ])
+    }
+
+    @Test func pullRequestsSeenAgainAfterAnOutageAreNotLoggedAsNew() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        gh.fail(exitCode: 4, "To get started with GitHub CLI, please run:  gh auth login")
+        await workspace.refreshPullRequests(repoPath: repo)
+        gh.answer([0: (5, "OPEN")])
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        #expect(await logged(workspace, "pr").isEmpty)
+    }
+
+    @Test func aBranchsFirstLookupIsNotLoggedAsOpening() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        gh.answer([0: (5, "OPEN"), 2: (9, "OPEN")])
+        try await Fixture.worktree(repo: repo, branch: "feat/c", at: dir.sub("home/worktrees/demo/feat-c"))
+        await workspace.refresh(repoPath: repo)
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        #expect(await pullRequest(workspace, dir.sub("home/worktrees/demo/feat-c"))?.number == 9)
+        #expect(await logged(workspace, "pr").isEmpty)
+    }
+
+    @Test func anOlderClosedPullRequestTakingOverIsNotLoggedAsOpening() async throws {
+        let dir = try TempDir()
+        let (workspace, gh, repo) = try await setUp(dir)
+        gh.answer([0: (7, "CLOSED")])
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        // A comment on closed #3 makes it the branch's most recently updated PR.
+        gh.answer([0: (3, "CLOSED")])
+        await workspace.refreshPullRequests(repoPath: repo)
+        gh.answer([0: (9, "OPEN")])
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        let events = await logged(workspace, "pr")
+        #expect(events.map(\.type) == ["pr.opened"])
+        #expect(events.first?.data["number"] == 9)
+    }
 }
