@@ -8,7 +8,7 @@ Also stop the tests' git calls from each starting `xcodebuild` on a fresh CI run
 **Architecture:** A new `onOwnThread` helper in `CanopyCore` runs blocking work on a thread of its own.
 `GitRunner.run` and both `GitHubCLI` lookups use it instead of `DispatchQueue.global()`, since each one blocks for as long as its child process runs.
 Short scans, such as the port scans, stay on Dispatch.
-The tests resolve the git that `/usr/bin/git` hands off to once, and run it directly.
+The tests find the git that `/usr/bin/git` hands off to once, through `xcode-select`, and run it directly.
 
 **Tech Stack:** Swift 6.2, Foundation `Thread`, Swift Testing.
 
@@ -341,11 +341,14 @@ enum Fixture {
     static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
 
     /// The git that /usr/bin/git hands off to. The shim asks xcrun on every run, and xcrun's cache starts empty on a
-    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs.
+    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs. Asking
+    /// xcrun here would start one too, while every test waits for this value, so the path comes from xcode-select.
     static let gitPath: String = {
-        let found = try? Subprocess.run(
-            "/usr/bin/xcrun", ["--find", "git"], environment: environment, directory: nil, timeout: .seconds(60))
-        let path = found.map { String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) }
+        let folder = try? Subprocess.run(
+            "/usr/bin/xcode-select", ["--print-path"], environment: environment, directory: nil, timeout: .seconds(10))
+        let path = folder.map {
+            String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) + "/usr/bin/git"
+        }
         return path.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/usr/bin/git"
     }()
 
@@ -365,7 +368,8 @@ In `Fixture.git(in:before:)`:
 - [ ] **Step 2: Point the hand-written wrappers at it**
 
 In `RowActivityTests.swift` and `WorkspaceTests.swift`, every `/usr/bin/git` inside a wrapper script becomes `'\(Fixture.gitPath)'`, and the `GitRunner` in `WorkspaceTests` takes `environment: Fixture.environment`.
-After this, `grep -rn "/usr/bin/git" Tests` finds only the fallback and the comment in `Fixtures.swift`.
+After this, `grep -rn "/usr/bin/git" Tests` finds only the fallback and the comments.
+A `GitRunner` built without an executable also runs `/usr/bin/git`, so `grep -rn "GitRunner(" Tests` must show `executable:` on every one.
 
 - [ ] **Step 3: Run the suite**
 
@@ -398,7 +402,7 @@ An independent reviewer (opus) read `git diff main...HEAD` with this plan and th
 It found nothing critical or important, and these minor points.
 
 1. **The busy-pool tests would miss a regression to a higher-priority global queue.**
-   True, but not for the reason given, and its suggested fix, holding the threads at `.userInteractive`, would have made the tests miss the original `DispatchQueue.global()` code too.
+   True, for the reason given, but its suggested fix, holding the threads at `.userInteractive`, would have made the tests miss the original `DispatchQueue.global()` code too.
    A small standalone experiment showed what matters: while Dispatch is still adding threads, it hands the next one to the most urgent work waiting, so a block at a higher priority than the fillers slips through.
    Once every filler holds a thread, a block at any priority waits.
    So `withEveryDispatchThreadBusy` now fills at the default priority and waits until every filler has started before it runs `body`.
@@ -445,12 +449,27 @@ func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -
     defer {
         for _ in 0..<limit { release.signal() }
     }
-    try await offPool {
-        for _ in 0..<limit { _ = started.wait(timeout: deadline) }
-    }
+    let allStarted = try await offPool { (0..<limit).allSatisfy { _ in started.wait(timeout: deadline) == .success } }
+    try #require(allStarted, "Dispatch never lent every thread, so the pool was never full")
     return try await body()
 }
 ```
+
+### Second round
+
+The same reviewer then read everything after the commit it had reviewed, including the xcrun change.
+
+1. **Important: `Fixture.gitPath` ran `xcrun --find git` on a Swift concurrency thread.**
+   It is a static, so every test that reaches `Fixture.git` waits for its first run, and on a cold runner that run starts one xcodebuild.
+   In CI's process log it lasted about a second, with the three-thread pool frozen meanwhile.
+   `gitPath` now asks `xcode-select --print-path` instead, which never starts xcodebuild, and adds `/usr/bin/git`.
+   On CI that gives `/Applications/Xcode_26.6.app/Contents/Developer/usr/bin/git`, the same path `xcrun --find git` printed there.
+   A new test, `testsRunGitWithoutTheShim`, checks that `gitPath` is not `/usr/bin/git` and can run, so a silent fallback to the shim would fail.
+2. **If Dispatch never lent every thread before the deadline, `withEveryDispatchThreadBusy` ran `body` on a pool that was about to empty,** and a regression would pass after a 10 s delay.
+   It now requires that every filler started, and fails with a message otherwise.
+3. **`gitIgnoresAnInheritedGitDir` still ran `/usr/bin/git`,** through a `GitRunner` built without an executable.
+   It now passes `executable: Fixture.gitPath`, and Task 3's check looks for this case too.
+4. **Nit:** point 1 of the first round said the reviewer's reason was wrong; the reason held, and only the suggested fix was wrong.
 
 ### Also seen
 
