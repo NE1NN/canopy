@@ -10,7 +10,16 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case missingTarget(flag: String)
     case invalidBranch(String)
     case invalidBase(String)
-    case branchCheckedOut(String)
+    /// `row` is where the branch is checked out, when Canopy knows.
+    case branchCheckedOut(String, row: Row?)
+    /// `fetchFailure` says why origin's branches may be out of date.
+    case branchNotFound(String, fetchFailure: String?)
+    /// Local branches a PR's row could have used, none of which is the PR's.
+    case branchExists([String], pr: Int)
+    case invalidPullRequest(String)
+    case pullRequestInOtherRepo(String, origin: String)
+    case pullRequestNotFound(Int, repo: String)
+    case pullRequestFetchFailed(Int, reason: String)
     case worktreeDirty(String)
     case cannotRemoveMain
     case notManaged(String)
@@ -53,6 +62,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .invalidBranch: "invalid_branch"
         case .invalidBase: "invalid_base"
         case .branchCheckedOut: "branch_checked_out"
+        case .branchNotFound: "branch_not_found"
+        case .branchExists: "branch_exists"
+        case .invalidPullRequest, .pullRequestInOtherRepo: "invalid_pr"
+        case .pullRequestNotFound: "pr_not_found"
+        case .pullRequestFetchFailed: "git_failed"
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
         case .notManaged: "not_managed"
@@ -96,7 +110,30 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .missingTarget(let flag): "Could not tell which one you mean. Pass \(flag)."
         case .invalidBranch(let name): "Not a valid branch name: \(name)"
         case .invalidBase(let ref): "No commit matches --from \(ref)."
-        case .branchCheckedOut(let name): "Branch \(name) is already checked out in another worktree."
+        case .branchCheckedOut(let name, let row?):
+            switch row.rowClass {
+            case .main: "Branch \(name) is checked out in the main checkout at \(row.path)."
+            case .canopy, .adopted:
+                "Branch \(name) already has a row at \(row.path). Run `canopy row select \(name)` to show it."
+            case .external:
+                "Branch \(name) is checked out in another tool's worktree at \(row.path). "
+                    + "Run `canopy row adopt \(row.path)` to show it as a row."
+            }
+        case .branchCheckedOut(let name, nil): "Branch \(name) is already checked out in another worktree."
+        case .branchNotFound(let name, nil):
+            "No branch \(name) here or on origin. Leave out --existing to create it."
+        case .branchNotFound(let name, let failure?):
+            "No branch \(name) here or in what Canopy last saw of origin, because \(failure)."
+        case .branchExists(let names, let number) where names.count == 1:
+            "Branch \(names[0]) already exists and is not PR #\(number)'s branch. Pass another --branch."
+        case .branchExists(let names, let number):
+            "Branches \(names.joined(separator: " and ")) already exist and are not PR #\(number)'s. "
+                + "Pass --branch to name the row's branch."
+        case .invalidPullRequest(let text): "Pass a PR number, #number, or PR URL, not \"\(text)\"."
+        case .pullRequestInOtherRepo(let repo, let origin):
+            "That PR is in \(repo), but this repo's origin is \(origin). Pass --repo for a repo whose origin is \(repo)."
+        case .pullRequestNotFound(let number, let repo): "\(repo) has no PR #\(number)."
+        case .pullRequestFetchFailed(let number, let reason): "Could not fetch PR #\(number) from origin: \(reason)"
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
         case .notManaged(let path): "\(path) belongs to another tool. Adopt it first."

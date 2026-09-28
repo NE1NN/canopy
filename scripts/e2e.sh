@@ -33,7 +33,14 @@ git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q --a
 git -C "$work/demo" push -q origin main
 git -C "$work/demo" remote set-head origin main
 
-count_apps() { { pgrep -f "Canopy Dev.app/Contents/MacOS/Canopy" || true; } | wc -l; }
+# Only apps on this run's home: other checkouts run dev builds of their own at the same time.
+count_apps() {
+    local count=0 pid
+    for pid in $(pgrep -f "Canopy Dev.app/Contents/MacOS/Canopy" || true); do
+        ps eww -p "$pid" -o command= | tr ' ' '\n' | grep -qxF "CANOPY_HOME=$CANOPY_HOME" && count=$((count + 1))
+    done
+    echo "$count"
+}
 
 step "two CLI calls at once launch exactly one app"
 running_before=$(count_apps)
@@ -349,6 +356,8 @@ done
 # git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
 (ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file \
     exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
+# Stopped later, and bash would otherwise report the job it killed.
+disown
 for _ in $(seq 1 100); do
     [[ -n "$(app_pid)" ]] && break
     sleep 0.1
@@ -410,6 +419,120 @@ if len(calls) < 5 or not any(c["data"].get("error") == "clone_failed" for c in c
     sys.exit(f"repo.clone calls: {calls}")
 EOF
 "$cli" agent-guide | grep -q "canopy repo clone" || fail "agent-guide is missing repo clone"
+
+step "row new --pr checks out a PR's branch, from the repo and from a fork"
+# The app running now answers gh from the clone steps' stand-in, so this part starts one of its own.
+kill "$(app_pid)"
+for _ in $(seq 1 50); do
+    [[ -z "$(app_pid)" ]] && break
+    sleep 0.1
+done
+[[ -z "$(app_pid)" ]] || fail "the app did not quit"
+# A GitHub on this machine: bare repos in $work/remotes, which git reaches at https://github.com/ through a URL rewrite,
+# and a stand-in gh that answers from the PRs in $work/prs. The app gets both only when this script launches it.
+mkdir -p "$work/prbin" "$work/przdot" "$work/prs"
+git clone -q --bare "$work/demo" "$work/remotes/acme/shop.git"
+git clone -q --bare "$work/demo" "$work/remotes/someone/shop.git"
+git clone -q "$work/remotes/acme/shop.git" "$work/prwork"
+author() { git -C "$work/prwork" -c user.email=e2e@example.com -c user.name=e2e "$@"; }
+author switch -q -c feat/checkout
+author commit -q --allow-empty -m "checkout in steps"
+author push -q origin feat/checkout feat/checkout:refs/pull/21/head
+author switch -q -c feat/fork main
+author commit -q --allow-empty -m "a fix from a fork"
+author push -q "$work/remotes/someone/shop.git" feat/fork
+author push -q origin feat/fork:refs/pull/22/head
+write_pr() { # number, head branch, head owner, maintainerCanModify
+    /usr/bin/python3 - "$work/prs/$1.json" "$1" "$2" "$3" "$4" "$(author rev-parse "$2")" <<'EOF'
+import json, sys
+path, number, branch, owner, editable, oid = sys.argv[1:]
+json.dump({"number": int(number), "title": f"PR {number}", "url": f"https://github.com/acme/shop/pull/{number}",
+           "state": "OPEN", "isDraft": False, "updatedAt": "2026-09-28T00:00:00Z", "headRefName": branch,
+           "headRefOid": oid, "headRef": {"name": branch}, "baseRefName": "main",
+           "isCrossRepository": owner != "acme", "maintainerCanModify": editable == "true",
+           "headRepository": {"name": "shop"}, "headRepositoryOwner": {"login": owner}}, open(path, "w"))
+EOF
+}
+write_pr 21 feat/checkout acme false
+write_pr 22 feat/fork someone true
+cat > "$work/prbin/gh" <<'GH'
+#!/usr/bin/python3
+import json, os, re, sys
+prs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prs")
+query = next(a[6:] for a in sys.argv if a.startswith("query="))
+def load(number):
+    path = os.path.join(prs, f"{number}.json")
+    return json.load(open(path)) if os.path.exists(path) else None
+if "maintainerCanModify" in query:
+    number = re.search(r"pullRequest\(number: (\d+)\)", query).group(1)
+    pr = load(number)
+    print(json.dumps({"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": pr}}}))
+    if pr is None:
+        sys.stderr.write(f"gh: Could not resolve to a PullRequest with the number of {number}.\n")
+        sys.exit(1)
+    sys.exit(0)
+def node(pr):
+    return {key: pr[key] for key in ("number", "title", "url", "state", "isDraft", "updatedAt", "isCrossRepository")}
+everything = [load(name[:-5]) for name in os.listdir(prs)]
+repo = {}
+for alias, number in re.findall(r"(b\d+): pullRequest\(number: (\d+)\)", query):
+    if load(number) is None:
+        # Like gh: GitHub fails the whole query, and gh exits 1.
+        print(json.dumps({"data": {"repository": {alias: None}}}))
+        sys.stderr.write(f"gh: Could not resolve to a PullRequest with the number of {number}.\n")
+        sys.exit(1)
+    repo[alias] = node(load(number))
+for alias, branch in re.findall(r'(b\d+): pullRequests\(headRefName: "([^"]*)"', query):
+    repo[alias] = {"nodes": [node(pr) for pr in everything if pr["headRefName"] == branch]}
+print(json.dumps({"data": {"repository": repo}}))
+GH
+chmod +x "$work/prbin/gh"
+printf 'export PATH="%s/prbin:$PATH"\n' "$work" > "$work/przdot/.zshrc"
+(ZDOTDIR="$work/przdot" SHELL=/bin/zsh GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$work/remotes/.insteadOf" \
+    GIT_CONFIG_VALUE_0=https://github.com/ exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
+# cleanup stops it, and bash would otherwise report the job it killed.
+disown
+for _ in $(seq 1 100); do
+    [[ -n "$(app_pid)" ]] && break
+    sleep 0.1
+done
+[[ -n "$(app_pid)" ]] || fail "the app did not start"
+git clone -q "$work/remotes/acme/shop.git" "$work/shop"
+git -C "$work/shop" remote set-url origin https://github.com/acme/shop.git
+"$cli" repo add "$work/shop" >/dev/null
+field() { /usr/bin/python3 -c 'import json, sys; v = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."): v = v[key]
+print(v)' "$@"; }
+"$cli" group new Review --repo shop >/dev/null
+"$cli" row new --pr 21 --repo shop --group Review --no-setup --json > "$work/pr21.json"
+[[ "$(field "$work/pr21.json" row.branch)" == feat/checkout ]] || fail "PR 21 is not on feat/checkout"
+[[ "$(field "$work/pr21.json" source)" == origin ]] || fail "PR 21's branch did not come from origin"
+[[ "$(field "$work/pr21.json" pr.number)" == 21 ]] || fail "the result does not name PR 21"
+[[ "$(field "$work/pr21.json" row.group)" == Review ]] || fail "row new --pr --group did not put the row in Review"
+row21="$(field "$work/pr21.json" row.path)"
+[[ "$(git -C "$row21" rev-parse --abbrev-ref '@{upstream}')" == origin/feat/checkout ]] || fail "PR 21 tracks the wrong branch"
+"$cli" row new --pr https://github.com/acme/shop/pull/22/files --repo shop --no-setup --select > "$work/pr22.txt"
+grep -q "^Checked out PR #22 as feat/fork in " "$work/pr22.txt" || fail "row new --pr printed $(cat "$work/pr22.txt")"
+[[ "$(git -C "$work/shop" config branch.feat/fork.pushRemote)" == https://github.com/someone/shop.git ]] ||
+    fail "the fork PR does not push to the fork"
+[[ "$(git -C "$work/shop" log -1 --format=%s feat/fork)" == "a fix from a fork" ]] || fail "the fork's commit is missing"
+
+step "a fork PR's row gets its badge"
+"$cli" pr feat/fork --repo shop --refresh --json > "$work/pr22-badge.json"
+[[ "$(field "$work/pr22-badge.json" pr.number)" == 22 ]] || fail "the fork PR row has no PR"
+sleep 1
+swift scripts/window-shot.swift "$(app_pid)" "$shots/pr-fork.png"
+echo "saved $shots/pr-fork.png"
+
+step "row new says which branch it used, and --existing refuses a name that matches nothing"
+git -C "$work/shop" branch feat/local
+"$cli" row new feat/local --repo shop --no-setup | grep -q "^Checked out feat/local in " || fail "feat/local was not checked out"
+"$cli" row new feat/brand-new --repo shop --no-setup | grep -q "^Created new branch feat/brand-new from origin/main in " ||
+    fail "feat/brand-new does not say it is new"
+if "$cli" row new feat/typo --repo shop --existing --json > "$work/typo.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"branch_not_found"' "$work/typo.json" || fail "missing branch_not_found"
+if git -C "$work/shop" show-ref --verify --quiet refs/heads/feat/typo; then fail "--existing created a branch"; fi
+"$cli" agent-guide | grep -q "row new --pr" || fail "agent-guide is missing row new --pr"
 
 echo
 echo "e2e passed"

@@ -97,7 +97,8 @@ struct RowLifecycleTests {
                 try await workspace.createRow(repoPath: repo, branch: name)
             }
         }
-        await #expect(throws: WorkspaceError.branchCheckedOut("main")) {
+        let main = await workspace.snapshot.row(path: repo)
+        await #expect(throws: WorkspaceError.branchCheckedOut("main", row: main)) {
             try await workspace.createRow(repoPath: repo, branch: "main")
         }
     }

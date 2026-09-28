@@ -46,8 +46,9 @@ public struct GitHubCLI: Sendable {
         }
     }
 
-    public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
-        let query = PRQuery.build(repo: repo, branches: branches)
+    /// `numbers` holds the PR bound to a branch whose name cannot find it.
+    public func pullRequests(repo: GitHubRepo, branches: [String], numbers: [String: Int] = [:]) async -> PRLookup {
+        let query = PRQuery.build(repo: repo, branches: branches, numbers: numbers)
         switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
         case .failure(.ghMissing): return .ghMissing
         case .failure(.notLoggedIn): return .notLoggedIn
@@ -55,6 +56,20 @@ public struct GitHubCLI: Sendable {
         case .success(let reply):
             guard let found = try? PRQuery.parse(reply, branches: branches) else { return .failed(Self.unreadable) }
             return .found(found)
+        }
+    }
+
+    /// One pull request of `repo`, with what starting a row from it needs. Nil when the repo has no such PR.
+    public func pullRequest(repo: GitHubRepo, number: Int) async -> Result<PullRequestHead?, GHFailure> {
+        let query = PRHeadQuery.build(repo: repo, number: number)
+        switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
+        case .failure(.failed(let message)) where message.hasPrefix("Could not resolve to a PullRequest"):
+            return .success(nil)
+        case .failure(let failure):
+            return .failure(failure)
+        case .success(let reply):
+            guard let head = try? PRHeadQuery.parse(reply) else { return .failure(.failed(Self.unreadable)) }
+            return .success(head)
         }
     }
 

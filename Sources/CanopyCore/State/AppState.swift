@@ -1,3 +1,15 @@
+/// The pull request a branch was started from with `row new --pr`.
+public struct PRBinding: Codable, Sendable, Equatable {
+    public var number: Int
+    /// origin's GitHub repo, as owner/name, when the branch was made. The number means nothing in another repo.
+    public var repo: String
+
+    public init(number: Int, repo: String) {
+        self.number = number
+        self.repo = repo
+    }
+}
+
 public struct RepoEntry: Codable, Sendable, Equatable {
     public var path: String
     public var dirName: String
@@ -5,15 +17,20 @@ public struct RepoEntry: Codable, Sendable, Equatable {
     /// The ungrouped Canopy and adopted rows, in sidebar order. Grouped rows are in `groups`.
     public var rowOrder: [String]
     public var groups: [RowGroup]
+    /// PRs keyed by local branch, for branches whose name cannot find their PR: a fork's, or one checked out under
+    /// another name.
+    public var prBindings: [String: PRBinding]
 
     public init(
-        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = []
+        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = [],
+        prBindings: [String: PRBinding] = [:]
     ) {
         self.path = path
         self.dirName = dirName
         self.adopted = adopted
         self.rowOrder = rowOrder
         self.groups = groups
+        self.prBindings = prBindings
     }
 
     public init(from decoder: any Decoder) throws {
@@ -22,6 +39,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         dirName = try container.decode(String.self, forKey: .dirName)
         adopted = try container.decodeIfPresent([String].self, forKey: .adopted) ?? []
         rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
+        // Bindings that cannot be read only cost fork rows their badges, so the repo still loads.
+        prBindings = (try? container.decodeIfPresent([String: PRBinding].self, forKey: .prBindings)) ?? [:]
         // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
         let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
         groups = decoded?.compactMap(\.value) ?? []

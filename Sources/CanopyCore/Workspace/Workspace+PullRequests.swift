@@ -57,10 +57,64 @@ struct RepoPullRequests: Equatable {
     }
 }
 
+/// A git remote on GitHub.
+struct GitHubRemote: Sendable, Equatable {
+    /// The URL git uses for the remote.
+    var url: String
+    var repo: GitHubRepo
+}
+
 extension Workspace {
+    /// The GitHub repo behind a remote, or nil when it is not on GitHub. `git remote get-url` applies `insteadOf`
+    /// rewrites, so a mirror can hide GitHub, and then the remote's configured URL still names the repo.
+    func gitHubRemote(_ remote: String, repoPath: String) async -> GitHubRemote? {
+        for arguments in [["remote", "get-url", remote], ["config", "--get", "remote.\(remote).url"]] {
+            guard let url = try? await git.run(arguments, in: repoPath).trimmingCharacters(in: .whitespacesAndNewlines),
+                let repo = await github.repo(forRemote: url)
+            else { continue }
+            return GitHubRemote(url: url, repo: repo)
+        }
+        return nil
+    }
+
     /// Main and external rows are never looked up, and neither is a detached HEAD.
     static func looksUpPullRequest(_ row: Row) -> Bool {
         (row.rowClass == .canopy || row.rowClass == .adopted) && row.branch != nil
+    }
+
+    /// The PRs bound to `branches`, while origin is still the repo they were bound in.
+    func boundPullRequests(repoPath: String, branches: [String], repo: GitHubRepo) -> [String: Int] {
+        let bindings = state.repos.first { $0.path == repoPath }?.prBindings ?? [:]
+        var numbers: [String: Int] = [:]
+        for branch in branches {
+            guard let binding = bindings[branch], binding.repo.lowercased() == repo.nameWithOwner.lowercased() else {
+                continue
+            }
+            numbers[branch] = binding.number
+        }
+        return numbers
+    }
+
+    /// The PR number in gh's message for a PR GitHub cannot find.
+    static func unresolvedNumber(_ message: String) -> Int? {
+        let prefix = "Could not resolve to a PullRequest with the number of "
+        guard message.hasPrefix(prefix) else { return nil }
+        return Int(message.dropFirst(prefix.count).prefix(while: \.isNumber))
+    }
+
+    private func forgetPullRequest(number: Int, repoPath: String) {
+        guard let index = try? entryIndex(repoPath: repoPath) else { return }
+        state.repos[index].prBindings = state.repos[index].prBindings.filter { $0.value.number != number }
+        try? save()
+    }
+
+    /// Forgets the PR bound to `branch`, which is gone, or is about to be a new branch with the same name.
+    func forgetPullRequest(of branch: String, repoPath: String) throws {
+        guard let index = try? entryIndex(repoPath: repoPath), state.repos[index].prBindings[branch] != nil else {
+            return
+        }
+        state.repos[index].prBindings[branch] = nil
+        try save()
     }
 
     func pullRequestBranches(repoPath: String) -> [String] {
@@ -130,10 +184,21 @@ extension Workspace {
         guard state.repos.contains(where: { $0.path == repoPath }), let repo = repoSnapshots[repoPath], !repo.isMissing
         else { return }
         let branches = pullRequestBranches(repoPath: repoPath)
-        let origin = try? await git.run(["remote", "get-url", "origin"], in: repoPath)
         var lookup: PRLookup?
-        if let origin, let gitHubRepo = await github.repo(forRemote: origin) {
-            lookup = branches.isEmpty ? .found([:]) : await github.pullRequests(repo: gitHubRepo, branches: branches)
+        if let origin = await gitHubRemote("origin", repoPath: repoPath) {
+            var numbers = boundPullRequests(repoPath: repoPath, branches: branches, repo: origin.repo)
+            lookup =
+                branches.isEmpty
+                ? .found([:]) : await github.pullRequests(repo: origin.repo, branches: branches, numbers: numbers)
+            // GitHub fails the whole query over one PR it cannot find, such as one it removed, so that PR's binding
+            // goes and the branch is looked up by name again.
+            while case .failed(let message) = lookup, let missing = Self.unresolvedNumber(message),
+                numbers.values.contains(missing)
+            {
+                numbers = numbers.filter { $0.value != missing }
+                forgetPullRequest(number: missing, repoPath: repoPath)
+                lookup = await github.pullRequests(repo: origin.repo, branches: branches, numbers: numbers)
+            }
         }
         // The repo may have been removed while gh answered.
         guard state.repos.contains(where: { $0.path == repoPath }) else { return }

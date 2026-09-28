@@ -27,7 +27,8 @@ struct AgentGuide: ParsableCommand {
             canopy repo clone <owner/repo | url> [--into <dir>]
 
             canopy row list [--all]                       rows, and other tools' worktrees with --all
-            canopy row new <branch> [--from <ref>] [--run <cmd>] [--no-setup] [--select]
+            canopy row new <branch> [--from <ref> | --existing] [--run <cmd>] [--no-setup] [--select]
+            canopy row new --pr <n | #n | URL> [--branch <name>] [--group <name>] [--run <cmd>] [--no-setup] [--select]
             canopy row rm [<branch>] [--force] [--delete-branch]
             canopy row select [<branch>]
             canopy row adopt <path>                       show another tool's worktree as a row
@@ -39,6 +40,16 @@ struct AgentGuide: ParsableCommand {
         Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
         command is not run, and `row new` exits 1. `row rm` runs teardown first, then removes the worktree.
 
+        `row new <branch>` fetches origin, then says in "source" which branch it used: `local` (an existing branch,
+        fast-forwarded if it was only behind origin), `origin` (a new local branch tracking origin's), or `new`
+        (created from --from, by default origin's default branch). A mistyped name makes a new branch, so pass
+        `--existing` when you mean someone else's branch: it fails with branch_not_found instead. A branch with
+        commits of its own is never reset. "notes" say what Canopy did, and "warnings" what may need you.
+
+        `row new --pr` checks out a pull request's branch, including one from a fork, with gh pr checkout's names and
+        tracking, and "pr" in the result is the PR. Pick the local name with `--branch`. A branch another row has
+        fails with branch_checked_out, which names that row; use `canopy row select` or `canopy term` there instead.
+
         ## Groups
 
             canopy group list [--repo <name>]             groups and their rows
@@ -46,7 +57,7 @@ struct AgentGuide: ParsableCommand {
             canopy group rename <name> <new-name>
             canopy group rm <name>                        its rows become ungrouped; no worktree is touched
             canopy row move [<row>] (--group <name> | --no-group | --before <row> | --after <row>)
-            canopy row new <branch> --group <name>        create the row straight into a group
+            canopy row new <branch> --group <name>        create the row straight into a group, also with --pr
 
         A group belongs to one repo and only arranges the sidebar, where it can fold away. Names match ignoring
         case. A group that does not exist is an error (group_not_found), never created for you, so make it first
@@ -97,6 +108,10 @@ struct AgentGuide: ParsableCommand {
 
             pane=$(canopy row new fix/login-redirect --run 'claude "fix the login redirect, ticket FL-123"' --json | jq -r .pane)
             canopy term read "$pane" --lines 40
+
+        Review a pull request in its own row:
+
+            canopy row new --pr 123 --run 'claude "review this PR"'
 
         Run a dev server in its own tab of your row and watch it:
 

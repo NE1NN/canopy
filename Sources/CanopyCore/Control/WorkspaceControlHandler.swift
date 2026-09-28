@@ -106,9 +106,18 @@ public struct WorkspaceControlHandler: Sendable {
 
         case ControlMethod.rowNew:
             let params = try request.decodeParams(RowNewParams.self)
+            let start = try RowStart(params)
             let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
-            let created = try await workspace.createRow(
-                repoPath: repo.path, branch: params.branch, base: params.base, group: params.group)
+            let created =
+                switch start {
+                case .branch(let branch):
+                    try await workspace.createRow(
+                        repoPath: repo.path, branch: branch, base: params.base, existing: params.existing,
+                        group: params.group)
+                case .pullRequest(let reference):
+                    try await workspace.createRow(
+                        repoPath: repo.path, pullRequest: reference, branch: params.branch, group: params.group)
+                }
             let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
             if params.select {
                 await select(created.row.path)
@@ -116,7 +125,9 @@ public struct WorkspaceControlHandler: Sendable {
             let ready = await preparing.value
             return try .from(
                 RowNewResult(
-                    row: created.row, warnings: created.warnings, setup: ready.setup, pane: ready.pane?.description))
+                    row: created.row, source: created.source, base: created.base, pr: created.pullRequest,
+                    notes: created.notes, warnings: created.warnings, setup: ready.setup,
+                    pane: ready.pane?.description))
 
         case ControlMethod.rowRemove:
             let params = try request.decodeParams(RowRemoveParams.self)
@@ -274,5 +285,27 @@ public struct WorkspaceControlHandler: Sendable {
         try? await workspace.revealRow(path: path)
         try? await workspace.setSelectedRow(path: path)
         await ui.selectRow(path: path)
+    }
+}
+
+/// What `row.new` starts from, once the options the CLI never sends together are refused.
+private enum RowStart {
+    case branch(String)
+    case pullRequest(PRReference)
+
+    init(_ params: RowNewParams) throws {
+        func refuse(_ message: String) -> ControlError { ControlError(code: "bad_params", message: message) }
+        guard let text = params.pr else {
+            guard let branch = params.branch else { throw refuse("Pass a branch name, or a PR with --pr.") }
+            if params.existing, params.base != nil {
+                throw refuse("--from only applies to new branches, and --existing never creates one.")
+            }
+            self = .branch(branch)
+            return
+        }
+        if params.base != nil { throw refuse("--from only applies to new branches, and --pr uses the PR's.") }
+        if params.existing { throw refuse("--existing is for a branch name. --pr always uses the PR's branch.") }
+        guard let reference = PRReference(text) else { throw WorkspaceError.invalidPullRequest(text) }
+        self = .pullRequest(reference)
     }
 }

@@ -1,7 +1,25 @@
 import Foundation
 
+/// Where a new row's branch came from.
+public enum BranchSource: String, Codable, Sendable {
+    /// A local branch was checked out.
+    case local
+    /// A branch on origin was checked out as a new local branch tracking it.
+    case origin
+    /// Nothing matched, so a new branch was created.
+    case new
+}
+
 public struct CreatedRow: Sendable, Equatable {
     public var row: Row
+    public var source: BranchSource
+    /// Where a new branch started, such as origin/main.
+    public var base: String?
+    /// The pull request the row was started from.
+    public var pullRequest: PullRequest?
+    /// What Canopy did along the way, such as fast-forwarding the branch.
+    public var notes: [String]
+    /// What may need fixing, such as a branch that has diverged from origin.
     public var warnings: [String]
 }
 
@@ -13,27 +31,36 @@ struct JoiningGroup: Sendable, Equatable {
 
 struct FetchAttempt: Sendable {
     var finishedAt: ContinuousClock.Instant
-    var warning: String?
+    /// Why the fetch failed, such as "git fetch timed out".
+    var failure: String?
 }
 
 extension Workspace {
-    /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/.
-    /// An existing local branch is checked out, a branch only on origin is tracked,
-    /// and anything else is created from `base` (default: origin's default branch).
+    /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/. An existing local branch is checked out,
+    /// after a fast-forward if it is only behind origin. A branch only on origin is tracked. Anything else is created
+    /// from `base` (default: origin's default branch), unless `existing` asks to fail instead.
     /// With `group`, the row goes straight to the end of that group, which must exist.
     public func createRow(
-        repoPath: String, branch: String, base: String? = nil, group: String? = nil
+        repoPath: String, branch: String, base: String? = nil, existing: Bool = false, group: String? = nil
     ) async throws -> CreatedRow {
         let requestedAt = ContinuousClock.now
-        // Checked before waiting for other git work in the repo, and again once it is this row's turn.
+        return try await createRow(repoPath: repoPath, joining: group) {
+            try await self.createRowNow(
+                repoPath: repoPath, branch: branch, base: base, existing: existing, group: group,
+                requestedAt: requestedAt)
+        }
+    }
+
+    /// Runs `create` in the repo's git queue, then logs the new row's move into the group it joined. `create` checks
+    /// the group again once it is its turn, since the group can go away while it waits.
+    func createRow(
+        repoPath: String, joining group: String?, _ create: @escaping @Sendable () async throws -> CreatedRow
+    ) async throws -> CreatedRow {
         if let group {
             _ = try joiningGroup(group, repoPath: repoPath)
         }
-        var created = try await serialized(repoPath: repoPath) {
-            try await self.createRowNow(
-                repoPath: repoPath, branch: branch, base: base, group: group, requestedAt: requestedAt)
-        }
-        // After createRowNow, which logged the row's creation, so its move into the group is logged second.
+        var created = try await serialized(repoPath: repoPath, create)
+        // After `create`, which logged the row's creation, so its move into the group is logged second.
         if let joining = rowsJoiningGroups.removeValue(forKey: created.row.path) {
             created.row = snapshot.row(path: created.row.path) ?? created.row
             if let joined = created.row.group {
@@ -58,34 +85,112 @@ extension Workspace {
 
     private func createRowNow(
         repoPath: String,
-        branch: String,
+        branch requested: String,
         base: String?,
+        existing: Bool,
         group: String?,
         requestedAt: ContinuousClock.Instant
     ) async throws -> CreatedRow {
-        let index = try entryIndex(repoPath: repoPath)
-        let dirName = state.repos[index].dirName
-        var warnings: [String] = []
+        _ = try entryIndex(repoPath: repoPath)
         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
-
         guard FileManager.default.fileExists(atPath: repoPath) else {
             throw WorkspaceError.pathNotFound(repoPath)
         }
-        // `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
-        guard !branch.hasPrefix("-"), branch != "HEAD",
-            await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
-        else {
-            throw WorkspaceError.invalidBranch(branch)
-        }
-        if snapshot.repo(path: repoPath)?.allRows.contains(where: { $0.branch == branch }) == true {
-            throw WorkspaceError.branchCheckedOut(branch)
+        try await requireValidBranchName(requested, repoPath: repoPath)
+        // Fails before fetching, since a row that has the branch will still have it after.
+        if let holder = holder(of: requested, repoPath: repoPath), !holder.isMissing {
+            throw WorkspaceError.branchCheckedOut(requested, row: holder)
         }
 
+        var notes: [String] = []
+        var warnings: [String] = []
         let hasOrigin = await git.succeeds(["remote", "get-url", "origin"], in: repoPath)
-        if hasOrigin, let warning = await fetchUnlessFresh(repoPath: repoPath, since: requestedAt) {
-            warnings.append(warning)
+        var fetchFailure: String?
+        if hasOrigin {
+            fetchFailure = await fetchUnlessFresh(repoPath: repoPath, since: requestedAt)
+            if let fetchFailure { warnings.append("\(fetchFailure), so the row starts from local refs.") }
         }
 
+        let branch: String
+        let source: BranchSource
+        var start: String?
+        if let local = await existingBranch(requested, under: "refs/heads/", repoPath: repoPath) {
+            (branch, source) = (local, .local)
+        } else if hasOrigin,
+            let remote = await existingBranch(requested, under: "refs/remotes/origin/", repoPath: repoPath)
+        {
+            (branch, source) = (remote, .origin)
+        } else {
+            guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
+            (branch, source) = (requested, .new)
+            start = try await startPoint(base, repoPath: repoPath, hasOrigin: hasOrigin)
+        }
+        if source != .local {
+            // A PR bound to an old branch of this name is not the new branch's.
+            try forgetPullRequest(of: branch, repoPath: repoPath)
+        }
+        if branch != requested {
+            notes.append("Using \(branch), the branch's own spelling.")
+        }
+        try await claim(branch: branch, repoPath: repoPath)
+
+        var fastForward: FastForward?
+        if source == .local, hasOrigin {
+            let remote = "refs/remotes/origin/\(branch)"
+            if await git.succeeds(["show-ref", "--verify", "--quiet", remote], in: repoPath) {
+                let report = await compare(
+                    branch, with: remote, named: "origin/\(branch)", resetTo: "origin/\(branch)", repoPath: repoPath)
+                notes += report.notes
+                warnings += report.warnings
+                fastForward = report.fastForward
+            } else if fetchFailure == nil, let warning = await goneUpstreamWarning(branch, repoPath: repoPath) {
+                warnings.append(warning)
+            }
+        }
+
+        let added = try await addRow(
+            repoPath: repoPath, branch: branch, joining: joining, fastForward: fastForward
+        ) { folder in
+            switch source {
+            case .local: [folder, branch]
+            case .origin: ["--track", "-b", branch, folder, "origin/\(branch)"]
+            case .new: ["--no-track", "-b", branch, folder, start ?? "HEAD"]
+            }
+        }
+        return CreatedRow(
+            row: added.row, source: source, base: start, pullRequest: nil, notes: notes + added.report.notes,
+            warnings: warnings + added.report.warnings)
+    }
+
+    func requireValidBranchName(_ branch: String, repoPath: String) async throws {
+        guard await isValidBranchName(branch, repoPath: repoPath) else { throw WorkspaceError.invalidBranch(branch) }
+    }
+
+    /// `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
+    func isValidBranchName(_ branch: String, repoPath: String) async -> Bool {
+        guard !branch.hasPrefix("-"), branch != "HEAD" else { return false }
+        return await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
+    }
+
+    private func startPoint(_ base: String?, repoPath: String, hasOrigin: Bool) async throws -> String {
+        guard let base else { return await defaultBase(repoPath: repoPath, hasOrigin: hasOrigin) }
+        guard !base.hasPrefix("-"),
+            await git.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"], in: repoPath)
+        else {
+            throw WorkspaceError.invalidBase(base)
+        }
+        return base
+    }
+
+    /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then `fastForward` in it, and lists
+    /// the row last among the repo's rows, or last in the group it is `joining`. `arguments` gets the folder and
+    /// returns what follows `worktree add`. The report says how the fast-forward went, and warns when a checkout hook
+    /// failed after git had made the worktree.
+    func addRow(
+        repoPath: String, branch: String, joining: String? = nil, fastForward: FastForward? = nil,
+        arguments: (String) -> [String]
+    ) async throws -> (row: Row, report: BranchReport) {
+        let dirName = state.repos[try entryIndex(repoPath: repoPath)].dirName
         // A worktree whose folder was deleted keeps its path until it is pruned, so git would refuse to reuse it.
         await refresh(repoPath: repoPath)
         let registered = Set(snapshot.repo(path: repoPath)?.allRows.map(\.path) ?? [])
@@ -95,28 +200,6 @@ extension Workspace {
             registered.contains(Paths.canonical($0.path)) || FileManager.default.fileExists(atPath: $0.path)
         }
 
-        var arguments = ["worktree", "add"]
-        if await git.succeeds(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repoPath) {
-            arguments += [folder.path, branch]
-        } else if hasOrigin,
-            await git.succeeds(["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(branch)"], in: repoPath)
-        {
-            arguments += ["--track", "-b", branch, folder.path, "origin/\(branch)"]
-        } else {
-            let start: String
-            if let base {
-                guard !base.hasPrefix("-"),
-                    await git.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"], in: repoPath)
-                else {
-                    throw WorkspaceError.invalidBase(base)
-                }
-                start = base
-            } else {
-                start = await defaultBase(repoPath: repoPath, hasOrigin: hasOrigin)
-            }
-            arguments += ["--no-track", "-b", branch, folder.path, start]
-        }
-
         let path = Paths.canonical(folder.path)
         rowsJoiningGroups[path] = joining.map { JoiningGroup(repoPath: repoPath, group: $0) }
         // `createRow` takes the path back out once it has logged the move, unless creating the row fails.
@@ -124,16 +207,18 @@ extension Workspace {
         defer { if !created { rowsJoiningGroups[path] = nil } }
         changingRows[path] = .current
         defer { finishChanging([path], repoPath: repoPath) }
+        var report = BranchReport()
         do {
-            try await git.run(arguments, in: repoPath)
+            try await git.run(["worktree", "add"] + arguments(folder.path), in: repoPath)
         } catch let error as GitError {
             if error.stderr.contains("already checked out") || error.stderr.contains("already used by worktree") {
-                throw WorkspaceError.branchCheckedOut(branch)
+                await refresh(repoPath: repoPath)
+                throw WorkspaceError.branchCheckedOut(branch, row: holder(of: branch, repoPath: repoPath))
             }
             // A failing post-checkout hook makes git exit non-zero after the worktree is complete.
             await refresh(repoPath: repoPath)
             guard snapshot.row(path: path)?.branch == branch else { throw WorkspaceError.git(error) }
-            warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
+            report.warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
         }
 
         if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].holds(path) {
@@ -141,9 +226,15 @@ extension Workspace {
             try save()
         }
         await refresh(repoPath: repoPath)
-        guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
+        guard var row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
         created = true
-        return CreatedRow(row: row, warnings: warnings)
+        if let fastForward {
+            let done = await self.fastForward(fastForward, in: row)
+            report.notes += done.notes
+            report.warnings += done.warnings
+            row = snapshot.row(path: path) ?? row
+        }
+        return (row, report)
     }
 
     private func removeRowNow(path: String, force: Bool, deleteBranch: Bool) async throws -> [String] {
@@ -187,6 +278,7 @@ extension Workspace {
                 } catch {
                     return ["Removed the row, but could not delete branch \(branch): \(error)"]
                 }
+                try? forgetPullRequest(of: branch, repoPath: row.repoPath)
             }
             return []
         }
@@ -203,20 +295,21 @@ extension Workspace {
 
     /// Parallel creates queue behind each other, so a fetch that finished after this request was made
     /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
+    /// Returns why the fetch failed, or nil. Pruning drops branches deleted on origin, which are no longer on it.
     private func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
         if let attempt = lastFetch[repoPath], attempt.finishedAt > requestedAt {
-            return attempt.warning
+            return attempt.failure
         }
-        var warning: String?
+        var failure: String?
         do {
-            try await git.run(["fetch", "--quiet", "origin"], in: repoPath, timeout: fetchTimeout)
+            try await git.run(["fetch", "--quiet", "--prune", "origin"], in: repoPath, timeout: fetchTimeout)
         } catch let error as GitError where error.timedOut {
-            warning = "git fetch timed out, so the row starts from local refs."
+            failure = "git fetch timed out"
         } catch {
-            warning = "git fetch failed, so the row starts from local refs: \(error)"
+            failure = "git fetch failed: \(error)"
         }
-        lastFetch[repoPath] = FetchAttempt(finishedAt: .now, warning: warning)
-        return warning
+        lastFetch[repoPath] = FetchAttempt(finishedAt: .now, failure: failure)
+        return failure
     }
 
     /// Whether the repo still has a group of that name. A row being created into it may have been moved out since.
@@ -225,7 +318,7 @@ extension Workspace {
     }
 
     /// The stored name of the group a new row is to join, which must exist.
-    private func joiningGroup(_ name: String, repoPath: String) throws -> String {
+    func joiningGroup(_ name: String, repoPath: String) throws -> String {
         let index = try entryIndex(repoPath: repoPath)
         let entry = state.repos[index]
         return entry.groups[try entry.requireGroup(name, repo: repoName(repoPath))].name

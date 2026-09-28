@@ -13,12 +13,12 @@ final class RecordingUI: ControlUIBridge {
 }
 
 struct ControlServerTests {
-    func startServer(_ dir: TempDir, github: GitHubCLI = GitHubCLI(), logsCommands: Bool = true) async throws
-        -> (Workspace, ControlServer, ControlClient, RecordingUI)
-    {
+    func startServer(
+        _ dir: TempDir, git: GitRunner = Fixture.git, github: GitHubCLI = GitHubCLI(), logsCommands: Bool = true
+    ) async throws -> (Workspace, ControlServer, ControlClient, RecordingUI) {
         let home = CanopyHome(path: dir.sub("home"))
         let activity = ActivityLog(folder: home.activityFolder, logsCommands: logsCommands)
-        let workspace = Workspace(home: home, git: Fixture.git, github: github, activity: activity)
+        let workspace = Workspace(home: home, git: git, github: github, activity: activity)
         try await workspace.start()
         let ui = RecordingUI()
         let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
@@ -424,6 +424,54 @@ struct ControlServerTests {
             return params["text"]
         }
         #expect(texts == [nil, "ls"])
+    }
+
+    @Test func rowNewStartsFromAPullRequest() async throws {
+        let dir = try TempDir()
+        let github = try LocalGitHub(dir)
+        try await github.createRepo("acme/app")
+        try await github.push(to: "feat/split", of: "acme/app")
+        try await github.openPR(7, on: "acme/app", from: "feat/split")
+        let repo = try await github.clone("acme/app")
+        let (_, server, client, _) = try await startServer(dir, git: github.git, github: github.gh)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+
+        let created = try await call(
+            client, ControlMethod.rowNew,
+            JSONValue.object([
+                "pr": .string("https://github.com/acme/app/pull/7/files"), "target": .object(["repo": .string("demo")]),
+            ]),
+            as: RowNewResult.self)
+
+        #expect(created.row.branch == "feat/split")
+        #expect(created.source == .origin)
+        #expect(created.pr?.number == 7)
+    }
+
+    @Test func rowNewRefusesOptionsThatDoNotGoTogether() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir, origin: true)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+
+        func code(_ params: [String: JSONValue]) async throws -> String? {
+            var params = params
+            params["target"] = .object(["repo": .string("demo")])
+            let request = ControlRequest(method: ControlMethod.rowNew, params: .object(params))
+            return try await offPool { try client.send(request) }.error?.code
+        }
+        #expect(try await code([:]) == "bad_params")
+        #expect(try await code(["pr": .number(7), "base": .string("main")]) == "bad_params")
+        #expect(try await code(["pr": .number(7), "existing": .bool(true)]) == "bad_params")
+        #expect(
+            try await code(["branch": .string("feat/x"), "base": .string("main"), "existing": .bool(true)])
+                == "bad_params")
+        #expect(try await code(["pr": .string("feat/x")]) == "invalid_pr")
+        #expect(try await code(["branch": .string("feat/typo"), "existing": .bool(true)]) == "branch_not_found")
+        #expect(
+            await Fixture.git.succeeds(["show-ref", "--verify", "--quiet", "refs/heads/feat/x"], in: repo) == false)
     }
 
     @Test func errorsCarryCodes() async throws {
