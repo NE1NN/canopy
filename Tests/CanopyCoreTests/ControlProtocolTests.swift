@@ -62,6 +62,21 @@ struct JSONValueTests {
         #expect(String(decoding: try JSONEncoder().encode(shown), as: UTF8.self).contains(#""pr":null"#))
     }
 
+    @Test func listParamsDefaultWhatIsLeftOut() throws {
+        let prs = try JSONValue.object([:]).decode(PRListParams.self)
+        #expect(prs.target == TargetHint() && prs.query == nil && !prs.closed)
+        let branches = try JSONValue.object([:]).decode(BranchListParams.self)
+        #expect(branches.target == TargetHint() && branches.query == nil && branches.fetch)
+
+        let asked = try JSONValue.object(["query": .string("#7"), "closed": .bool(true)]).decode(PRListParams.self)
+        #expect(asked.query == "#7" && asked.closed)
+        #expect(try JSONValue.object(["fetch": .bool(false)]).decode(BranchListParams.self).fetch == false)
+    }
+
+    @Test func listsOnlyRead() {
+        #expect(ControlMethod.readOnly.isSuperset(of: [ControlMethod.prList, ControlMethod.branchList]))
+    }
+
     @Test func keepsIntegersIntegral() throws {
         let data = try JSONEncoder().encode(JSONValue.number(42))
         #expect(String(decoding: data, as: UTF8.self) == "42")
@@ -82,6 +97,9 @@ struct JSONValueTests {
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList).map { $0 <= 60 } == true)
         // A refresh can wait behind a lookup already asking GitHub, and each gets 30 seconds.
         #expect(ControlMethod.replyTimeout(for: ControlMethod.prShow).map { $0 >= 60 } == true)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.prList).map { $0 >= 60 } == true)
+        // A fetch waits behind other git work in the repo, as creating rows does.
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.branchList).map { $0 >= 600 } == true)
     }
 
     @Test func clientFailuresMapToStableCodes() {

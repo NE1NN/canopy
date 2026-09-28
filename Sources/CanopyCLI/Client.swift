@@ -181,4 +181,16 @@ enum Table {
         }
         .joined(separator: "\n")
     }
+
+    /// Where a listed PR or branch is checked out. A PR's row can be on a branch named other than its head.
+    static func holder(_ holder: BranchHolder?, for head: String? = nil) -> String {
+        guard let holder else { return "-" }
+        switch holder.rowClass {
+        case .main: return "main checkout"
+        case .external: return "other worktree"
+        case .canopy, .adopted:
+            guard let branch = holder.branch, let head, branch != head else { return "in row" }
+            return "in row \(branch)"
+        }
+    }
 }
