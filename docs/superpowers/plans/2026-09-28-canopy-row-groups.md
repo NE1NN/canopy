@@ -559,10 +559,10 @@ extension RepoEntry {
 `Sources/CanopyCore/Workspace/WorkspaceError.swift`:
 
 ```diff
-@@ -26,6 +26,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
-     case ghFailed(String)
-     case portNotFound(Int)
-     case portInOtherRow(Int, row: String)
+@@ -32,6 +32,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+     case folderTaken(String, holding: String?)
+     case cloneFailed(String, reason: String)
+     case cloneCancelled
 +    case invalidGroupName(String)
 +    case groupExists(String, repo: String)
 +    case groupNotFound(String, repo: String)
@@ -571,10 +571,10 @@ extension RepoEntry {
      case git(GitError)
  
      public var code: String {
-@@ -57,6 +62,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
-         case .ghFailed: "gh_failed"
-         case .portNotFound: "port_not_found"
-         case .portInOtherRow: "port_in_other_row"
+@@ -68,6 +73,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+         case .folderTaken: "folder_taken"
+         case .cloneFailed: "clone_failed"
+         case .cloneCancelled: "clone_cancelled"
 +        case .invalidGroupName: "invalid_group_name"
 +        case .groupExists: "group_exists"
 +        case .groupNotFound: "group_not_found"
@@ -583,10 +583,10 @@ extension RepoEntry {
          case .git: "git_failed"
          }
      }
-@@ -95,6 +105,12 @@ public enum WorkspaceError: Error, Sendable, Equatable {
-             "No row's process listens on port \(port). Run `canopy ports --all`; Canopy only stops its rows' ports."
-         case .portInOtherRow(let port, let row):
-             "Port \(port) belongs to \(row), not to this row. Pass --row \(row), or --all to stop it anywhere."
+@@ -114,6 +124,12 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+             "\(path) is already there and is not an empty folder. Pass --into to clone somewhere else."
+         case .cloneFailed(let source, let reason): "Could not clone \(source): \(reason)"
+         case .cloneCancelled: "The clone was stopped before it finished."
 +        case .invalidGroupName: "A group name cannot be empty or hold control characters such as a newline."
 +        case .groupExists(let name, let repo): "\(repo) already has a group named \(name)."
 +        case .groupNotFound(let name, let repo): "\(repo) has no group named \"\(name)\". Run `canopy group list`."
@@ -1299,7 +1299,7 @@ extension Workspace {
 `Sources/CanopyCore/Workspace/Workspace.swift`:
 
 ```diff
-@@ -208,7 +208,7 @@ public actor Workspace {
+@@ -217,7 +217,7 @@ public actor Workspace {
          }
          let row = snapshot.row(path: path)
          state.repos[index].adopted.removeAll { $0 == path }
@@ -1308,7 +1308,7 @@ extension Workspace {
          if state.selectedRowPath == path {
              state.selectedRowPath = nil
          }
-@@ -298,7 +298,7 @@ public actor Workspace {
+@@ -307,7 +307,7 @@ public actor Workspace {
      private func refreshNow(repoPath: String) async {
          guard let entry = state.repos.first(where: { $0.path == repoPath }) else { return }
          guard FileManager.default.fileExists(atPath: entry.path) else {
@@ -1317,7 +1317,7 @@ extension Workspace {
              publish()
              return
          }
-@@ -320,7 +320,8 @@ public actor Workspace {
+@@ -329,7 +329,8 @@ public actor Workspace {
          let worktrees = WorktreeListParser.parse(output)
          // git follows a folder that moves after it started in it, and reports where the folder went.
          guard worktrees.first.map({ Paths.canonical($0.path) }) == current.path else {
@@ -1327,7 +1327,7 @@ extension Workspace {
              publish()
              return
          }
-@@ -332,18 +333,17 @@ public actor Workspace {
+@@ -341,18 +342,17 @@ public actor Workspace {
          )
          recordRowChanges(repoPath: current.path, rows: rows)
          let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
@@ -1723,7 +1723,7 @@ Expected: the build fails with `extra argument 'group' in call`.
 `Sources/CanopyCore/Workspace/Workspace.swift`:
 
 ```diff
-@@ -24,6 +24,9 @@ public actor Workspace {
+@@ -26,6 +26,9 @@ public actor Workspace {
      /// Rows Canopy is creating, removing, or pruning, with who asked. git can list a row halfway through a change, so
      /// refreshes leave these out of the comparison, and the operation logs how each one ended up.
      var changingRows: [String: ActivitySource] = [:]
@@ -1733,7 +1733,7 @@ Expected: the build fails with `extra argument 'group' in call`.
  
      let github: GitHubCLI
      let prTiming: PRTiming
-@@ -334,7 +337,7 @@ public actor Workspace {
+@@ -343,7 +346,7 @@ public actor Workspace {
          recordRowChanges(repoPath: current.path, rows: rows)
          let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
          var reconciled = current
@@ -1957,7 +1957,7 @@ Expected: the build fails with `cannot find 'GroupMethod' in scope`.
 `Sources/CanopyCLI/AgentGuide.swift`:
 
 ```diff
-@@ -35,6 +35,20 @@ struct AgentGuide: ParsableCommand {
+@@ -39,6 +39,20 @@ struct AgentGuide: ParsableCommand {
          Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
          command is not run, and `row new` exits 1. `row rm` runs teardown first, then removes the worktree.
  
@@ -1978,7 +1978,7 @@ Expected: the build fails with `cannot find 'GroupMethod' in scope`.
          ## Terminals
  
              canopy term list [--all]                      ID, row, tab, process, title, and folder
-@@ -89,6 +103,12 @@ struct AgentGuide: ParsableCommand {
+@@ -93,6 +107,12 @@ struct AgentGuide: ParsableCommand {
  
              canopy log --since 1h --type term.command --json | jq '.[] | select(.data.exit != 0) | .data.cmd'
  
@@ -2236,7 +2236,7 @@ struct GroupCommand: AsyncParsableCommand {
 `Sources/CanopyCore/Control/ControlMethods.swift`:
 
 ```diff
-@@ -10,11 +10,12 @@ public enum ControlMethod {
+@@ -11,11 +11,12 @@ public enum ControlMethod {
      public static let rowRemove = "row.remove"
      public static let rowSelect = "row.select"
      public static let rowAdopt = "row.adopt"
@@ -2250,7 +2250,7 @@ struct GroupCommand: AsyncParsableCommand {
      ]
  
      /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
-@@ -126,10 +127,12 @@ public struct RowNewParams: Codable, Sendable {
+@@ -140,10 +141,12 @@ public struct RowNewParams: Codable, Sendable {
      public var setup: Bool
      /// A command to type into a new terminal once setup succeeds.
      public var run: String?
@@ -2264,7 +2264,7 @@ struct GroupCommand: AsyncParsableCommand {
      ) {
          self.target = target
          self.branch = branch
-@@ -137,6 +140,7 @@ public struct RowNewParams: Codable, Sendable {
+@@ -151,6 +154,7 @@ public struct RowNewParams: Codable, Sendable {
          self.select = select
          self.setup = setup
          self.run = run
@@ -2272,7 +2272,7 @@ struct GroupCommand: AsyncParsableCommand {
      }
  
      public init(from decoder: any Decoder) throws {
-@@ -147,6 +151,7 @@ public struct RowNewParams: Codable, Sendable {
+@@ -161,6 +165,7 @@ public struct RowNewParams: Codable, Sendable {
          select = try container.decodeIfPresent(Bool.self, forKey: .select) ?? false
          setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
          run = try container.decodeIfPresent(String.self, forKey: .run)
@@ -2393,7 +2393,7 @@ public struct RowMoveResult: Codable, Sendable {
 `Sources/CanopyCore/Control/WorkspaceControlHandler.swift`:
 
 ```diff
-@@ -99,7 +99,8 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -107,7 +107,8 @@ public struct WorkspaceControlHandler: Sendable {
          case ControlMethod.rowNew:
              let params = try request.decodeParams(RowNewParams.self)
              let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
@@ -2403,7 +2403,7 @@ public struct RowMoveResult: Codable, Sendable {
              let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
              if params.select {
                  await select(created.row.path)
-@@ -128,6 +129,51 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -136,6 +137,51 @@ public struct WorkspaceControlHandler: Sendable {
              let params = try request.decodeParams(RowAdoptParams.self)
              return try .from(try await workspace.adopt(path: params.path))
  
@@ -2455,7 +2455,7 @@ public struct RowMoveResult: Codable, Sendable {
          case ControlMethod.prShow:
              let params = try request.decodeParams(PRShowParams.self)
              let snapshot = await workspace.snapshot
-@@ -199,7 +245,25 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -207,7 +253,25 @@ public struct WorkspaceControlHandler: Sendable {
          }
      }
  
@@ -2798,7 +2798,7 @@ Modify `SidebarView.swift`, `RowActionViews.swift`, `PortsPanel.swift`, `AppMode
 - Consumes Tasks 2 and 3.
 - Produces `AppModel.createGroup(in:name:) async -> String?`, `createGroup(named:moving:) async -> String?`, `renameGroup(_:in:to:) async -> String?`, `removeGroup(_:in:)`, `setCollapsed(_:_:in:)`, `move(_:to:)`, and `createRow(in:branch:base:group:)`.
 - Produces `AppModel.reveal(_ path: String)`, which selects a row and unfolds its group, and `scrollRequest`, which the list scrolls to.
-- Produces `MoreMenu`, the `…` button the repo and group headers share, and `GroupNamePopover`.
+- Produces `GroupNamePopover`, and uses `IconMenu` from #16 for the group header's `…` button.
 - Produces `ui rightclick`, `ui down`, `ui drag-to`, and `ui up`, and `window-shot.swift --all`, which draws the app's own windows with ScreenCaptureKit, since `screencapture -l` cannot take menu windows.
 
 Each repo section shows the ungrouped rows, then a `GroupHeaderView` per group with its rows indented one step, all filtered from `repo.rows` by `group`.
@@ -2828,7 +2828,7 @@ Checks, each with posted events and confirmed with the CLI where it changes stat
 `Sources/CanopyApp/AppModel.swift`:
 
 ```diff
-@@ -124,15 +124,13 @@ final class AppModel {
+@@ -125,15 +125,13 @@ final class AppModel {
          selectedRowPath = rows[number - 1].path
      }
  
@@ -2848,7 +2848,7 @@ Checks, each with posted events and confirmed with the CLI where it changes stat
      }
  
      /// Once the sidebar lets go of the keyboard, rows selected later hand it to their terminal again.
-@@ -149,17 +147,43 @@ final class AppModel {
+@@ -150,17 +148,43 @@ final class AppModel {
          Task { await workspace.refreshAll() }
      }
  
@@ -2895,7 +2895,7 @@ Checks, each with posted events and confirmed with the CLI where it changes stat
              await select(created.row.path)
              if let warning = created.warnings.first {
                  show(warning)
-@@ -202,6 +226,47 @@ final class AppModel {
+@@ -203,6 +227,47 @@ final class AppModel {
          }
      }
  
@@ -2983,7 +2983,7 @@ struct GroupHeaderView: View {
                 .truncationMode(.tail)
             Spacer(minLength: 4)
             if isHovering || isRenaming || isConfirmingDelete {
-                MoreMenu(help: "More for \(group.name)") {
+                IconMenu(title: "More for \(group.name)", systemImage: "ellipsis") {
                     GroupMenuItems(rename: { isRenaming = true }, delete: requestDelete)
                 }
                 IconButton(title: "New Row in \(group.name)…", systemImage: "plus", action: onNewRow)
@@ -3184,31 +3184,6 @@ struct RowMenuItems: View {
         }
     }
 }
-
-/// A borderless `…` button that opens a menu, as in the repo and group headers.
-struct MoreMenu<Content: View>: View {
-    let help: String
-    @ViewBuilder let content: Content
-    @State private var isHovering = false
-
-    var body: some View {
-        Menu {
-            content
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .frame(width: 22, height: 22)
-        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
-        .foregroundStyle(isHovering ? .primary : .secondary)
-        .onHover { isHovering = $0 }
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
 ```
 
 `Sources/CanopyApp/Sidebar/PortsPanel.swift`:
@@ -3299,7 +3274,7 @@ struct MoreMenu<Content: View>: View {
          }
      }
  
-@@ -55,7 +60,7 @@ struct SidebarView: View {
+@@ -56,7 +61,7 @@ struct SidebarView: View {
                              get: { expanded.contains(repo.path) },
                              set: { if $0 { expanded.insert(repo.path) } else { expanded.remove(repo.path) } }),
                          isFocused: isFocused,
@@ -3308,7 +3283,7 @@ struct MoreMenu<Content: View>: View {
                      )
                  }
              }
-@@ -93,29 +98,43 @@ struct SidebarView: View {
+@@ -94,29 +99,43 @@ struct SidebarView: View {
      }
  }
  
@@ -3364,7 +3339,7 @@ struct MoreMenu<Content: View>: View {
                      }
                  }
              }
-@@ -134,6 +153,14 @@ struct RepoSection: View {
+@@ -135,6 +154,14 @@ struct RepoSection: View {
          }
          .padding(.top, 4)
      }
@@ -3379,7 +3354,7 @@ struct MoreMenu<Content: View>: View {
  }
  
  struct RepoHeaderView: View {
-@@ -141,6 +168,7 @@ struct RepoHeaderView: View {
+@@ -142,6 +169,7 @@ struct RepoHeaderView: View {
      let repo: RepoSnapshot
      let onNewRow: () -> Void
      @State private var isHovering = false
@@ -3387,7 +3362,7 @@ struct MoreMenu<Content: View>: View {
  
      var body: some View {
          HStack(spacing: 8) {
-@@ -164,9 +192,9 @@ struct RepoHeaderView: View {
+@@ -165,9 +193,9 @@ struct RepoHeaderView: View {
                  Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
                      .controlSize(.small)
                      .help("Find where \(repo.name) moved")
@@ -3400,7 +3375,7 @@ struct MoreMenu<Content: View>: View {
                  IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
              } else {
                  Text(verbatim: "\(repo.rows.count)")
-@@ -183,7 +211,13 @@ struct RepoHeaderView: View {
+@@ -184,7 +212,13 @@ struct RepoHeaderView: View {
          .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
          .contentShape(Rectangle())
          .onHover { isHovering = $0 }
@@ -3415,35 +3390,20 @@ struct MoreMenu<Content: View>: View {
      }
  }
  
-@@ -191,24 +225,12 @@ struct RepoHeaderView: View {
+@@ -192,10 +226,11 @@ struct RepoHeaderView: View {
  struct RepoMenu: View {
      let repo: RepoSnapshot
      let onNewRow: () -> Void
--    @State private var isHovering = false
 +    let onNewGroup: () -> Void
  
      var body: some View {
--        Menu {
+         IconMenu(title: "More for \(repo.name)", systemImage: "ellipsis") {
 -            RepoMenuItems(repo: repo, onNewRow: onNewRow)
--        } label: {
--            Image(systemName: "ellipsis")
--                .font(.system(size: 12, weight: .medium))
-+        MoreMenu(help: "More for \(repo.name)") {
 +            RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: onNewGroup)
          }
--        .menuStyle(.button)
--        .buttonStyle(.plain)
--        .menuIndicator(.hidden)
--        .frame(width: 22, height: 22)
--        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
--        .foregroundStyle(isHovering ? .primary : .secondary)
--        .onHover { isHovering = $0 }
--        .help("More for \(repo.name)")
--        .accessibilityLabel("More for \(repo.name)")
      }
  }
- 
-@@ -216,12 +238,14 @@ struct RepoMenuItems: View {
+@@ -204,12 +239,14 @@ struct RepoMenuItems: View {
      @Environment(AppModel.self) private var model
      let repo: RepoSnapshot
      let onNewRow: () -> Void
@@ -3458,7 +3418,7 @@ struct MoreMenu<Content: View>: View {
          }
          Divider()
          Button("Remove Repo from Canopy") { model.removeRepo(repo) }
-@@ -235,8 +259,11 @@ struct RowLineView: View {
+@@ -223,8 +260,11 @@ struct RowLineView: View {
      let isFocused: Bool
      let shortcut: Int?
      let removable: Bool
@@ -3470,7 +3430,7 @@ struct MoreMenu<Content: View>: View {
  
      private var isRunning: Bool { model.terminals.isRunningProgram(inRow: row.path) }
  
-@@ -287,12 +314,18 @@ struct RowLineView: View {
+@@ -275,12 +315,18 @@ struct RowLineView: View {
                  }
              }
          }
@@ -3490,7 +3450,7 @@ struct MoreMenu<Content: View>: View {
          .onHover { isHovering = $0 }
          // The PR number slides left as the shortcut and remove button come in.
          .animation(.easeOut(duration: 0.12), value: isHovering)
-@@ -310,6 +343,7 @@ struct RowLineView: View {
+@@ -298,6 +344,7 @@ struct RowLineView: View {
  
      private var accessibilityLabel: String {
          var parts = [row.displayName]
@@ -3527,7 +3487,7 @@ struct MoreMenu<Content: View>: View {
  #
  #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
  #   scripts/ui-fixture.sh stop           quit it and delete its folder
-@@ -84,12 +84,20 @@ for repo in web-app api-server docs; do "$cli" repo add "$work/$repo" >/dev/null
+@@ -129,13 +129,20 @@ for repo in web-app api-server docs; do "$cli" repo add "$work/$repo" >/dev/null
  "$cli" row new feat/onboarding-flow --repo web-app >/dev/null
  "$cli" row new fix/login-redirect --repo web-app >/dev/null
  "$cli" row new feat/checkout-redesign --repo web-app >/dev/null
@@ -3543,7 +3503,7 @@ struct MoreMenu<Content: View>: View {
  # Remotes come after the rows, so creating the rows does not fetch. The stand-in gh answers for them.
  git -C "$work/web-app" remote add origin https://github.com/acme/web-app.git
  git -C "$work/api-server" remote add origin https://github.com/acme/api-server.git
-+"$cli" pr feat/checkout-redesign --repo web-app --refresh >/dev/null
+ "$cli" pr feat/onboarding-flow --repo web-app --refresh >/dev/null
 +"$cli" pr feat/rate-limits --repo api-server --refresh >/dev/null || true
  "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
  sleep 1
@@ -3611,9 +3571,9 @@ struct MoreMenu<Content: View>: View {
 `scripts/window-shot.swift`:
 
 ```diff
-@@ -1,32 +1,66 @@
--// Captures the main window of a process, even when it is behind other apps or not yet shown. Usage: swift scripts/window-shot.swift <pid> <out.png>
-+// Captures the main window of a process, even when it is behind other apps or not yet shown.
+@@ -1,7 +1,13 @@
+ // Captures the main window of a process, even when it is behind other apps or not yet shown.
+-// Usage: swift scripts/window-shot.swift <pid> <out.png>
 +//
 +//   swift scripts/window-shot.swift <pid> <out.png>         the main window alone
 +//   swift scripts/window-shot.swift <pid> <out.png> --all   the main window with the app's own menus and popovers,
@@ -3625,6 +3585,10 @@ struct MoreMenu<Content: View>: View {
 +import UniformTypeIdentifiers
  
  let pid = Int32(CommandLine.arguments[1])!
+ // screencapture runs as part of the app hosting this terminal, which needs Screen Recording. Without it the capture fails
+@@ -17,29 +23,56 @@ guard CGPreflightScreenCaptureAccess() else {
+     exit(1)
+ }
  let output = CommandLine.arguments[2]
 -let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 +let withMenus = CommandLine.arguments.dropFirst(3).contains("--all")
@@ -3768,7 +3732,7 @@ Checks, each with posted mouse events and confirmed with `canopy row list`:
 `Sources/CanopyApp/AppModel.swift`:
 
 ```diff
-@@ -253,6 +253,13 @@ final class AppModel {
+@@ -254,6 +254,13 @@ final class AppModel {
          perform { try await $0.setGroupCollapsed(repoPath: repo.path, name: group.name, collapsed: collapsed) }
      }
  
@@ -3974,7 +3938,7 @@ extension DropSlot.Kind {
      @FocusState private var isFocused: Bool
  
      var body: some View {
-@@ -64,6 +66,14 @@ struct SidebarView: View {
+@@ -65,6 +67,14 @@ struct SidebarView: View {
                      )
                  }
              }
@@ -3989,7 +3953,7 @@ extension DropSlot.Kind {
              .padding(.horizontal, 8)
              .padding(.bottom, 8)
              // Fills the column even with no repos, so the empty state gets the whole width.
-@@ -130,7 +140,11 @@ struct RepoSection: View {
+@@ -131,7 +141,11 @@ struct RepoSection: View {
                      let rows = repo.rows(inGroup: group.name)
                      GroupHeaderView(
                          repo: repo, group: group, count: rows.count, isFocused: isFocused,
@@ -4002,7 +3966,7 @@ extension DropSlot.Kind {
                      if !group.collapsed {
                          ForEach(rows) { row in
                              line(for: row, indent: Style.groupIndent)
-@@ -159,6 +173,7 @@ struct RepoSection: View {
+@@ -160,6 +174,7 @@ struct RepoSection: View {
              row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
              shortcut: model.shortcut(for: row), removable: row.rowClass != .main, indent: indent
          )
@@ -4010,7 +3974,7 @@ extension DropSlot.Kind {
          .id(row.path)
      }
  }
-@@ -267,6 +282,9 @@ struct RowLineView: View {
+@@ -268,6 +283,9 @@ struct RowLineView: View {
  
      private var isRunning: Bool { model.terminals.isRunningProgram(inRow: row.path) }
  
@@ -4020,7 +3984,7 @@ extension DropSlot.Kind {
      var body: some View {
          HStack(spacing: 8) {
              RowMark(row: row)
-@@ -289,7 +307,7 @@ struct RowLineView: View {
+@@ -290,7 +308,7 @@ struct RowLineView: View {
              if let pr = row.pullRequest {
                  PullRequestNumber(pr: pr)
              }
@@ -4029,7 +3993,7 @@ extension DropSlot.Kind {
                  if let shortcut {
                      Text(verbatim: "⌘\(shortcut)")
                          .font(Style.meta)
-@@ -320,6 +338,9 @@ struct RowLineView: View {
+@@ -321,6 +339,9 @@ struct RowLineView: View {
          .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
          .contentShape(Rectangle())
          .onTapGesture { model.selectedRowPath = row.path }
@@ -4039,7 +4003,7 @@ extension DropSlot.Kind {
          .contextMenu { RowMenuItems(row: row, onNewGroup: { isNamingGroup = true }) }
          .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
              GroupNamePopover(title: "New Group", actionTitle: "Create and Move", isPresented: $isNamingGroup) { name in
-@@ -338,7 +359,7 @@ struct RowLineView: View {
+@@ -339,7 +360,7 @@ struct RowLineView: View {
  
      private var fill: Color {
          if isSelected { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
@@ -4079,7 +4043,7 @@ The groups spec's control table says `row.move` answers with the row and whether
 `docs/superpowers/specs/2026-09-27-canopy-design.md`:
 
 ```diff
-@@ -160,6 +160,7 @@ Canopy and adopted rows follow, in the order Canopy first saw them, so new rows
+@@ -182,6 +182,7 @@ Canopy and adopted rows follow, in the order Canopy first saw them, so new rows
  That order is saved in `state.json`.
  External rows sit in a collapsed "Other worktrees (N)" group at the bottom of the repo.
  Clicking an external row adopts it and selects it.
@@ -4087,7 +4051,7 @@ The groups spec's control table says `row.move` answers with the row and whether
  
  ### Creating a row
  
-@@ -500,6 +501,7 @@ Every command exits non-zero on failure.
+@@ -531,6 +532,7 @@ Every command exits non-zero on failure.
  | `canopy row rm <branch> [--force] [--delete-branch]` | remove or un-adopt a row |
  | `canopy row select <branch>` | select a row in the UI |
  | `canopy row adopt <path>` | adopt an external worktree |
@@ -4095,7 +4059,7 @@ The groups spec's control table says `row.move` answers with the row and whether
  | `canopy term list [--all]` | list panes with ID, row, tab, title, folder, and foreground process |
  | `canopy term new [--tab <name> \| --new-tab] [--run <cmd>] [--title <t>]` | add a pane using the add rule and optionally run a command |
  | `canopy term send <id> <text> [--enter]` | write text to a pane, optionally followed by Enter |
-@@ -551,6 +553,7 @@ Readers skip a trailing partial line and any line they cannot read.
+@@ -582,6 +584,7 @@ Readers skip a trailing partial line and any line they cannot read.
  | `term.opened`, `term.exited` | a pane's shell starts, including a restart, or exits | `pane`, `code` |
  | `term.command` | a command finishes in a zsh pane | `pane`, `cmd`, `cwd`, `exit`, `durationMs` |
  | `cli.call` | a `canopy` request changes something | `method`, `params`, `error` when it failed |
