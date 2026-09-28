@@ -30,10 +30,10 @@ extension RowLifecycle {
         return TermNewResult(pane: pane.id.description, tab: tab.name)
     }
 
-    public func sendToTerminal(_ params: TermSendParams) throws {
+    public func sendToTerminal(_ params: TermSendParams) async throws {
         let pane = try terminal(params.pane)
         guard case .running = pane.status else { throw WorkspaceError.paneExited(params.pane) }
-        pane.type(params.text + (params.enter ? "\r" : ""))
+        await pane.type(params.text, enter: params.enter)
     }
 
     public func readTerminal(_ params: TermReadParams) throws -> TermReadResult {
