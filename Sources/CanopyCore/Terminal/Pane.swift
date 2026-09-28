@@ -39,6 +39,13 @@ public final class Pane: Identifiable {
     @ObservationIgnored public var onAgentChange: ((Pane, AgentChange) -> Void)?
     /// Called when the pane closes for good, before its agent state clears.
     @ObservationIgnored public var onClose: ((Pane) -> Void)?
+    /// When a key was last typed or text sent. Kept out of observation, so typing redraws no dot.
+    @ObservationIgnored public private(set) var lastInput = Date.distantPast
+
+    /// Whether the agent reached its state after the last input, so a done from before a new prompt does not count.
+    public var agentIsFresh: Bool {
+        agent.isFresh(after: lastInput)
+    }
 
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
@@ -95,6 +102,10 @@ public final class Pane: Identifiable {
     @discardableResult
     public func report(_ report: AgentReport, now: Date = Date()) -> AgentChange? {
         let change = agent.apply(report, now: now)
+        // Takes note of the program now, so its exit clears the state even if no refresh saw it running.
+        if agent.state != .none, isBusy, !isRunningProgram {
+            isRunningProgram = true
+        }
         agentChanged(change)
         return change
     }
@@ -122,16 +133,19 @@ public final class Pane: Identifiable {
     @ObservationIgnored var returnPatience = Duration.seconds(2)
 
     /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
+    /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
+    /// it, and this returns once Return is in. Programs such as Claude Code and Codex take text and a Return that
+    /// arrive together for a paste, where Return adds a new line instead of submitting.
     public func type(_ text: String, enter: Bool = false) async {
         guard case .running = status, let process else { return }
-        agentChanged(agent.typed(Data(text.utf8), at: Date()))
+        typed(Data(text.utf8))
         guard enter else {
             process.write(text)
             return
         }
         await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
         // Return reaches the key rules as the key of its own that the program gets.
-        agentChanged(agent.typed(Data("\r".utf8), at: Date()))
+        typed(Data("\r".utf8))
     }
 
     /// Starts a new shell in the same folder after the last one exited.
@@ -228,7 +242,9 @@ public final class Pane: Identifiable {
         switch status {
         case .running:
             process?.write(data)
-            agentChanged(agent.typed(data, at: Date()))
+            if !PaneAgent.isTerminalReport(data) {
+                typed(data)
+            }
         case .exited:
             if data == Data("\r".utf8) { restart() }
         }
@@ -243,6 +259,12 @@ public final class Pane: Identifiable {
         activity.record(
             type, repo: context.repoName, row: context.rowName, path: context.rowPath, source: source,
             data: data.merging(["pane": .string(id.description)]) { value, _ in value })
+    }
+
+    private func typed(_ data: Data) {
+        let now = Date()
+        lastInput = now
+        agentChanged(agent.typed(data, at: now))
     }
 
     private func agentChanged(_ change: AgentChange?) {

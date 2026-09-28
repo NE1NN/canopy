@@ -22,8 +22,10 @@ extension RowLifecycle {
             guard let id = PaneID(text) else { throw WorkspaceError.paneNotFound(text) }
             return id
         }
+        // A year is as long as anyone waits, and keeps the milliseconds in range.
+        let milliseconds = Int64(min(params.timeout, 366 * 86_400) * 1000)
         let (pane, state) = try await terminals.waitForAgents(
-            ids, for: params.target, timeout: .milliseconds(Int64(params.timeout * 1000)))
+            ids, for: params.target, timeout: .milliseconds(milliseconds))
         return TermWaitResult(pane: pane.id.description, state: state)
     }
 }

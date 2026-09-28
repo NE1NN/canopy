@@ -294,6 +294,18 @@ struct ClaudeSettingsTests {
         #expect(ClaudeHooks.status(of: settings) == .installed)
     }
 
+    @Test func aRepeatedKeyIsReadAsItsLastOne() throws {
+        let dir = try TempDir()
+        let file = Fixture.claudeSettings(dir)
+        try write("{\n  \"hooks\": [],\n  \"model\": \"opus\",\n  \"hooks\": {}\n}\n", to: file)
+        #expect(try file.install())
+        let settings = try OrderedJSON.parse(try Data(contentsOf: file.url))
+        #expect(ClaudeHooks.status(of: settings) == .installed)
+        guard case .object(let members) = settings else { return }
+        #expect(members.map(\.key) == ["hooks", "model", "hooks"])
+        #expect(members[0].value == .array([]))
+    }
+
     @Test func disablingAllHooksIsNoticed() throws {
         let dir = try TempDir()
         let file = Fixture.claudeSettings(dir)

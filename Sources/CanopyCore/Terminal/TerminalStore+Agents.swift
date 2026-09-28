@@ -97,7 +97,7 @@ extension TerminalStore {
             guard let pane = pane(id) else { throw WorkspaceError.paneNotFound(id.description) }
             return pane
         }
-        if let ready = panes.first(where: { target.matches($0.agent.state) && $0.agent.isFresh }) {
+        if let ready = panes.first(where: { target.matches($0.agent.state) && $0.agentIsFresh }) {
             return (ready, ready.agent.state)
         }
         let watched = Set(ids)
@@ -125,7 +125,12 @@ extension TerminalStore {
             stopObservingAgents(observer)
             timer.cancel()
         }
-        return try await withCheckedThrowingContinuation { wait.start($0) }
+        // A client that goes away cancels the request, which ends the wait rather than leaving it to its timeout.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { wait.start($0) }
+        } onCancel: {
+            Task { @MainActor in wait.finish(.failure(CancellationError())) }
+        }
     }
 }
 

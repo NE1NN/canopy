@@ -30,15 +30,16 @@ public indirect enum OrderedJSON: Equatable, Sendable {
         }
     }
 
-    /// An object's value for `key`. Setting nil removes the key, and setting a new key adds it at the end.
+    /// An object's value for `key`, the last one when a file repeats it, as JavaScript's `JSON.parse` reads it.
+    /// Setting nil removes that key, and setting a new key adds it at the end.
     public subscript(key: String) -> OrderedJSON? {
         get {
             guard case .object(let members) = self else { return nil }
-            return members.first { $0.key == key }?.value
+            return members.last { $0.key == key }?.value
         }
         set {
             guard case .object(var members) = self else { return }
-            if let index = members.firstIndex(where: { $0.key == key }) {
+            if let index = members.lastIndex(where: { $0.key == key }) {
                 if let newValue {
                     members[index].value = newValue
                 } else {

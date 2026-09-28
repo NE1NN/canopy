@@ -81,7 +81,8 @@ struct ClaudeHookTests {
     }
 
     @Test func otherNotificationsAndEventsMapToNothing() {
-        for type in ["idle_prompt", "auth_success", "elicitation_complete"] {
+        // A background session finishing is not this pane's agent, which Stop reports.
+        for type in ["idle_prompt", "auth_success", "elicitation_complete", "agent_completed"] {
             #expect(
                 report(#"{"session_id": "abc123", "hook_event_name": "Notification", "notification_type": "\#(type)"}"#)
                     == nil)
@@ -124,6 +125,18 @@ struct ClaudeHookTests {
                 #"{"session_id": "abc123", "hook_event_name": "StopFailure", "error": "rate_limit", "last_assistant_message": "API Error: Rate limit reached?"}"#
             )
                 == expected(.done, "StopFailure"))
+    }
+
+    @Test func aFieldThatChangedShapeReadsAsMissing() {
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Done.", "background_tasks": {"count": 2}}"#
+            )
+                == expected(.done, "Stop"))
+        #expect(
+            report(#"{"session_id": "abc123", "hook_event_name": "SessionStart", "source": 7}"#)
+                == expected(nil, "SessionStart"))
+        #expect(report(#"{"session_id": 12, "hook_event_name": "UserPromptSubmit"}"#)?.state == .working)
     }
 
     @Test func theQuestionRuleReadsTheLastLine() {

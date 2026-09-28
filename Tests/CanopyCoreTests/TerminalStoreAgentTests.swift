@@ -178,6 +178,21 @@ struct TerminalStoreAgentTests {
         await #expect(throws: WorkspaceError.agentStopped(rows.beside.id.description)) { try await stopping.value }
     }
 
+    @Test func aCancelledWaitEndsAndStopsWatching() async throws {
+        let dir = try TempDir()
+        let rows = try Rows(dir)
+        defer { rows.terminals.closeAll() }
+
+        let waiting = Task {
+            try await rows.terminals.waitForAgents([rows.otherRow.id], for: .done, timeout: .seconds(600))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        waiting.cancel()
+        await #expect(throws: CancellationError.self) { try await waiting.value }
+        // Nothing still listens: a finish now reaches no wait.
+        rows.otherRow.report(AgentReport(state: .done))
+    }
+
     @Test func aPaneWithNoAgentCanStartOneDuringAWait() async throws {
         let dir = try TempDir()
         let rows = try Rows(dir)

@@ -84,8 +84,6 @@ public struct PaneAgent: Sendable, Equatable {
     public private(set) var waitsOnQuestion = false
     /// When Canopy saw the pane reach its state.
     public private(set) var since = Date.distantPast
-    /// When something was last typed or sent into the pane.
-    public private(set) var lastInput = Date.distantPast
     /// When the last change happened, by the clock of whatever caused it. Hooks that started earlier are stale.
     private var changedAt = Date.distantPast
 
@@ -100,8 +98,8 @@ public struct PaneAgent: Sendable, Equatable {
         }
     }
 
-    /// Whether the pane reached its state after its last input. A done from before a new prompt is stale.
-    public var isFresh: Bool {
+    /// Whether the pane reached its state after input at `lastInput`. A done from before a new prompt is stale.
+    public func isFresh(after lastInput: Date) -> Bool {
         lastInput <= since
     }
 
@@ -128,7 +126,6 @@ public struct PaneAgent: Sendable, Equatable {
     /// Keys typed into the pane, or text sent with `canopy term send`. Claude Code runs no hook for an interrupt or a
     /// dismissed prompt, so Escape and Control-C clear the state, and Return answers a prompt.
     public mutating func typed(_ data: Data, at: Date) -> AgentChange? {
-        lastInput = max(lastInput, at)
         let interrupts = Self.interruptKeys.contains(data)
         switch state {
         case .working where interrupts:
@@ -169,6 +166,19 @@ public struct PaneAgent: Sendable, Equatable {
     }
 
     /// Escape and Control-C as a terminal sends them, plainly or in the kitty keyboard protocol's form.
+    /// Whether `data` is something the terminal sends on its own rather than a key: a focus change, a mouse report,
+    /// or a reply to a query about the terminal.
+    public static func isTerminalReport(_ data: Data) -> Bool {
+        guard data.count >= 3, data.first == 0x1B else { return false }
+        let text = String(decoding: data, as: UTF8.self)
+        if text == "\u{1b}[I" || text == "\u{1b}[O" { return true }
+        if text.hasPrefix("\u{1b}[<") || text.hasPrefix("\u{1b}[M") { return true }
+        if text.hasPrefix("\u{1b}]") || text.hasPrefix("\u{1b}P") { return true }
+        // Cursor position, device attributes, status, and mode replies.
+        return text.hasPrefix("\u{1b}[") && ["R", "c", "n", "y", "t"].contains(text.last.map(String.init) ?? "")
+            && text.dropFirst(2).dropLast().allSatisfy { "0123456789;?$>=".contains($0) }
+    }
+
     static let interruptKeys: Set<Data> = [
         Data([0x1B]), Data([0x03]), Data("\u{1b}[27u".utf8), Data("\u{1b}[99;5u".utf8),
     ]

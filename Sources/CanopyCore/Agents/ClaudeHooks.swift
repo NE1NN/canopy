@@ -37,7 +37,7 @@ public enum ClaudeHooks {
         Entry(event: "PostToolUseFailure", matcher: nil, timing: .background),
         Entry(
             event: "Notification",
-            matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|agent_completed",
+            matcher: "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input",
             timing: .background),
         Entry(event: "Elicitation", matcher: nil, timing: .background),
         Entry(event: "ElicitationResult", matcher: nil, timing: .background),

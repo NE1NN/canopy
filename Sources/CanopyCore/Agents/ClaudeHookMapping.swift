@@ -33,9 +33,8 @@ public enum ClaudeHookMapping {
             switch hook.notificationType {
             case "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input":
                 return report(.waiting)
-            case "agent_completed":
-                return report(.done)
             default:
+                // agent_completed is a background session finishing, not this pane's agent, which Stop reports.
                 return nil
             }
         case "Stop":
@@ -81,6 +80,20 @@ public enum ClaudeHookMapping {
 
         struct BackgroundTask: Decodable {
             var type: String?
+        }
+
+        /// Only the event's name must decode. Any other field that changed shape reads as missing, so one odd field
+        /// cannot drop a whole event.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            event = try container.decode(String.self, forKey: .event)
+            sessionID = try? container.decodeIfPresent(String.self, forKey: .sessionID)
+            agentID = try? container.decodeIfPresent(String.self, forKey: .agentID)
+            source = try? container.decodeIfPresent(String.self, forKey: .source)
+            toolName = try? container.decodeIfPresent(String.self, forKey: .toolName)
+            notificationType = try? container.decodeIfPresent(String.self, forKey: .notificationType)
+            lastAssistantMessage = try? container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+            backgroundTasks = try? container.decodeIfPresent([BackgroundTask].self, forKey: .backgroundTasks)
         }
 
         enum CodingKeys: String, CodingKey {

@@ -77,6 +77,37 @@ struct PaneAgentStateTests {
         #expect(await logged(terminals, "agent").last?.data["via"] == "exit")
     }
 
+    @Test func focusAndMouseReportsDoNotMakeAStateStale() async throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        pane.report(AgentReport(state: .done))
+
+        pane.screen.type("\u{1b}[I")
+        pane.screen.type("\u{1b}[<64;10;5M")
+        #expect(pane.agentIsFresh)
+        pane.screen.type("x")
+        #expect(!pane.agentIsFresh)
+    }
+
+    @Test func anExitWhileNoRefreshRanStillClearsTheState() async throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        #expect(await eventually { pane.foreground?.name == "bash" })
+
+        // The window is hidden, so nothing refreshes while the program runs.
+        await pane.run("sleep 2")
+        #expect(await eventually { pane.isBusy })
+        pane.report(AgentReport(state: .done))
+        #expect(await eventually { !pane.isBusy })
+
+        pane.refreshActivity()
+        #expect(pane.agent.state == .none)
+    }
+
     @Test func aStateWithoutAProgramStaysUntilReported() async throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)

@@ -90,6 +90,7 @@ A wrong guess corrects itself: if a turn goes on after an Escape that did not in
 When the pane's shell is back in the foreground after a program, the state goes to none.
 Canopy already checks each pane's foreground program every second while the window can be seen, and once when it comes back into view.
 This clears the state after a crash that skipped `SessionEnd`, and for agents that never report their exit.
+A report that arrives while a program runs takes note of it at once, so its exit is noticed even when no check saw it running.
 Closing the pane, or its shell exiting, clears it too.
 
 ### Which reports count
@@ -137,7 +138,6 @@ Hooks run with Claude Code's environment, which it inherited from the pane's she
 | `PreToolUse` | `AskUserQuestion\|ExitPlanMode` | | waiting |
 | `PermissionRequest` | all | from the main agent, not a subagent | waiting |
 | `Notification` | `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` | | waiting |
-| `Notification` | `agent_completed` | | done |
 | `Elicitation` | all | | waiting |
 | `ElicitationResult` | all | | working |
 | `PostToolUse`, `PostToolUseFailure` | all | from the main agent, not a subagent | working |
@@ -157,6 +157,8 @@ Hooks run with Claude Code's environment, which it inherited from the pane's she
 - `SubagentStop` is not hooked, because a subagent finishing is not the agent finishing.
 - `idle_prompt` is not hooked.
   It comes a minute after a turn ends and adds nothing.
+- `agent_completed` is not hooked.
+  It reports a background session finishing, not the pane's own agent, whose finish `Stop` reports, and mapping it to done would turn a pane green while its agent still waits on a prompt.
 - The question rule reads `last_assistant_message`.
   It takes the last line that is not blank, removes trailing whitespace and the closing marks `*`, `_`, `` ` ``, `)`, `]`, `"`, `'`, `”`, and `’`, and checks whether what is left ends in `?` or `？`.
 - The background rule counts `background_tasks` entries of type `subagent` or `workflow`.
@@ -182,7 +184,7 @@ Claude Code's file watcher picks up the change, so sessions already running star
 Each prints what it found or did and the file's path.
 With `--json` each prints `{"settings": "<path>", "state": "installed"}`, where the state is `installed`, `outdated`, or `not_installed` after the command ran.
 
-`install` and `status` warn when the file sets `"disableAllHooks": true`, since Claude Code then runs none of them.
+Each command warns when the file sets `"disableAllHooks": true`, since Claude Code then runs none of them.
 
 Writing the file:
 
@@ -217,7 +219,7 @@ The `|| true` keeps any failure, such as a CLI gone after the app moved, out of 
 | `PermissionRequest` | none | background |
 | `PostToolUse` | none | background |
 | `PostToolUseFailure` | none | background |
-| `Notification` | `permission_prompt\|elicitation_dialog\|elicitation_url_dialog\|agent_needs_input\|agent_completed` | background |
+| `Notification` | `permission_prompt\|elicitation_dialog\|elicitation_url_dialog\|agent_needs_input` | background |
 | `Elicitation` | none | background |
 | `ElicitationResult` | none | background |
 | `Stop` | none | inline |
@@ -379,12 +381,13 @@ Codex adds its JSON as a last argument, which the shell leaves unused.
 
 | Method | Params | Result |
 |---|---|---|
-| `term.state` | `pane`, `state`, and from hooks `session`, `event`, and `at` | `pane` and its `state` afterwards |
+| `term.state` | `pane`, `state`, and from hooks `session`, `event`, `at`, `question`, `takesOver`, and `releases` | `pane` and its `state` afterwards |
 | `term.wait` | `panes`, `for`, and `timeout` in seconds | `pane` and `state` |
 
 `state` is one of `working`, `waiting`, `done`, and `none`.
 `event` is the hook event's name, which goes into the activity log.
-A waiting report whose `event` is `Stop` is a turn that ended on a question, and every other waiting report is a prompt, for the key rules.
+`question` marks a waiting report from a turn that ended on a question, and every other waiting report is a prompt, for the key rules.
+`takesOver` and `releases` carry the session rules, so `canopy agent-hook` alone knows Claude Code's event names.
 `at` is when the hook process started, in seconds since 1970, and reports without it take the time they arrive.
 When a report is ignored, the result carries the state the pane kept.
 
@@ -401,7 +404,7 @@ The CLI waits for `term.wait`'s reply for its timeout plus 10 seconds.
 
 `from` is the previous state, or null for none.
 `via` says what caused the change: the hook event's name such as `Stop`, `term.state` for the command, `key` for a key rule, or `exit` for the program exiting or the pane closing.
-`source` is `cli` for reports and `ui` for keys and exits.
+`source` is `cli` for reports and for keys sent with `canopy term send`, and `ui` for keys typed in the window and for exits.
 The events carry the pane's repo, row, and path like the other `term.*` events.
 A pane that finishes while the author watches still logs `agent.done`, since the log records what the agent did.
 
@@ -475,6 +478,8 @@ One PR, `feat: agent state, with a bell when an agent finishes`, holding this sp
   Both still play a sound.
 - **The key rules are guesses too.**
   A wrong one corrects itself at the agent's next hook.
+- **Other hooks can change what Claude Code does after Canopy's hook reported.**
+  A `PermissionRequest` hook of the author's own that approves on its own still turns the pane yellow until the tool's `PostToolUse`, and a `Stop` hook that keeps Claude going still reports done.
 - **Pulsing dots cost redraws.**
   The plan measures CPU with several agents working at once.
 

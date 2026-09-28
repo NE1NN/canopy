@@ -174,12 +174,23 @@ struct PaneAgentTests {
     @Test func aStateIsFreshUntilThePaneGetsInput() {
         var agent = PaneAgent()
         _ = agent.apply(hook(.done, at: 1), now: time(2))
-        #expect(agent.isFresh)
-        _ = agent.typed(Data("next step\r".utf8), at: time(3))
-        #expect(!agent.isFresh)
+        #expect(agent.isFresh(after: time(1)))
+        #expect(!agent.isFresh(after: time(3)))
         _ = agent.apply(hook(.working, event: "UserPromptSubmit", at: 4), now: time(4))
         _ = agent.apply(hook(.done, at: 5), now: time(5))
-        #expect(agent.isFresh)
+        #expect(agent.isFresh(after: time(3)))
+    }
+
+    @Test func whatTheTerminalSendsOnItsOwnIsNotAKey() {
+        for report in [
+            "\u{1b}[I", "\u{1b}[O", "\u{1b}[<64;10;5M", "\u{1b}[M !!", "\u{1b}[12;40R", "\u{1b}[?1;2c",
+            "\u{1b}]11;rgb:1e1e/1e1e/1e1e\u{7}", "\u{1b}P1$r0m\u{1b}\\", "\u{1b}[?2004;1$y",
+        ] {
+            #expect(PaneAgent.isTerminalReport(Data(report.utf8)), "\(report.debugDescription)")
+        }
+        for key in ["a", "\r", "\u{1b}", "\u{3}", "\u{1b}[A", "\u{1b}[1;5C", "\u{1b}[27u", "next step\r"] {
+            #expect(!PaneAgent.isTerminalReport(Data(key.utf8)), "\(key.debugDescription)")
+        }
     }
 
     @Test func theMostUrgentDotWins() {

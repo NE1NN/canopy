@@ -84,6 +84,13 @@ extension ControlServerTests {
         #expect(
             try await error(client, TermMethod.wait, .object(["panes": .array([id]), "timeout": .number(0.1)]))
                 == "wait_timeout")
+        // A timeout past any sensible length is cut to a year rather than overflowing.
+        _ = try await call(
+            client, TermMethod.state, TermStateParams(pane: pane, state: .done), as: TermStateResult.self)
+        #expect(
+            try await call(
+                client, TermMethod.wait, TermWaitParams(panes: [pane], timeout: 1e300), as: TermWaitResult.self
+            ).state == .done)
     }
 
     @Test func agentRequestsStayOutOfCLICalls() async throws {
