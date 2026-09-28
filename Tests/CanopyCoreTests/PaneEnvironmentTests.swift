@@ -18,7 +18,7 @@ struct PaneEnvironmentTests {
     @Test func keepsLoginSessionVariablesAndDropsTheRest() {
         let base = [
             "HOME": "/Users/me", "USER": "me", "SSH_AUTH_SOCK": "/tmp/agent", "CLAUDE_CODE_CHILD_SESSION": "1",
-            "PATH": "/some/tool/bin:/usr/bin", "GIT_DIR": "/elsewhere/.git",
+            "PATH": "/some/tool/bin:/usr/bin", "GIT_DIR": "/elsewhere/.git", "ZDOTDIR": "/Users/me/.config/zsh",
         ]
 
         let environment = PaneEnvironment.build(settings: settings(base), context: context, pane: PaneID(12))
@@ -26,6 +26,7 @@ struct PaneEnvironmentTests {
         #expect(environment["HOME"] == "/Users/me")
         #expect(environment["USER"] == "me")
         #expect(environment["SSH_AUTH_SOCK"] == "/tmp/agent")
+        #expect(environment["ZDOTDIR"] == "/Users/me/.config/zsh")
         #expect(environment["CLAUDE_CODE_CHILD_SESSION"] == nil)
         #expect(environment["GIT_DIR"] == nil)
         #expect(environment["PATH"] == "/App/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin")

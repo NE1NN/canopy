@@ -1,10 +1,12 @@
 import Foundation
 
 public enum PaneEnvironment {
-    /// What a macOS login session starts with. Everything else in the app's environment came from whatever
-    /// launched it, such as a Claude Code session running a dev build, and must not reach terminals.
+    /// What a macOS login session starts with, and the folder zsh reads its startup files from, which the user may
+    /// set there. Everything else in the app's environment came from whatever launched it, such as a Claude Code
+    /// session running a dev build, and must not reach terminals.
     static let inherited: Set<String> = [
         "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK", "__CF_USER_TEXT_ENCODING", "LANG", "LC_ALL", "LC_CTYPE",
+        "ZDOTDIR",
     ]
     /// The login shell's path_helper adds /etc/paths to this, and the user's startup files add the rest.
     static let systemPath = "/usr/bin:/bin:/usr/sbin:/sbin"

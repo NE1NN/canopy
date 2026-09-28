@@ -88,6 +88,18 @@ struct ZshCommandLoggingTests {
 
     static let barrier = "echo done-$((40 + 2))"
 
+    /// The four startup files in `folder`, a path under HOME, each adding its own path to LOADED when zsh reads it.
+    func startupFiles(in folder: String) -> [String: String] {
+        let paths = [".zshenv", ".zprofile", ".zshrc", ".zlogin"].map { folder.isEmpty ? $0 : "\(folder)/\($0)" }
+        return Dictionary(uniqueKeysWithValues: paths.map { ($0, #"LOADED+=" \#($0)""#) })
+    }
+
+    /// Which startup files ran, then ZDOTDIR in the shell and in its environment, what is left of Canopy's
+    /// variables, and the history file macOS's /etc/zshrc picked.
+    static let check =
+        #"print -r -- "check:$LOADED:${ZDOTDIR-unset}:$(printenv ZDOTDIR):${CANOPY_USER_ZDOTDIR-none}:"#
+        + #"${CANOPY_COMMAND_TOKEN-none}:$HISTFILE""#
+
     /// Runs a last command and waits until it is logged, so every command before it is too.
     func barrier(_ pane: Pane, _ terminals: TerminalStore) async -> Bool {
         await pane.run(Self.barrier)
@@ -149,6 +161,35 @@ struct ZshCommandLoggingTests {
 
         #expect(await run(pane, "hello", until: "hi-from-config"))
         #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == ["hello"] })
+    }
+
+    @Test(arguments: [false])
+    func aZDOTDIRFromTheEnvironmentIsKept(logsCommands: Bool) async throws {
+        let dir = try TempDir()
+        let zdot = dir.sub("user-home/z dot")
+        let terminals = try Fixture.zshTerminals(
+            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, logsCommands: logsCommands,
+            environment: ["ZDOTDIR": zdot])
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+
+        let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
+        #expect(await run(pane, Self.check, until: "check:\(loaded):\(zdot):\(zdot):none:none:\(zdot)/.zsh_history"))
+        let logged: [JSONValue?] = logsCommands ? [.string(Self.check)] : []
+        #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == logged })
+    }
+
+    @Test func setupScriptsReadTheAppsZDOTDIR() async throws {
+        let dir = try TempDir()
+        let zdot = dir.sub("user-home/z dot")
+        let terminals = try Fixture.zshTerminals(
+            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, environment: ["ZDOTDIR": zdot])
+        defer { terminals.closeAll() }
+        let script = #"print -r -- "check:$LOADED:${ZDOTDIR-unset}""#
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused
+
+        let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
+        #expect(await eventually { pane.screen.text.contains("check:\(loaded):\(zdot)") })
     }
 
     @Test func theUsersOwnHooksKeepRunningWhateverTheirOptions() async throws {

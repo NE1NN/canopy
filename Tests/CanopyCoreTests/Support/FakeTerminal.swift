@@ -66,11 +66,11 @@ extension Fixture {
     }
 
     /// zsh with a private HOME holding `files` as the user's own startup files, keyed by path under HOME, and
-    /// Canopy's startup shim unless command logging is off.
+    /// Canopy's startup shim unless command logging is off. `environment` is added to the app's own.
     @MainActor
-    static func zshTerminals(_ dir: TempDir, files: [String: String] = [:], logsCommands: Bool = true) throws
-        -> TerminalStore
-    {
+    static func zshTerminals(
+        _ dir: TempDir, files: [String: String] = [:], logsCommands: Bool = true, environment: [String: String] = [:]
+    ) throws -> TerminalStore {
         let home = dir.sub("user-home")
         for (name, text) in files {
             let path = home + "/" + name
@@ -80,7 +80,7 @@ extension Fixture {
         }
         var settings = shellSettings(dir)
         settings.shell = "/bin/zsh"
-        settings.baseEnvironment = ["HOME": home, "USER": NSUserName()]
+        settings.baseEnvironment = ["HOME": home, "USER": NSUserName()].merging(environment) { $1 }
         settings.logsCommands = logsCommands
         return TerminalStore(engine: FakeEngine(), settings: settings)
     }
