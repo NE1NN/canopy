@@ -112,11 +112,11 @@ struct RowActivityTests {
             in: dir,
             before: """
                 if [[ $1 == worktree && $2 == add ]]; then
-                    /usr/bin/git "$@" || exit
-                    /usr/bin/git -C '\(path)' switch --quiet --detach
+                    '\(Fixture.gitPath)' "$@" || exit
+                    '\(Fixture.gitPath)' -C '\(path)' switch --quiet --detach
                     touch '\(paused)'
                     while [[ -f '\(paused)' ]]; do sleep 0.05; done
-                    exec /usr/bin/git -C '\(path)' switch --quiet feat/a
+                    exec '\(Fixture.gitPath)' -C '\(path)' switch --quiet feat/a
                 fi
                 """)
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
@@ -229,7 +229,7 @@ struct RowActivityTests {
         let git = try Fixture.git(
             in: dir,
             before: """
-                if [[ $1 == worktree && $2 == prune ]]; then /usr/bin/git "$@"; exit 1; fi
+                if [[ $1 == worktree && $2 == prune ]]; then '\(Fixture.gitPath)' "$@"; exit 1; fi
                 """)
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
         try await workspace.start()

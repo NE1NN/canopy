@@ -4,13 +4,20 @@ import Testing
 @testable import CanopyCore
 
 enum Fixture {
-    /// This process's environment without the SDKROOT that `swift test` adds, which the app never has. /usr/bin/git asks
-    /// xcrun which git to run, and xcrun caches its answer per SDKROOT. On a fresh CI runner every git in the first wave
-    /// of tests missed that cache and started xcodebuild, a hundred at once on three CPUs.
+    /// This process's environment without the SDKROOT that `swift test` adds and the app never has.
     static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
 
+    /// The git that /usr/bin/git hands off to. The shim asks xcrun on every run, and xcrun's cache starts empty on a
+    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs.
+    static let gitPath: String = {
+        let found = try? Subprocess.run(
+            "/usr/bin/xcrun", ["--find", "git"], environment: environment, directory: nil, timeout: .seconds(60))
+        let path = found.map { String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) }
+        return path.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/usr/bin/git"
+    }()
+
     /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
-    static let git = GitRunner(environment: environment)
+    static let git = GitRunner(executable: gitPath, environment: environment)
 
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
@@ -36,7 +43,7 @@ enum Fixture {
     /// Use it to stall or count specific git commands.
     static func git(in dir: TempDir, before: String) throws -> GitRunner {
         let script = dir.sub("git-wrapper-\(UUID().uuidString.prefix(6))")
-        let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
+        let body = "#!/bin/bash\n\(before)\nexec '\(gitPath)' \"$@\"\n"
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
         return GitRunner(executable: script, environment: environment)
