@@ -30,12 +30,8 @@ extension Workspace {
             head = found
         case .success(nil):
             throw WorkspaceError.pullRequestNotFound(reference.number, repo: origin.repo.nameWithOwner)
-        case .failure(.ghMissing):
-            throw WorkspaceError.ghUnavailable(RepoPullRequests(source: .ghMissing).warning ?? "")
-        case .failure(.notLoggedIn):
-            throw WorkspaceError.ghUnavailable(RepoPullRequests(source: .notLoggedIn).warning ?? "")
-        case .failure(.failed(let message)):
-            throw WorkspaceError.ghFailed(message)
+        case .failure(let failure):
+            throw WorkspaceError(failure)
         }
         return try await createRow(repoPath: repoPath, joining: group) {
             try await self.createPullRequestRowNow(

@@ -4,8 +4,8 @@ import Foundation
 
 /// A GitHub on this machine, so PR tests never reach the network. Repos are bare repos at
 /// `<dir>/remotes/<owner>/<name>.git`, and `git` reaches them at https://github.com/<owner>/<name>.git through a URL
-/// rewrite. `gh` answers a PR's lookup from what `openPR` wrote, and records every other query and answers it from
-/// `reply`.
+/// rewrite. `gh` answers a PR's lookup and the list of PRs from what `openPR` wrote, and records every other query and
+/// answers it from `reply`.
 struct LocalGitHub {
     let dir: TempDir
     let git: GitRunner
@@ -36,6 +36,8 @@ struct LocalGitHub {
                 echo "gh: Could not resolve to a PullRequest with the number of $number." >&2
                 exit 1
             fi
+            if [[ "$query" == *"pullRequests(states: [OPEN],"* ]]; then cat "\(dir.sub("gh-list-open"))"; exit 0; fi
+            if [[ "$query" == *"pullRequests(states:"* ]]; then cat "\(dir.sub("gh-list-all"))"; exit 0; fi
             printf '%s\\n' "$query" >> "\(dir.sub("gh-calls"))"
             for number in $(grep -oE 'pullRequest\\(number: [0-9]+\\)' <<< "$query" | grep -oE '[0-9]+'); do
                 if [[ ! -f "\(dir.sub("gh-prs"))/$number.json" ]]; then
@@ -46,6 +48,7 @@ struct LocalGitHub {
             done
             cat "\(dir.sub("gh-reply"))" 2>/dev/null || echo '{"data": {"repository": {}}}'
             """)
+        try writeLists()
     }
 
     /// The tests' environment, with https://github.com/ rewritten to `remotes`.
@@ -104,7 +107,8 @@ struct LocalGitHub {
     /// `refs/pull/<number>/head` of the base repo, so that ref is pointed at the branch's tip.
     func openPR(
         _ number: Int, on base: String, from branch: String, of head: String? = nil, state: String = "OPEN",
-        maintainerCanModify: Bool = false, deleteBranch: Bool = false, forkGone: Bool = false
+        maintainerCanModify: Bool = false, deleteBranch: Bool = false, forkGone: Bool = false, title: String? = nil,
+        author: String? = "author", isDraft: Bool = false, updatedAt: String = "2026-09-28T00:00:00Z"
     ) async throws {
         let headRepo = head ?? base
         let tip = try await Fixture.git.run(["rev-parse", "refs/heads/\(branch)"], in: bare(headRepo))
@@ -116,19 +120,42 @@ struct LocalGitHub {
         }
         let parts = headRepo.split(separator: "/")
         let json: [String: Any] = [
-            "number": number, "title": "PR \(number)", "url": "https://github.com/\(base)/pull/\(number)",
-            "state": state, "isDraft": false, "updatedAt": "2026-09-28T00:00:00Z", "headRefName": branch,
+            "number": number, "title": title ?? "PR \(number)", "url": "https://github.com/\(base)/pull/\(number)",
+            "state": state, "isDraft": isDraft, "updatedAt": updatedAt, "headRefName": branch,
             "headRefOid": tip, "headRef": deleteBranch ? NSNull() : ["name": branch], "baseRefName": "main",
             "isCrossRepository": headRepo != base, "maintainerCanModify": maintainerCanModify,
             "headRepository": forkGone ? NSNull() : ["name": String(parts[1])],
             "headRepositoryOwner": forkGone ? NSNull() : ["login": String(parts[0])],
+            "author": author.map { ["login": $0] } ?? NSNull(),
         ]
         try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: "\(prs)/\(number).json"))
+        try writeLists()
     }
 
     /// Makes GitHub forget PR `number`, as when it removes a spam PR.
     func deletePR(_ number: Int) {
         try? FileManager.default.removeItem(atPath: "\(prs)/\(number).json")
+        try? writeLists()
+    }
+
+    /// What gh answers for the list of open PRs and of all PRs, most recently updated first.
+    private func writeLists() throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: prs).filter { $0.hasSuffix(".json") }
+        let all = try names.compactMap {
+            try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: "\(prs)/\($0)")))
+                as? [String: Any]
+        }
+        .sorted { ($0["updatedAt"] as? String ?? "") > ($1["updatedAt"] as? String ?? "") }
+        let fields = [
+            "number", "title", "url", "state", "isDraft", "updatedAt", "headRefName", "isCrossRepository", "author",
+        ]
+        for (file, states) in [("gh-list-open", ["OPEN"]), ("gh-list-all", ["OPEN", "CLOSED", "MERGED"])] {
+            let nodes = all.filter { states.contains($0["state"] as? String ?? "") }.map {
+                $0.filter { fields.contains($0.key) }
+            }
+            let reply = ["data": ["repository": ["pullRequests": ["nodes": nodes]]]]
+            try JSONSerialization.data(withJSONObject: reply).write(to: URL(fileURLWithPath: dir.sub(file)))
+        }
     }
 
     /// What gh answers every query that is not a PR's lookup.
