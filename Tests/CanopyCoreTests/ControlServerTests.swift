@@ -501,37 +501,28 @@ struct ControlServerTests {
         let (_, server, _, _) = try await startServer(dir)
         defer { server.stop() }
 
-        let socketPath = dir.sub("home/canopy.sock")
-        let reply = try await offPool { () throws -> Data in
-            let fd = try ControlClient.connect(to: socketPath)
-            defer { close(fd) }
-            _ = "not json\n".withCString { write(fd, $0, strlen($0)) }
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            let count = read(fd, &buffer, buffer.count)
-            return Data(buffer[0..<max(count, 0)].prefix { $0 != 0x0A })
-        }
-        let response = try ControlCodec.decode(ControlResponse.self, from: reply)
+        let replies = try await exchange(dir.sub("home/canopy.sock"), Data("not json\n".utf8))
+
+        let response = try ControlCodec.decode(ControlResponse.self, from: Data(try #require(replies.first).utf8))
         #expect(response.error?.code == "bad_request")
     }
 
     /// Sends `payload` on a raw connection, optionally closes the write side, and reads until `lines` replies arrive.
+    /// The server may hang up before taking all of `payload`, so write errors are left to show as missing replies.
     func exchange(_ socketPath: String, _ payload: Data, halfClose: Bool = false, lines: Int = 1) async throws
         -> [String]
     {
         try await offPool {
             let fd = try ControlClient.connect(to: socketPath)
             defer { close(fd) }
-            var timeout = timeval(tv_sec: 10, tv_usec: 0)
-            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-            _ = payload.withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+            let stream = SocketStream(fd: fd, deadline: .now + .seconds(60))
+            try? stream.write(payload)
             if halfClose { shutdown(fd, SHUT_WR) }
             var received = Data()
-            var chunk = [UInt8](repeating: 0, count: 65_536)
             while received.filter({ $0 == 0x0A }).count < lines {
-                let count = read(fd, &chunk, chunk.count)
-                if count < 0 && errno == EINTR { continue }
-                guard count > 0 else { break }
-                received.append(contentsOf: chunk[0..<count])
+                let chunk = try stream.read()
+                guard !chunk.isEmpty else { break }
+                received.append(chunk)
             }
             return String(decoding: received, as: UTF8.self).split(separator: "\n").map(String.init)
         }
