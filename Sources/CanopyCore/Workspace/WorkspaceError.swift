@@ -14,6 +14,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case branchCheckedOut(String, row: Row?)
     /// `fetchFailure` says why origin's branches may be out of date.
     case branchNotFound(String, fetchFailure: String?)
+    /// Local branches a PR's row could have used, none of which is the PR's.
+    case branchExists([String], pr: Int)
+    case pullRequestInOtherRepo(String, origin: String)
+    case pullRequestNotFound(Int, repo: String)
+    case pullRequestFetchFailed(Int, reason: String)
     case worktreeDirty(String)
     case cannotRemoveMain
     case notManaged(String)
@@ -57,6 +62,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .invalidBase: "invalid_base"
         case .branchCheckedOut: "branch_checked_out"
         case .branchNotFound: "branch_not_found"
+        case .branchExists: "branch_exists"
+        case .pullRequestInOtherRepo: "invalid_pr"
+        case .pullRequestNotFound: "pr_not_found"
+        case .pullRequestFetchFailed: "git_failed"
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
         case .notManaged: "not_managed"
@@ -114,6 +123,15 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "No branch \(name) here or on origin. Leave out --existing to create it."
         case .branchNotFound(let name, let failure?):
             "No branch \(name) here or in what Canopy last saw of origin, because \(failure)."
+        case .branchExists(let names, let number) where names.count == 1:
+            "Branch \(names[0]) already exists and is not PR #\(number)'s branch. Pass another --branch."
+        case .branchExists(let names, let number):
+            "Branches \(names.joined(separator: " and ")) already exist and are not PR #\(number)'s. "
+                + "Pass --branch to name the row's branch."
+        case .pullRequestInOtherRepo(let repo, let origin):
+            "That PR is in \(repo), but this repo's origin is \(origin). Pass --repo for a repo whose origin is \(repo)."
+        case .pullRequestNotFound(let number, let repo): "\(repo) has no PR #\(number)."
+        case .pullRequestFetchFailed(let number, let reason): "Could not fetch PR #\(number) from origin: \(reason)"
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
         case .notManaged(let path): "\(path) belongs to another tool. Adopt it first."

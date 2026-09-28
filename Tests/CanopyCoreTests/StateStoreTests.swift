@@ -14,7 +14,11 @@ struct StateStoreTests {
         let dir = try TempDir()
         let store = StateStore(url: URL(fileURLWithPath: dir.sub("state.json")))
         let state = AppState(
-            repos: [RepoEntry(path: "/r", dirName: "r", adopted: ["/x"], rowOrder: ["/x"])],
+            repos: [
+                RepoEntry(
+                    path: "/r", dirName: "r", adopted: ["/x"], rowOrder: ["/x"],
+                    prBindings: ["someone/feat": PRBinding(number: 7, repo: "acme/app")])
+            ],
             selectedRowPath: "/x"
         )
 
@@ -79,6 +83,17 @@ struct StateStoreTests {
         #expect(
             StateStore(url: url).load()
                 == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r", adopted: ["/a"], rowOrder: ["/a"])])))
+    }
+
+    @Test func unreadableBindingsAreDroppedOnTheirOwn() throws {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("state.json"))
+        try #"{"version": 1, "repos": [{"path": "/r", "dirName": "r", "adopted": ["/x"], "prBindings": {"b": 7}}]}"#
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        #expect(
+            StateStore(url: url).load()
+                == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r", adopted: ["/x"])])))
     }
 
     @Test func corruptFileIsBackedUp() throws {
