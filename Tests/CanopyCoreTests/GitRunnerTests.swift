@@ -130,4 +130,5 @@ struct GitRunnerTests {
         #expect(!handle.isRunning)
         #expect(handle.errorOutput().isEmpty)
     }
+
 }

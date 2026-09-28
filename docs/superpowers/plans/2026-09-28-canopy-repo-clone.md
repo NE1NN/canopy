@@ -2988,6 +2988,11 @@ The two handle tests now time from the cancel, with a 30 second bound on a 60 se
 Pointing clones at the repo's git queue again makes it fail, as it should.
 The progress test gives the watcher 3 seconds to see its line.
 
+The second CI run showed the real cause: tests whose stand-in git never started within 20 seconds.
+`GitRunner.run` and `GitHubCLI.run` waited for their process on Dispatch's global queues, which lend only a fixed number of threads, and the clone tests alone park more waits than a 3-CPU runner gets.
+PR 14 fixed the same thing independently, with `onOwnThread`, and also stopped the tests' git from going through the xcrun shim, which started xcodebuild on a fresh runner.
+This branch was rebased onto it: `GitRunner.run` with its `handle` and the new `GitHubCLI.run` both wait through `onOwnThread`, and the clone stand-ins run the git from `Fixture.gitPath`.
+
 ## UI checks
 
 The release Canopy hosts the agent's terminal, so macOS treats it as the app posting events, and it has no Accessibility permission.

@@ -79,7 +79,7 @@ public struct GitHubCLI: Sendable {
 
     private static let unreadable = "gh returned a reply Canopy could not read."
 
-    /// Runs gh off the Swift concurrency pool and returns what it printed.
+    /// Runs gh on a thread of its own, off the Swift concurrency pool, and returns what it printed.
     private func run(
         _ arguments: [String], timeout: Duration?, handle: SubprocessHandle? = nil
     ) async -> Result<Data, GHFailure> {
