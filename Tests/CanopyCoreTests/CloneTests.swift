@@ -298,7 +298,7 @@ struct CloneTests {
         let git = try Fixture.git(
             in: dir,
             before:
-                #"[[ "$1" == clone ]] && { /usr/bin/git "$@"; echo 'fatal: unable to checkout working tree' >&2; exit 128; }"#
+                #"[[ "$1" == clone ]] && { '\#(Fixture.gitPath)' "$@"; echo 'fatal: unable to checkout working tree' >&2; exit 128; }"#
         )
         let workspace = try await makeWorkspace(dir, github: Fixture.noGH(in: dir), git: git)
 

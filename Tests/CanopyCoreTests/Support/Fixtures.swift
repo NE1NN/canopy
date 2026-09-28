@@ -88,8 +88,8 @@ enum Fixture {
                 echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
                 exit 1
             fi
-            git clone "${@:6}" "file://\(dir.path)/remotes/$repo.git" "$4" || exit 1
-            git -C "$4" remote set-url origin "https://github.com/$repo.git"
+            '\(gitPath)' clone "${@:6}" "file://\(dir.path)/remotes/$repo.git" "$4" || exit 1
+            '\(gitPath)' -C "$4" remote set-url origin "https://github.com/$repo.git"
             """)
     }
 
@@ -100,8 +100,8 @@ enum Fixture {
 
     /// A GitRunner that fetches https://github.com/ URLs from `<dir>/remotes` instead, so plain git clones of GitHub
     /// URLs stay on this machine.
-    static func gitRedirectingGitHub(to dir: TempDir, executable: String = "/usr/bin/git") -> GitRunner {
-        var environment = ProcessInfo.processInfo.environment
+    static func gitRedirectingGitHub(to dir: TempDir, executable: String = gitPath) -> GitRunner {
+        var environment = Fixture.environment
         environment["GIT_CONFIG_COUNT"] = "1"
         environment["GIT_CONFIG_KEY_0"] = "url.file://\(dir.sub("remotes"))/.insteadOf"
         environment["GIT_CONFIG_VALUE_0"] = "https://github.com/"
