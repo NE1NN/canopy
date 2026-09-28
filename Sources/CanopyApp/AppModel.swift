@@ -119,6 +119,15 @@ final class AppModel {
         selectedRowPath = rows[number - 1].path
     }
 
+    /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last.
+    func selectRow(offset: Int) {
+        let rows = snapshot.visibleRows
+        guard !rows.isEmpty else { return }
+        let index =
+            rows.firstIndex { $0.path == selectedRowPath }.map { $0 + offset } ?? (offset > 0 ? 0 : rows.count - 1)
+        selectedRowPath = rows[min(max(index, 0), rows.count - 1)].path
+    }
+
     func menuTitle(forRow number: Int) -> String {
         let rows = snapshot.visibleRows
         return number <= rows.count ? rows[number - 1].displayName : "Row \(number)"
@@ -463,8 +472,27 @@ final class AppModel {
 
     // MARK: Repos
 
-    func addRepo(_ url: URL) {
-        perform { try await $0.addRepo(path: url.path) }
+    enum FolderRequest {
+        case addRepo
+        case locate(RepoSnapshot)
+    }
+
+    /// SwiftUI resets `isChoosingFolder` before calling the completion, so the request lives in its own property.
+    var isChoosingFolder = false
+    private(set) var folderRequest = FolderRequest.addRepo
+
+    /// The sidebar's +, File > Add Repo…, the empty states, and Locate… for a missing repo.
+    func chooseFolder(for request: FolderRequest) {
+        folderRequest = request
+        isChoosingFolder = true
+    }
+
+    func folderChosen(_ result: Result<URL, any Error>) {
+        switch (result, folderRequest) {
+        case (.success(let url), .addRepo): perform { try await $0.addRepo(path: url.path) }
+        case (.success(let url), .locate(let repo)): relocateRepo(repo, to: url)
+        case (.failure(let error), _): show(error)
+        }
     }
 
     /// A repo removal waiting for the user to confirm, because programs still run in its terminals.

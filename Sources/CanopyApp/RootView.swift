@@ -1,11 +1,13 @@
 import AppKit
 import CanopyCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
@@ -21,6 +23,7 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.toast)
+        .fileImporter(isPresented: $model.isChoosingFolder, allowedContentTypes: [.folder]) { model.folderChosen($0) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }
@@ -61,11 +64,15 @@ struct RowDetailView: View {
                 .navigationTitle(row.displayName)
                 .navigationSubtitle(model.snapshot.repo(path: row.repoPath)?.name ?? "")
         } else {
-            ContentUnavailableView(
-                "No Row Selected",
-                systemImage: "sidebar.left",
-                description: Text("Pick a row in the sidebar, or add a repo to get started.")
-            )
+            ContentUnavailableView {
+                Label("No Row Selected", systemImage: "sidebar.left")
+            } description: {
+                Text("Pick a row in the sidebar, or add a repo to get started.")
+            } actions: {
+                if model.snapshot.repos.isEmpty {
+                    Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
+                }
+            }
         }
     }
 }

@@ -212,17 +212,29 @@ They get these environment variables:
 
 ## Sidebar rows
 
-A row line reads, left to right: icon, branch name, then a right-aligned PR number when a PR exists.
+A "Repos" label heads the sidebar, with a `+` that adds a repo.
+File > Add Repo… (`⇧⌘O`) and the empty sidebar's button add one too.
 
-- The icon is a branch glyph when the row has no PR, and a pull request glyph when it has one.
+Each repo group starts with a header: a tile with the repo's first letter, its name, and its row count.
+The tile takes one of eight hues, picked by a stable hash of the repo's path, so a repo keeps its color across launches.
+On hover, the count gives way to a `…` menu and a `+` that creates a row.
+
+A row line reads, left to right: icon, branch name, then a right-aligned running dot and PR number.
+
+- The icon is a pull request glyph when the row has a PR, a trunk glyph for the main checkout, and a branch glyph otherwise.
 - The PR glyph and number are colored by state:
   green for open, gray for draft, purple for merged, red for closed.
+  They keep their colors on the selected row.
+- The running dot shows while a program other than the shell runs in one of the row's terminals.
+  It is refreshed every second while the window can be seen.
 - Clicking the PR number opens the PR in the default browser.
   Clicking anywhere else on the row selects it.
 - On hover, the PR number slides left to make room for the row's shortcut hint (`⌘8`) and an `x`.
-- The selected row has a rounded highlight.
+- The selected row has a rounded highlight, tinted with the accent color while the sidebar has the keyboard.
+  `↑` and `↓` then move the selection.
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order.
 - A detached HEAD shows the short commit hash in place of a branch name.
+- External worktrees fold into a "3 other worktrees" row under their repo's rows.
 
 ## Terminals
 
@@ -570,7 +582,7 @@ A command starting with a space is left out when the user has `hist_ignore_space
 
 - **Git and setup failures**: the UI shows git's message in a toast.
   The CLI exits non-zero, and with `--json` prints `{"error": {"code", "message"}}`.
-- **Missing repo folder**: the repo group shows "missing" with Locate and Remove.
+- **Missing repo folder**: the repo header shows "missing" and a Locate… button, and its `…` menu holds Remove.
 - **Missing worktree folder**: the row shows "missing" with Prune.
 - **`gh` unavailable**: covered under PR badges.
 - **Shell exits**: covered under Terminals.

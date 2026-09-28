@@ -41,20 +41,37 @@ struct PullRequestGlyph: Shape {
     }
 }
 
-/// A row's mark: its PR in the PR's state color, or a muted branch when it has none.
-struct RowIcon: View {
+/// The main checkout's mark: the trunk, a line through a commit.
+struct TrunkGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24
+        let transform = CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: scale, y: scale)
+        var path = Path()
+        path.move(to: CGPoint(x: 12, y: 2.5))
+        path.addLine(to: CGPoint(x: 12, y: 8.5))
+        path.addEllipse(in: CGRect(x: 8.5, y: 8.5, width: 7, height: 7))
+        path.move(to: CGPoint(x: 12, y: 15.5))
+        path.addLine(to: CGPoint(x: 12, y: 21.5))
+        return path.applying(transform)
+    }
+}
+
+/// A row's mark: its PR in the PR's state color, the trunk for the main checkout, or a muted branch.
+struct RowMark: View {
     let row: Row
-    @Environment(\.backgroundProminence) private var prominence
+    var size = 14.0
 
     var body: some View {
         Group {
             if let pr = row.pullRequest {
-                PullRequestGlyph().stroke(pr.state.style(on: prominence), style: Self.stroke)
+                PullRequestGlyph().stroke(pr.state.color, style: Self.stroke)
+            } else if row.rowClass == .main {
+                TrunkGlyph().stroke(row.isMissing ? .tertiary : .secondary, style: Self.stroke)
             } else {
-                BranchGlyph().stroke(.secondary, style: Self.stroke)
+                BranchGlyph().stroke(row.isMissing ? .tertiary : .secondary, style: Self.stroke)
             }
         }
-        .frame(width: 14, height: 14)
+        .frame(width: size, height: size)
     }
 
     private static let stroke = StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
@@ -71,12 +88,6 @@ extension PRState {
         }
     }
 
-    /// On a selected row in a focused sidebar, state colors would clash with the accent color, so they turn white
-    /// like the rest of the row.
-    func style(on prominence: BackgroundProminence) -> AnyShapeStyle {
-        prominence == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(color)
-    }
-
     var label: String {
         switch self {
         case .open: "Open"
@@ -84,17 +95,5 @@ extension PRState {
         case .merged: "Merged"
         case .closed: "Closed"
         }
-    }
-}
-
-extension Color {
-    static func adaptive(light: UInt32, dark: UInt32) -> Color {
-        Color(
-            nsColor: NSColor(name: nil) { appearance in
-                let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-                return NSColor(
-                    srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
-                    blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
-            })
     }
 }

@@ -66,6 +66,9 @@ struct TerminalCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
             Button("New Tab", action: model.newTab)
                 .keyboardShortcut("t")
                 .disabled(!model.canOpenTerminal)
