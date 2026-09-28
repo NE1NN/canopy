@@ -136,10 +136,12 @@ struct PtyProcessTests {
     }
 
     @Test func terminalHandlesUTF8Input() async throws {
-        let (_, recorder) = try start(["/bin/stty", "-a"])
+        // The program stays up after printing, so the check does not race its output against its exit. On a CI
+        // runner, stty's output once went missing when it exited straight away.
+        let (process, recorder) = try start(["/bin/sh", "-c", "stty -a; sleep 30"])
 
-        #expect(await eventually { recorder.exitCode != nil })
-        #expect(recorder.text.split(whereSeparator: \.isWhitespace).contains("iutf8"))
+        #expect(await eventually { recorder.text.split(whereSeparator: \.isWhitespace).contains("iutf8") })
+        process.terminate()
     }
 
     @Test func missingExecutableThrows() {

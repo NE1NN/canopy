@@ -1934,6 +1934,12 @@ Two commits fix them: `test: keep the PR timing tests steady on a slow runner` a
 Waits now default to 20 seconds, which costs nothing when the condition holds, and the suite passed five throttled runs in a row.
 A timer tick already on its way into the workspace when `stop()` ran could still start a lookup, so ticks check for cancellation on the actor.
 
+A second CI run lost the output of `stty -a` in `terminalHandlesUTF8Input`, a test from PR 5.
+Locally, macOS holds a terminal program's exit until its output is read, even with nothing reading for minutes, so the loss needs something CI-specific that about 15 throttled full-suite runs did not reproduce.
+Holding the child's side of the terminal open in Canopy did not change that wait, since it comes from the program being the session leader, so that idea was dropped.
+The test now keeps its program alive after printing and waits for the text, which is what it checks.
+If the last lines of a setup script ever go missing in the app, this is the place to look.
+
 An independent review found no blockers.
 One commit, `fix: address review of PR badges`, fixes what it found, and the branch is the reference for it:
 - Forks are told apart by `isCrossRepository` instead of by name, so a renamed repo, which GitHub answers for under its new name, keeps its badges.
