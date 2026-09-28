@@ -88,7 +88,10 @@ struct WatcherLifetimeTests {
         let git = try Fixture.git(
             in: dir,
             before: """
-                if [[ "$1" == "rev-parse" ]]; then touch "\(started)"; while [[ ! -f "\(release)" ]]; do sleep 0.05; done; fi
+                if [[ "$1" == "rev-parse" ]]; then
+                    touch "\(started)"
+                    \(Fixture.waitForFile(release))
+                fi
                 """)
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
         try await workspace.start()
