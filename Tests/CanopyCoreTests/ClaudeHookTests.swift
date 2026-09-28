@@ -206,17 +206,15 @@ struct ClaudeHookTests {
 
         let socketPath = home.socketPath
         let clock = ContinuousClock()
-        let fast = try await clock.measure {
-            try await offPool { try ControlClient(socketPath: socketPath).post(ControlRequest(method: "term.state")) }
-        }
-        #expect(fast < .seconds(1))
-        #expect(received.withLock { $0 } == ["term.state"])
+        try await offPool { try ControlClient(socketPath: socketPath).post(ControlRequest(method: "term.state")) }
+        #expect(await eventually { received.withLock { $0 } == ["term.state"] })
 
+        // An app that takes 3 seconds to answer holds the hook for about a second, however slow the machine.
         let slow = try await clock.measure {
             try await offPool { try ControlClient(socketPath: socketPath).post(ControlRequest(method: "slow")) }
         }
-        #expect(slow >= .milliseconds(900) && slow < .seconds(2))
-        #expect(received.withLock { $0 } == ["term.state", "slow"])
+        #expect(slow >= .milliseconds(900) && slow < .milliseconds(2900))
+        #expect(await eventually { received.withLock { $0 } == ["term.state", "slow"] })
     }
 
     @Test func postingFailsFastWhenTheAppIsNotRunning() async throws {

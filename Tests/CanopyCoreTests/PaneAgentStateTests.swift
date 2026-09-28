@@ -59,7 +59,8 @@ struct PaneAgentStateTests {
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
         #expect(await eventually { pane.foreground?.name == "bash" })
 
-        await pane.run("sleep 2")
+        // cat runs until Control-D, so the test decides when the program exits.
+        await pane.run("cat")
         #expect(
             await eventually {
                 pane.refreshActivity()
@@ -67,6 +68,7 @@ struct PaneAgentStateTests {
             })
         _ = pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
         #expect(pane.agent.state == .done)
+        pane.type("\u{4}")
 
         #expect(
             await eventually {
@@ -99,9 +101,10 @@ struct PaneAgentStateTests {
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // The window is hidden, so nothing refreshes while the program runs.
-        await pane.run("sleep 2")
+        await pane.run("cat")
         #expect(await eventually { pane.isBusy })
         pane.report(AgentReport(state: .done))
+        pane.type("\u{4}")
         #expect(await eventually { !pane.isBusy })
 
         pane.refreshActivity()
