@@ -24,6 +24,7 @@ public final class Pane: Identifiable {
         didSet { refreshTitle() }
     }
     @ObservationIgnored private let settings: ShellSettings
+    @ObservationIgnored private let activity: ActivityLog
     @ObservationIgnored private var process: PtyProcess?
     @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
@@ -35,12 +36,13 @@ public final class Pane: Identifiable {
 
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
-        emulator: any TerminalEmulator, directory: String? = nil
+        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil
     ) {
         self.id = id
         self.context = context
         self.startDirectory = directory
         self.settings = settings
+        self.activity = activity
         self.emulator = emulator
         emulator.onInput = { [weak self] in self?.input($0) }
         emulator.onResize = { [weak self] in self?.process?.resize($0) }
@@ -143,6 +145,7 @@ public final class Pane: Identifiable {
                 onExit: { [weak self] in self?.processExited($0) }
             )
             status = .running
+            record(ActivityType.termOpened)
             // Name the pane after what was launched. Reading the foreground now could catch the child
             // between fork and exec, still named after Canopy.
             title = (launch.executable as NSString).lastPathComponent
@@ -166,11 +169,18 @@ public final class Pane: Identifiable {
         refreshTitle()
     }
 
+    private func record(_ type: String, _ data: [String: JSONValue] = [:]) {
+        activity.record(
+            type, repo: context.repoName, row: context.rowName, path: context.rowPath,
+            data: data.merging(["pane": .string(id.description)]) { value, _ in value })
+    }
+
     private func processExited(_ code: Int32) {
         // A closed pane already reported its exit. An exit status that was on its way when it closed changes nothing.
         if isClosed, case .exited = status { return }
         process = nil
         status = .exited(code)
+        record(ActivityType.termExited, ["code": .number(Double(code))])
         // Nothing reads input now, so hide the cursor. The soft reset in `restart` shows it again.
         emulator.feed(Data("\u{1b}[?25l".utf8))
         let waiters = exitWaiters
