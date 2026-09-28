@@ -181,4 +181,44 @@ struct GitHubCLITests {
         #expect(await loggedOut.viewerRepos() == .failure(.notLoggedIn))
         #expect(await garbled.viewerRepos() == .failure(.failed("gh returned a reply Canopy could not read.")))
     }
+
+    @Test func looksUpOnePullRequest() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            printf '%s\\n' "$@" > "\(dir.sub("args"))"
+            echo '{"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": {"number": 7, "title": "t", "url": "u", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28", "headRefName": "feat/x", "headRefOid": "abc", "headRef": {"name": "feat/x"}, "baseRefName": "main", "isCrossRepository": false, "maintainerCanModify": false, "headRepository": {"name": "canopy"}, "headRepositoryOwner": {"login": "NE1NN"}}}}}'
+            """)
+
+        let head = try await gh.pullRequest(repo: repo, number: 7).get()
+
+        #expect(head?.branch == "feat/x")
+        let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8).split(separator: "\n")
+        #expect(Array(args.prefix(3)) == ["api", "graphql", "-f"])
+        #expect(args.dropFirst(3).first?.contains("pullRequest(number: 7)") == true)
+    }
+
+    @Test func aPullRequestGitHubDoesNotHaveIsNone() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            echo '{"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": null}}}'
+            echo 'gh: Could not resolve to a PullRequest with the number of 7.' >&2
+            exit 1
+            """)
+
+        #expect(try await gh.pullRequest(repo: repo, number: 7).get() == nil)
+    }
+
+    @Test func aPullRequestLookupSaysWhyGHCannotAnswer() async throws {
+        let dir = try TempDir()
+        let loggedOut = try Fixture.gh(
+            in: dir, "echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4")
+        let missing = GitHubCLI(environment: ["PATH": dir.path, "HOME": dir.path], fallbackFolders: [])
+
+        #expect(await loggedOut.pullRequest(repo: repo, number: 7) == .failure(.notLoggedIn))
+        #expect(await missing.pullRequest(repo: repo, number: 7) == .failure(.ghMissing))
+    }
 }

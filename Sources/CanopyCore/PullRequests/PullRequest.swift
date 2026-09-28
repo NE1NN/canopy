@@ -2,6 +2,16 @@ import Foundation
 
 public enum PRState: String, Codable, Sendable {
     case open, draft, merged, closed
+
+    /// GitHub's state, with an open draft shown as draft.
+    init(gitHub state: String, isDraft: Bool) {
+        self =
+            switch state {
+            case "OPEN": isDraft ? .draft : .open
+            case "MERGED": .merged
+            default: .closed
+            }
+    }
 }
 
 public struct PullRequest: Codable, Sendable, Equatable {
@@ -28,6 +38,34 @@ public struct GitHubRepo: Sendable, Equatable {
     public var nameWithOwner: String { "\(owner)/\(name)" }
 
     static let hosts: Set<String> = ["github.com", "www.github.com", "ssh.github.com"]
+
+    public init(owner: String, name: String) {
+        self.owner = owner
+        self.name = name
+    }
+
+    /// GitHub ignores case in owner and repo names.
+    public func matches(_ other: GitHubRepo) -> Bool {
+        owner.lowercased() == other.owner.lowercased() && name.lowercased() == other.name.lowercased()
+    }
+
+    /// `remoteURL` with this repo's owner and name in place of its own, keeping its scheme, user, host, and `.git`
+    /// ending, so a fork is reached the way origin is: over the same protocol, SSH host alias, and URL rewrites.
+    public func url(replacingRepoIn remoteURL: String) -> String? {
+        let url = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.split(url) != nil else { return nil }
+        let pathStart: String.Index
+        if let separator = url.range(of: "://") {
+            guard let slash = url[separator.upperBound...].firstIndex(of: "/") else { return nil }
+            pathStart = url.index(after: slash)
+        } else {
+            guard let colon = url.firstIndex(of: ":") else { return nil }
+            pathStart = url.index(after: colon)
+        }
+        var path = url[pathStart...]
+        if path.hasSuffix("/") { path.removeLast() }
+        return url[..<pathStart] + "\(owner)/\(name)" + (path.hasSuffix(".git") ? ".git" : "")
+    }
 
     /// Reads https, ssh, and scp-style GitHub remotes. `sshHostName` says which host an SSH alias, such as the
     /// github-work people set up for a second account, connects to. Anything else has no GitHub repo.
@@ -106,14 +144,9 @@ public enum PRQuery {
                 let chosen = nodes.first(where: { $0.state == "OPEN" })
                     ?? nodes.max(by: { $0.updatedAt < $1.updatedAt })
             else { continue }
-            let state: PRState =
-                switch chosen.state {
-                case "OPEN": chosen.isDraft ? .draft : .open
-                case "MERGED": .merged
-                default: .closed
-                }
             result[branch] = PullRequest(
-                number: chosen.number, title: chosen.title, url: chosen.url, state: state, updatedAt: chosen.updatedAt)
+                number: chosen.number, title: chosen.title, url: chosen.url,
+                state: PRState(gitHub: chosen.state, isDraft: chosen.isDraft), updatedAt: chosen.updatedAt)
         }
         return result
     }

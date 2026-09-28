@@ -58,6 +58,20 @@ public struct GitHubCLI: Sendable {
         }
     }
 
+    /// One pull request of `repo`, with what starting a row from it needs. Nil when the repo has no such PR.
+    public func pullRequest(repo: GitHubRepo, number: Int) async -> Result<PullRequestHead?, GHFailure> {
+        let query = PRHeadQuery.build(repo: repo, number: number)
+        switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
+        case .failure(.failed(let message)) where message.hasPrefix("Could not resolve to a PullRequest"):
+            return .success(nil)
+        case .failure(let failure):
+            return .failure(failure)
+        case .success(let reply):
+            guard let head = try? PRHeadQuery.parse(reply) else { return .failure(.failed(Self.unreadable)) }
+            return .success(head)
+        }
+    }
+
     /// Clones with `gh repo clone`, which uses the user's login and preferred git protocol, into `folder`, which must
     /// not exist yet. git reports progress to stderr, which `handle` reads. Nil when it cloned.
     public func clone(_ repo: String, into folder: String, handle: SubprocessHandle) async -> GHFailure? {
