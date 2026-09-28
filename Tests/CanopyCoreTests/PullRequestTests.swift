@@ -38,13 +38,13 @@ struct PullRequestTests {
         #expect(GitHubRepo(remoteURL: "https://github-work/NE1NN/canopy.git", sshHostName: resolve) == nil)
     }
 
-    @Test func readsTheHostAnSSHAliasConnectsTo() throws {
+    @Test func readsTheHostAnSSHAliasConnectsTo() async throws {
         let dir = try TempDir()
-        try "Host github-work\n  HostName github.com\n".write(
-            toFile: dir.sub("ssh_config"), atomically: true, encoding: .utf8)
+        let config = dir.sub("ssh_config")
+        try "Host github-work\n  HostName github.com\n".write(toFile: config, atomically: true, encoding: .utf8)
 
-        #expect(SSHConfig.hostName(for: "github-work", configFile: dir.sub("ssh_config")) == "github.com")
-        #expect(SSHConfig.hostName(for: "elsewhere", configFile: dir.sub("ssh_config")) == "elsewhere")
+        #expect(try await offPool { SSHConfig.hostName(for: "github-work", configFile: config) } == "github.com")
+        #expect(try await offPool { SSHConfig.hostName(for: "elsewhere", configFile: config) } == "elsewhere")
     }
 
     @Test func queryAliasesEachBranchAndEscapesNames() {

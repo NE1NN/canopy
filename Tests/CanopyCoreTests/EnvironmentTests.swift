@@ -52,7 +52,8 @@ struct EnvironmentTests {
     @Test func gitIgnoresAnInheritedGitDir() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)
-        let git = GitRunner(environment: ["PATH": "/usr/bin:/bin", "GIT_DIR": dir.sub("nowhere/.git")])
+        let git = GitRunner(
+            executable: Fixture.gitPath, environment: ["PATH": "/usr/bin:/bin", "GIT_DIR": dir.sub("nowhere/.git")])
 
         let top = try await git.run(["rev-parse", "--show-toplevel"], in: repo)
 

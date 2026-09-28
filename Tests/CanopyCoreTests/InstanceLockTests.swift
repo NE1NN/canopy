@@ -37,12 +37,13 @@ struct InstanceLockTests {
         try await holder.value
     }
 
-    @Test func waitingGivesUpAfterTheTimeout() throws {
+    @Test func waitingGivesUpAfterTheTimeout() async throws {
         let dir = try TempDir()
-        let first = try InstanceLock(path: dir.sub("launch.lock"))
+        let path = dir.sub("launch.lock")
+        let first = try InstanceLock(path: path)
 
-        #expect(throws: InstanceLockError.heldElsewhere(dir.sub("launch.lock"))) {
-            try InstanceLock.waiting(path: dir.sub("launch.lock"), timeout: 0.3)
+        await #expect(throws: InstanceLockError.heldElsewhere(path)) {
+            try await offPool { try InstanceLock.waiting(path: path, timeout: 0.3) }
         }
         _ = first
     }

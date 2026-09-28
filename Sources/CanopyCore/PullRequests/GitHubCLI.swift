@@ -32,22 +32,15 @@ public struct GitHubCLI: Sendable {
     /// The GitHub repo behind a remote, following SSH host aliases the way git would.
     public func repo(forRemote url: String) async -> GitHubRepo? {
         let environment = environment ?? ProcessInfo.processInfo.environment
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(
-                    returning: GitHubRepo(remoteURL: url) {
-                        SSHConfig.hostName(for: $0, configFile: sshConfigFile, environment: environment)
-                    })
+        return await onOwnThread {
+            GitHubRepo(remoteURL: url) {
+                SSHConfig.hostName(for: $0, configFile: sshConfigFile, environment: environment)
             }
         }
     }
 
     public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: lookUpBlocking(repo: repo, branches: branches))
-            }
-        }
+        await onOwnThread { lookUpBlocking(repo: repo, branches: branches) }
     }
 
     private func lookUpBlocking(repo: GitHubRepo, branches: [String]) -> PRLookup {

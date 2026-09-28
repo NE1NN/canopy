@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import CanopyCore
@@ -41,6 +42,33 @@ struct GitRunnerTests {
         }
 
         #expect(clock.now - start < .seconds(5))
+    }
+
+    /// On CI, dozens of tests running git at once took every thread Dispatch lends, and a run that queued for one
+    /// started its timeout late.
+    @Test func timeoutHoldsWhenDispatchHasNoThreadsLeft() async throws {
+        let dir = try TempDir()
+        let git = try Fixture.git(in: dir, before: "sleep 30")
+        let clock = ContinuousClock()
+
+        let elapsed = try await withEveryDispatchThreadBusy {
+            let start = clock.now
+            do {
+                try await git.run(["fetch"], in: dir.path, timeout: .milliseconds(300))
+                Issue.record("expected a timeout")
+            } catch let error as GitError {
+                #expect(error.timedOut)
+            }
+            return clock.now - start
+        }
+
+        #expect(elapsed < .seconds(5))
+    }
+
+    /// Through the /usr/bin/git shim, each test's git asked xcrun, which started xcodebuild on a fresh CI runner.
+    @Test func testsRunGitWithoutTheShim() {
+        #expect(Fixture.gitPath != "/usr/bin/git")
+        #expect(FileManager.default.isExecutableFile(atPath: Fixture.gitPath))
     }
 
     @Test func noTimeoutByDefault() async throws {

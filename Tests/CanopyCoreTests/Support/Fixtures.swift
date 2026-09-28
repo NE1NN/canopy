@@ -1,10 +1,26 @@
 import Foundation
+import Testing
 
 @testable import CanopyCore
 
 enum Fixture {
+    /// This process's environment without the SDKROOT that `swift test` adds and the app never has.
+    static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
+
+    /// The git that /usr/bin/git hands off to. The shim asks xcrun on every run, and xcrun's cache starts empty on a
+    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs. Asking
+    /// xcrun here would start one too, while every test waits for this value, so the path comes from xcode-select.
+    static let gitPath: String = {
+        let folder = try? Subprocess.run(
+            "/usr/bin/xcode-select", ["--print-path"], environment: environment, directory: nil, timeout: .seconds(10))
+        let path = folder.map {
+            String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) + "/usr/bin/git"
+        }
+        return path.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/usr/bin/git"
+    }()
+
     /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
-    static let git = GitRunner(environment: ProcessInfo.processInfo.environment)
+    static let git = GitRunner(executable: gitPath, environment: environment)
 
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
@@ -30,10 +46,10 @@ enum Fixture {
     /// Use it to stall or count specific git commands.
     static func git(in dir: TempDir, before: String) throws -> GitRunner {
         let script = dir.sub("git-wrapper-\(UUID().uuidString.prefix(6))")
-        let body = "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n"
+        let body = "#!/bin/bash\n\(before)\nexec '\(gitPath)' \"$@\"\n"
         try body.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        return GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+        return GitRunner(executable: script, environment: environment)
     }
 
     /// A GitHubCLI whose `gh` is a bash script running `body`, alone on PATH.
@@ -61,9 +77,38 @@ enum Fixture {
 /// Runs blocking work (socket reads, lock waits) on its own thread. On a Swift concurrency thread it would
 /// hold one of the few threads the server needs to answer it, and a small CI machine deadlocks.
 func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        Thread { continuation.resume(with: Result { try work() }) }.start()
+    try await onOwnThread { Result { try work() } }.get()
+}
+
+/// One test at a time takes every Dispatch thread, or two would each hold part of the pool and wait for the rest.
+private let everyDispatchThreadGate = DispatchSemaphore(value: 1)
+
+/// Runs `body` while blocks hold every thread Dispatch lends its global queues, as dozens of tests running git at once
+/// did on a 3-CPU CI runner. `body` starts only once they all hold one: while Dispatch is still adding threads, it gives
+/// the next to the most urgent work waiting, so work at a higher priority would slip through. Work queued meanwhile at
+/// any priority waits until `body` returns, or ten seconds at most.
+func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -> T {
+    var threads: UInt32 = 0
+    var size = MemoryLayout<UInt32>.size
+    try #require(sysctlbyname("kern.wq_max_constrained_threads", &threads, &size, nil, 0) == 0)
+    let limit = threads
+    try await offPool { everyDispatchThreadGate.wait() }
+    defer { everyDispatchThreadGate.signal() }
+    let started = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    let deadline = DispatchTime.now() + 10
+    for _ in 0..<limit {
+        DispatchQueue.global().async {
+            started.signal()
+            _ = release.wait(timeout: deadline)
+        }
     }
+    defer {
+        for _ in 0..<limit { release.signal() }
+    }
+    let allStarted = try await offPool { (0..<limit).allSatisfy { _ in started.wait(timeout: deadline) == .success } }
+    try #require(allStarted, "Dispatch never lent every thread, so the pool was never full")
+    return try await body()
 }
 
 /// Polls until `condition` holds or the timeout passes. Returns whether it held. The timeout is long because a loaded CI

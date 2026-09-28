@@ -242,7 +242,7 @@ struct WorkspaceTests {
         #!/bin/bash
         if [[ "$1 $2" == "worktree list" && -f "\(marker)" ]]; then
             out=$(mktemp)
-            /usr/bin/git "$@" > "$out"
+            '\(Fixture.gitPath)' "$@" > "$out"
             status=$?
             rm "\(marker)"
             sleep 1
@@ -250,10 +250,10 @@ struct WorkspaceTests {
             rm "$out"
             exit $status
         fi
-        exec /usr/bin/git "$@"
+        exec '\(Fixture.gitPath)' "$@"
         """.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
-        let git = GitRunner(executable: script, environment: ProcessInfo.processInfo.environment)
+        let git = GitRunner(executable: script, environment: Fixture.environment)
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
         try await workspace.start()
         try await workspace.addRepo(path: repo)
