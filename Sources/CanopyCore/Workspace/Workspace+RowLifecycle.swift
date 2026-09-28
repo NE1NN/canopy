@@ -300,7 +300,7 @@ extension Workspace {
     /// Parallel creates queue behind each other, so a fetch that finished after this request was made
     /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
     /// Returns why the fetch failed, or nil. Pruning drops branches deleted on origin, which are no longer on it.
-    private func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
+    func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
         if let attempt = lastFetch[repoPath], attempt.finishedAt > requestedAt {
             return attempt.failure
         }

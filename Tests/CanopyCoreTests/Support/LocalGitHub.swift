@@ -82,9 +82,12 @@ struct LocalGitHub {
         return Paths.canonical(path)
     }
 
-    /// Pushes `count` new commits on `branch` of `nameWithOwner`, starting it from main if it is new. Returns its tip.
+    /// Pushes `count` new commits on `branch` of `nameWithOwner`, starting it from main if it is new, made at `date`
+    /// (default: now). Returns its tip.
     @discardableResult
-    func push(_ count: Int = 1, to branch: String, of nameWithOwner: String) async throws -> String {
+    func push(
+        _ count: Int = 1, to branch: String, of nameWithOwner: String, date: String? = nil
+    ) async throws -> String {
         let work = dir.sub("work/\(nameWithOwner)")
         if !FileManager.default.fileExists(atPath: work) {
             try await Fixture.git.run(["clone", "--quiet", bare(nameWithOwner), work])
@@ -96,7 +99,8 @@ struct LocalGitHub {
         try await Fixture.git.run(
             ["switch", "--quiet", "--force-create", branch, start ? "origin/\(branch)" : "origin/main"], in: work)
         for index in 1...count {
-            try await Fixture.git.run(["commit", "--quiet", "--allow-empty", "-m", "\(branch) \(index)"], in: work)
+            try await Fixture.git(committingAt: date).run(
+                ["commit", "--quiet", "--allow-empty", "-m", "\(branch) \(index)"], in: work)
         }
         try await Fixture.git.run(["push", "--quiet", "origin", "HEAD:refs/heads/\(branch)"], in: work)
         return try await Fixture.git.run(["rev-parse", "HEAD"], in: work).trimmingCharacters(
