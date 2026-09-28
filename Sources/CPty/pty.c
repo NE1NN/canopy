@@ -95,3 +95,9 @@ int canopy_pty_resize(int master, unsigned short columns, unsigned short rows)
     struct winsize size = {.ws_row = rows, .ws_col = columns};
     return ioctl(master, TIOCSWINSZ, &size);
 }
+
+int canopy_pty_unread_input(int master)
+{
+    int count = 0;
+    return ioctl(master, FIONREAD, &count) == 0 ? count : -1;
+}
