@@ -133,37 +133,31 @@ struct ZshCommandLoggingTests {
 
     @Test func theUsersStartupFilesLoadAsUsual() async throws {
         let dir = try TempDir()
-        let terminals = try Fixture.zshTerminals(
-            dir,
-            files: [
-                ".zshenv": "export FROM_ZSHENV=1", ".zprofile": "export FROM_ZPROFILE=1",
-                ".zshrc": "export FROM_ZSHRC=1", ".zlogin": "export FROM_ZLOGIN=1",
-            ])
+        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""))
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
-        let check =
-            #"print -r -- "check:$FROM_ZSHENV$FROM_ZPROFILE$FROM_ZSHRC$FROM_ZLOGIN:${ZDOTDIR-unset}:"#
-            + #"${CANOPY_COMMAND_TOKEN-none}:$HISTFILE""#
-        #expect(await run(pane, check, until: "check:1111:unset:none:\(dir.sub("user-home"))/.zsh_history"))
+        let loaded = " .zshenv .zprofile .zshrc .zlogin"
+        let home = dir.sub("user-home")
+        #expect(await run(pane, Self.check, until: "check:\(loaded):unset::none:none:\(home)/.zsh_history"))
     }
 
     @Test func aZDOTDIRSetInTheUsersZshenvIsFollowed() async throws {
         let dir = try TempDir()
-        let terminals = try Fixture.zshTerminals(
-            dir,
-            files: [
-                ".zshenv": "export ZDOTDIR=$HOME/.config/zsh",
-                ".config/zsh/.zshrc": "alias hello='echo hi-from-config'",
-            ])
+        var files = startupFiles(in: "").merging(startupFiles(in: ".config/zsh")) { $1 }
+        files[".zshenv", default: ""] += "\nexport ZDOTDIR=$HOME/.config/zsh"
+        let terminals = try Fixture.zshTerminals(dir, files: files)
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
-        #expect(await run(pane, "hello", until: "hi-from-config"))
-        #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == ["hello"] })
+        let loaded = " .zshenv .config/zsh/.zprofile .config/zsh/.zshrc .config/zsh/.zlogin"
+        let config = dir.sub("user-home/.config/zsh")
+        #expect(
+            await run(pane, Self.check, until: "check:\(loaded):\(config):\(config):none:none:\(config)/.zsh_history"))
+        #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == [.string(Self.check)] })
     }
 
-    @Test(arguments: [false])
+    @Test(arguments: [false, true])
     func aZDOTDIRFromTheEnvironmentIsKept(logsCommands: Bool) async throws {
         let dir = try TempDir()
         let zdot = dir.sub("user-home/z dot")
@@ -177,6 +171,16 @@ struct ZshCommandLoggingTests {
         #expect(await run(pane, Self.check, until: "check:\(loaded):\(zdot):\(zdot):none:none:\(zdot)/.zsh_history"))
         let logged: [JSONValue?] = logsCommands ? [.string(Self.check)] : []
         #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == logged })
+    }
+
+    @Test func anEmptyZDOTDIRIsKeptAsZshKeepsIt() async throws {
+        // zsh reads startup files from a ZDOTDIR that is set, even to nothing, so from /, never from HOME.
+        let dir = try TempDir()
+        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), environment: ["ZDOTDIR": ""])
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+
+        #expect(await run(pane, Self.check, until: "check::::none:none:\(dir.sub("user-home"))/.zsh_history"))
     }
 
     @Test func setupScriptsReadTheAppsZDOTDIR() async throws {
@@ -294,14 +298,19 @@ struct ZshCommandLoggingTests {
         var settings = Fixture.shellSettings(dir)
         settings.logsCommands = true
 
-        let bash = settings.interactiveShell(environment: [:], directory: "/", commandToken: "t0k")
-        settings.shell = "/bin/zsh"
-        let zsh = settings.interactiveShell(environment: [:], directory: "/", commandToken: "t0k")
-        let script = settings.script("true", environment: [:], directory: "/")
+        let environment = ["ZDOTDIR": "/z"]
 
-        #expect(bash.environment["ZDOTDIR"] == nil && bash.environment["CANOPY_COMMAND_TOKEN"] == nil)
+        let bash = settings.interactiveShell(environment: environment, directory: "/", commandToken: "t0k")
+        settings.shell = "/bin/zsh"
+        let zsh = settings.interactiveShell(environment: environment, directory: "/", commandToken: "t0k")
+        let zshWithoutZDOTDIR = settings.interactiveShell(environment: [:], directory: "/", commandToken: "t0k")
+        let script = settings.script("true", environment: environment, directory: "/")
+
+        #expect(bash.environment == environment)
         #expect(zsh.environment["ZDOTDIR"] == settings.home.zshShimFolder.path)
+        #expect(zsh.environment["CANOPY_USER_ZDOTDIR"] == "/z")
         #expect(zsh.environment["CANOPY_COMMAND_TOKEN"] == "t0k")
-        #expect(script.environment["ZDOTDIR"] == nil)
+        #expect(zshWithoutZDOTDIR.environment["CANOPY_USER_ZDOTDIR"] == nil)
+        #expect(script.environment == environment)
     }
 }

@@ -59,6 +59,8 @@ public struct ShellSettings: Sendable, Equatable {
         var environment = environment
         // Written again if it went missing: zsh pointed at a folder without it would skip the user's startup files.
         if reportsCommands, let commandToken, let folder = try? ZshIntegration.install(in: home) {
+            // The shim puts the user's own ZDOTDIR back from here, or unsets it if there was none.
+            environment["CANOPY_USER_ZDOTDIR"] = environment["ZDOTDIR"]
             environment["ZDOTDIR"] = folder
             environment["CANOPY_COMMAND_TOKEN"] = commandToken
         }
