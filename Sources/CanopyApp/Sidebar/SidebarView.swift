@@ -25,7 +25,7 @@ struct SidebarView: View {
             }
         }
         .sheet(item: $newRow) { request in
-            NewRowSheet(repo: request.repo, group: request.group)
+            NewRowSheet(repo: request.repo, group: request.group, sources: model.newRowSources(for: request.repo))
         }
     }
 
