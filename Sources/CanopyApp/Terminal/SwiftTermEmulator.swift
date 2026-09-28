@@ -128,7 +128,8 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
 
     /// The scroller shows only while the view is scrolled back from the bottom, into the scrollback.
     func scrolled(source: TerminalView, position: Double) {
-        let isScrolledBack = position < 1
+        // Full-screen programs such as less and vim cannot scroll back, and report position 0 there.
+        let isScrolledBack = position < 1 && terminalView.canScroll
         guard let scroller, (scroller.alphaValue > 0) != isScrolledBack else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = isScrolledBack ? 0.1 : 0.4

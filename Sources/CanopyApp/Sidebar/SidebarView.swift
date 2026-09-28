@@ -68,6 +68,9 @@ struct SidebarView: View {
         .focusable()
         .focused($isFocused)
         .focusEffectDisabled()
+        .onChange(of: isFocused) {
+            if !isFocused { model.sidebarLostKeyboard() }
+        }
         .onKeyPress(.upArrow) {
             model.selectRow(offset: -1)
             return .handled
@@ -307,6 +310,7 @@ struct RowLineView: View {
 
     private var accessibilityLabel: String {
         var parts = [row.displayName]
+        if let tag = row.externalTag { parts.append("from \(tag.label)") }
         if let pr = row.pullRequest { parts.append("pull request \(pr.number), \(pr.state.label)") }
         if isRunning { parts.append("running a program") }
         if row.isMissing { parts.append("missing") }
@@ -362,6 +366,7 @@ struct OtherWorktreesToggle: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 }
 

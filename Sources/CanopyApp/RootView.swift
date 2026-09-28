@@ -14,7 +14,7 @@ struct RootView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
         } detail: {
-            RowDetailView(isSidebarHidden: columns == .detailOnly)
+            RowDetailView()
                 .onGeometryChange(for: CGRect.self) {
                     $0.frame(in: .global)
                 } action: {
@@ -72,12 +72,11 @@ struct RootView: View {
 
 struct RowDetailView: View {
     @Environment(AppModel.self) private var model
-    let isSidebarHidden: Bool
 
     var body: some View {
         if let row = model.selectedRow {
             // The title bar is hidden, but the title still names the window in the Window menu and Mission Control.
-            RowTerminalsView(row: row, isSidebarHidden: isSidebarHidden)
+            RowTerminalsView(row: row)
                 .navigationTitle(row.displayName)
         } else {
             ContentUnavailableView {

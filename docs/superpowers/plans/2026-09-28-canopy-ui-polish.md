@@ -117,7 +117,7 @@ The density is fixed and ignores the system's sidebar size setting, the way Xcod
   Hover adds the `⌘N` hint and `×`, as today.
 - A selected row keeps its PR colors.
 - Other worktrees fold into a muted "3 other worktrees" disclosure row.
-- The PR lookup warning, "missing", and tags from other tools use the Meta size.
+- The PR lookup warning uses the Meta size, and the "missing" and tool tags a point smaller.
 - A row selected by `⌘N` or `canopy row select` scrolls into view.
 
 ### Ports
@@ -181,7 +181,8 @@ The app refreshes a stored `isRunningProgram` for every pane once a second while
   Nothing newer than macOS 15 is used without `#available`.
 - Swift 6 language mode with strict concurrency, and no warnings from `swift build`.
 - `make lint` (`swift format lint --strict`) passes after every task.
-- Every size, font, and fill comes from `Style`.
+- Fonts, fills, and the shared heights and radii come from `Style`.
+  A few one-off sizes stay with their view, such as the 30 point exit strip and the 10 point tags.
 - Never block a Swift concurrency thread: the activity refresh reads each pane's foreground with `tcgetpgrp` and a process name lookup on the main actor, which takes microseconds.
 - UI checks use `scripts/ui.swift` and `scripts/window-shot.swift` on the dev build with a throwaway `CANOPY_HOME`.
   Never take full-screen captures, and keep the machine's user and host names out of shots.
@@ -189,7 +190,7 @@ The app refreshes a stored `isRunningProgram` for every pane once a second while
 
 ## Review Focus
 
-1. **Clicks in the title bar row** must reach the tabs, the Split Pane and New Tab buttons, and the crumb while terminals are on screen, and empty space there must still move and zoom the window.
+1. **Clicks in the title bar row** must reach the tabs and the Split Pane and New Tab buttons while terminals are on screen, and empty space there, the crumb included, must still move and zoom the window.
    Pinned by the UI check in Task 7, which clicks each and counts panes with `canopy term list`.
 2. **Many tabs or a narrow window** must scroll the tab strip and keep both buttons in place, with no overflow menu.
    Pinned by the UI check in Task 7 with twelve tabs.
@@ -3038,3 +3039,35 @@ git commit -m "feat: the sidebar scrolls a newly selected row into view"
 - The top bar is a window-level overlay rather than part of the detail column, for the click problem described above.
 - Two additions beyond the approved direction: the sidebar scrolls a newly selected row into view, and `scripts/ui-fixture.sh`.
 - The ports panel hides when there are no repos.
+
+## After Review
+
+An independent reviewer read `git diff main...feat/ui-polish` against the spec and this plan.
+Its findings and what became of them:
+
+1. **Major, fixed:** `↑` and `↓` moved the selection once, and then the new row's terminal took the keyboard, so the next `↓` went into its shell.
+   `AppModel.sidebarKeepsKeyboard` now marks a selection made by the sidebar's arrow keys, and `GridView` then does not let that row's terminal take the keyboard, until the sidebar lets go of it.
+   Checked in the app: two `↓` presses move two rows with the sidebar keeping its tint, and clicking a row still sends typing to its terminal.
+2. **Major, fixed:** the ports panel's stop buttons show on hover only, so VoiceOver could not reach them.
+   Each badge and group now has an accessibility action and a context menu item that stop it.
+3. **Minor, fixed:** a long repo name and branch in the crumb could push the tab strip and buttons out of the bar.
+   The crumb is capped at 320 points and truncates the branch in the middle.
+4. **Minor, fixed:** the crumb swallowed drags and double-clicks meant for the window.
+   It no longer takes clicks, so they reach the title bar area behind it.
+5. **Minor, fixed:** `scripts/ui-fixture.sh dark` did not force dark on a Mac set to light.
+   It now passes `-AppleInterfaceStyle Dark`.
+6. **Minor, fixed:** the fixture's `stop` guard could fail silently or match too much.
+   It now deletes only a folder named `cnp.*` that holds the stand-in `gh` and the fixture `ZDOTDIR`, and fails loudly otherwise.
+7. **Minor, fixed:** a fixture that failed partway left the app running with no state file for `stop`.
+   The state file is written right after launch, with `$!` as the app's pid.
+8. **Minor, fixed:** VoiceOver lost the other-worktrees disclosure's state and a row's tool tag.
+   The disclosure reports Expanded or Collapsed, and the row's label includes "from Conductor" and the like.
+9. **Nit, fixed:** in `less` or `vim`, scrolling showed the scroller, since SwiftTerm reports position 0 on the alternate screen.
+   The scroller now shows only when the terminal can scroll.
+10. **Nit, not changed:** in full screen, with the sidebar hidden, the bar keeps its 150 point inset though the traffic lights are hidden.
+    The sidebar toggle still sits there, so the gap is smaller than it looks, and full screen is rare for this window.
+11. **Nit, fixed in the plan:** the constraint that every size comes from `Style` overstated it.
+    The constraint and the tag size now say what the code does.
+12. **Nit, fixed:** `RowTerminalsView` took an `isSidebarHidden` it never read.
+13. **Nit, fixed:** the refresh loop kept sleeping if the model went away.
+    It now ends.

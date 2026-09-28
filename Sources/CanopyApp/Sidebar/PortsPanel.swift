@@ -99,6 +99,14 @@ struct PortGroupView: View {
             .frame(height: 24)
             .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
             .onHover { isHovering = $0 }
+            // The stop button shows on hover only, so VoiceOver and the context menu reach it too.
+            .accessibilityAction(named: "Stop Everything Listening Here") {
+                model.stop(group.ports, inRow: group.rowPath)
+            }
+            .contextMenu {
+                Button("Stop Everything Listening Here") { model.stop(group.ports, inRow: group.rowPath) }
+                    .disabled(isStopping)
+            }
             FlowLayout(spacing: 4) {
                 ForEach(group.ports, id: \.port) { port in
                     PortBadge(port: port, rowPath: group.rowPath)
@@ -152,6 +160,10 @@ struct PortBadge: View {
         .opacity(isStopping ? 0.4 : 1)
         .disabled(isStopping)
         .onHover { isHovering = $0 }
+        .accessibilityAction(named: "Stop") { model.stop([port], inRow: rowPath) }
+        .contextMenu {
+            Button("Stop") { model.stop([port], inRow: rowPath) }
+        }
     }
 
     // Tooltips are built as plain strings: in a string literal, SwiftUI would format the numbers, as in "3,000".

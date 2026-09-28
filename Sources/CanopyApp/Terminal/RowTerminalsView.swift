@@ -5,7 +5,6 @@ import SwiftUI
 struct RowTerminalsView: View {
     @Environment(AppModel.self) private var model
     let row: Row
-    let isSidebarHidden: Bool
 
     var body: some View {
         if row.isMissing {

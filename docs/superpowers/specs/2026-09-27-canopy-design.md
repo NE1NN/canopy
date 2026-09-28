@@ -231,7 +231,7 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
   Clicking anywhere else on the row selects it.
 - On hover, the PR number slides left to make room for the row's shortcut hint (`⌘8`) and an `x`.
 - The selected row has a rounded highlight, tinted with the accent color while the sidebar has the keyboard.
-  `↑` and `↓` then move the selection.
+  `↑` and `↓` then move the selection, and the rows they pick leave the keyboard with the sidebar until it lets go.
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order.
 - A row selected any other way than by clicking it, such as with `⌘1` or `canopy row select`, scrolls into view.
 - A detached HEAD shows the short commit hash in place of a branch name.

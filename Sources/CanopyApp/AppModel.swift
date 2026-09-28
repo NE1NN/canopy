@@ -15,9 +15,14 @@ final class AppModel {
     private(set) var toast: String?
     var selectedRowPath: String? {
         didSet {
-            if selectedRowPath != oldValue { selectionChanged() }
+            guard selectedRowPath != oldValue else { return }
+            sidebarKeepsKeyboard = isSteppingRows
+            selectionChanged()
         }
     }
+    /// True after ↑ or ↓ in the sidebar picked the row, so its terminal does not take the keyboard from the sidebar.
+    private(set) var sidebarKeepsKeyboard = false
+    @ObservationIgnored private var isSteppingRows = false
     private var started = false
     private var toastTask: Task<Void, Never>?
     private var server: ControlServer?
@@ -125,7 +130,14 @@ final class AppModel {
         guard !rows.isEmpty else { return }
         let index =
             rows.firstIndex { $0.path == selectedRowPath }.map { $0 + offset } ?? (offset > 0 ? 0 : rows.count - 1)
+        isSteppingRows = true
+        defer { isSteppingRows = false }
         selectedRowPath = rows[min(max(index, 0), rows.count - 1)].path
+    }
+
+    /// Once the sidebar lets go of the keyboard, rows selected later hand it to their terminal again.
+    func sidebarLostKeyboard() {
+        sidebarKeepsKeyboard = false
     }
 
     func menuTitle(forRow number: Int) -> String {
@@ -235,7 +247,8 @@ final class AppModel {
     private func repeating(every interval: Duration, _ work: @escaping (AppModel) async -> Void) -> Task<Void, Never> {
         Task { [weak self] in
             while !Task.isCancelled {
-                if NSApp.occlusionState.contains(.visible), let self {
+                guard let self else { return }
+                if NSApp.occlusionState.contains(.visible) {
                     await work(self)
                 }
                 try? await Task.sleep(for: interval)

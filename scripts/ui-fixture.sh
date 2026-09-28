@@ -19,7 +19,12 @@ if [[ "${1:-}" == stop ]]; then
     # shellcheck source=/dev/null
     source "$state"
     kill "$pid" 2>/dev/null || true
-    [[ "$work" == "${TMPDIR:-/tmp}"*cnp.* ]] && rm -rf "$work"
+    # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
+    if [[ "$(basename "$work")" != cnp.* || ! -x "$work/bin/gh" || ! -d "$work/zdot" ]]; then
+        echo "not deleting $work: it does not look like a fixture folder" >&2
+        exit 1
+    fi
+    rm -rf "$work"
     rm -f "$state"
     exit 0
 fi
@@ -65,10 +70,11 @@ for repo in web-app api-server docs; do
     git -C "$work/$repo" -c user.email=ui@example.com -c user.name=ui commit -q --allow-empty -m init
 done
 
-args=()
-[[ "${1:-dark}" == light ]] && args=(-NSRequiresAquaSystemAppearance YES)
-(ZDOTDIR="$work/zdot" SHELL=/bin/zsh exec "$app/Contents/MacOS/Canopy" ${args[@]+"${args[@]}"} \
-    </dev/null >/dev/null 2>&1) &
+# Either appearance, whatever the Mac is set to.
+if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES); else args=(-AppleInterfaceStyle Dark); fi
+(ZDOTDIR="$work/zdot" SHELL=/bin/zsh exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
+# Written at once, so `stop` can clean up even if a later step fails. The subshell execs, so $! is the app.
+printf 'pid=%s\nwork=%s\n' "$!" "$work" > "$state"
 for _ in $(seq 1 100); do
     [[ -S "$CANOPY_HOME/canopy.sock" ]] && break
     sleep 0.1
@@ -102,6 +108,6 @@ first=$("$cli" term list --all --json | /usr/bin/python3 -c \
 "$cli" term new --repo api-server --row feat/rate-limits --run "$plain; python3 -m http.server 8080" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
-pid=$("$cli" status --json | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pid"])')
-printf 'pid=%s\nwork=%s\n' "$pid" "$work" > "$state"
+# shellcheck source=/dev/null
+source "$state"
 echo "pid $pid, CANOPY_HOME=$CANOPY_HOME"

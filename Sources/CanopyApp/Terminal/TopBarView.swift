@@ -98,11 +98,15 @@ struct RowCrumb: View {
             }
             Text(row.displayName)
                 .fontWeight(.semibold)
+                .truncationMode(.middle)
         }
         .font(Style.body)
         .lineLimit(1)
-        .fixedSize()
+        .frame(maxWidth: 320, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.trailing, 6)
+        // It only names the row, so drags and double-clicks on it reach the title bar area behind it.
+        .allowsHitTesting(false)
         Rectangle()
             .fill(.separator)
             .frame(width: 1, height: 16)
