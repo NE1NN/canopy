@@ -1197,7 +1197,7 @@ Selecting, opening, or closing a tab can bring a pane on screen, so each marks w
 `Sources/CanopyCore/Workspace/WorkspaceError.swift`:
 
 ```diff
-@@ -20,6 +20,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -29,6 +29,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
      case paneNotFound(String)
      case paneBusy(String, program: String)
      case paneExited(String)
@@ -1207,7 +1207,7 @@ Selecting, opening, or closing a tab can bring a pane on screen, so each marks w
      case noPullRequestLookup(String)
      case notOnGitHub(String)
      case ghUnavailable(String)
-@@ -62,6 +65,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -76,6 +79,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .paneNotFound: "pane_not_found"
          case .paneBusy: "pane_busy"
          case .paneExited: "pane_exited"
@@ -1217,7 +1217,7 @@ Selecting, opening, or closing a tab can bring a pane on screen, so each marks w
          case .noPullRequestLookup: "no_pr_lookup"
          case .notOnGitHub: "not_github"
          case .ghUnavailable: "gh_unavailable"
-@@ -107,6 +113,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -144,6 +150,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .paneNotFound(let id): "No terminal \(id). Run `canopy term list --all`."
          case .paneBusy(let id, let program): "\(program) is still running in \(id). Pass --force to close it anyway."
          case .paneExited(let id): "The shell in \(id) has exited. Close it, or restart it from the window."
@@ -1574,7 +1574,7 @@ extension RowLifecycle {
          var params = request.params ?? .object([:])
          if case .object(var fields) = params {
              for key in ["run", "text"] {
-@@ -238,6 +238,12 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -249,6 +249,12 @@ public struct WorkspaceControlHandler: Sendable {
              try await rows.closeTerminal(params)
              return .object(["pane": .string(params.pane)])
  
@@ -3103,7 +3103,7 @@ public struct ClaudeSettingsFile: Sendable {
 `Sources/CanopyCore/Workspace/WorkspaceError.swift`:
 
 ```diff
-@@ -23,6 +23,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -32,6 +32,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
      case waitTimeout([String], String)
      case paneClosed(String)
      case agentStopped(String)
@@ -3112,7 +3112,7 @@ public struct ClaudeSettingsFile: Sendable {
      case noPullRequestLookup(String)
      case notOnGitHub(String)
      case ghUnavailable(String)
-@@ -68,6 +70,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -82,6 +84,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .waitTimeout: "wait_timeout"
          case .paneClosed: "pane_closed"
          case .agentStopped: "agent_stopped"
@@ -3121,7 +3121,7 @@ public struct ClaudeSettingsFile: Sendable {
          case .noPullRequestLookup: "no_pr_lookup"
          case .notOnGitHub: "not_github"
          case .ghUnavailable: "gh_unavailable"
-@@ -118,6 +122,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -155,6 +159,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .paneClosed(let id): "\(id) closed during the wait."
          case .agentStopped(let id):
              "The agent in \(id) stopped without finishing: it exited, was interrupted, or was set to none."
@@ -3557,7 +3557,7 @@ struct AgentHookCommand: ParsableCommand {
 `Sources/CanopyCLI/AgentGuide.swift`:
 
 ```diff
-@@ -63,6 +63,24 @@ struct AgentGuide: ParsableCommand {
+@@ -74,6 +74,24 @@ struct AgentGuide: ParsableCommand {
  
          Terminal IDs such as p12 stay unique across relaunches. `term send`, `read`, and `close` never start Canopy.
  
@@ -3582,14 +3582,14 @@ struct AgentHookCommand: ParsableCommand {
          ## Ports
  
              canopy ports [--all]                          what the row's processes listen on, or every row's
-@@ -96,6 +114,7 @@ struct AgentGuide: ParsableCommand {
+@@ -107,6 +125,7 @@ struct AgentGuide: ParsableCommand {
          Start a parallel agent on a fix in its own row, then check on it:
  
              pane=$(canopy row new fix/login-redirect --run 'claude "fix the login redirect, ticket FL-123"' --json | jq -r .pane)
 +            canopy term wait "$pane" --timeout 1h
              canopy term read "$pane" --lines 40
  
-         Run a dev server in its own tab of your row and watch it:
+         Review a pull request in its own row:
 ```
 
 - [ ] **Step 5: Smoke-test the CLI on a throwaway home**
@@ -3628,7 +3628,7 @@ The script now clears the pane variables it inherits and points `CLAUDE_CONFIG_D
  mkdir -p "$shots"
  
  app_pid() {
-@@ -228,6 +231,71 @@ if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $por
+@@ -235,6 +238,71 @@ if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $por
  "$cli" term close "$server" >/dev/null
  "$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
  
@@ -3923,7 +3923,7 @@ Expected: compile errors, `cannot find 'AgentSound' in scope`.
 `Sources/CanopyCore/State/AppState.swift`:
 
 ```diff
-@@ -50,6 +50,8 @@ public struct AppState: Codable, Sendable, Equatable {
+@@ -69,6 +69,8 @@ public struct AppState: Codable, Sendable, Equatable {
      /// The next pane number, so a pane ID an agent kept never names a different terminal after a relaunch.
      public var nextPane = 1
      public var portsCollapsed = false
@@ -3932,7 +3932,7 @@ Expected: compile errors, `cannot find 'AgentSound' in scope`.
  
      public init(
          version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
-@@ -69,6 +71,7 @@ public struct AppState: Codable, Sendable, Equatable {
+@@ -88,6 +90,7 @@ public struct AppState: Codable, Sendable, Equatable {
          // Layouts that cannot be read are dropped on their own, so repos and rows still load.
          nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
          portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
@@ -4712,3 +4712,9 @@ So something in the test process closes the client's descriptor number while the
 Nothing in `Sources` or the tests closes a descriptor twice: `Subprocess`, `InstanceLock`, `ActivityLog`, the pty's cancel handler, and the tests' own sockets each close once.
 PR 10's spy interposed `close` only, and so would miss `close$NOCANCEL` and guarded closes inside system libraries.
 The `fix/control-socket-flake` row is working on it, so this PR leaves it there.
+
+**CI.**
+The first CI run failed two of this branch's tests on the 3-CPU runner.
+`postingWaitsAtMostASecondForTheApp` expected a reply within a second, and the two exit tests raced a `sleep 2` that the runner's slow shell could finish before a refresh saw it.
+`test: hold the agent tests on a slow CI runner` ends `cat` with Control-D instead, and bounds only what the slow app does.
+Both pass under `taskpolicy -b` with 14 `yes` hogs, and CI `check` passed after.
