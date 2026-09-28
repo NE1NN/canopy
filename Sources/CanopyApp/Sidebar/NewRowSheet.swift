@@ -8,15 +8,15 @@ struct NewRowSheet: View {
     @Environment(\.dismiss) private var dismiss
     let repo: RepoSnapshot
     @State var group: String?
-    @State private var picker: NewRowPicker
+    let picker: NewRowPicker
     @State private var isWorking = false
     @State private var error: String?
     @FocusState private var isFieldFocused: Bool
 
-    init(repo: RepoSnapshot, group: String?, sources: NewRowPicker.Sources) {
+    init(repo: RepoSnapshot, group: String?, picker: NewRowPicker) {
         self.repo = repo
         _group = State(initialValue: group)
-        _picker = State(initialValue: NewRowPicker(sources: sources))
+        self.picker = picker
     }
 
     var body: some View {
@@ -70,7 +70,7 @@ struct NewRowSheet: View {
                 Button(primaryTitle, action: runSelected)
                     .keyboardShortcut(.defaultAction)
                     .disabled(picker.selectedAction == nil || isWorking)
-                    .help(picker.selectedAction?.command ?? "")
+                    .help(picker.selectedAction?.command(repo: repo.name) ?? "")
             }
         }
         .padding(20)
@@ -174,17 +174,27 @@ private struct ItemLine: View {
         HStack(alignment: .center, spacing: 8) {
             content
         }
+        // Only the start point field takes clicks itself. Everything else lets them through to the fill below.
+        .allowsHitTesting(isNewBranch)
         .padding(.horizontal, 8)
         .frame(height: height)
-        .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: select)
-        .simultaneousGesture(TapGesture(count: 2).onEnded(run))
+        // Clicks select and double clicks run from the fill, which sits behind the start point field rather than
+        // around it, so a double click that selects a word there never runs the line.
+        .background {
+            RoundedRectangle(cornerRadius: Style.cornerRadius)
+                .fill(fill)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: select)
+                .simultaneousGesture(TapGesture(count: 2).onEnded(run))
+        }
         .onHover { isHovering = $0 }
         // The new branch line keeps its start point field reachable on its own.
         .accessibilityElement(children: isNewBranch ? .contain : .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(.default, run)
+        .accessibilityAction {
+            select()
+            run()
+        }
     }
 
     private var isNewBranch: Bool {
@@ -257,11 +267,13 @@ private struct ItemLine: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 14)
+                .allowsHitTesting(false)
             (Text("New branch ") + Text(verbatim: "‘\(name)’").fontWeight(.medium) + Text(" from"))
                 .font(Style.row)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(1)
+                .allowsHitTesting(false)
             TextField("Start from", text: $base, prompt: Text(verbatim: defaultBase ?? "origin's default branch"))
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)

@@ -36,8 +36,15 @@ struct LocalGitHub {
                 echo "gh: Could not resolve to a PullRequest with the number of $number." >&2
                 exit 1
             fi
-            if [[ "$query" == *"pullRequests(states: [OPEN],"* ]]; then cat "\(dir.sub("gh-list-open"))"; exit 0; fi
-            if [[ "$query" == *"pullRequests(states:"* ]]; then cat "\(dir.sub("gh-list-all"))"; exit 0; fi
+            repo=$(sed -nE 's/.*repository\\(owner: "([^"]*)", name: "([^"]*)"\\).*/\\1\\/\\2/p' <<< "$query")
+            if [[ "$query" == *"pullRequests(states: [OPEN],"* ]]; then list=open
+            elif [[ "$query" == *"pullRequests(states:"* ]]; then list=all
+            fi
+            if [[ -n "${list:-}" ]]; then
+                cat "\(dir.sub("gh-lists"))/$repo/$list.json" 2>/dev/null ||
+                    echo '{"data": {"repository": {"pullRequests": {"nodes": []}}}}'
+                exit 0
+            fi
             printf '%s\\n' "$query" >> "\(dir.sub("gh-calls"))"
             for number in $(grep -oE 'pullRequest\\(number: [0-9]+\\)' <<< "$query" | grep -oE '[0-9]+'); do
                 if [[ ! -f "\(dir.sub("gh-prs"))/$number.json" ]]; then
@@ -142,7 +149,7 @@ struct LocalGitHub {
         try? writeLists()
     }
 
-    /// What gh answers for the list of open PRs and of all PRs, most recently updated first.
+    /// What gh answers for each repo's list of open PRs and of all its PRs, most recently updated first.
     private func writeLists() throws {
         let names = try FileManager.default.contentsOfDirectory(atPath: prs).filter { $0.hasSuffix(".json") }
         let all = try names.compactMap {
@@ -153,12 +160,22 @@ struct LocalGitHub {
         let fields = [
             "number", "title", "url", "state", "isDraft", "updatedAt", "headRefName", "isCrossRepository", "author",
         ]
-        for (file, states) in [("gh-list-open", ["OPEN"]), ("gh-list-all", ["OPEN", "CLOSED", "MERGED"])] {
-            let nodes = all.filter { states.contains($0["state"] as? String ?? "") }.map {
-                $0.filter { fields.contains($0.key) }
+        // A PR's URL names the repo it was opened on: https://github.com/<owner>/<name>/pull/<number>.
+        func base(_ pr: [String: Any]) -> String {
+            ((pr["url"] as? String) ?? "").split(separator: "/").dropFirst(2).prefix(2).joined(separator: "/")
+        }
+        try? FileManager.default.removeItem(atPath: dir.sub("gh-lists"))
+        for repo in Set(all.map(base)) {
+            let folder = dir.sub("gh-lists/\(repo)")
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            for (file, states) in [("open", ["OPEN"]), ("all", ["OPEN", "CLOSED", "MERGED"])] {
+                let nodes = all.filter { base($0) == repo && states.contains($0["state"] as? String ?? "") }.map {
+                    $0.filter { fields.contains($0.key) }
+                }
+                let reply = ["data": ["repository": ["pullRequests": ["nodes": nodes]]]]
+                try JSONSerialization.data(withJSONObject: reply).write(
+                    to: URL(fileURLWithPath: "\(folder)/\(file).json"))
             }
-            let reply = ["data": ["repository": ["pullRequests": ["nodes": nodes]]]]
-            try JSONSerialization.data(withJSONObject: reply).write(to: URL(fileURLWithPath: dir.sub(file)))
         }
     }
 

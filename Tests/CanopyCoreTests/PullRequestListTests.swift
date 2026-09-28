@@ -25,6 +25,10 @@ struct PullRequestListTests {
         try await github.openPR(1, on: "acme/app", from: "feat/a", updatedAt: "2026-09-28T01:00:00Z")
         try await github.openPR(2, on: "acme/app", from: "feat/b", author: nil, updatedAt: "2026-09-28T03:00:00Z")
         try await github.openPR(3, on: "acme/app", from: "feat/c", state: "MERGED", updatedAt: "2026-09-28T02:00:00Z")
+        // Another repo's PR is not this repo's.
+        try await github.createRepo("acme/other")
+        try await github.push(to: "feat/elsewhere", of: "acme/other")
+        try await github.openPR(4, on: "acme/other", from: "feat/elsewhere", updatedAt: "2026-09-28T04:00:00Z")
 
         let open = try await workspace.listPullRequests(repoPath: repo)
         let all = try await workspace.listPullRequests(repoPath: repo, includeClosed: true)
@@ -139,6 +143,34 @@ struct PullRequestListTests {
         _ = try await workspace.createRow(repoPath: repo, branch: "feat/x", existing: true)
 
         #expect(try await workspace.listPullRequests(repoPath: repo).first?.row == nil)
+    }
+
+    @Test func aBranchBoundToOnePullRequestIsNotAnothersRow() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "fix", of: "someone/app")
+        try await github.openPR(7, on: "acme/app", from: "fix", of: "someone/app")
+        let row = try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 7)).row
+        try await github.push(to: "fix", of: "acme/app")
+        try await github.openPR(9, on: "acme/app", from: "fix")
+
+        let holders = Dictionary(
+            uniqueKeysWithValues: try await workspace.listPullRequests(repoPath: repo).map { ($0.number, $0.row) })
+
+        #expect(row.branch == "fix")
+        #expect(holders[7] == BranchHolder(row))
+        #expect(holders[9] == .some(nil))
+    }
+
+    @Test func aMissingRepoFolderSaysSo() async throws {
+        let dir = try TempDir()
+        let (_, repo, workspace) = try await setUp(dir)
+        try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
+
+        await #expect(throws: WorkspaceError.pathNotFound(repo)) {
+            try await workspace.listPullRequests(repoPath: repo)
+        }
     }
 
     @Test func ghProblemsAreTheSidebarsErrors() async throws {

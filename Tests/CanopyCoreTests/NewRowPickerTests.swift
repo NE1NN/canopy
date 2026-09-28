@@ -33,6 +33,8 @@ final class FakeLists: Sendable {
         var pullRequests: Result<[ListedPullRequest], WorkspaceError> = .success([])
         var lookups: [String: [ListedPullRequest]] = [:]
         var lookupGates: [String: Gate] = [:]
+        /// Lookups that fail once, then answer from `lookups`.
+        var lookupFailures: [String: WorkspaceError] = [:]
         var local = BranchListing(branches: [], defaultBase: "origin/main")
         var fetched: BranchListing?
         var fetchGate: Gate?
@@ -48,6 +50,9 @@ final class FakeLists: Sendable {
                 let (gate, result) = self.state.withLock { state in
                     state.queries.append(query)
                     guard let query else { return (state.pullRequestGate, state.pullRequests) }
+                    if let failure = state.lookupFailures.removeValue(forKey: query) {
+                        return (state.lookupGates[query], .failure(failure))
+                    }
                     let found = state.lookups[query.trimmingCharacters(in: .whitespaces)] ?? []
                     return (state.lookupGates[query], state.pullRequests.map { _ in found })
                 }
@@ -216,7 +221,7 @@ struct NewRowPickerTests {
         await picker.load()
 
         for (text, shown) in [
-            ("feat/new", true), (" feat/new ", true), ("12", true), ("feat/login", false), ("", false),
+            ("feat/new", true), (" feat/new ", true), ("12", false), ("feat/login", false), ("", false),
             ("bad name", false), ("#12", false), ("feat/x.lock", false), ("https://github.com/acme/app/pull/1", false),
         ] {
             picker.text = text
@@ -281,7 +286,7 @@ struct NewRowPickerTests {
         #expect(picker.selectedItem?.id == "branch/feat/b")
     }
 
-    @Test func theSelectionStaysPutWhenTheListRefreshes() async throws {
+    @Test func anExplicitSelectionStaysPutWhenTheListRefreshes() async throws {
         let lists = FakeLists()
         let prGate = Gate()
         let fetchGate = Gate()
@@ -298,18 +303,94 @@ struct NewRowPickerTests {
 
         picker.text = "feat"
         #expect(picker.selectedItem?.id == "branch/feat/a")
+        picker.moveSelection(by: 1)
+        #expect(picker.selectedItem?.id == "branch/feat/b")
         await prGate.open()
         #expect(await eventually { ids(picker.pullRequestItems) == ["pr/3"] })
-        #expect(picker.selectedItem?.id == "branch/feat/a")
+        #expect(picker.selectedItem?.id == "branch/feat/b")
         await fetchGate.open()
         await loading.value
         #expect(ids(picker.branchItems).first == "branch/feat/new")
-        #expect(picker.selectedItem?.id == "branch/feat/a")
+        #expect(picker.selectedItem?.id == "branch/feat/b")
 
-        picker.text = "feat/b"
+        // A picked item that goes away gives way to the best match.
         lists.state.withLock { $0.fetched = listing([branch("feat/a")]) }
         await picker.refreshBranches()
-        #expect(picker.selectedItem?.id == "new")
+        #expect(picker.selectedItem?.id == "pr/3")
+    }
+
+    @Test func theAutomaticSelectionFollowsTheBestMatch() async throws {
+        let lists = FakeLists()
+        let prGate = Gate()
+        let lookupGate = Gate()
+        lists.state.withLock {
+            $0.pullRequests = .success([pr(145, "Fix the main menu", head: "feat/menu"), pr(3, head: "feat/c")])
+            $0.pullRequestGate = prGate
+            $0.lookups = ["139": [pr(139, head: "fix/old", state: .closed)]]
+            $0.lookupGates = ["139": lookupGate]
+            $0.local = listing([branch("feat/menu"), branch("main")])
+        }
+        let picker = makePicker(lists)
+        let loading = Task { await picker.load() }
+        #expect(await eventually { !picker.branchItems.isEmpty })
+
+        // Partial text selects the first item, and follows the first item as answers arrive.
+        picker.text = "feat"
+        #expect(picker.selectedItem?.id == "branch/feat/menu")
+        // A PR number typed before the open PRs arrive offers nothing to create by mistake.
+        picker.text = "145"
+        #expect(picker.items.isEmpty && picker.selectedItem == nil)
+        await prGate.open()
+        await loading.value
+        #expect(picker.selectedItem?.id == "pr/145")
+        picker.text = "feat"
+        #expect(picker.selectedItem?.id == "pr/145")
+
+        // A closed PR's number, whose lookup answers late.
+        picker.text = "139"
+        #expect(picker.items.isEmpty && picker.selectedItem == nil)
+        await lookupGate.open()
+        #expect(await eventually { picker.selectedItem?.id == "pr/139" })
+
+        // A branch named exactly what was typed, in any case, beats a PR that only mentions it.
+        picker.text = "MAIN"
+        #expect(ids(picker.items).first == "pr/145")
+        #expect(picker.selectedItem?.id == "branch/main")
+    }
+
+    @Test func aNumberIsLookedUpOnceHoweverItIsTyped() async throws {
+        let lists = FakeLists()
+        lists.state.withLock { $0.lookups = ["40": [pr(40, head: "feat/old", state: .closed)]] }
+        let picker = makePicker(lists)
+        await picker.load()
+
+        picker.text = "40"
+        #expect(await eventually { ids(picker.pullRequestItems) == ["pr/40"] })
+        picker.text = "#40"
+        #expect(ids(picker.pullRequestItems) == ["pr/40"])
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(lists.queries == [nil, "40"])
+    }
+
+    @Test func aFailedLookupIsTriedAgain() async throws {
+        let lists = FakeLists()
+        lists.state.withLock {
+            $0.lookups = ["#40": [pr(40, head: "feat/old", state: .closed)]]
+            $0.lookupFailures = ["#40": .ghFailed("gh did not answer in time.")]
+        }
+        let picker = makePicker(lists)
+        await picker.load()
+
+        picker.text = "#40"
+        #expect(
+            await eventually {
+                picker.pullRequestNote
+                    == .init(kind: .warning, text: "Pull requests did not load: gh did not answer in time.")
+            })
+        picker.text = "#4"
+        picker.text = "#40"
+        #expect(await eventually { ids(picker.pullRequestItems) == ["pr/40"] })
+        #expect(lists.queries.filter { $0 == "#40" }.count == 2)
     }
 
     @Test func eachItemMapsToOneCommand() {
@@ -317,25 +398,31 @@ struct NewRowPickerTests {
         let main = BranchHolder(path: "/r/app", branch: "main", rowClass: .main)
         let other = BranchHolder(path: "/tmp/my worktree", branch: "feat/z", rowClass: .external)
         let cases: [(NewRowItem, String?, NewRowAction, String)] = [
-            (.pullRequest(pr(12, head: "fix/cart")), nil, .pullRequest(12), "canopy row new --pr 12"),
-            (.branch(branch("feat/y")), nil, .branch("feat/y"), "canopy row new feat/y --existing"),
-            (.newBranch("feat/n"), nil, .newBranch("feat/n", base: nil), "canopy row new feat/n"),
+            (.pullRequest(pr(12, head: "fix/cart")), nil, .pullRequest(12), "canopy row new --pr 12 --repo web-app"),
+            (.branch(branch("feat/y")), nil, .branch("feat/y"), "canopy row new feat/y --existing --repo web-app"),
+            (.newBranch("feat/n"), nil, .newBranch("feat/n", base: nil), "canopy row new feat/n --repo web-app"),
             (
                 .newBranch("feat/n"), "origin/dev", .newBranch("feat/n", base: "origin/dev"),
-                "canopy row new feat/n --from origin/dev"
+                "canopy row new feat/n --from origin/dev --repo web-app"
             ),
-            (.branch(branch("feat/x", row: row)), nil, .selectRow(row), "canopy row select feat/x"),
-            (.pullRequest(pr(9, head: "feat/x", row: row)), nil, .selectRow(row), "canopy row select feat/x"),
-            (.branch(branch("main", row: main)), nil, .selectRow(main), "canopy row select main"),
+            (.branch(branch("feat/x", row: row)), nil, .selectRow(row), "canopy row select feat/x --repo web-app"),
+            (
+                .pullRequest(pr(9, head: "feat/x", row: row)), nil, .selectRow(row),
+                "canopy row select feat/x --repo web-app"
+            ),
+            (.branch(branch("main", row: main)), nil, .selectRow(main), "canopy row select main --repo web-app"),
             (.branch(branch("feat/z", row: other)), nil, .adopt(other), "canopy row adopt '/tmp/my worktree'"),
         ]
         for (item, base, action, command) in cases {
             #expect(item.action(base: base) == action, "\(item.id)")
-            #expect(action.command == command)
+            #expect(action.command(repo: "web-app") == command)
         }
         #expect(NewRowAction.pullRequest(1).createsRow && NewRowAction.newBranch("x", base: nil).createsRow)
         #expect(!NewRowAction.selectRow(row).createsRow && !NewRowAction.adopt(other).createsRow)
-        #expect(NewRowAction.branch("it's").command == #"canopy row new 'it'\''s' --existing"#)
+        #expect(
+            NewRowAction.branch("it's").command(repo: "a b") == #"canopy row new 'it'\''s' --existing --repo 'a b'"#)
+        // A word starting with # would read as a comment.
+        #expect(NewRowAction.branch("#hotfix").command(repo: "app") == "canopy row new '#hotfix' --existing --repo app")
     }
 
     @Test func theNewBranchLineStartsFromTheTypedBase() async throws {

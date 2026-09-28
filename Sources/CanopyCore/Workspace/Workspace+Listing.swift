@@ -25,6 +25,7 @@ extension Workspace {
         repoPath: String, query: String? = nil, includeClosed: Bool = false
     ) async throws -> [ListedPullRequest] {
         _ = try entryIndex(repoPath: repoPath)
+        guard FileManager.default.fileExists(atPath: repoPath) else { throw WorkspaceError.pathNotFound(repoPath) }
         guard let origin = await gitHubRemote("origin", repoPath: repoPath) else {
             throw WorkspaceError.notOnGitHub(repoName(repoPath))
         }
@@ -51,15 +52,15 @@ extension Workspace {
     }
 
     /// Finds the row or worktree that has a PR's branch: one on a branch bound to the PR, or for a PR from the repo
-    /// itself, one on its head branch. These are also how the PR badges find a row's PR. A worktree whose folder is
-    /// gone holds nothing, since `row new` takes its branch back.
+    /// itself, one on its head branch that is not bound to another PR. These are also how the PR badges find a row's
+    /// PR. A worktree whose folder is gone holds nothing, since `row new` takes its branch back.
     func pullRequestHolders(repoPath: String, repo: GitHubRepo) -> (ListedPullRequest) -> BranchHolder? {
         let rows = snapshot.repo(path: repoPath)?.allRows.filter { !$0.isMissing && $0.branch != nil } ?? []
         let bound = boundPullRequests(repoPath: repoPath, branches: rows.compactMap(\.branch), repo: repo)
         return { pr in
             let row =
                 rows.first { $0.branch.flatMap { bound[$0] } == pr.number }
-                ?? (pr.isFork ? nil : rows.first { $0.branch == pr.headBranch })
+                ?? (pr.isFork ? nil : rows.first { $0.branch == pr.headBranch && bound[pr.headBranch] == nil })
             return row.map(BranchHolder.init)
         }
     }
@@ -81,23 +82,31 @@ extension Workspace {
             if let failure { warnings.append("\(failure), so the list shows what Canopy last saw of origin.") }
         }
 
+        // A local branch whose upstream is its namesake on origin, as most are, gets its counts from this one call.
         let output: String
         do {
             output = try await git.run(
-                ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(committerdate:unix)", "refs/heads/"]
-                    + (hasOrigin ? ["refs/remotes/origin/"] : []),
+                [
+                    "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(committerdate:unix)%00%(upstream)%00"
+                        + "%(upstream:track,nobracket)",
+                    "refs/heads/",
+                ] + (hasOrigin ? ["refs/remotes/origin/"] : []),
                 in: repoPath)
         } catch let error as GitError {
             throw WorkspaceError.git(error)
         }
         var local: [String: (commit: String, date: Date)] = [:]
         var origin: [String: (commit: String, date: Date)] = [:]
+        var tracked: [String: (ahead: Int, behind: Int)] = [:]
         for line in output.split(separator: "\n") {
             let fields = line.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 3, let seconds = TimeInterval(fields[2]) else { continue }
+            guard fields.count == 5, let seconds = TimeInterval(fields[2]) else { continue }
             let tip = (commit: fields[1], date: Date(timeIntervalSince1970: seconds))
             if fields[0].hasPrefix("refs/heads/") {
-                local[String(fields[0].dropFirst("refs/heads/".count))] = tip
+                let name = String(fields[0].dropFirst("refs/heads/".count))
+                local[name] = tip
+                if fields[3] == "refs/remotes/origin/\(name)" { tracked[name] = Self.counts(fields[4]) }
             } else if fields[0] != "refs/remotes/origin/HEAD" {
                 origin[String(fields[0].dropFirst("refs/remotes/origin/".count))] = tip
             }
@@ -114,9 +123,13 @@ extension Workspace {
                 committedAt: max(here?.date ?? .distantPast, there?.date ?? .distantPast).formatted(.iso8601),
                 row: rows.first { $0.branch == name }.map(BranchHolder.init))
             if let here, let there {
-                (branch.ahead, branch.behind) =
-                    here.commit == there.commit
-                    ? (0, 0) : await aheadBehind(here.commit, there.commit, repoPath: repoPath)
+                if here.commit == there.commit {
+                    (branch.ahead, branch.behind) = (0, 0)
+                } else if let counts = tracked[name] {
+                    (branch.ahead, branch.behind) = counts
+                } else {
+                    (branch.ahead, branch.behind) = await aheadBehind(here.commit, there.commit, repoPath: repoPath)
+                }
             }
             branches.append(branch)
         }
@@ -131,6 +144,22 @@ extension Workspace {
         return BranchListing(
             branches: branches, defaultBase: await defaultBase(repoPath: repoPath, hasOrigin: hasOrigin),
             warnings: warnings)
+    }
+
+    /// Reads `ahead 1, behind 2`, `ahead 1`, `behind 2`, or nothing, as `%(upstream:track,nobracket)` writes them.
+    static func counts(_ track: String) -> (ahead: Int, behind: Int)? {
+        guard track != "gone" else { return nil }
+        var counts = (ahead: 0, behind: 0)
+        for part in track.split(separator: ",") {
+            let words = part.split(separator: " ")
+            guard words.count == 2, let count = Int(words[1]) else { return nil }
+            switch words[0] {
+            case "ahead": counts.ahead = count
+            case "behind": counts.behind = count
+            default: return nil
+            }
+        }
+        return counts
     }
 
     /// How many commits `local` has that `other` does not, and the other way round. Nil when git cannot say.

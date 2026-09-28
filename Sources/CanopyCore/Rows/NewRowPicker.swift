@@ -21,13 +21,16 @@ public enum NewRowAction: Equatable, Sendable {
         }
     }
 
-    public var command: String {
+    /// The command that does the same in `repo`, quoted for a shell. Adopting names the worktree by its path, which
+    /// needs no repo.
+    public func command(repo: String) -> String {
         let words: [String] =
             switch self {
-            case .pullRequest(let number): ["row", "new", "--pr", "\(number)"]
-            case .branch(let name): ["row", "new", name, "--existing"]
-            case .newBranch(let name, let base): ["row", "new", name] + (base.map { ["--from", $0] } ?? [])
-            case .selectRow(let row): ["row", "select", row.branch ?? row.path]
+            case .pullRequest(let number): ["row", "new", "--pr", "\(number)", "--repo", repo]
+            case .branch(let name): ["row", "new", name, "--existing", "--repo", repo]
+            case .newBranch(let name, let base):
+                ["row", "new", name] + (base.map { ["--from", $0] } ?? []) + ["--repo", repo]
+            case .selectRow(let row): ["row", "select", row.branch ?? row.path, "--repo", repo]
             case .adopt(let worktree): ["row", "adopt", worktree.path]
             }
         return (["canopy"] + words.map(Self.quoted)).joined(separator: " ")
@@ -35,7 +38,7 @@ public enum NewRowAction: Equatable, Sendable {
 
     /// `word` as a shell reads it back.
     static func quoted(_ word: String) -> String {
-        let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-#@+=")
+        let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-@+=")
         guard word.isEmpty || !word.unicodeScalars.allSatisfy(plain.contains) else { return word }
         return "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
@@ -124,6 +127,9 @@ public final class NewRowPicker {
         didSet {
             guard text != oldValue else { return }
             selection = nil
+            isSelectionPicked = false
+            // A lookup that failed, such as one gh did not answer in time, is tried again when asked for again.
+            lookups = lookups.filter { if case .failure = $0.value { false } else { true } }
             settleSelection()
             scheduleLookup()
         }
@@ -141,10 +147,13 @@ public final class NewRowPicker {
     @ObservationIgnored private var lookingUp: Set<String> = []
     /// Nil while the open PRs load.
     private var openPullRequests: Result<[ListedPullRequest], WorkspaceError>?
-    /// PRs looked up by what was typed, nil where GitHub has none.
+    /// PRs looked up by number, and by repo too for a URL, nil where GitHub has none.
     private var lookups: [String: Result<ListedPullRequest?, WorkspaceError>] = [:]
     private var branchListing: Result<BranchListing, WorkspaceError>?
     private var selection: String?
+    /// Whether the selected item was picked with the arrows, a click, or the start point field, rather than being the
+    /// best match for the typed text.
+    @ObservationIgnored private var isSelectionPicked = false
 
     public init(sources: Sources, lookupDelay: Duration = .milliseconds(250)) {
         self.sources = sources
@@ -197,11 +206,11 @@ public final class NewRowPicker {
     private var reference: PRReference? { PRReference(typed) }
 
     /// A PR the typed text names that is not in the open list, and so is looked up on its own. URLs are always looked
-    /// up, since only the lookup says whether they name this repo.
+    /// up, since only the lookup says whether they name this repo. `12` and `#12` share one lookup.
     private var lookupKey: String? {
         guard showsPullRequests, let reference, case .success(let open) = openPullRequests else { return nil }
         guard reference.repo != nil || !open.contains(where: { $0.number == reference.number }) else { return nil }
-        return typed
+        return (reference.repo.map { $0.nameWithOwner.lowercased() } ?? "") + "#\(reference.number)"
     }
 
     public var pullRequestItems: [NewRowItem] {
@@ -264,10 +273,11 @@ public final class NewRowPicker {
     }
 
     /// "New branch ‘<name>’", shown for a valid branch name that no branch has in any case, since `row new` would use
-    /// that branch. Text starting with `#` means a PR.
+    /// that branch. A PR number, and any text starting with `#`, means a PR, so it never offers a branch to create by
+    /// mistake while the PR is on its way.
     public var newBranchItem: NewRowItem? {
         let name = typed
-        guard BranchName.isValid(name), !name.hasPrefix("#") else { return nil }
+        guard BranchName.isValid(name), !name.hasPrefix("#"), reference == nil else { return nil }
         if case .success(let listing) = branchListing,
             listing.branches.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame })
         {
@@ -294,12 +304,14 @@ public final class NewRowPicker {
 
     public func select(_ id: String?) {
         selection = id
+        isSelectionPicked = id != nil
     }
 
     /// Moves by `offset` items, stopping at the ends. With nothing selected, down picks the first and up the last.
     public func moveSelection(by offset: Int) {
         let items = items
         guard !items.isEmpty else { return }
+        isSelectionPicked = true
         guard let index = items.firstIndex(where: { $0.id == selection }) else {
             selection = (offset > 0 ? items.first : items.last)?.id
             return
@@ -307,12 +319,24 @@ public final class NewRowPicker {
         selection = items[min(max(index + offset, 0), items.count - 1)].id
     }
 
-    /// Keeps the selected item while it is listed, so answers arriving later never move it. Otherwise the first item
-    /// is selected once something is typed, and nothing before.
+    /// Keeps a picked item selected while it is listed, so answers arriving later never move it. Otherwise the best
+    /// match is selected once something is typed, and nothing before, and it follows the answers as they arrive.
     private func settleSelection() {
         let items = items
-        if let selection, items.contains(where: { $0.id == selection }) { return }
-        selection = typed.isEmpty ? nil : items.first?.id
+        if isSelectionPicked, let selection, items.contains(where: { $0.id == selection }) { return }
+        isSelectionPicked = false
+        selection = typed.isEmpty ? nil : bestMatch(in: items)?.id
+    }
+
+    /// The PR a number names, then a branch named exactly what was typed, in any case, then the first item.
+    private func bestMatch(in items: [NewRowItem]) -> NewRowItem? {
+        if reference != nil, let pullRequest = pullRequestItems.first { return pullRequest }
+        if let branch = branchItems.first, case .branch(let listed) = branch,
+            listed.name.caseInsensitiveCompare(typed) == .orderedSame
+        {
+            return branch
+        }
+        return items.first
     }
 
     // MARK: Looking up one PR
@@ -322,19 +346,19 @@ public final class NewRowPicker {
     private func scheduleLookup() {
         lookupTask?.cancel()
         guard let key = lookupKey, lookups[key] == nil, !lookingUp.contains(key) else { return }
-        lookupTask = Task { [weak self, lookupDelay] in
+        lookupTask = Task { [weak self, lookupDelay, query = typed] in
             if lookupDelay > .zero { try? await Task.sleep(for: lookupDelay) }
             guard !Task.isCancelled else { return }
-            await self?.lookUp(key)
+            await self?.lookUp(key, query: query)
         }
     }
 
-    private func lookUp(_ key: String) async {
+    private func lookUp(_ key: String, query: String) async {
         lookingUp.insert(key)
         defer { lookingUp.remove(key) }
         let result: Result<ListedPullRequest?, WorkspaceError>
         do {
-            result = .success(try await sources.pullRequests(key).first)
+            result = .success(try await sources.pullRequests(query).first)
         } catch {
             result = .failure(Self.workspaceError(error))
         }

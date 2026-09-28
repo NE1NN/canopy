@@ -238,6 +238,7 @@ struct GitHubCLITests {
         let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8).split(separator: "\n")
         #expect(Array(args.prefix(3)) == ["api", "graphql", "-f"])
         #expect(args.dropFirst(3).first?.contains("states: [OPEN, CLOSED, MERGED]") == true)
+        #expect(args.dropFirst(3).first?.contains("orderBy: {field: UPDATED_AT, direction: DESC}") == true)
     }
 
     @Test func aPullRequestListSaysWhyGHCannotAnswer() async throws {

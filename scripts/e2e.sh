@@ -677,7 +677,9 @@ EOF
 "$cli" pr list --repo shop --query SOMEONE --json > "$work/someone.json"
 [[ "$(field "$work/someone.json" 0.number)" == 22 ]] || fail "pr list --query did not find PR 22 by its author"
 "$cli" pr list --repo shop --closed --json | grep -q '"number" : 23' || fail "pr list --closed is missing PR 23"
-if "$cli" pr list --repo shop --json | grep -q '"number" : 23'; then fail "pr list shows the closed PR 23"; fi
+# Saved first, so a failing canopy fails the run rather than passing a check that something is absent.
+"$cli" pr list --repo shop --json > "$work/open.json"
+if grep -q '"number" : 23' "$work/open.json"; then fail "pr list shows the closed PR 23"; fi
 "$cli" pr list --repo shop --query '#23' --json > "$work/pr23.json"
 [[ "$(field "$work/pr23.json" 0.state)" == closed && "$(field "$work/pr23.json" 0.row)" == None ]] ||
     fail "pr list --query '#23' did not look up the closed PR"
@@ -690,7 +692,8 @@ step "pr show is the default of canopy pr"
 
 step "branch list shows local and origin branches, and fetches first"
 author push -q origin main:refs/heads/feat/just-pushed
-if "$cli" branch list --repo shop --no-fetch | grep -q feat/just-pushed; then fail "branch list --no-fetch fetched"; fi
+"$cli" branch list --repo shop --no-fetch > "$work/no-fetch.txt"
+if grep -q feat/just-pushed "$work/no-fetch.txt"; then fail "branch list --no-fetch fetched"; fi
 "$cli" branch list --repo shop --json > "$work/branches.json"
 /usr/bin/python3 - "$work/branches.json" "$row21" <<'EOF' || fail "branch list is wrong"
 import json, sys

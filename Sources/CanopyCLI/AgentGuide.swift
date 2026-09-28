@@ -117,13 +117,14 @@ struct AgentGuide: ParsableCommand {
         once a minute and more often right after a push. `--refresh` asks GitHub now, for example right after
         `gh pr create`. `row list --json` also carries each row's PR as "pr" when it has one.
 
-        `pr list` shows the 100 most recently updated PRs. `--query` keeps those whose number, title, head branch, or
-        author holds each word, and a number, #number, or URL looks that PR up even when it is closed. `branch list`
-        fetches origin first, unless you pass `--no-fetch`. It says where each branch is ("where": local, origin, or
-        both) and how many commits the local branch is "ahead" of or "behind" origin's. In both lists "row" is the
-        row or worktree that has the item checked out, or null. Start a row on an item without one with `row new --pr <n>` or
-        `row new <branch> --existing`, show one that has a row with `row select`, and adopt one in another tool's
-        worktree ("class": "external") with `row adopt <path>`. These are the lists the New Row sheet shows.
+        `pr list` shows the 100 most recently updated open PRs, or PRs in any state with `--closed`. `--query` keeps
+        those whose number, title, head branch, or author holds each word, and a number, #number, or URL looks that PR
+        up even when it is closed. `branch list` fetches origin first, unless you pass `--no-fetch`. It says where each
+        branch is ("where": local, origin, or both) and how many commits the local branch is "ahead" of or "behind"
+        origin's. In both lists "row" is the row or worktree that has the item checked out, or null. Start a row on an
+        item without one with `row new --pr <n>` or `row new <branch> --existing`, show one that has a row with
+        `row select`, and adopt one in another tool's worktree ("class": "external") with `row adopt <path>`. These
+        are the lists the New Row sheet shows.
 
         ## Activity
 

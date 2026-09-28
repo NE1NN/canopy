@@ -82,6 +82,30 @@ struct BranchListTests {
         #expect(branches["feat/behind"]?.committedAt == "2026-09-02T00:00:00Z")
     }
 
+    /// A branch tracking its namesake on origin is compared in the one listing git call, so a repo with many branches
+    /// behind origin does not start a process for each.
+    @Test func aBranchTrackingItsNamesakeNeedsNoProcessOfItsOwn() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(
+            dir, before: #"[[ "$1" == rev-list ]] && echo "$@" >> "\#(dir.sub("counts"))""#)
+        for branch in ["feat/one", "feat/two", "feat/three", "feat/untracked"] {
+            try await github.push(3, to: branch, of: "acme/app", date: "2026-09-02T00:00:00Z")
+        }
+        try await github.git.run(["fetch", "--quiet", "origin"], in: repo)
+        for branch in ["feat/one", "feat/two", "feat/three"] {
+            try await github.git.run(["branch", "--no-track", branch, "origin/\(branch)~1"], in: repo)
+            try await github.git.run(["branch", "--quiet", "--set-upstream-to", "origin/\(branch)", branch], in: repo)
+        }
+        try await github.git.run(["branch", "--no-track", "feat/untracked", "origin/feat/untracked~2"], in: repo)
+
+        let branches = try await workspace.listBranches(repoPath: repo, fetch: false).branches
+
+        #expect(branches.filter { $0.behind == 1 }.map(\.name).sorted() == ["feat/one", "feat/three", "feat/two"])
+        #expect(branches.first { $0.name == "feat/untracked" }?.behind == 2)
+        let counts = (try? String(contentsOfFile: dir.sub("counts"), encoding: .utf8)) ?? ""
+        #expect(counts.split(separator: "\n").count == 1)
+    }
+
     @Test func labelsSayWhereABranchIs() {
         func label(_ location: BranchLocation, _ ahead: Int? = nil, _ behind: Int? = nil) -> String {
             ListedBranch(name: "x", location: location, ahead: ahead, behind: behind, committedAt: "").label
