@@ -267,5 +267,92 @@ done
 "$cli" log --type repo.added | grep -q demo || fail "canopy log needs the app"
 [[ -z "$(app_pid)" ]] || fail "canopy log launched the app"
 
+step "canopy repo clone clones owner/repo through gh into repos/<owner>/<name>"
+# A stand-in gh clones from local bare repos and points origin at GitHub, as gh would, so nothing reaches the network.
+# The app finds it first on its login PATH through a ZDOTDIR, so this part launches the app itself.
+mkdir -p "$work/bin" "$work/zdot"
+cat > "$work/bin/gh" <<'GH'
+#!/bin/bash
+remotes="$(cd "$(dirname "$0")/.." && pwd)/remotes"
+# PR lookups for the repos above find no PRs.
+[[ "$1 $2" == "api graphql" ]] && { echo '{"data": {"repository": {}}}'; exit 0; }
+[[ "$1 $2" == "repo clone" ]] || { echo "gh: the stand-in only clones" >&2; exit 1; }
+repo="${3#https://github.com/}"
+repo="${repo%.git}"
+if [[ ! -d "$remotes/$repo.git" ]]; then
+    echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
+    exit 1
+fi
+git clone "${@:6}" "file://$remotes/$repo.git" "$4" || exit 1
+git -C "$4" remote set-url origin "https://github.com/$repo.git"
+GH
+chmod +x "$work/bin/gh"
+printf 'export PATH="%s/bin:$PATH"\n' "$work" > "$work/zdot/.zshrc"
+for repo in acme/app other/app team/lib; do
+    git clone -q --bare "$work/demo" "$work/remotes/$repo.git"
+done
+(ZDOTDIR="$work/zdot" SHELL=/bin/zsh exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
+for _ in $(seq 1 100); do
+    [[ -n "$(app_pid)" ]] && break
+    sleep 0.1
+done
+[[ -n "$(app_pid)" ]] || fail "the app did not start"
+json_field() { /usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$@"; }
+repos="$(cd "$CANOPY_HOME" && pwd -P)/repos"
+"$cli" repo clone acme/app --json > "$work/clone.json"
+[[ "$(json_field "$work/clone.json" path)" == "$repos/acme/app" ]] || fail "acme/app is not in repos/acme/app"
+[[ "$(git -C "$repos/acme/app" remote get-url origin)" == https://github.com/acme/app.git ]] || fail "wrong origin"
+git -C "$repos/acme/app" log --oneline -1 | grep -q "canopy config" || fail "the clone has no commits"
+
+step "cloning it again registers the folder it made"
+"$cli" repo clone https://github.com/acme/app --json > "$work/again.json"
+[[ "$(json_field "$work/again.json" path)" == "$repos/acme/app" ]] || fail "the second clone went somewhere else"
+[[ "$("$cli" repo list | grep -c "repos/acme/app")" == 1 ]] || fail "acme/app is registered twice"
+
+step "two repos named app show their owners"
+"$cli" repo clone other/app >/dev/null
+"$cli" repo list | grep -q "^acme/app " || fail "acme/app is not named by its owner"
+"$cli" repo list | grep -q "^other/app " || fail "other/app is not named by its owner"
+
+step "other URLs clone with git, and --into takes a folder relative to the caller"
+(cd "$work" && "$cli" repo clone "file://$work/remotes/team/lib.git" --into ./lib-copy --json) > "$work/lib.json"
+[[ "$(json_field "$work/lib.json" path)" == "$(cd "$work" && pwd -P)/lib-copy" ]] || fail "--into was not used"
+
+step "a failed clone exits 1 and leaves nothing behind"
+if "$cli" repo clone acme/nope --json > "$work/nope.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"clone_failed"' "$work/nope.json" || fail "missing clone_failed"
+[[ "$(ls -A "$repos/acme")" == app ]] || fail "the failed clone left $(ls -A "$repos/acme")"
+
+step "a folder holding something else is refused and left alone"
+mkdir -p "$repos/acme/taken"
+touch "$repos/acme/taken/notes.txt"
+if "$cli" repo clone acme/taken --json > "$work/taken.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"folder_taken"' "$work/taken.json" || fail "missing folder_taken"
+[[ -f "$repos/acme/taken/notes.txt" ]] || fail "the folder's contents were touched"
+
+step "screenshot"
+"$cli" row select main --repo acme/app >/dev/null
+sleep 1
+swift scripts/window-shot.swift "$(app_pid)" "$shots/clone.png"
+echo "saved $shots/clone.png"
+
+step "repo rm unregisters a clone and leaves its folder"
+"$cli" repo rm acme/app >/dev/null
+[[ -d "$repos/acme/app/.git" ]] || fail "repo rm deleted the clone"
+
+step "clones are in the activity log"
+"$cli" log --json > "$work/clone-log.json"
+/usr/bin/python3 - "$work/clone-log.json" <<'EOF' || fail "canopy log is missing the clone"
+import json, sys
+events = json.load(open(sys.argv[1]))
+added = [e for e in events if e["type"] == "repo.added" and e["data"].get("clonedFrom") == "acme/app"]
+calls = [e for e in events if e["type"] == "cli.call" and e["data"]["method"] == "repo.clone"]
+if len(added) != 1 or added[0]["source"] != "cli":
+    sys.exit(f"repo.added for acme/app: {added}")
+if len(calls) < 5 or not any(c["data"].get("error") == "clone_failed" for c in calls):
+    sys.exit(f"repo.clone calls: {calls}")
+EOF
+"$cli" agent-guide | grep -q "canopy repo clone" || fail "agent-guide is missing repo clone"
+
 echo
 echo "e2e passed"

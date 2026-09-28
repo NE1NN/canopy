@@ -1,8 +1,21 @@
-// Captures the main window of a process, even when it is behind other apps or not yet shown. Usage: swift scripts/window-shot.swift <pid> <out.png>
+// Captures the main window of a process, even when it is behind other apps or not yet shown.
+// Usage: swift scripts/window-shot.swift <pid> <out.png>
 import CoreGraphics
 import Foundation
 
 let pid = Int32(CommandLine.arguments[1])!
+// screencapture runs as part of the app hosting this terminal, which needs Screen Recording. Without it the capture fails
+// with only "could not create image from window".
+guard CGPreflightScreenCaptureAccess() else {
+    FileHandle.standardError.write(
+        Data(
+            """
+            Screen Recording is off for the app running this terminal. Turn it on in System Settings > Privacy & Security \
+            > Screen Recording. macOS then offers to quit and reopen that app, which closes its terminals.
+
+            """.utf8))
+    exit(1)
+}
 let output = CommandLine.arguments[2]
 let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 
