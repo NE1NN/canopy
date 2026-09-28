@@ -70,9 +70,12 @@ final class AppModel {
             }
         }
         await startControlServer()
+        portsCollapsed = await workspace.portsCollapsed
+        startScanningPorts()
     }
 
     func shutdown() {
+        portsTask?.cancel()
         server?.stop()
         server = nil
         terminals.closeAll()
@@ -166,6 +169,53 @@ final class AppModel {
         } catch {
             return .failed((error as? WorkspaceError)?.message ?? "\(error)")
         }
+    }
+
+    // MARK: Ports
+
+    private(set) var ports: [PortGroup] = []
+    /// Ports whose processes are being stopped, shown dimmed until they close.
+    private(set) var stoppingPorts: Set<ListeningPort> = []
+    var portsCollapsed = false {
+        didSet {
+            guard portsCollapsed != oldValue else { return }
+            let collapsed = portsCollapsed
+            perform { try await $0.setPortsCollapsed(collapsed) }
+        }
+    }
+    @ObservationIgnored private var portsTask: Task<Void, Never>?
+
+    /// Scans every 2 seconds while any part of the window can be seen.
+    private func startScanningPorts() {
+        portsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                if NSApp.occlusionState.contains(.visible) {
+                    await self?.refreshPorts()
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    func refreshPorts() async {
+        let groups = await rows.portGroups()
+        if groups != ports {
+            ports = groups
+        }
+    }
+
+    func stop(_ ports: [ListeningPort]) {
+        stoppingPorts.formUnion(ports)
+        Task {
+            _ = await PortStopper().stop(ports)
+            await refreshPorts()
+            stoppingPorts.subtract(ports)
+        }
+    }
+
+    /// The other ports a port's process listens on, which stopping it closes too.
+    func otherPorts(of port: ListeningPort) -> [UInt16] {
+        ports.flatMap(\.ports).filter { $0.pid == port.pid && $0.port != port.port }.map(\.port)
     }
 
     // MARK: Terminals

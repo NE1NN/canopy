@@ -31,6 +31,7 @@ public struct AppState: Codable, Sendable, Equatable {
     public var terminals: [String: SavedRowTerminals]
     /// The next pane number, so a pane ID an agent kept never names a different terminal after a relaunch.
     public var nextPane = 1
+    public var portsCollapsed = false
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -49,6 +50,7 @@ public struct AppState: Codable, Sendable, Equatable {
         selectedRowPath = try container.decodeIfPresent(String.self, forKey: .selectedRowPath)
         // Layouts that cannot be read are dropped on their own, so repos and rows still load.
         nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
+        portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
         terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
     }
 }

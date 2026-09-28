@@ -216,6 +216,16 @@ public actor Workspace {
         try save()
     }
 
+    public var portsCollapsed: Bool {
+        state.portsCollapsed
+    }
+
+    public func setPortsCollapsed(_ collapsed: Bool) throws {
+        guard state.portsCollapsed != collapsed else { return }
+        state.portsCollapsed = collapsed
+        try save()
+    }
+
     public func setSelectedRow(path: String?) throws {
         guard state.selectedRowPath != path else { return }
         state.selectedRowPath = path

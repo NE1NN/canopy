@@ -10,6 +10,17 @@ struct WorkspaceTests {
         return workspace
     }
 
+    @Test func thePortsPanelRemembersBeingCollapsed() async throws {
+        let dir = try TempDir()
+        let first = try await makeWorkspace(dir)
+        #expect(await first.portsCollapsed == false)
+
+        try await first.setPortsCollapsed(true)
+        await first.stop()
+
+        #expect(try await makeWorkspace(dir).portsCollapsed)
+    }
+
     @Test func addRepoShowsMainRow() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)
