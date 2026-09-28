@@ -13,11 +13,12 @@ final class RecordingUI: ControlUIBridge {
 }
 
 struct ControlServerTests {
-    func startServer(_ dir: TempDir, github: GitHubCLI = GitHubCLI()) async throws
+    func startServer(_ dir: TempDir, github: GitHubCLI = GitHubCLI(), logsCommands: Bool = true) async throws
         -> (Workspace, ControlServer, ControlClient, RecordingUI)
     {
         let home = CanopyHome(path: dir.sub("home"))
-        let workspace = Workspace(home: home, git: Fixture.git, github: github)
+        let activity = ActivityLog(folder: home.activityFolder, logsCommands: logsCommands)
+        let workspace = Workspace(home: home, git: Fixture.git, github: github, activity: activity)
         try await workspace.start()
         let ui = RecordingUI()
         let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
@@ -285,6 +286,82 @@ struct ControlServerTests {
         #expect(refused.error?.code == "port_not_found")
         _ = stranger
         _ = try await call(client, TermMethod.close, TermCloseParams(pane: pane.pane, force: true), as: JSONValue.self)
+    }
+
+    @Test func callsThatChangeSomethingAreLoggedAsTheCLIs() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (workspace, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let params = RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", setup: false, run: "echo hi")
+        let created = try await call(client, ControlMethod.rowNew, params, as: RowNewResult.self)
+        _ = try await call(client, ControlMethod.rowList, RowListParams(), as: [Row].self)
+        _ = try await call(
+            client, TermMethod.read, TermReadParams(pane: try #require(created.pane)), as: JSONValue.self)
+        await #expect(throws: ControlError.self) {
+            _ = try await call(
+                client, ControlMethod.rowNew, RowNewParams(target: TargetHint(repo: "demo"), branch: "bad name"),
+                as: JSONValue.self)
+        }
+
+        let events = await logged(workspace, "repo", "row", "cli")
+        #expect(events.map(\.type) == ["repo.added", "cli.call", "row.created", "cli.call", "cli.call"])
+        #expect(events.allSatisfy { $0.source == .cli })
+        let calls = events.filter { $0.type == ActivityType.cliCall }
+        try #require(calls.map(\.data["method"]) == ["repo.add", "row.new", "row.new"])
+        #expect(calls[1].data["params"] == (try JSONValue.from(params)))
+        #expect(calls.map(\.data["error"]) == [nil, nil, "invalid_branch"])
+    }
+
+    @Test func commandTextIsLeftOutOfCallsWhenCommandLoggingIsOff() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (workspace, server, client, _) = try await startServer(dir, logsCommands: false)
+        defer { server.stop() }
+
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let created = try await call(
+            client, ControlMethod.rowNew,
+            RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", setup: false, run: "echo secret-run"),
+            as: RowNewResult.self)
+        _ = try await call(
+            client, TermMethod.send, TermSendParams(pane: try #require(created.pane), text: "echo secret-text"),
+            as: JSONValue.self)
+
+        let calls = await logged(workspace, "cli")
+        try #require(calls.count == 3)
+        guard case .object(let rowNew) = calls[1].data["params"], case .object(let send) = calls[2].data["params"]
+        else {
+            Issue.record("params are not objects")
+            return
+        }
+        #expect(rowNew["branch"] == "feat/cli" && rowNew["run"] == nil)
+        #expect(send["pane"] == .string(created.pane!) && send["text"] == nil)
+    }
+
+    @Test func textStartingWithASpaceIsLeftOutOfCalls() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (workspace, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let created = try await call(
+            client, ControlMethod.rowNew,
+            RowNewParams(target: TargetHint(repo: "demo"), branch: "feat/cli", setup: false, run: "true"),
+            as: RowNewResult.self)
+        let pane = try #require(created.pane)
+        _ = try await call(client, TermMethod.send, TermSendParams(pane: pane, text: " hunter2"), as: JSONValue.self)
+        _ = try await call(client, TermMethod.send, TermSendParams(pane: pane, text: "ls"), as: JSONValue.self)
+
+        let sends = await logged(workspace, "cli").filter { $0.data["method"] == "term.send" }
+        let texts = sends.map { event -> JSONValue? in
+            guard case .object(let params) = event.data["params"] else { return nil }
+            return params["text"]
+        }
+        #expect(texts == [nil, "ls"])
     }
 
     @Test func errorsCarryCodes() async throws {

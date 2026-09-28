@@ -234,7 +234,7 @@ A session exposes:
 - its NSView, its shell PID, and its current title
 - writing input and resizing
 - reading the visible screen and the last N lines of scrollback as plain text
-- events for title changes, bell, process exit with code, and shell integration marks
+- events for title changes, bell, and process exit with code
 
 Nothing outside the SwiftTerm implementation imports SwiftTerm.
 
@@ -484,10 +484,12 @@ Every command exits non-zero on failure.
 | `canopy ports [--all]` | list ports for the resolved row, or for all rows with `--all` or when no row resolves |
 | `canopy ports stop <port>` | stop the process holding a port |
 | `canopy pr [--refresh]` | show the current row's PR |
-| `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events |
+| `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events, from 24 hours ago by default |
 | `canopy agent-guide` | print a manual written for agents |
 
 `canopy log` reads the activity files directly, so it works while the app is not running.
+Times can be a span back from now such as `30m`, `2h`, or `3d`, `today`, `yesterday`, a date, a local date and time, a time today, or a full ISO 8601 timestamp.
+`--type` takes a type such as `term.command`, or a kind such as `row` for every row event.
 
 `canopy agent-guide` explains rows, target resolution, and the commands, with worked examples such as spawning a parallel agent:
 
@@ -505,38 +507,63 @@ One line in a global `CLAUDE.md` pointing at `canopy agent-guide` is enough for 
 Each event is one JSON line appended to `CANOPY_HOME/activity/<local date>.jsonl`.
 
 ```json
-{"ts": "2026-09-27T21:15:03.123+10:00", "type": "row.created", "repo": "solis-v1", "row": "fix/login", "path": "...", "source": "cli", "data": {}}
+{"ts": "2026-09-27T21:15:03.123+10:00", "type": "row.created", "repo": "solis-v1", "row": "fix/login", "path": "...", "source": "cli", "data": {"class": "canopy"}}
 ```
 
-`source` is `ui`, `cli`, or `git` (detected from outside Canopy).
+`source` is `ui` for what is done in Canopy's window, including commands typed in its terminals, `cli` for a `canopy` command, or `git` for a change Canopy noticed rather than made, such as git run in any terminal, Canopy's own included, or a PR changing on GitHub.
+`repo`, `row`, and `path` are left out when an event is not about one, as for `cli.call`.
 One writer in the app serializes all appends.
-Readers skip a trailing partial line.
+Readers skip a trailing partial line and any line they cannot read.
 
 ### Events
 
 | Type | Recorded when | `data` |
 |---|---|---|
 | `repo.added`, `repo.removed` | a repo is registered or unregistered | |
-| `row.created`, `row.adopted`, `row.removed` | a row appears, is adopted, or goes away | `class` |
-| `row.branch_changed` | a row's HEAD moves to another branch | `from`, `to` |
-| `pr.opened` | a row goes from no PR to a PR | `number`, `url` |
-| `pr.state_changed` | a PR moves between draft, open, merged, and closed | `number`, `from`, `to` |
-| `term.opened`, `term.exited` | a pane starts or its shell exits | `pane`, `code` |
+| `row.created`, `row.adopted`, `row.removed` | a row appears, is adopted, or goes away, including being un-adopted | `class` |
+| `row.branch_changed` | a row's HEAD moves to another branch | `from`, `to`, null when detached |
+| `pr.opened` | a row's branch goes from no PR, or a closed one, to a new PR | `number`, `title`, `state`, `url` |
+| `pr.state_changed` | a PR moves between draft, open, merged, and closed | `number`, `from`, `to`, `url` |
+| `term.opened`, `term.exited` | a pane's shell starts, including a restart, or exits | `pane`, `code` |
 | `term.command` | a command finishes in a zsh pane | `pane`, `cmd`, `cwd`, `exit`, `durationMs` |
-| `cli.call` | the CLI makes a request | `method`, `params` |
+| `cli.call` | a `canopy` request changes something | `method`, `params`, `error` when it failed |
 
-When Canopy creates or removes a row itself, it marks the path as expected before calling git.
-The watcher then skips that path, so each row change is logged once with the right `source`.
+Row and PR changes are found by comparing each worktree list and each PR lookup with the one before.
+The first one after launching or adding a repo only sets the baseline, so what already existed is not logged.
+A PR lookup `gh` could not make keeps the baseline, so PRs coming back after `gh auth login` are not logged as new.
+Among closed PRs a branch shows the most recently updated, so one closed PR taking over from another is not an opening.
+
+git lists a worktree halfway through `git worktree add` with a detached, all-zero HEAD, so such a row is compared only once it is whole.
+When Canopy creates, removes, or prunes a row itself, it marks the path with the source that asked before calling git, and refreshes leave the path alone until the operation ends.
+The operation then logs how the row ended up, so each row change is logged once with the right `source`.
+If git reports the main checkout somewhere other than where it was registered, the folder moved while git ran, and the repo shows as missing.
+
+`cli.call` leaves out requests that only read: `status`, `repo list`, `row list`, `term list`, `term read`, `ports`, and `pr`.
+Agents poll some of them every few seconds, which would bury everything else.
 
 ### Command logging
 
 Canopy starts zsh with `ZDOTDIR` pointing at `CANOPY_HOME/shell/zsh`.
-The shim files there restore the user's original `ZDOTDIR` and source the user's own `.zshenv`, `.zprofile`, `.zshrc`, and `.zlogin` first, so the user's setup is unchanged.
-They then add `preexec` and `precmd` hooks that emit OSC 133 prompt and command marks, plus a private OSC sequence carrying the command text.
-The terminal engine turns these into `term.command` events.
+The `.zshenv` there puts `ZDOTDIR` back and sources the user's own `.zshenv`, so zsh then reads the user's `.zprofile`, `.zshrc`, and `.zlogin` from their usual place, and the user's setup is unchanged.
+It adds `preexec` and `precmd` hooks.
+After each command, `precmd` prints one private OSC 6973 sequence carrying the command, the folder it started in, its exit code, and its duration, percent-encoded.
+The pane reads these from its output before the terminal engine draws it, and records `term.command`.
+
+Each shell gets a random token in `CANOPY_COMMAND_TOKEN`.
+The shim takes it out of the environment and puts it in every report, so output that happens to replay a report, such as `cat` of a recorded session, is ignored.
+Each hook puts the other back if the user's `.zshrc` replaces its list, and the app writes the shim again before starting zsh if it went missing, since zsh pointed at an empty folder would skip the user's startup files.
+A zsh started inside the pane, including `exec zsh`, runs without the shim, so its commands are not logged.
+
+The shim sends no OSC 133 marks.
+SwiftTerm acts on them, and a prompt mark sent from `precmd` starts a fresh line before zsh can show its `%` after output that did not end in a newline.
+Nothing in Canopy reads them yet.
 
 Commands can contain secrets.
-The log never leaves the machine, only the user can read it, and `"logCommands": false` in `config.json` turns command logging off.
+The log never leaves the machine and only the user can read it.
+A command starting with a space is left out when the user has `hist_ignore_space` set, and one matching `HISTORY_IGNORE` is left out too, as zsh keeps both out of the history file.
+`zshaddhistory` hooks are not consulted.
+`cli.call` events leave out `run` and `text` params that start with a space for the same reason.
+`"logCommands": false` in `config.json` turns command logging off from the next launch: zsh starts without the shim, and `cli.call` events leave out the `run` and `text` params.
 
 ## Error handling
 
@@ -593,6 +620,5 @@ If SwiftTerm fails, a follow-up `docs` PR amends this spec before PR 2.
   The layout math lives in `CanopyCore` as pure functions so it can be tested without UI.
 - **Single process** means quitting stops every agent.
   Mitigated by the quit confirmation and dev builds with their own data folder.
-- **Private OSC handling in SwiftTerm** is assumed, not verified.
-  The spike checks it.
-  If it is missing, command events come from parsing OSC 133 marks alone and the command text is read from the screen.
+- **Private OSC handling in SwiftTerm** is not needed.
+  Panes read the shim's command reports from the output before the engine draws it, so logging works whatever the engine.

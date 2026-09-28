@@ -10,6 +10,7 @@ final class AppModel {
     let workspace: Workspace
     let terminals: TerminalStore
     let rows: RowLifecycle
+    let activity: ActivityLog
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
     var selectedRowPath: String? {
@@ -23,9 +24,16 @@ final class AppModel {
 
     init(home: CanopyHome) {
         self.home = home
-        let workspace = Workspace(home: home)
+        let config = GlobalConfig.load(from: home.configFile)
+        let activity = ActivityLog(folder: home.activityFolder, logsCommands: config.logCommands)
+        let workspace = Workspace(home: home, activity: activity)
         let terminals = TerminalStore(
-            engine: SwiftTermEngine(), settings: .current(home: home, cliDirectory: Self.bundledCLIDirectory()))
+            engine: SwiftTermEngine(),
+            settings: .current(
+                home: home, cliDirectory: Self.bundledCLIDirectory(), logsCommands: config.logCommands),
+            activity: activity)
+        self.config = config
+        self.activity = activity
         self.workspace = workspace
         self.terminals = terminals
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
@@ -79,6 +87,7 @@ final class AppModel {
         server?.stop()
         server = nil
         terminals.closeAll()
+        activity.flushNow()
     }
 
     private func startControlServer() async {
@@ -322,7 +331,7 @@ final class AppModel {
     var gridSize = CGSize(width: 1000, height: 700) {
         didSet { terminals.fits = addRuleFits() }
     }
-    @ObservationIgnored private lazy var config = GlobalConfig.load(from: home.configFile)
+    @ObservationIgnored private let config: GlobalConfig
 
     /// The least room a pane may shrink to: 20 columns and 5 rows, plus its padding and header.
     var minimumPaneSize: CGSize {
@@ -494,6 +503,7 @@ final class AppModel {
     private func apply(_ snapshot: WorkspaceSnapshot) {
         self.snapshot = snapshot
         terminals.closeRowsGone(from: snapshot)
+        terminals.followRowNames(in: snapshot)
         if terminalsRestored, !deferredTerminals.isEmpty {
             restoreDeferredTerminals()
         }

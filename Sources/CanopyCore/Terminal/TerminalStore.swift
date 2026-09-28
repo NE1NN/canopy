@@ -49,6 +49,7 @@ public final class TerminalStore {
     /// The app keeps it in step with the grid's width.
     @ObservationIgnored public var fits: (Int) -> Bool = { $0 <= 2 }
     @ObservationIgnored public let settings: ShellSettings
+    @ObservationIgnored public let activity: ActivityLog
     @ObservationIgnored private let engine: any TerminalEngine
     @ObservationIgnored private var nextPane = 1
     @ObservationIgnored private var nextTab = 1
@@ -56,9 +57,10 @@ public final class TerminalStore {
     /// that went away.
     @ObservationIgnored private var seenRows: Set<String> = []
 
-    public init(engine: any TerminalEngine, settings: ShellSettings) {
+    public init(engine: any TerminalEngine, settings: ShellSettings, activity: ActivityLog? = nil) {
         self.engine = engine
         self.settings = settings
+        self.activity = activity ?? ActivityLog(folder: settings.home.activityFolder)
     }
 
     /// The number the next pane gets, saved so IDs keep counting up across launches.
@@ -288,6 +290,17 @@ public final class TerminalStore {
         }
     }
 
+    /// Keeps each pane's repo and row names in step with the sidebar, so a row whose checkout moved to another branch
+    /// is logged and listed by its name now. Shells already running keep the CANOPY_ROW they started with.
+    public func followRowNames(in snapshot: WorkspaceSnapshot) {
+        for pane in panes {
+            guard let row = snapshot.row(path: pane.context.rowPath), let repo = snapshot.repo(path: row.repoPath)
+            else { continue }
+            if pane.context.rowName != row.displayName { pane.context.rowName = row.displayName }
+            if pane.context.repoName != repo.name { pane.context.repoName = repo.name }
+        }
+    }
+
     /// Closes every terminal in a repo's rows, for when the repo is unregistered.
     public func closeRows(ofRepo repoPath: String) {
         for (path, tabs) in tabsByRow where tabs.first?.repoPath == repoPath {
@@ -372,6 +385,6 @@ public final class TerminalStore {
         defer { nextPane += 1 }
         return Pane(
             id: PaneID(nextPane), context: context, command: command, settings: settings,
-            emulator: engine.makeEmulator(size: preferredSize), directory: directory)
+            emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory)
     }
 }

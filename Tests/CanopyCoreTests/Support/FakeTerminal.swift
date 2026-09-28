@@ -65,6 +65,26 @@ extension Fixture {
         TerminalStore(engine: FakeEngine(), settings: shellSettings(dir))
     }
 
+    /// zsh with a private HOME holding `files` as the user's own startup files, keyed by path under HOME, and
+    /// Canopy's startup shim unless command logging is off.
+    @MainActor
+    static func zshTerminals(_ dir: TempDir, files: [String: String] = [:], logsCommands: Bool = true) throws
+        -> TerminalStore
+    {
+        let home = dir.sub("user-home")
+        for (name, text) in files {
+            let path = home + "/" + name
+            try FileManager.default.createDirectory(
+                atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try text.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        var settings = shellSettings(dir)
+        settings.shell = "/bin/zsh"
+        settings.baseEnvironment = ["HOME": home, "USER": NSUserName()]
+        settings.logsCommands = logsCommands
+        return TerminalStore(engine: FakeEngine(), settings: settings)
+    }
+
     static func context(_ path: String, branch: String = "feat/x", repoPath: String = "/r/demo") -> PaneContext {
         PaneContext(
             row: Row(repoPath: repoPath, path: path, branch: branch, head: nil, rowClass: .canopy), repoName: "demo")

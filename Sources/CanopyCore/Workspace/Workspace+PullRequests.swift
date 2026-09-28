@@ -145,9 +145,42 @@ extension Workspace {
         case .notLoggedIn: entry = RepoPullRequests(source: .notLoggedIn, branches: branches)
         case .failed(let message): entry.source = .failed(message)
         }
+        recordPullRequestChanges(repoPath: repoPath, entry: entry)
         guard entry != pullRequests[repoPath] else { return }
         pullRequests[repoPath] = entry
         publish()
+    }
+
+    /// Logs PRs that opened or changed state since the last lookup GitHub answered. A branch that lookup did not ask
+    /// about, such as a row made a moment ago, has nothing to compare with. A lookup gh could not make changes nothing,
+    /// so PRs coming back after `gh auth login` are not logged as new.
+    private func recordPullRequestChanges(repoPath: String, entry: RepoPullRequests) {
+        guard entry.source == .github else { return }
+        defer { prBaselines[repoPath] = entry }
+        guard let before = prBaselines[repoPath] else { return }
+        let rows = repoSnapshots[repoPath]?.rows.filter(Self.looksUpPullRequest) ?? []
+        for branch in entry.branches where before.branches.contains(branch) {
+            guard let pr = entry.found[branch], let row = rows.first(where: { $0.branch == branch }) else { continue }
+            let number = JSONValue.number(Double(pr.number))
+            if let old = before.found[branch], old.number == pr.number {
+                guard old.state != pr.state else { continue }
+                record(
+                    ActivityType.prStateChanged, row, source: .git,
+                    data: [
+                        "number": number, "from": .string(old.state.rawValue), "to": .string(pr.state.rawValue),
+                        "url": .string(pr.url),
+                    ])
+            } else if before.found[branch] == nil || [.open, .draft].contains(pr.state) {
+                // Among closed PRs the branch shows the most recently updated, so one can take over from another
+                // without anything being opened.
+                record(
+                    ActivityType.prOpened, row, source: .git,
+                    data: [
+                        "number": number, "title": .string(pr.title), "state": .string(pr.state.rawValue),
+                        "url": .string(pr.url),
+                    ])
+            }
+        }
     }
 
     func startPullRequests() {
@@ -196,6 +229,7 @@ extension Workspace {
 
     func forgetPullRequests(repoPath: String) {
         pullRequests[repoPath] = nil
+        prBaselines[repoPath] = nil
         prBranchesRequested[repoPath] = nil
         afterPush.removeValue(forKey: repoPath)?.task.cancel()
     }
