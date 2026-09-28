@@ -6,9 +6,11 @@ public struct ShellSettings: Sendable, Equatable {
     static let posixShells: Set<String> = ["zsh", "bash", "sh", "ksh", "dash"]
 
     public var shell: String
-    /// The app's own environment, with ZDOTDIR as the login session has it. Terminals only get what a macOS login
-    /// session starts with.
+    /// The app's own environment. Terminals only get what a macOS login session starts with.
     public var baseEnvironment: [String: String]
+    /// ZDOTDIR as the login session has it, which a Terminal window gets. The app's own can come from whatever launched
+    /// it, such as a shell whose ~/.zshenv exports it, and zsh started with that would skip ~/.zshenv.
+    public var zdotdir: String?
     /// The folder holding the bundled `canopy`, put on PATH so agents in a terminal can run it.
     public var cliDirectory: String?
     public var home: CanopyHome
@@ -24,10 +26,12 @@ public struct ShellSettings: Sendable, Equatable {
         cliDirectory: String?,
         home: CanopyHome,
         language: String = "en_US.UTF-8",
-        logsCommands: Bool = false
+        logsCommands: Bool = false,
+        zdotdir: String? = nil
     ) {
         self.shell = shell
         self.baseEnvironment = baseEnvironment
+        self.zdotdir = zdotdir
         self.cliDirectory = cliDirectory
         self.home = home
         self.language = language
@@ -36,22 +40,18 @@ public struct ShellSettings: Sendable, Equatable {
 
     public static func current(
         home: CanopyHome, cliDirectory: String?, logsCommands: Bool,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        sessionVariable: (String) -> String? = LoginShell.sessionVariable
+        sessionVariable: (String) -> String? = { LoginShell.sessionVariable($0) }
     ) -> ShellSettings {
-        var environment = environment
-        // A Terminal window gets ZDOTDIR from the login session. The app's own can come from whatever launched it,
-        // such as a shell whose ~/.zshenv exports it, and zsh started with that would skip ~/.zshenv.
-        environment["ZDOTDIR"] = sessionVariable("ZDOTDIR")
-        return ShellSettings(
+        ShellSettings(
             shell: LoginShell.path(),
-            baseEnvironment: environment,
+            baseEnvironment: ProcessInfo.processInfo.environment,
             cliDirectory: cliDirectory,
             home: home,
             language: LoginShell.language(for: Locale.current.identifier) {
                 FileManager.default.fileExists(atPath: "/usr/share/locale/\($0)")
             },
-            logsCommands: logsCommands
+            logsCommands: logsCommands,
+            zdotdir: sessionVariable("ZDOTDIR")
         )
     }
 
@@ -106,17 +106,12 @@ public enum LoginShell {
     }
 
     /// A variable as the login session has it, which `launchctl setenv` sets, or nil if it has none.
-    public static func sessionVariable(_ name: String) -> String? {
+    public static func sessionVariable(_ name: String, launchctl: String = "/bin/launchctl") -> String? {
         let result = try? Subprocess.run(
-            "/bin/launchctl", ["getenv", name], environment: [:], directory: nil, timeout: .seconds(2))
-        guard let result, !result.timedOut, result.status == 0 else { return nil }
-        return sessionValue(launchctlOutput: result.stdout)
-    }
-
-    /// launchctl prints nothing for a variable the session does not have, and the value and a newline for one it has.
-    static func sessionValue(launchctlOutput output: Data) -> String? {
-        guard !output.isEmpty else { return nil }
-        var value = String(decoding: output, as: UTF8.self)
+            launchctl, ["getenv", name], environment: [:], directory: nil, timeout: .seconds(2))
+        // launchctl prints nothing for a variable the session does not have, and the value and a newline for one it has.
+        guard let result, !result.timedOut, result.status == 0, !result.stdout.isEmpty else { return nil }
+        var value = String(decoding: result.stdout, as: UTF8.self)
         if value.hasSuffix("\n") { value.removeLast() }
         return value
     }

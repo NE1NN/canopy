@@ -165,7 +165,7 @@ struct ZshCommandLoggingTests {
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(
             dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, logsCommands: logsCommands,
-            environment: ["ZDOTDIR": zdot])
+            zdotdir: zdot)
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
@@ -195,7 +195,7 @@ struct ZshCommandLoggingTests {
     @Test func anEmptyZDOTDIRIsKeptAsZshKeepsIt() async throws {
         // zsh reads startup files from a ZDOTDIR that is set, even to nothing, so from /, never from HOME.
         let dir = try TempDir()
-        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), environment: ["ZDOTDIR": ""])
+        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), zdotdir: "")
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
@@ -207,7 +207,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(
-            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, environment: ["ZDOTDIR": zdot])
+            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, zdotdir: zdot)
         defer { terminals.closeAll() }
         let script = #"print -r -- "check:$LOADED:${ZDOTDIR-unset}""#
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused

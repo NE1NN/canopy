@@ -289,21 +289,25 @@ Nothing outside the SwiftTerm implementation imports SwiftTerm.
 ### Starting a shell
 
 Each pane runs the user's login shell (`$SHELL -l`) in the row's folder, or in a saved folder when restoring.
-From the app's own environment it keeps only what a macOS login session starts with, such as `HOME`, `USER`, `LANG`, and `SSH_AUTH_SOCK`.
+From the app's own environment it keeps only the kinds of variables a macOS login session sets: `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SSH_AUTH_SOCK`, `__CF_USER_TEXT_ENCODING`, and the locale.
 Everything else there came from whatever launched the app, such as a Claude Code session running a dev build.
-`ZDOTDIR` comes from the login session itself, through `launchctl getenv`, as a Terminal window gets it.
-The app's own `ZDOTDIR` may come from a shell whose `~/.zshenv` exports it, and zsh started with it would skip that `~/.zshenv`.
+`ZDOTDIR` comes from the login session itself, through `launchctl getenv`, as a Terminal window gets it, and never from the app's own environment.
+A shell whose `~/.zshenv` exports `ZDOTDIR` passes it to a Canopy it launches, and zsh started with it would skip that `~/.zshenv`.
 The environment adds:
 
 | Variable | Value |
 |---|---|
+| `SHELL` | the login shell |
 | `TERM` | `xterm-256color` |
 | `COLORTERM` | `truecolor` |
 | `TERM_PROGRAM` | `Canopy` |
+| `TERM_PROGRAM_VERSION` | Canopy's version |
+| `LANG` | the app's own, or one for the Mac's language when the app has none |
 | `CANOPY_HOME` | the data folder |
 | `CANOPY_REPO`, `CANOPY_ROW`, `CANOPY_ROW_PATH` | the pane's row |
+| `CANOPY_ROOT_PATH` | the repo's main checkout |
 | `CANOPY_PANE` | the pane ID, such as `p12` |
-| `PATH` | the bundle's CLI folder prepended |
+| `PATH` | the bundle's CLI folder, then `/usr/bin:/bin:/usr/sbin:/sbin`, which the login shell's `path_helper` and the user's startup files add to |
 
 Agents inside any Canopy terminal can therefore run `canopy` without arguments naming the repo or row.
 

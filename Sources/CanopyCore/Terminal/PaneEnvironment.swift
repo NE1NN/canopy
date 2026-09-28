@@ -1,12 +1,10 @@
 import Foundation
 
 public enum PaneEnvironment {
-    /// What a macOS login session starts with, and ZDOTDIR, which `ShellSettings.current` takes from the login session
-    /// itself. Everything else in the app's environment came from whatever launched it, such as a Claude Code session
-    /// running a dev build, and must not reach terminals.
+    /// What a macOS login session starts with. Everything else in the app's environment came from whatever
+    /// launched it, such as a Claude Code session running a dev build, and must not reach terminals.
     static let inherited: Set<String> = [
         "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK", "__CF_USER_TEXT_ENCODING", "LANG", "LC_ALL", "LC_CTYPE",
-        "ZDOTDIR",
     ]
     /// The login shell's path_helper adds /etc/paths to this, and the user's startup files add the rest.
     static let systemPath = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -15,6 +13,7 @@ public enum PaneEnvironment {
         var environment = settings.baseEnvironment.filter { inherited.contains($0.key) }
         environment["HOME"] = environment["HOME"] ?? NSHomeDirectory()
         environment["LANG"] = environment["LANG"] ?? settings.language
+        environment["ZDOTDIR"] = settings.zdotdir
         environment["SHELL"] = settings.shell
         environment["PATH"] = ([settings.cliDirectory].compactMap { $0 } + [systemPath]).joined(separator: ":")
         environment["TERM"] = "xterm-256color"

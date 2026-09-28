@@ -404,6 +404,7 @@ echo "saved $shots/clone.png"
 
 step "terminals take ZDOTDIR from the login session, not from whatever launched Canopy, and still log commands"
 # A Terminal window would not get the ZDOTDIR this app was launched with, whose .zshrc puts the stand-in gh on PATH.
+# This guards against passing the app's own ZDOTDIR on. Testing the login session's would mean changing the Mac's.
 check="[[ \${ZDOTDIR-} != '$work/zdot' && \${commands[gh]-} != '$work/bin/gh' ]] && echo zdotdir-\$((40 + 2))"
 pane=$("$cli" term new --repo acme/app --row main --run "$check" --json |
     /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')

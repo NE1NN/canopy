@@ -4,8 +4,9 @@
 
 **Goal:** A Canopy terminal reads the same zsh startup files, in the same order, and ends with the same `ZDOTDIR`, as a new Terminal window, whether `ZDOTDIR` comes from the login session, from `~/.zshenv`, or from nowhere, and whatever launched Canopy.
 
-**Architecture:** Terminals and setup scripts get `ZDOTDIR` as the login session has it, which `ShellSettings.current` reads once with `launchctl getenv`, as a Terminal window would get it.
-The app's own `ZDOTDIR` is not used, since it can come from whatever launched the app.
+**Architecture:** Terminals and setup scripts get `ZDOTDIR` as the login session has it, as a Terminal window would get it.
+`ShellSettings.current` reads it once with `launchctl getenv` into its own `zdotdir` field, and `PaneEnvironment.build` sets it.
+The app's own `ZDOTDIR` is never used, since it can come from whatever launched the app.
 While command logging is on, `ShellSettings.interactiveShell` moves that value into `CANOPY_USER_ZDOTDIR` before pointing `ZDOTDIR` at the shim.
 The shim puts it back, or unsets `ZDOTDIR` if there was none, and loads `.zshenv` from `${ZDOTDIR-$HOME}`, which is zsh's own rule.
 
@@ -40,8 +41,8 @@ The first version passed the app's own `ZDOTDIR` to terminals, and the review sh
 `canopy` starts the app with `open --env`, which hands it the caller's whole environment.
 A common setup exports `ZDOTDIR` from `~/.zshenv`, so every shell has it, and a Canopy started from one of them would give its terminals that value.
 zsh started with it skips `~/.zshenv`, and whatever lives only there, such as rustup's `. "$HOME/.cargo/env"`, is lost.
-A Terminal window never has that problem: it gets its environment from the login session, where `ZDOTDIR` is only set by `launchctl setenv`.
-So terminals take `ZDOTDIR` from the login session, like the other login-session variables they keep.
+A Terminal window never has that problem: it gets its environment from the login session, where only `launchctl setenv` or `launchctl config user setenv` sets `ZDOTDIR`.
+So terminals take `ZDOTDIR` from the login session, and never from the app's own environment.
 
 ## Global Constraints
 
@@ -68,8 +69,12 @@ So terminals take `ZDOTDIR` from the login session, like the other login-session
 - Terminals take `ZDOTDIR` from the login session, not from the app's own environment.
   A launcher's `ZDOTDIR`, such as the fixture folder `scripts/ui-fixture.sh` and `scripts/e2e.sh` launch the dev app with, no longer reaches terminals, just as it would not reach a Terminal window.
   The fixtures still use it for what they need, the app's own login PATH.
-- `launchctl getenv` runs once, on the main thread, while the app starts, and takes about 20 ms.
+- `launchctl getenv` runs once, on the main thread, while the app starts, and takes 10 to 20 ms.
   If it fails or takes over 2 s, terminals get no `ZDOTDIR`, as before this change.
+  Keeping the app's own value instead would bring back the bug above whenever `launchctl` failed.
+- The other variables terminals keep, such as `SSH_AUTH_SOCK` and the locale, still come from whatever launched the app, as before this change.
+  Taking them from the login session too is the same kind of fix, and is left for a follow-up.
+  So is the app's own login PATH, which it works out with its own `ZDOTDIR`.
 
 ---
 
@@ -77,53 +82,58 @@ So terminals take `ZDOTDIR` from the login session, like the other login-session
 
 **Files:**
 - Modify: `Sources/CanopyCore/Terminal/PaneEnvironment.swift`
-- Modify: `Sources/CanopyCore/Terminal/ShellSettings.swift` (`current` and `LoginShell`)
-- Modify: `Tests/CanopyCoreTests/Support/FakeTerminal.swift` (`zshTerminals` takes extra environment)
+- Modify: `Sources/CanopyCore/Terminal/ShellSettings.swift` (`zdotdir`, `current`, and `LoginShell`)
+- Modify: `Tests/CanopyCoreTests/Support/FakeTerminal.swift` (`zshTerminals` takes the session's `ZDOTDIR`)
 - Test: `Tests/CanopyCoreTests/PaneEnvironmentTests.swift`, `Tests/CanopyCoreTests/CommandLoggingTests.swift`
 
 **Interfaces:**
-- Produces: `ShellSettings.current(home:cliDirectory:logsCommands:environment:sessionVariable:)`, whose last two parameters default to the process's environment and `LoginShell.sessionVariable`.
-- Produces: `LoginShell.sessionVariable(_:) -> String?`.
-- Produces: `Fixture.zshTerminals(_:files:logsCommands:environment:)`, whose `environment` is added to the app's environment, standing for the login session's `ZDOTDIR` after `current` put it there.
+- Produces: `ShellSettings.zdotdir: String?`, and `ShellSettings.current(home:cliDirectory:logsCommands:sessionVariable:)`, whose last parameter defaults to `LoginShell.sessionVariable`.
+- Produces: `LoginShell.sessionVariable(_:launchctl:) -> String?`, whose `launchctl` defaults to `/bin/launchctl`.
+- Produces: `Fixture.zshTerminals(_:files:logsCommands:zdotdir:)`, whose `zdotdir` stands for the login session's.
 - Produces: `ZshCommandLoggingTests.startupFiles(in:)` and `ZshCommandLoggingTests.check`, used again in Task 2.
 
-- [ ] **Step 1: Let the zsh fixture take the app's environment**
+- [ ] **Step 1: Let the zsh fixture take the session's ZDOTDIR**
 
 ```swift
     static func zshTerminals(
-        _ dir: TempDir, files: [String: String] = [:], logsCommands: Bool = true, environment: [String: String] = [:]
+        _ dir: TempDir, files: [String: String] = [:], logsCommands: Bool = true, zdotdir: String? = nil
     ) throws -> TerminalStore {
         ...
-        settings.baseEnvironment = ["HOME": home, "USER": NSUserName()].merging(environment) { $1 }
+        settings.baseEnvironment = ["HOME": home, "USER": NSUserName()]
+        settings.zdotdir = zdotdir
 ```
 
 - [ ] **Step 2: Write the failing tests**
 
-In `PaneEnvironmentTests.keepsLoginSessionVariablesAndDropsTheRest`, add `"ZDOTDIR": "/Users/me/.config/zsh"` to `base` and expect it kept.
+In `PaneEnvironmentTests.keepsLoginSessionVariablesAndDropsTheRest`, add `"ZDOTDIR": "/Users/me/.config/zsh"` to `base` and expect it dropped.
 Then:
 
 ```swift
-    @Test func terminalsTakeZDOTDIRFromTheLoginSessionNotFromWhateverLaunchedTheApp() {
+    @Test func terminalsGetTheLoginSessionsZDOTDIRNotTheAppsOwn() {
         // Like `canopy` run from a shell whose ~/.zshenv exports ZDOTDIR. A Terminal window would read that ~/.zshenv.
-        let launcher = ["HOME": "/Users/me", "ZDOTDIR": "/Users/me/.config/zsh"]
-        let home = CanopyHome(path: "/h/.canopy")
-
-        let unset = ShellSettings.current(
-            home: home, cliDirectory: nil, logsCommands: true, environment: launcher, sessionVariable: { _ in nil })
-        let set = ShellSettings.current(
-            home: home, cliDirectory: nil, logsCommands: true, environment: launcher,
+        var launched = settings(["HOME": "/Users/me", "ZDOTDIR": "/Users/me/.config/zsh"])
+        let current = ShellSettings.current(
+            home: CanopyHome(path: "/h/.canopy"), cliDirectory: nil, logsCommands: true,
             sessionVariable: { $0 == "ZDOTDIR" ? "/session/zsh" : nil })
 
-        #expect(unset.baseEnvironment["ZDOTDIR"] == nil)
-        #expect(set.baseEnvironment["ZDOTDIR"] == "/session/zsh")
-        #expect(set.baseEnvironment["HOME"] == "/Users/me")
+        #expect(PaneEnvironment.build(settings: launched, context: context, pane: PaneID(1))["ZDOTDIR"] == nil)
+        launched.zdotdir = "/session/zsh"
+        #expect(
+            PaneEnvironment.build(settings: launched, context: context, pane: PaneID(1))["ZDOTDIR"] == "/session/zsh")
+        #expect(current.zdotdir == "/session/zsh")
     }
 
-    @Test func readsLaunchctlsAnswer() {
-        #expect(LoginShell.sessionValue(launchctlOutput: Data()) == nil)
-        #expect(LoginShell.sessionValue(launchctlOutput: Data("/Users/me/z dot\n".utf8)) == "/Users/me/z dot")
-        #expect(LoginShell.sessionValue(launchctlOutput: Data("\n".utf8)) == "")
-        #expect(LoginShell.sessionVariable("CANOPY_NEVER_SET_\(UUID().uuidString)") == nil)
+    @Test func asksLaunchctlForTheLoginSessionsValue() async throws {
+        // echo prints its arguments and a newline, as launchctl prints a value the session has.
+        let echoed = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/bin/echo") }
+        let silent = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/usr/bin/true") }
+        let failed = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/usr/bin/false") }
+        let unset = try await offPool { LoginShell.sessionVariable("CANOPY_NEVER_SET_\(UUID().uuidString)") }
+
+        #expect(echoed == "getenv ZDOTDIR")
+        #expect(silent == nil)
+        #expect(failed == nil)
+        #expect(unset == nil)
     }
 ```
 
@@ -148,7 +158,7 @@ In `ZshCommandLoggingTests`:
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(
             dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, logsCommands: logsCommands,
-            environment: ["ZDOTDIR": zdot])
+            zdotdir: zdot)
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
@@ -165,7 +175,7 @@ In `ZshCommandLoggingTests`:
         let dir = try TempDir()
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(
-            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, environment: ["ZDOTDIR": zdot])
+            dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, zdotdir: zdot)
         defer { terminals.closeAll() }
         let script = #"print -r -- "check:$LOADED:${ZDOTDIR-unset}""#
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused
@@ -178,53 +188,49 @@ In `ZshCommandLoggingTests`:
 - [ ] **Step 3: Run them and watch them fail**
 
 Run: `swift test $(scripts/test-flags.sh) --filter 'PaneEnvironmentTests|ZshCommandLoggingTests'`
-Expected: `ShellSettings.current` has no `environment` or `sessionVariable` parameter, and `LoginShell` has no `sessionVariable` or `sessionValue`.
-With those in place but `ZDOTDIR` still filtered out, the zsh tests read `~/` instead of `z dot/`.
+Expected: `ShellSettings` has no `zdotdir`, and `LoginShell` has no `sessionVariable`.
+With those in place but not yet set in `PaneEnvironment.build`, the zsh tests read `~/` instead of `z dot/`.
 
-- [ ] **Step 4: Keep ZDOTDIR, and take it from the login session**
+- [ ] **Step 4: Take ZDOTDIR from the login session**
+
+In `ShellSettings`, next to `baseEnvironment`, with a matching `zdotdir: String? = nil` parameter on `init`:
 
 ```swift
-    /// What a macOS login session starts with, and ZDOTDIR, which `ShellSettings.current` takes from the login session
-    /// itself. Everything else in the app's environment came from whatever launched it, such as a Claude Code session
-    /// running a dev build, and must not reach terminals.
-    static let inherited: Set<String> = [
-        "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK", "__CF_USER_TEXT_ENCODING", "LANG", "LC_ALL", "LC_CTYPE",
-        "ZDOTDIR",
-    ]
+    /// ZDOTDIR as the login session has it, which a Terminal window gets. The app's own can come from whatever launched
+    /// it, such as a shell whose ~/.zshenv exports it, and zsh started with that would skip ~/.zshenv.
+    public var zdotdir: String?
 ```
 
 ```swift
     public static func current(
         home: CanopyHome, cliDirectory: String?, logsCommands: Bool,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        sessionVariable: (String) -> String? = LoginShell.sessionVariable
+        sessionVariable: (String) -> String? = { LoginShell.sessionVariable($0) }
     ) -> ShellSettings {
-        var environment = environment
-        // A Terminal window gets ZDOTDIR from the login session. The app's own can come from whatever launched it,
-        // such as a shell whose ~/.zshenv exports it, and zsh started with that would skip ~/.zshenv.
-        environment["ZDOTDIR"] = sessionVariable("ZDOTDIR")
-        return ShellSettings(
-            shell: LoginShell.path(),
-            baseEnvironment: environment,
+        ShellSettings(
             ...
+            logsCommands: logsCommands,
+            zdotdir: sessionVariable("ZDOTDIR")
+        )
+    }
 ```
 
 ```swift
     /// A variable as the login session has it, which `launchctl setenv` sets, or nil if it has none.
-    public static func sessionVariable(_ name: String) -> String? {
+    public static func sessionVariable(_ name: String, launchctl: String = "/bin/launchctl") -> String? {
         let result = try? Subprocess.run(
-            "/bin/launchctl", ["getenv", name], environment: [:], directory: nil, timeout: .seconds(2))
-        guard let result, !result.timedOut, result.status == 0 else { return nil }
-        return sessionValue(launchctlOutput: result.stdout)
-    }
-
-    /// launchctl prints nothing for a variable the session does not have, and the value and a newline for one it has.
-    static func sessionValue(launchctlOutput output: Data) -> String? {
-        guard !output.isEmpty else { return nil }
-        var value = String(decoding: output, as: UTF8.self)
+            launchctl, ["getenv", name], environment: [:], directory: nil, timeout: .seconds(2))
+        // launchctl prints nothing for a variable the session does not have, and the value and a newline for one it has.
+        guard let result, !result.timedOut, result.status == 0, !result.stdout.isEmpty else { return nil }
+        var value = String(decoding: result.stdout, as: UTF8.self)
         if value.hasSuffix("\n") { value.removeLast() }
         return value
     }
+```
+
+In `PaneEnvironment.build`, after the filtered environment gets `HOME` and `LANG`:
+
+```swift
+        environment["ZDOTDIR"] = settings.zdotdir
 ```
 
 - [ ] **Step 5: Run the tests again**
@@ -298,7 +304,7 @@ Add the empty case, and an unreadable `.zshenv`, which zsh skips without a word:
     @Test func anEmptyZDOTDIRIsKeptAsZshKeepsIt() async throws {
         // zsh reads startup files from a ZDOTDIR that is set, even to nothing, so from /, never from HOME.
         let dir = try TempDir()
-        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), environment: ["ZDOTDIR": ""])
+        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), zdotdir: "")
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
@@ -368,6 +374,7 @@ A Terminal window would not get that value, so a Canopy terminal must not either
 ```bash
 step "terminals take ZDOTDIR from the login session, not from whatever launched Canopy, and still log commands"
 # A Terminal window would not get the ZDOTDIR this app was launched with, whose .zshrc puts the stand-in gh on PATH.
+# This guards against passing the app's own ZDOTDIR on. Testing the login session's would mean changing the Mac's.
 check="[[ \${ZDOTDIR-} != '$work/zdot' && \${commands[gh]-} != '$work/bin/gh' ]] && echo zdotdir-\$((40 + 2))"
 pane=$("$cli" term new --repo acme/app --row main --run "$check" --json |
     /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
@@ -382,6 +389,7 @@ done
 - [ ] **Step 2: Update the spec**
 
 In "Starting a shell", say which of the app's variables terminals keep, and that `ZDOTDIR` comes from the login session.
+Bring its table up to date with `PaneEnvironment.build`, which had drifted before this change: it was missing `SHELL`, `TERM_PROGRAM_VERSION`, `LANG`, and `CANOPY_ROOT_PATH`, and `PATH` is replaced, not prepended to.
 In "Command logging", say that the shim puts back the user's `ZDOTDIR`, or unsets it, and loads `.zshenv` from `${ZDOTDIR-$HOME}`, and what happens when `/etc/zshenv` exports `ZDOTDIR`.
 
 - [ ] **Step 3: Run `make e2e` and commit**
@@ -411,7 +419,7 @@ Its findings, and what changed:
    The first version kept the app's own `ZDOTDIR`, and `canopy` starts the app with the caller's whole environment.
    With the common `export ZDOTDIR=$HOME/.config/zsh` in `~/.zshenv`, a Canopy started from a shell gave its terminals that value, so they skipped `~/.zshenv`, which `main` did not do.
    Fixed: `ShellSettings.current` takes `ZDOTDIR` from the login session with `launchctl getenv`, and ignores the app's own.
-   New tests: `terminalsTakeZDOTDIRFromTheLoginSessionNotFromWhateverLaunchedTheApp` and `readsLaunchctlsAnswer`.
+   New tests: `terminalsGetTheLoginSessionsZDOTDIRNotTheAppsOwn` and `asksLaunchctlForTheLoginSessionsValue`.
    The e2e step now checks that the `ZDOTDIR` the dev app was launched with does not reach its terminals, where it first checked the opposite.
    The repro now compares against a Terminal window, and a fourth case, the app launched from a shell whose `~/.zshenv` exported `ZDOTDIR`, reads the same files as one.
    See "Where a terminal's ZDOTDIR should come from" and "Decisions to Review".
@@ -431,3 +439,28 @@ Its findings, and what changed:
    Not changed.
 
 The review found the tests independent of each other, and saw no false pass in the e2e step: the typed line echoes `$((40 + 2))`, and `zdotdir-42` is short enough not to wrap.
+
+### Second round
+
+A second opus reviewer read the branch after those fixes, with the same brief.
+It found no bugs, agreed that the login session is the right source, and found no case where this branch does worse than `main`.
+It checked by experiment that `open --env` hands the app the caller's `ZDOTDIR`, `SSH_AUTH_SOCK`, and `LC_ALL`, that `launchctl getenv` inside that app still answers with the session's values, and that a Ghostty window started from the Dock has no `ZDOTDIR`.
+Its findings, and what changed:
+
+1. **The other variables terminals keep still come from whatever launched the app,** such as an SSH agent forwarded into the shell that ran `canopy`, or `LC_ALL=C` from a Makefile.
+   This is so on `main` too.
+   Not changed; listed as a follow-up in "Decisions to Review", with the app's own login PATH.
+2. **A failed `launchctl` call drops `ZDOTDIR`,** where the app's own value would be right for an app started from the Dock.
+   Not changed: the app's own value is wrong whenever `canopy` started the app, and a failure leaves things as on `main`.
+   See "Decisions to Review".
+3. **The e2e step also passes on `main`.**
+   It guards against the first-round design, and a positive check would need the Mac's login session changed.
+   Its comment now says so.
+4. **Only `ShellSettings.current` made `baseEnvironment["ZDOTDIR"]` the session's,** so any other way of building `ShellSettings` would pass the launcher's value on again.
+   Fixed: the session's value lives in its own `ShellSettings.zdotdir`, `PaneEnvironment.build` sets it, and `ZDOTDIR` is no longer in `inherited`.
+   The zsh fixture takes `zdotdir:` instead of extra environment.
+   A mutation check that drops the line in `PaneEnvironment.build` fails five tests.
+5. **The only real `launchctl` test would also pass if `sessionVariable` always returned nil.**
+   Fixed: `sessionVariable` takes the program to run, and `asksLaunchctlForTheLoginSessionsValue` checks a value, no output, and a failure with real processes.
+6. **Docs:** the start-up cost (10 to 20 ms, not about 20 ms), how the login session gets a `ZDOTDIR`, and the spec's claim that the kept variables are the login session's.
+   Fixed, and the spec's table of terminal variables now matches `PaneEnvironment.build`, which it had drifted from before this change.
