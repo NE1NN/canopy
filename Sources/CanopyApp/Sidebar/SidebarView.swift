@@ -10,6 +10,24 @@ struct SidebarView: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
+        // The ports panel sits below the list rather than over it, so rows never scroll under it.
+        VStack(spacing: 0) {
+            repoList
+            // With no repos there are no rows to listen, so the empty state stands alone.
+            if !model.snapshot.repos.isEmpty {
+                Divider()
+                PortsPanel()
+                    .padding(.horizontal, 8)
+                    .padding(.top, 4)
+                    .padding(.bottom, 8)
+            }
+        }
+        .sheet(item: $newRowRepo) { repo in
+            NewRowSheet(repo: repo)
+        }
+    }
+
+    private var repoList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !model.snapshot.repos.isEmpty {
@@ -57,17 +75,6 @@ struct SidebarView: View {
                     Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                PortsPanel()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-            }
-        }
-        .sheet(item: $newRowRepo) { repo in
-            NewRowSheet(repo: repo)
         }
     }
 }

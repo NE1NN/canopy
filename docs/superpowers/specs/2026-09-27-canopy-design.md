@@ -425,7 +425,8 @@ A row can own any number of ports.
 ### Panel
 
 The ports panel sits at the bottom of the sidebar and can collapse.
-It groups ports under their row's branch name, ordered like the sidebar, with ports sorted by number.
+Its "Ports" label shows how many ports are listening.
+It groups ports under their row's mark and branch name, ordered like the sidebar, with ports sorted by number.
 
 ```
 feat/new-feature                x
@@ -438,9 +439,9 @@ feat/new-feature-2              x
 - Clicking a branch heading selects that row.
 - Clicking a badge opens `http://localhost:<port>`.
 - Hovering a badge shows the process name and PID.
-- A badge's `x` stops the process listening on that port.
+- A badge's `x`, shown on hover, stops the process listening on that port.
   Its tooltip names the process, because stopping it also closes any other ports it holds.
-- A group's `x` stops every process holding a port in that row.
+- A group's `x`, shown while hovering its branch name, stops every process holding a port in that row.
 - Stopping sends SIGTERM, then SIGKILL if the port is still listening after 3 seconds.
 - Badges wrap onto new lines.
 
