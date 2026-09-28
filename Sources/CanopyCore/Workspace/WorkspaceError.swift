@@ -24,6 +24,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case notOnGitHub(String)
     case ghUnavailable(String)
     case ghFailed(String)
+    case portNotFound(Int)
     case git(GitError)
 
     public var code: String {
@@ -53,6 +54,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .notOnGitHub: "not_github"
         case .ghUnavailable: "gh_unavailable"
         case .ghFailed: "gh_failed"
+        case .portNotFound: "port_not_found"
         case .git: "git_failed"
         }
     }
@@ -87,6 +89,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .notOnGitHub(let repo): "\(repo)'s origin is not on GitHub, so its rows have no PRs."
         case .ghUnavailable(let warning): warning
         case .ghFailed(let message): "Pull requests did not load: \(message)"
+        case .portNotFound(let port):
+            "No row's process listens on port \(port). Run `canopy ports --all`; Canopy only stops its rows' ports."
         case .git(let error): error.description
         }
     }

@@ -222,6 +222,56 @@ struct ControlServerTests {
         #expect(main.error?.code == "no_pr_lookup")
     }
 
+    @Test func portsAnswerOverTheSocket() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let feature = dir.sub("home/worktrees/demo/feat-web")
+        try await Fixture.worktree(repo: repo, branch: "feat/web", at: feature)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        // Started in the main row's terminal but working in /, so only the terminal ties it to the row.
+        let listener =
+            #"cd / && perl -MIO::Socket::INET -e 'my $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 0) or die; sleep 120'"#
+        let pane = try await call(
+            client, TermMethod.new, TermNewParams(target: TargetHint(repo: "demo", row: "main"), run: listener),
+            as: TermNewResult.self)
+        // Started outside Canopy, in the feature row's folder.
+        let outside = try await ListeningChild.start(in: feature)
+        defer { outside.process.terminate() }
+
+        var all: [PortInfo] = []
+        #expect(
+            await eventually {
+                all = (try? await call(client, PortMethod.list, PortsListParams(all: true), as: [PortInfo].self)) ?? []
+                return all.count == 2
+            })
+        #expect(all.map(\.row) == ["main", "feat/web"])
+        #expect(all.first?.process == "perl")
+        #expect(all.last?.port == Int(outside.port.port))
+        let featureOnly = try await call(
+            client, PortMethod.list, PortsListParams(target: TargetHint(repo: "demo", row: "feat/web")),
+            as: [PortInfo].self)
+        #expect(featureOnly.map(\.pid) == [outside.port.pid])
+
+        let stopped = try await call(
+            client, PortMethod.stop, PortsStopParams(port: Int(outside.port.port)), as: PortsStopResult.self)
+
+        #expect(stopped.stopped.map(\.pid) == [outside.port.pid])
+        #expect(stopped.killed.isEmpty)
+        #expect(await eventually { !outside.process.isRunning })
+        // This test process listens too, but its folder is no row's, so the port is not Canopy's to stop.
+        let stranger = try Listener()
+        let strangerPort = Int(stranger.port)
+        let refused = try await offPool {
+            try client.send(
+                ControlRequest(method: PortMethod.stop, params: try .from(PortsStopParams(port: strangerPort))))
+        }
+        #expect(refused.error?.code == "port_not_found")
+        _ = stranger
+        _ = try await call(client, TermMethod.close, TermCloseParams(pane: pane.pane, force: true), as: JSONValue.self)
+    }
+
     @Test func errorsCarryCodes() async throws {
         let dir = try TempDir()
         let (_, server, client, _) = try await startServer(dir)

@@ -45,6 +45,14 @@ struct AgentGuide: ParsableCommand {
 
         Terminal IDs such as p12 stay unique across relaunches. `term send`, `read`, and `close` never start Canopy.
 
+        ## Ports
+
+            canopy ports [--all]                          what the row's processes listen on, or every row's
+            canopy ports stop <port>                      SIGTERM, then SIGKILL after 3 seconds if still listening
+
+        A port belongs to the row whose terminal started its process, otherwise to the row whose folder the process
+        works in. `ports stop` only stops ports that belong to a row.
+
         ## Pull requests
 
             canopy pr [<branch>] [--refresh]              the row's PR: number, state, title, and URL

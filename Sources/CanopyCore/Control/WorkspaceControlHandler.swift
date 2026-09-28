@@ -112,6 +112,22 @@ public struct WorkspaceControlHandler: Sendable {
                     repo: snapshot.repo(path: row.repoPath)?.name ?? "", branch: row.displayName, path: row.path,
                     pr: pr))
 
+        case PortMethod.list:
+            let params = try request.decodeParams(PortsListParams.self)
+            // Every row's ports with --all, or when no row resolves.
+            var row: Row?
+            if !params.all {
+                do {
+                    row = try TargetResolver.row(for: params.target, in: await workspace.snapshot)
+                } catch WorkspaceError.missingTarget {
+                    row = nil
+                }
+            }
+            return try .from(await rows.portInfo(rowPath: row?.path))
+
+        case PortMethod.stop:
+            return try .from(try await rows.stopPort(request.decodeParams(PortsStopParams.self).port))
+
         case TermMethod.list:
             let params = try request.decodeParams(TermListParams.self)
             let snapshot = await workspace.snapshot
