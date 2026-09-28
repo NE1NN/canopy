@@ -6,7 +6,7 @@ struct RowCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "row",
         abstract: "Create, remove, and list rows (worktrees).",
-        subcommands: [List.self, New.self, Remove.self, Select.self, Adopt.self]
+        subcommands: [List.self, New.self, Remove.self, Select.self, Adopt.self, Move.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -27,10 +27,10 @@ struct RowCommand: AsyncParsableCommand {
             try client.print(result) {
                 let rows = try result.decode([Row].self)
                 return Table.render(
-                    ["BRANCH", "CLASS", "PATH"],
+                    ["BRANCH", "GROUP", "CLASS", "PATH"],
                     rows.map { row in
                         let rowClass = row.externalTag.map { "\(row.rowClass.rawValue):\($0.rawValue)" }
-                        return [row.displayName, rowClass ?? row.rowClass.rawValue, row.path]
+                        return [row.displayName, row.group ?? "-", rowClass ?? row.rowClass.rawValue, row.path]
                     }
                 )
             }
@@ -61,6 +61,8 @@ struct RowCommand: AsyncParsableCommand {
         var noSetup = false
         @Flag(help: "Switch the Canopy window to the new row.")
         var select = false
+        @Option(help: "Put the row at the end of this group of the repo, which must exist.")
+        var group: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
@@ -69,7 +71,7 @@ struct RowCommand: AsyncParsableCommand {
                 ControlMethod.rowNew,
                 RowNewParams(
                     target: Client.hint(repo: repo), branch: branch, base: base, select: select, setup: !noSetup,
-                    run: command)
+                    run: command, group: group)
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
@@ -145,6 +147,63 @@ struct RowCommand: AsyncParsableCommand {
             let result = client.call(
                 ControlMethod.rowSelect, RowRefParams(target: Client.hint(repo: repo, row: row)))
             try client.print(result) { "Selected \(try result.decode(Row.self).displayName)." }
+        }
+    }
+
+    struct Move: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Move a row into a group, out of one, or next to another row of its repo.",
+            discussion: """
+                Pass exactly one of --group, --no-group, --before, and --after. A move that would leave the row \
+                where it is changes nothing, so `--group` is safe to repeat: it never reorders a row already in \
+                that group.
+                """
+        )
+
+        @Argument(help: "Branch or path. Defaults to the row you are in.")
+        var row: String?
+        @Option(help: "Repo name or path, when the branch exists in several repos.")
+        var repo: String?
+        @Option(help: "Put the row at the end of this group, which must exist.")
+        var group: String?
+        @Flag(name: .customLong("no-group"), help: "Put the row at the end of the ungrouped rows.")
+        var noGroup = false
+        @Option(help: "Put the row just before this row of the same repo (branch or path).")
+        var before: String?
+        @Option(help: "Put the row just after this row of the same repo (branch or path).")
+        var after: String?
+        @OptionGroup var output: OutputOptions
+
+        func validate() throws {
+            let destinations = [group != nil, noGroup, before != nil, after != nil].filter { $0 }.count
+            guard destinations == 1 else {
+                throw ValidationError("Pass exactly one of --group, --no-group, --before, and --after.")
+            }
+        }
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            let result = client.call(
+                ControlMethod.rowMove,
+                RowMoveParams(
+                    target: Client.hint(repo: repo, row: row), group: group, noGroup: noGroup,
+                    before: before.map(Client.absolutePathIfRelative), after: after.map(Client.absolutePathIfRelative))
+            )
+            let moved = try result.decode(RowMoveResult.self)
+            try client.print(try .from(moved.row)) { summary(of: moved) }
+        }
+
+        private func summary(of moved: RowMoveResult) -> String {
+            let name = moved.row.displayName
+            if let before, moved.moved { return "Moved \(name) before \(before)." }
+            if let after, moved.moved { return "Moved \(name) after \(after)." }
+            switch (moved.moved, moved.row.group, moved.from) {
+            case (true, let to?, _): return "Moved \(name) to \(to)."
+            case (true, nil, let from?): return "Moved \(name) out of \(from)."
+            case (false, let group?, _) where self.group != nil: return "\(name) is already in \(group)."
+            case (false, nil, _) where noGroup: return "\(name) is not in a group."
+            default: return "\(name) is already there."
+            }
         }
     }
 

@@ -125,15 +125,13 @@ final class AppModel {
         selectedRowPath = rows[number - 1].path
     }
 
-    /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last.
+    /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last. From a row hidden in a
+    /// collapsed group, they go on from the group's place.
     func selectRow(offset: Int) {
-        let rows = snapshot.visibleRows
-        guard !rows.isEmpty else { return }
-        let index =
-            rows.firstIndex { $0.path == selectedRowPath }.map { $0 + offset } ?? (offset > 0 ? 0 : rows.count - 1)
+        guard let row = snapshot.steppingRow(from: selectedRowPath, offset: offset) else { return }
         isSteppingRows = true
         defer { isSteppingRows = false }
-        selectedRowPath = rows[min(max(index, 0), rows.count - 1)].path
+        selectedRowPath = row.path
     }
 
     /// Once the sidebar lets go of the keyboard, rows selected later hand it to their terminal again.
@@ -150,17 +148,43 @@ final class AppModel {
         Task { await workspace.refreshAll() }
     }
 
-    /// Selects a row once the snapshot has it, so a row created a moment ago gets its terminal.
+    /// Selects a row once the snapshot has it, so a row created a moment ago gets its terminal. The control API has
+    /// already unfolded a group hiding it.
     func select(_ path: String) async {
         apply(await workspace.snapshot)
         selectedRowPath = path
+        scrollRequest = ScrollRequest(path: path)
     }
 
+    /// Selects a row from outside the list, as the ports panel does, unfolding a group that hides it.
+    func reveal(_ path: String) {
+        selectedRowPath = path
+        Task {
+            do {
+                try await workspace.revealRow(path: path)
+            } catch {
+                show(error)
+            }
+            await select(path)
+        }
+    }
+
+    struct ScrollRequest: Equatable {
+        let path: String
+        let id = UUID()
+    }
+
+    /// A row the sidebar should scroll to even though the selection did not change.
+    private(set) var scrollRequest: ScrollRequest?
+
     /// Creates a row, starts its setup, and selects it. Returns an error message for the sheet to show, or nil.
-    func createRow(in repo: RepoSnapshot, branch: String, base: String?) async -> String? {
+    func createRow(in repo: RepoSnapshot, branch: String, base: String?, group: String? = nil) async -> String? {
         do {
-            let created = try await workspace.createRow(repoPath: repo.path, branch: branch, base: base)
+            let created = try await workspace.createRow(
+                repoPath: repo.path, branch: branch, base: base, group: group)
             let preparing = rows.prepare(created.row, repoName: repo.name, setup: true, run: nil)
+            // A row created into a collapsed group unfolds it, since the new row is selected.
+            try? await workspace.revealRow(path: created.row.path)
             await select(created.row.path)
             if let warning = created.warnings.first {
                 show(warning)
@@ -200,6 +224,54 @@ final class AppModel {
             return .teardownFailed(code)
         } catch {
             return .failed((error as? WorkspaceError)?.message ?? "\(error)")
+        }
+    }
+
+    // MARK: Groups
+
+    /// Returns an error message for the name popover to show, or nil.
+    func createGroup(in repo: RepoSnapshot, name: String) async -> String? {
+        await message { try await $0.createGroup(repoPath: repo.path, name: name) }
+    }
+
+    /// The row menu's New Group…: makes the group, then moves the row into it.
+    func createGroup(named name: String, moving row: Row) async -> String? {
+        await message { workspace in
+            let group = try await workspace.createGroup(repoPath: row.repoPath, name: name)
+            _ = try await workspace.moveRow(path: row.path, to: .group(group.name))
+        }
+    }
+
+    func renameGroup(_ group: GroupSnapshot, in repo: RepoSnapshot, to name: String) async -> String? {
+        await message { try await $0.renameGroup(repoPath: repo.path, name: group.name, to: name) }
+    }
+
+    func removeGroup(_ group: GroupSnapshot, in repo: RepoSnapshot) {
+        perform { try await $0.removeGroup(repoPath: repo.path, name: group.name) }
+    }
+
+    func setCollapsed(_ group: GroupSnapshot, _ collapsed: Bool, in repo: RepoSnapshot) {
+        perform { try await $0.setGroupCollapsed(repoPath: repo.path, name: group.name, collapsed: collapsed) }
+    }
+
+    /// The row being dragged in the sidebar, set when its drag starts, so drops only react to Canopy's own rows.
+    var draggedRow: Row?
+    /// Whether that drag is over the repo list, where the row dims in place.
+    var isDraggingRowOverList = false
+    /// Where the dragged row would land, which the list draws.
+    var rowDropTarget: RowDropTarget?
+
+    /// Move to Group and drops. A failure shows in a toast.
+    func move(_ row: Row, to placement: RowPlacement) {
+        perform { _ = try await $0.moveRow(path: row.path, to: placement) }
+    }
+
+    private func message(_ action: @escaping @Sendable (Workspace) async throws -> Void) async -> String? {
+        do {
+            try await action(workspace)
+            return nil
+        } catch {
+            return (error as? WorkspaceError)?.message ?? "\(error)"
         }
     }
 

@@ -26,6 +26,9 @@ public actor Workspace {
     /// Rows Canopy is creating, removing, or pruning, with who asked. git can list a row halfway through a change, so
     /// refreshes leave these out of the comparison, and the operation logs how each one ended up.
     var changingRows: [String: ActivitySource] = [:]
+    /// Rows being created into a group, by path, so a refresh that lists one before its creation finishes puts it
+    /// straight into the group. Renaming the group renames it here too.
+    var rowsJoiningGroups: [String: JoiningGroup] = [:]
 
     let github: GitHubCLI
     let prTiming: PRTiming
@@ -217,7 +220,7 @@ public actor Workspace {
         }
         let row = snapshot.row(path: path)
         state.repos[index].adopted.removeAll { $0 == path }
-        state.repos[index].rowOrder.removeAll { $0 == path }
+        state.repos[index].forget(path)
         if state.selectedRowPath == path {
             state.selectedRowPath = nil
         }
@@ -307,7 +310,7 @@ public actor Workspace {
     private func refreshNow(repoPath: String) async {
         guard let entry = state.repos.first(where: { $0.path == repoPath }) else { return }
         guard FileManager.default.fileExists(atPath: entry.path) else {
-            repoSnapshots[entry.path] = RepoSnapshot(path: entry.path, name: "", isMissing: true)
+            repoSnapshots[entry.path] = RepoSnapshot(path: entry.path, name: "", isMissing: true).arranged(by: entry)
             publish()
             return
         }
@@ -329,7 +332,8 @@ public actor Workspace {
         let worktrees = WorktreeListParser.parse(output)
         // git follows a folder that moves after it started in it, and reports where the folder went.
         guard worktrees.first.map({ Paths.canonical($0.path) }) == current.path else {
-            repoSnapshots[current.path] = RepoSnapshot(path: current.path, name: "", isMissing: true)
+            repoSnapshots[current.path] = RepoSnapshot(path: current.path, name: "", isMissing: true).arranged(
+                by: current)
             publish()
             return
         }
@@ -341,18 +345,18 @@ public actor Workspace {
         )
         recordRowChanges(repoPath: current.path, rows: rows)
         let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
-        let order = RowOrdering.reconcile(order: current.rowOrder, present: managed.map(\.path))
-        if order != current.rowOrder {
-            state.repos[index].rowOrder = order
+        var reconciled = current
+        let joining = rowsJoiningGroups.filter { $0.value.repoPath == current.path }.mapValues(\.group)
+        if reconciled.reconcile(present: managed.map(\.path), joining: joining) {
+            state.repos[index] = reconciled
             try? save()
         }
-        let managedByPath = Dictionary(managed.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         repoSnapshots[current.path] = RepoSnapshot(
             path: current.path,
             name: "",
-            rows: rows.filter { $0.rowClass == .main } + order.compactMap { managedByPath[$0] },
+            rows: rows.filter { $0.rowClass != .external },
             external: rows.filter { $0.rowClass == .external }
-        )
+        ).arranged(by: reconciled)
         publish()
         if prBranchesRequested[current.path] != pullRequestBranches(repoPath: current.path) {
             _ = queuePullRequestRefresh(repoPath: current.path)

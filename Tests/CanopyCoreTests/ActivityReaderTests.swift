@@ -153,4 +153,17 @@ struct ActivityReaderTests {
                 ]) == #"row.new {"branch":"bad name"} failed: invalid_branch"#)
         #expect(ActivityEvent(date: date, type: "x", source: .ui).localTime == "2026-09-28 14:02:00")
     }
+
+    @Test func groupEventsReadWell() {
+        let summary = { (type: String, data: [String: JSONValue]) in
+            ActivityEvent(date: Self.date(28, 14, 2), type: type, source: .cli, data: data).summary
+        }
+
+        #expect(summary("group.created", ["name": "Review"]) == "Review")
+        #expect(summary("group.renamed", ["from": "Review", "to": "Code review"]) == "Review -> Code review")
+        #expect(summary("group.removed", ["name": "Review", "rows": 2]) == "Review, 2 rows")
+        #expect(summary("group.removed", ["name": "Later", "rows": 1]) == "Later, 1 row")
+        #expect(summary("row.moved", ["from": .null, "to": "Review"]) == "none -> Review")
+        #expect(summary("row.moved", ["from": "Review", "to": .null]) == "Review -> none")
+    }
 }

@@ -5,6 +5,12 @@ public struct CreatedRow: Sendable, Equatable {
     public var warnings: [String]
 }
 
+/// The group a row being created goes into.
+struct JoiningGroup: Sendable, Equatable {
+    var repoPath: String
+    var group: String
+}
+
 struct FetchAttempt: Sendable {
     var finishedAt: ContinuousClock.Instant
     var warning: String?
@@ -14,11 +20,30 @@ extension Workspace {
     /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/.
     /// An existing local branch is checked out, a branch only on origin is tracked,
     /// and anything else is created from `base` (default: origin's default branch).
-    public func createRow(repoPath: String, branch: String, base: String? = nil) async throws -> CreatedRow {
+    /// With `group`, the row goes straight to the end of that group, which must exist.
+    public func createRow(
+        repoPath: String, branch: String, base: String? = nil, group: String? = nil
+    ) async throws -> CreatedRow {
         let requestedAt = ContinuousClock.now
-        return try await serialized(repoPath: repoPath) {
-            try await self.createRowNow(repoPath: repoPath, branch: branch, base: base, requestedAt: requestedAt)
+        // Checked before waiting for other git work in the repo, and again once it is this row's turn.
+        if let group {
+            _ = try joiningGroup(group, repoPath: repoPath)
         }
+        var created = try await serialized(repoPath: repoPath) {
+            try await self.createRowNow(
+                repoPath: repoPath, branch: branch, base: base, group: group, requestedAt: requestedAt)
+        }
+        // After createRowNow, which logged the row's creation, so its move into the group is logged second.
+        if let joining = rowsJoiningGroups.removeValue(forKey: created.row.path) {
+            created.row = snapshot.row(path: created.row.path) ?? created.row
+            if let joined = created.row.group {
+                record(ActivityType.rowMoved, created.row, data: ["from": .null, "to": .string(joined)])
+            } else if !groupExists(joining.group, repoPath: repoPath) {
+                created.warnings.append(
+                    "Group \(joining.group) went away while the row was being created, so the row is ungrouped.")
+            }
+        }
+        return created
     }
 
     /// Removes a Canopy row's worktree, or un-adopts an adopted row without touching its files.
@@ -35,11 +60,13 @@ extension Workspace {
         repoPath: String,
         branch: String,
         base: String?,
+        group: String?,
         requestedAt: ContinuousClock.Instant
     ) async throws -> CreatedRow {
         let index = try entryIndex(repoPath: repoPath)
         let dirName = state.repos[index].dirName
         var warnings: [String] = []
+        let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
 
         guard FileManager.default.fileExists(atPath: repoPath) else {
             throw WorkspaceError.pathNotFound(repoPath)
@@ -91,6 +118,10 @@ extension Workspace {
         }
 
         let path = Paths.canonical(folder.path)
+        rowsJoiningGroups[path] = joining.map { JoiningGroup(repoPath: repoPath, group: $0) }
+        // `createRow` takes the path back out once it has logged the move, unless creating the row fails.
+        var created = false
+        defer { if !created { rowsJoiningGroups[path] = nil } }
         changingRows[path] = .current
         defer { finishChanging([path], repoPath: repoPath) }
         do {
@@ -105,12 +136,13 @@ extension Workspace {
             warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
         }
 
-        if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].rowOrder.contains(path) {
-            state.repos[current].rowOrder.append(path)
+        if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].holds(path) {
+            state.repos[current].place(path, joining: rowsJoiningGroups[path]?.group)
             try save()
         }
         await refresh(repoPath: repoPath)
         guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
+        created = true
         return CreatedRow(row: row, warnings: warnings)
     }
 
@@ -141,7 +173,7 @@ extension Workspace {
                 throw WorkspaceError.git(error)
             }
             if let index = try? entryIndex(repoPath: row.repoPath) {
-                state.repos[index].rowOrder.removeAll { $0 == path }
+                state.repos[index].forget(path)
             }
             if state.selectedRowPath == path {
                 state.selectedRowPath = nil
@@ -185,6 +217,18 @@ extension Workspace {
         }
         lastFetch[repoPath] = FetchAttempt(finishedAt: .now, warning: warning)
         return warning
+    }
+
+    /// Whether the repo still has a group of that name. A row being created into it may have been moved out since.
+    private func groupExists(_ name: String, repoPath: String) -> Bool {
+        state.repos.first { $0.path == repoPath }?.groupIndex(named: name) != nil
+    }
+
+    /// The stored name of the group a new row is to join, which must exist.
+    private func joiningGroup(_ name: String, repoPath: String) throws -> String {
+        let index = try entryIndex(repoPath: repoPath)
+        let entry = state.repos[index]
+        return entry.groups[try entry.requireGroup(name, repo: repoName(repoPath))].name
     }
 
     func entryIndex(repoPath: String) throws -> Int {

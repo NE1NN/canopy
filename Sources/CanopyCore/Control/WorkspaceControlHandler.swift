@@ -107,7 +107,8 @@ public struct WorkspaceControlHandler: Sendable {
         case ControlMethod.rowNew:
             let params = try request.decodeParams(RowNewParams.self)
             let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
-            let created = try await workspace.createRow(repoPath: repo.path, branch: params.branch, base: params.base)
+            let created = try await workspace.createRow(
+                repoPath: repo.path, branch: params.branch, base: params.base, group: params.group)
             let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
             if params.select {
                 await select(created.row.path)
@@ -135,6 +136,51 @@ public struct WorkspaceControlHandler: Sendable {
         case ControlMethod.rowAdopt:
             let params = try request.decodeParams(RowAdoptParams.self)
             return try .from(try await workspace.adopt(path: params.path))
+
+        case ControlMethod.rowMove:
+            let params = try request.decodeParams(RowMoveParams.self)
+            guard params.destinationCount == 1 else {
+                throw ControlError(
+                    code: "bad_params", message: "row.move takes exactly one of group, noGroup, before, and after.")
+            }
+            let snapshot = await workspace.snapshot
+            let row = try TargetResolver.row(for: params.target, in: snapshot)
+            let placement: RowPlacement =
+                if let group = params.group {
+                    .group(group)
+                } else if let before = params.before {
+                    .before(try anchor(before, besides: row, in: snapshot))
+                } else if let after = params.after {
+                    .after(try anchor(after, besides: row, in: snapshot))
+                } else {
+                    .ungrouped
+                }
+            let moved = try await workspace.moveRow(path: row.path, to: placement)
+            return try .from(RowMoveResult(row: moved.row, moved: moved.moved, from: moved.from))
+
+        case GroupMethod.list:
+            let params = try request.decodeParams(GroupListParams.self)
+            let snapshot = await workspace.snapshot
+            let repos =
+                try params.repo.map { [try TargetResolver.repo(for: TargetHint(repo: $0), in: snapshot)] }
+                ?? snapshot.repos
+            return try .from(repos.flatMap { repo in repo.groups.map { GroupInfo(repo: repo, group: $0) } })
+
+        case GroupMethod.new:
+            let params = try request.decodeParams(GroupParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(try await workspace.createGroup(repoPath: repo.path, name: params.name))
+
+        case GroupMethod.rename:
+            let params = try request.decodeParams(GroupRenameParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(
+                try await workspace.renameGroup(repoPath: repo.path, name: params.name, to: params.newName))
+
+        case GroupMethod.remove:
+            let params = try request.decodeParams(GroupParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(try await workspace.removeGroup(repoPath: repo.path, name: params.name))
 
         case ControlMethod.prShow:
             let params = try request.decodeParams(PRShowParams.self)
@@ -207,7 +253,25 @@ public struct WorkspaceControlHandler: Sendable {
         }
     }
 
+    /// The row `--before` or `--after` names, looked up among the moved row's repo, so a branch that also exists
+    /// in another repo is not ambiguous. It must be another Canopy or adopted row of that repo.
+    private func anchor(_ name: String, besides row: Row, in snapshot: WorkspaceSnapshot) throws -> String {
+        let found: Row
+        do {
+            found = try TargetResolver.row(for: TargetHint(repo: row.repoPath, row: name), in: snapshot)
+        } catch WorkspaceError.rowNotFound {
+            let elsewhere = snapshot.repos.contains { $0.allRows.contains { $0.branch == name } }
+            throw elsewhere ? WorkspaceError.invalidAnchor(name) : WorkspaceError.rowNotFound(name)
+        }
+        guard found.repoPath == row.repoPath, found.path != row.path,
+            found.rowClass == .canopy || found.rowClass == .adopted
+        else { throw WorkspaceError.invalidAnchor(name) }
+        return found.path
+    }
+
+    /// A row hidden in a collapsed group unfolds first, so the sidebar shows what is selected.
     private func select(_ path: String) async {
+        try? await workspace.revealRow(path: path)
         try? await workspace.setSelectedRow(path: path)
         await ui.selectRow(path: path)
     }

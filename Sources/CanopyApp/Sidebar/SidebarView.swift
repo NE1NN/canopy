@@ -4,9 +4,11 @@ import SwiftUI
 /// Repos and their rows, drawn by Canopy rather than a `List` so hover, selection, and density follow `Style`.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
-    @State private var newRowRepo: RepoSnapshot?
+    @State private var newRow: NewRowRequest?
     /// Repos whose other worktrees are shown.
     @State private var expanded: Set<String> = []
+    /// Where each line a dragged row can land sits in the list.
+    @State private var dropSlots: [DropSlot] = []
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -22,8 +24,8 @@ struct SidebarView: View {
                     .padding(.bottom, 8)
             }
         }
-        .sheet(item: $newRowRepo) { repo in
-            NewRowSheet(repo: repo)
+        .sheet(item: $newRow) { request in
+            NewRowSheet(repo: request.repo, group: request.group)
         }
     }
 
@@ -33,6 +35,11 @@ struct SidebarView: View {
                 // A row picked with ⌘1 to ⌘9 or `canopy row select` scrolls into view.
                 .onChange(of: model.selectedRowPath) {
                     guard let path = model.selectedRowPath else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(path) }
+                }
+                // A row picked again from the ports panel or the CLI, perhaps just unfolded, scrolls into view too.
+                .onChange(of: model.scrollRequest) {
+                    guard let path = model.scrollRequest?.path else { return }
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(path) }
                 }
         }
@@ -56,10 +63,18 @@ struct SidebarView: View {
                             get: { expanded.contains(repo.path) },
                             set: { if $0 { expanded.insert(repo.path) } else { expanded.remove(repo.path) } }),
                         isFocused: isFocused,
-                        onNewRow: { newRowRepo = repo }
+                        onNewRow: { newRow = NewRowRequest(repo: repo, group: $0) }
                     )
                 }
             }
+            .coordinateSpace(.rowList)
+            .onPreferenceChange(DropSlotsKey.self) { dropSlots = $0 }
+            .overlay(alignment: .topLeading) {
+                if let target = model.rowDropTarget {
+                    RowDropIndicator(target: target, slots: dropSlots)
+                }
+            }
+            .onDrop(of: [.canopyRow], delegate: RowDropDelegate(model: model, slots: dropSlots))
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
             // Fills the column even with no repos, so the empty state gets the whole width.
@@ -94,29 +109,47 @@ struct SidebarView: View {
     }
 }
 
-/// A repo's header, its PR warning, its rows, and its other worktrees.
+/// What the New Row sheet opens on: a repo, and the group a group's `+` picked.
+struct NewRowRequest: Identifiable {
+    let repo: RepoSnapshot
+    let group: String?
+
+    var id: String { repo.path }
+}
+
+/// A repo's header, its PR warning, its ungrouped rows, its groups, and its other worktrees.
 struct RepoSection: View {
     @Environment(AppModel.self) private var model
     let repo: RepoSnapshot
     @Binding var isExpanded: Bool
     let isFocused: Bool
-    let onNewRow: () -> Void
+    /// Opens the New Row sheet, on a group or on none.
+    let onNewRow: (String?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            RepoHeaderView(repo: repo, onNewRow: onNewRow)
+            RepoHeaderView(repo: repo, onNewRow: { onNewRow(nil) })
             if let warning = repo.pullRequestWarning {
                 RepoWarningView(text: warning)
             }
-            ForEach(repo.rows) { row in
-                RowLineView(
-                    row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
-                    shortcut: model.shortcut(for: row), removable: row.rowClass != .main
-                )
-                .id(row.path)
-                .contextMenu {
-                    if row.isMissing {
-                        Button("Prune Missing Worktrees") { model.prune(repo) }
+            ForEach(repo.rows.filter { $0.group == nil }) { row in
+                line(for: row)
+            }
+            // A missing repo shows no rows, so it shows no groups either.
+            if !repo.isMissing {
+                ForEach(repo.groups) { group in
+                    let rows = repo.rows(inGroup: group.name)
+                    GroupHeaderView(
+                        repo: repo, group: group, count: rows.count, isFocused: isFocused,
+                        isDropTarget: model.draggedRow?.repoPath == repo.path
+                            && model.rowDropTarget?.indicator == .header(group.name),
+                        onNewRow: { onNewRow(group.name) }
+                    )
+                    .dropSlot(repo: repo.path, .header(group.name))
+                    if !group.collapsed {
+                        ForEach(rows) { row in
+                            line(for: row, indent: Style.groupIndent)
+                        }
                     }
                 }
             }
@@ -134,6 +167,17 @@ struct RepoSection: View {
             }
         }
         .padding(.top, 4)
+        // Folding a group arrives as a new snapshot, so the rows it shows or hides animate from here.
+        .animation(.easeOut(duration: 0.15), value: repo.groups)
+    }
+
+    private func line(for row: Row, indent: Double = 0) -> some View {
+        RowLineView(
+            row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
+            shortcut: model.shortcut(for: row), removable: row.rowClass != .main, indent: indent
+        )
+        .dropSlot(repo: repo.path, row.rowClass == .main ? .main(row.path) : .row(row.path, group: row.group))
+        .id(row.path)
     }
 }
 
@@ -142,6 +186,7 @@ struct RepoHeaderView: View {
     let repo: RepoSnapshot
     let onNewRow: () -> Void
     @State private var isHovering = false
+    @State private var isNamingGroup = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -165,9 +210,9 @@ struct RepoHeaderView: View {
                 Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
                     .controlSize(.small)
                     .help("Find where \(repo.name) moved")
-                RepoMenu(repo: repo, onNewRow: onNewRow)
-            } else if isHovering {
-                RepoMenu(repo: repo, onNewRow: onNewRow)
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
+            } else if isHovering || isNamingGroup {
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
                 IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
             } else {
                 Text(verbatim: "\(repo.rows.count)")
@@ -184,7 +229,13 @@ struct RepoHeaderView: View {
         .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow) }
+        .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
+        .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
+            GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
+                name in
+                await model.createGroup(in: repo, name: name)
+            }
+        }
     }
 }
 
@@ -192,10 +243,11 @@ struct RepoHeaderView: View {
 struct RepoMenu: View {
     let repo: RepoSnapshot
     let onNewRow: () -> Void
+    let onNewGroup: () -> Void
 
     var body: some View {
         IconMenu(title: "More for \(repo.name)", systemImage: "ellipsis") {
-            RepoMenuItems(repo: repo, onNewRow: onNewRow)
+            RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: onNewGroup)
         }
     }
 }
@@ -204,12 +256,14 @@ struct RepoMenuItems: View {
     @Environment(AppModel.self) private var model
     let repo: RepoSnapshot
     let onNewRow: () -> Void
+    let onNewGroup: () -> Void
 
     var body: some View {
         if repo.isMissing {
             Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
         } else {
             Button("New Row…", action: onNewRow)
+            Button("New Group…", action: onNewGroup)
         }
         Divider()
         Button("Remove Repo from Canopy") { model.removeRepo(repo) }
@@ -223,10 +277,16 @@ struct RowLineView: View {
     let isFocused: Bool
     let shortcut: Int?
     let removable: Bool
+    /// How far a row sits in from its repo's other rows, as inside a group.
+    var indent = 0.0
     @State private var isHovering = false
     @State private var isConfirmingRemove = false
+    @State private var isNamingGroup = false
 
     private var isRunning: Bool { model.terminals.isRunningProgram(inRow: row.path) }
+
+    /// Hover stops updating during a drag, so the row being dragged drops its hover look itself.
+    private var isDragged: Bool { model.isDraggingRowOverList && model.draggedRow?.path == row.path }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -250,7 +310,7 @@ struct RowLineView: View {
             if let pr = row.pullRequest {
                 PullRequestNumber(pr: pr)
             }
-            if isHovering || isConfirmingRemove {
+            if (isHovering && !isDragged) || isConfirmingRemove {
                 if let shortcut {
                     Text(verbatim: "⌘\(shortcut)")
                         .font(Style.meta)
@@ -275,12 +335,21 @@ struct RowLineView: View {
                 }
             }
         }
-        .padding(.leading, 7)
+        .padding(.leading, 7 + indent)
         .padding(.trailing, 5)
         .frame(height: Style.rowHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
         .contentShape(Rectangle())
         .onTapGesture { model.selectedRowPath = row.path }
+        .rowDragSource(row, model: model)
+        // The dragged row dims in place while its image follows the pointer over the list.
+        .opacity(isDragged ? 0.4 : 1)
+        .contextMenu { RowMenuItems(row: row, onNewGroup: { isNamingGroup = true }) }
+        .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
+            GroupNamePopover(title: "New Group", actionTitle: "Create and Move", isPresented: $isNamingGroup) { name in
+                await model.createGroup(named: name, moving: row)
+            }
+        }
         .onHover { isHovering = $0 }
         // The PR number slides left as the shortcut and remove button come in.
         .animation(.easeOut(duration: 0.12), value: isHovering)
@@ -293,11 +362,12 @@ struct RowLineView: View {
 
     private var fill: Color {
         if isSelected { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
-        return isHovering ? Style.hoverFill : .clear
+        return isHovering && !isDragged ? Style.hoverFill : .clear
     }
 
     private var accessibilityLabel: String {
         var parts = [row.displayName]
+        if let group = row.group { parts.append("in \(group)") }
         if let tag = row.externalTag { parts.append("from \(tag.label)") }
         if let pr = row.pullRequest { parts.append("pull request \(pr.number), \(pr.state.label)") }
         if isRunning { parts.append("running a program") }

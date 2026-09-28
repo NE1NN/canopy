@@ -137,6 +137,15 @@ extension ActivityEvent {
             return text("class") ?? ""
         case ActivityType.rowBranchChanged:
             return "\(text("from") ?? "detached") -> \(text("to") ?? "detached")"
+        case ActivityType.rowMoved:
+            return "\(text("from") ?? "none") -> \(text("to") ?? "none")"
+        case ActivityType.groupCreated:
+            return text("name") ?? ""
+        case ActivityType.groupRenamed:
+            return "\(text("from") ?? "") -> \(text("to") ?? "")"
+        case ActivityType.groupRemoved:
+            let rows = number("rows") ?? 0
+            return "\(text("name") ?? ""), \(rows) \(rows == 1 ? "row" : "rows")"
         case ActivityType.prOpened:
             return "#\(number("number") ?? 0) \(text("state") ?? ""): \(text("title") ?? "") \(text("url") ?? "")"
         case ActivityType.prStateChanged:

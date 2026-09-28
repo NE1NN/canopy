@@ -32,6 +32,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case folderTaken(String, holding: String?)
     case cloneFailed(String, reason: String)
     case cloneCancelled
+    case invalidGroupName(String)
+    case groupExists(String, repo: String)
+    case groupNotFound(String, repo: String)
+    case cannotMoveMain
+    case invalidAnchor(String)
     case git(GitError)
 
     public var code: String {
@@ -68,6 +73,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .folderTaken: "folder_taken"
         case .cloneFailed: "clone_failed"
         case .cloneCancelled: "clone_cancelled"
+        case .invalidGroupName: "invalid_group_name"
+        case .groupExists: "group_exists"
+        case .groupNotFound: "group_not_found"
+        case .cannotMoveMain: "cannot_move_main"
+        case .invalidAnchor: "invalid_anchor"
         case .git: "git_failed"
         }
     }
@@ -114,6 +124,12 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "\(path) is already there and is not an empty folder. Pass --into to clone somewhere else."
         case .cloneFailed(let source, let reason): "Could not clone \(source): \(reason)"
         case .cloneCancelled: "The clone was stopped before it finished."
+        case .invalidGroupName: "A group name cannot be empty or hold control characters such as a newline."
+        case .groupExists(let name, let repo): "\(repo) already has a group named \(name)."
+        case .groupNotFound(let name, let repo): "\(repo) has no group named \"\(name)\". Run `canopy group list`."
+        case .cannotMoveMain: "The main checkout always comes first and cannot join a group."
+        case .invalidAnchor(let name):
+            "--before and --after take another Canopy or adopted row of the same repo, and \(name) is not one."
         case .git(let error): error.description
         }
     }
