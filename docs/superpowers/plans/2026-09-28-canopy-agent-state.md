@@ -693,15 +693,27 @@ The shell coming back to the foreground is the busy-to-idle edge `refreshActivit
      /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
      /// Shells without a line editor never report ready, so it types anyway after `timeout`.
      public func run(_ command: String, timeout: Duration = .seconds(10)) async {
-@@ -96,6 +119,7 @@ public final class Pane: Identifiable {
-     public func type(_ text: String) {
-         guard case .running = status else { return }
-         process?.write(text)
+@@ -99,16 +122,16 @@ public final class Pane: Identifiable {
+     @ObservationIgnored var returnPatience = Duration.seconds(2)
+ 
+     /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
+-    /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
+-    /// it, and this returns once Return is in. Programs such as Claude Code and Codex take text and a Return that
+-    /// arrive together for a paste, where Return adds a new line instead of submitting.
+     public func type(_ text: String, enter: Bool = false) async {
+         guard case .running = status, let process else { return }
 +        agentChanged(agent.typed(Data(text.utf8), at: Date()))
+         guard enter else {
+             process.write(text)
+             return
+         }
+         await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
++        // Return reaches the key rules as the key of its own that the program gets.
++        agentChanged(agent.typed(Data("\r".utf8), at: Date()))
      }
  
      /// Starts a new shell in the same folder after the last one exited.
-@@ -111,6 +135,7 @@ public final class Pane: Identifiable {
+@@ -124,6 +147,7 @@ public final class Pane: Identifiable {
      public func close() {
          guard !isClosed else { return }
          isClosed = true
@@ -709,7 +721,7 @@ The shell coming back to the foreground is the busy-to-idle edge `refreshActivit
          process?.terminate()
          if case .running = status {
              processExited(Self.closedExitCode)
-@@ -191,6 +216,7 @@ public final class Pane: Identifiable {
+@@ -204,6 +228,7 @@ public final class Pane: Identifiable {
          switch status {
          case .running:
              process?.write(data)
@@ -717,7 +729,7 @@ The shell coming back to the foreground is the busy-to-idle edge `refreshActivit
          case .exited:
              if data == Data("\r".utf8) { restart() }
          }
-@@ -207,6 +233,18 @@ public final class Pane: Identifiable {
+@@ -220,6 +245,18 @@ public final class Pane: Identifiable {
              data: data.merging(["pane": .string(id.description)]) { value, _ in value })
      }
  
@@ -736,7 +748,7 @@ The shell coming back to the foreground is the busy-to-idle edge `refreshActivit
      private func processExited(_ code: Int32) {
          // A closed pane already reported its exit. An exit status that was on its way when it closed changes nothing.
          if isClosed, case .exited = status { return }
-@@ -214,6 +252,7 @@ public final class Pane: Identifiable {
+@@ -227,6 +264,7 @@ public final class Pane: Identifiable {
          status = .exited(code)
          isRunningProgram = false
          record(ActivityType.termExited, ["code": .number(Double(code))])
@@ -3190,7 +3202,7 @@ struct TimeSpanTests {
 `Tests/CanopyCoreTests/PaneEnvironmentTests.swift`:
 
 ```diff
-@@ -45,9 +45,17 @@ struct PaneEnvironmentTests {
+@@ -46,9 +46,17 @@ struct PaneEnvironmentTests {
          #expect(environment["CANOPY_ROW_PATH"] == "/w/feat-x")
          #expect(environment["CANOPY_ROOT_PATH"] == "/r/demo")
          #expect(environment["CANOPY_PANE"] == "p12")
@@ -3246,7 +3258,7 @@ public enum TimeSpan {
 `Sources/CanopyCore/Terminal/PaneEnvironment.swift`:
 
 ```diff
-@@ -25,6 +25,10 @@ public enum PaneEnvironment {
+@@ -26,6 +26,10 @@ public enum PaneEnvironment {
          environment["CANOPY_ROW_PATH"] = context.rowPath
          environment["CANOPY_ROOT_PATH"] = context.repoPath
          environment["CANOPY_PANE"] = pane.description
@@ -3557,9 +3569,9 @@ struct AgentHookCommand: ParsableCommand {
 `Sources/CanopyCLI/AgentGuide.swift`:
 
 ```diff
-@@ -74,6 +74,24 @@ struct AgentGuide: ParsableCommand {
- 
-         Terminal IDs such as p12 stay unique across relaunches. `term send`, `read`, and `close` never start Canopy.
+@@ -79,6 +79,24 @@ struct AgentGuide: ParsableCommand {
+         Send to a program you just started once its prompt shows in `term read`: until it reads keys itself, the
+         terminal hands it typed-ahead lines together with their Return.
  
 +        ## Agent state
 +
@@ -3582,7 +3594,7 @@ struct AgentHookCommand: ParsableCommand {
          ## Ports
  
              canopy ports [--all]                          what the row's processes listen on, or every row's
-@@ -107,6 +125,7 @@ struct AgentGuide: ParsableCommand {
+@@ -112,6 +130,7 @@ struct AgentGuide: ParsableCommand {
          Start a parallel agent on a fix in its own row, then check on it:
  
              pane=$(canopy row new fix/login-redirect --run 'claude "fix the login redirect, ticket FL-123"' --json | jq -r .pane)
@@ -3628,7 +3640,7 @@ The script now clears the pane variables it inherits and points `CLAUDE_CONFIG_D
  mkdir -p "$shots"
  
  app_pid() {
-@@ -235,6 +238,71 @@ if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $por
+@@ -272,6 +275,71 @@ if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $por
  "$cli" term close "$server" >/dev/null
  "$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
  
@@ -3836,7 +3848,7 @@ Rows and tabs no longer show a running dot, so their running helpers go, and the
 -        #expect(tab.isRunningProgram)
 -        #expect(terminals.isRunningProgram(inRow: dir.path))
  
-         pane.type("\u{3}")
+         await pane.type("\u{3}")
          #expect(
 @@ -101,7 +96,6 @@ struct PaneTests {
                  terminals.refreshActivity()
@@ -4718,3 +4730,14 @@ The first CI run failed two of this branch's tests on the 3-CPU runner.
 `postingWaitsAtMostASecondForTheApp` expected a reply within a second, and the two exit tests raced a `sleep 2` that the runner's slow shell could finish before a refresh saw it.
 `test: hold the agent tests on a slow CI runner` ends `cat` with Control-D instead, and bounds only what the slow app does.
 Both pass under `taskpolicy -b` with 14 `yes` hogs, and CI `check` passed after.
+
+**Rebased onto #22.**
+`term send --enter` now goes through `Pane.type(_:enter:) async`, which writes Return on its own after the text.
+The pane reports the text to the key rules first, then Return once it is written, so a prompt that `term send <pane> 1 --enter` answers goes working on Return, and an answer typed at the agent's own input line still waits for the next prompt's hook.
+Test: `returnFromTermSendAnswersAPromptOnceItIsIn`.
+The per-commit checks above ran before this rebase; since then only the final commit was checked.
+
+**Follow-up: a hook that closes before the reply can lose its request.**
+Under load the app's `NWConnection` can fail with ENETDOWN before it reads a request from a client that already closed, and the request is lost.
+`canopy agent-hook` waits up to a second for the reply, which narrows the window but does not close it: when the app takes longer than a second, a report can still be lost.
+The fix belongs in the control server, which should read and handle whatever a client sent before it closed, and is left for its own PR.
