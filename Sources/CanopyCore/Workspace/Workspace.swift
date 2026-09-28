@@ -4,6 +4,7 @@ import Foundation
 /// the workspace only persists which repos are registered, adopted paths, and row order.
 public actor Workspace {
     public nonisolated let home: CanopyHome
+    public nonisolated let activity: ActivityLog
     let git: GitRunner
     let fetchTimeout: Duration
     var lastFetch: [String: FetchAttempt] = [:]
@@ -18,6 +19,11 @@ public actor Workspace {
     var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
+    /// Each repo's rows as of the last worktree list git gave, which the next one is compared with to log changes.
+    var rowBaselines: [String: [Row]] = [:]
+    /// Rows Canopy is creating, removing, or pruning, with who asked. git can list a row halfway through a change, so
+    /// refreshes leave these out of the comparison, and the operation logs how each one ended up.
+    var changingRows: [String: ActivitySource] = [:]
 
     let github: GitHubCLI
     let prTiming: PRTiming
@@ -35,9 +41,10 @@ public actor Workspace {
 
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
-        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard
+        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil
     ) {
         self.home = home
+        self.activity = activity ?? ActivityLog(folder: home.activityFolder)
         self.git = git
         self.fetchTimeout = fetchTimeout
         self.github = github
@@ -122,6 +129,7 @@ public actor Workspace {
         let dirName = RepoNaming.dirName(for: mainPath, taken: Set(state.repos.map(\.dirName)))
         state.repos.append(RepoEntry(path: mainPath, dirName: dirName))
         try save()
+        activity.record(ActivityType.repoAdded, repo: snapshot.repo(path: mainPath)?.name, path: mainPath)
         await watch(repoPath: mainPath)
         await refresh(repoPath: mainPath)
         return snapshot.repo(path: mainPath) ?? RepoSnapshot(path: mainPath, name: "")
@@ -131,13 +139,16 @@ public actor Workspace {
         guard let index = state.repos.firstIndex(where: { $0.path == path }) else {
             throw WorkspaceError.repoNotFound(path)
         }
+        let name = snapshot.repo(path: path)?.name
         state.repos.remove(at: index)
         watchers[path] = nil
         pendingRefreshes.removeValue(forKey: path)?.cancel()
         refreshQueues[path] = nil
         repoSnapshots[path] = nil
+        rowBaselines[path] = nil
         forgetPullRequests(repoPath: path)
         try save()
+        activity.record(ActivityType.repoRemoved, repo: name, path: path)
         publish()
     }
 
@@ -160,6 +171,7 @@ public actor Workspace {
         pendingRefreshes.removeValue(forKey: path)?.cancel()
         refreshQueues[path] = nil
         repoSnapshots[path] = nil
+        rowBaselines[path] = nil
         forgetPullRequests(repoPath: path)
         try save()
         await watch(repoPath: mainPath)
@@ -183,19 +195,25 @@ public actor Workspace {
         state.repos[index].adopted.append(canonical)
         try save()
         await refresh(repoPath: row.repoPath)
-        return snapshot.row(path: canonical) ?? row
+        let adopted = snapshot.row(path: canonical) ?? row
+        record(ActivityType.rowAdopted, adopted, data: ["class": .string(RowClass.adopted.rawValue)])
+        return adopted
     }
 
     public func unadopt(path: String) async throws {
         guard let index = state.repos.firstIndex(where: { $0.adopted.contains(path) }) else {
             throw WorkspaceError.rowNotFound(path)
         }
+        let row = snapshot.row(path: path)
         state.repos[index].adopted.removeAll { $0 == path }
         state.repos[index].rowOrder.removeAll { $0 == path }
         if state.selectedRowPath == path {
             state.selectedRowPath = nil
         }
         try save()
+        if let row {
+            record(ActivityType.rowRemoved, row, data: ["class": .string(RowClass.adopted.rawValue)])
+        }
         await refresh(repoPath: state.repos[index].path)
     }
 
@@ -234,12 +252,23 @@ public actor Workspace {
     }
 
     public func prune(repoPath: String) async throws {
-        try await serialized(repoPath: repoPath) {
-            do {
-                try await self.git.run(["worktree", "prune"], in: repoPath)
-            } catch let error as GitError {
-                throw WorkspaceError.git(error)
+        let missing = snapshot.repo(path: repoPath)?.allRows.filter(\.isMissing).map(\.path) ?? []
+        for path in missing {
+            changingRows[path] = .current
+        }
+        defer { finishChanging(missing, repoPath: repoPath) }
+        do {
+            try await serialized(repoPath: repoPath) {
+                do {
+                    try await self.git.run(["worktree", "prune"], in: repoPath)
+                } catch let error as GitError {
+                    throw WorkspaceError.git(error)
+                }
             }
+        } catch {
+            // git may have pruned some rows before it failed, and they are the caller's doing too.
+            await refresh(repoPath: repoPath)
+            throw error
         }
         await refresh(repoPath: repoPath)
     }
@@ -286,12 +315,20 @@ public actor Workspace {
         // The await above let other calls run, so read the entry again before using it.
         guard let index = state.repos.firstIndex(where: { $0.path == repoPath }) else { return }
         let current = state.repos[index]
+        let worktrees = WorktreeListParser.parse(output)
+        // git follows a folder that moves after it started in it, and reports where the folder went.
+        guard worktrees.first.map({ Paths.canonical($0.path) }) == current.path else {
+            repoSnapshots[current.path] = RepoSnapshot(path: current.path, name: "", isMissing: true)
+            publish()
+            return
+        }
         let rows = classifier.rows(
-            for: WorktreeListParser.parse(output),
+            for: worktrees,
             repoPath: current.path,
             adopted: Set(current.adopted),
             fileExists: { FileManager.default.fileExists(atPath: $0) }
         )
+        recordRowChanges(repoPath: current.path, rows: rows)
         let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
         let order = RowOrdering.reconcile(order: current.rowOrder, present: managed.map(\.path))
         if order != current.rowOrder {
@@ -309,6 +346,78 @@ public actor Workspace {
         if prBranchesRequested[current.path] != pullRequestBranches(repoPath: current.path) {
             _ = queuePullRequestRefresh(repoPath: current.path)
         }
+    }
+
+    // MARK: Activity
+
+    /// Logs rows that appeared, went away, or moved to another branch since git last listed the repo's worktrees.
+    /// Rows Canopy is changing, and rows git is still creating, wait until they are done. The first list after launch,
+    /// adding the repo, or relocating it has nothing to compare with, so it logs nothing.
+    private func recordRowChanges(repoPath: String, rows: [Row]) {
+        let unsettled = Set(changingRows.keys).union(rows.filter(Self.isBeingCreated).map(\.path))
+        let settled = rows.filter { !unsettled.contains($0.path) }
+        guard let before = rowBaselines[repoPath] else {
+            rowBaselines[repoPath] = settled
+            return
+        }
+        rowBaselines[repoPath] = settled + before.filter { unsettled.contains($0.path) }
+        let previous = Dictionary(before.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        for row in settled {
+            if let old = previous[row.path] {
+                recordBranchChange(from: old, to: row, source: .git)
+            } else {
+                record(ActivityType.rowCreated, row, source: .git, data: ["class": .string(row.rowClass.rawValue)])
+            }
+        }
+        let present = Set(rows.map(\.path))
+        for row in before where !unsettled.contains(row.path) && !present.contains(row.path) {
+            record(ActivityType.rowRemoved, row, source: .git, data: ["class": .string(row.rowClass.rawValue)])
+        }
+    }
+
+    /// Logs how rows Canopy changed ended up, as of the last refresh, and compares them from there on.
+    func finishChanging(_ paths: [String], repoPath: String) {
+        for path in paths {
+            guard let source = changingRows.removeValue(forKey: path), var baseline = rowBaselines[repoPath],
+                let repo = repoSnapshots[repoPath], !repo.isMissing
+            else { continue }
+            let old = baseline.first { $0.path == path }
+            let new = repo.allRows.first { $0.path == path && !Self.isBeingCreated($0) }
+            switch (old, new) {
+            case (nil, let row?):
+                record(ActivityType.rowCreated, row, source: source, data: ["class": .string(row.rowClass.rawValue)])
+            case (let row?, nil):
+                record(ActivityType.rowRemoved, row, source: source, data: ["class": .string(row.rowClass.rawValue)])
+            case (let old?, let row?):
+                recordBranchChange(from: old, to: row, source: source)
+            case (nil, nil):
+                break
+            }
+            baseline.removeAll { $0.path == path }
+            baseline += new.map { [$0] } ?? []
+            rowBaselines[repoPath] = baseline
+        }
+    }
+
+    private func recordBranchChange(from old: Row, to row: Row, source: ActivitySource) {
+        guard old.branch != row.branch else { return }
+        record(
+            ActivityType.rowBranchChanged, row, source: source,
+            data: ["from": old.branch.map(JSONValue.string) ?? .null, "to": row.branch.map(JSONValue.string) ?? .null])
+    }
+
+    /// `git worktree add` lists a new worktree with a detached, all-zero HEAD until it has checked the branch out.
+    /// A branch with no commits yet also has an all-zero HEAD, but it is named.
+    static func isBeingCreated(_ row: Row) -> Bool {
+        row.branch == nil && row.head.map { !$0.isEmpty && $0.allSatisfy { $0 == "0" } } ?? false
+    }
+
+    func record(
+        _ type: String, _ row: Row, source: ActivitySource = .current, data: [String: JSONValue] = [:]
+    ) {
+        activity.record(
+            type, repo: snapshot.repo(path: row.repoPath)?.name, row: row.displayName, path: row.path, source: source,
+            data: data)
     }
 
     // MARK: Internals

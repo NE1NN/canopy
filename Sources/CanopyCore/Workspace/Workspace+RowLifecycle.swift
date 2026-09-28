@@ -91,6 +91,8 @@ extension Workspace {
         }
 
         let path = Paths.canonical(folder.path)
+        changingRows[path] = .current
+        defer { finishChanging([path], repoPath: repoPath) }
         do {
             try await git.run(arguments, in: repoPath)
         } catch let error as GitError {
@@ -126,9 +128,13 @@ extension Workspace {
             var arguments = ["worktree", "remove"]
             if force { arguments.append("--force") }
             arguments.append(path)
+            changingRows[path] = .current
+            defer { finishChanging([path], repoPath: row.repoPath) }
             do {
                 try await git.run(arguments, in: row.repoPath)
             } catch let error as GitError {
+                // git may have removed part of the row before it failed.
+                await refresh(repoPath: row.repoPath)
                 if error.stderr.contains("modified or untracked files") {
                     throw WorkspaceError.worktreeDirty(path)
                 }
