@@ -9,6 +9,9 @@ cli="$app/Contents/Resources/bin/canopy"
 shots="$PWD/build/e2e"
 work=$(mktemp -d -t canopy-e2e)
 export CANOPY_HOME="$work/home"
+# Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+export CLAUDE_CONFIG_DIR="$work/claude"
 mkdir -p "$shots"
 
 app_pid() {
@@ -271,6 +274,71 @@ done
 if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $port is still listed"; fi
 "$cli" term close "$server" >/dev/null
 "$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
+
+step "Claude Code's hooks report into a pane, and agents wait on it"
+agent=$("$cli" term new --repo demo --row feat/term --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+hook() {
+    printf '%s' "$1" | CANOPY_PANE="$agent" "$cli" agent-hook > "$work/hook.out" 2>&1 || fail "agent-hook exited non-zero"
+    [[ ! -s "$work/hook.out" ]] || fail "agent-hook printed something"
+}
+agent_state() {
+    "$cli" term list --repo demo --row feat/term --json | /usr/bin/python3 -c \
+        "import json, sys; print(next(t.get('agent', 'none') for t in json.load(sys.stdin) if t['pane'] == '$agent'))"
+}
+hook '{"session_id": "e2e", "hook_event_name": "SessionStart", "source": "startup"}'
+hook '{"session_id": "e2e", "hook_event_name": "UserPromptSubmit", "prompt": "fix it"}'
+[[ "$(agent_state)" == working ]] || fail "UserPromptSubmit did not make the pane working"
+"$cli" term list --repo demo --row feat/term | grep "^$agent " | grep -q " working " || fail "term list has no AGENT column"
+hook '{"session_id": "nested", "hook_event_name": "Stop", "last_assistant_message": "Done."}'
+[[ "$(agent_state)" == working ]] || fail "another session's report moved the pane"
+"$cli" term wait "$agent" --for done --timeout 30s --json > "$work/wait.json" &
+waiter=$!
+sleep 1
+hook '{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "Fixed it, and the tests pass."}'
+wait "$waiter" || fail "term wait failed"
+grep -q '"state" : "done"' "$work/wait.json" || fail "term wait did not report done"
+hook '{"session_id": "e2e", "hook_event_name": "UserPromptSubmit", "prompt": "and the docs"}'
+hook '{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "Docs updated.\n\nShould I push it?"}'
+[[ "$(agent_state)" == waiting ]] || fail "a turn ending on a question did not make the pane waiting"
+"$cli" term state "$agent" none >/dev/null
+[[ "$(agent_state)" == none ]] || fail "term state none did not clear the pane"
+if "$cli" term wait "$agent" --timeout 1s --json > "$work/timeout.json" 2>/dev/null; then fail "expected a timeout"; fi
+grep -q '"wait_timeout"' "$work/timeout.json" || fail "missing wait_timeout"
+CANOPY_PANE="$agent" "$cli" term state done | grep -qx "$agent done" || fail "term state did not default to CANOPY_PANE"
+"$cli" log --type agent --json > "$work/agent-log.json"
+/usr/bin/python3 - "$work/agent-log.json" "$agent" <<'EOF' || fail "agent events are missing from the log"
+import json, sys
+events = [e for e in json.load(open(sys.argv[1])) if e["data"].get("pane") == sys.argv[2]]
+types = [e["type"] for e in events]
+want = ["agent.working", "agent.done", "agent.working", "agent.waiting", "agent.cleared", "agent.done"]
+if types != want:
+    sys.exit(f"got {types}")
+if any(e["source"] != "cli" for e in events):
+    sys.exit("agent events are not the CLI's")
+EOF
+if "$cli" log --type cli.call --json | grep -q '"term.state"'; then fail "term.state was logged as a CLI call"; fi
+printf '{"session_id": "x", "hook_event_name": "Stop"}' | CANOPY_PANE=p1 CANOPY_HOME="$work/nobody" "$cli" agent-hook ||
+    fail "agent-hook failed while its app was not running"
+[[ ! -e "$work/nobody" ]] || fail "agent-hook started an app"
+printf '{"session_id": "x", "hook_event_name": "Stop"}' | env -u CANOPY_PANE "$cli" agent-hook || fail "agent-hook failed outside Canopy"
+"$cli" term close "$agent" >/dev/null
+"$cli" agent-guide | grep -q "canopy term wait" || fail "agent-guide is missing term wait"
+
+step "canopy hooks adds its hooks to Claude Code's settings and takes only its own out"
+settings="$CLAUDE_CONFIG_DIR/settings.json"
+if "$cli" hooks status >/dev/null; then fail "hooks status succeeded before install"; fi
+mkdir -p "$CLAUDE_CONFIG_DIR"
+printf '{\n  "model": "opus"\n}\n' > "$settings"
+cp "$settings" "$work/settings.before"
+"$cli" hooks install --json | grep -q '"state" : "installed"' || fail "hooks install did not install"
+"$cli" hooks status >/dev/null || fail "hooks status failed after install"
+grep -q 'agent-hook' "$settings" || fail "the settings file has no agent-hook"
+"$cli" hooks uninstall >/dev/null
+cmp -s "$settings" "$work/settings.before" || fail "uninstall did not give back the settings file"
+"$cli" hooks install --settings "$work/other-settings.json" >/dev/null
+grep -q 'agent-hook' "$work/other-settings.json" || fail "hooks install --settings wrote elsewhere"
+"$cli" agent-guide | grep -q "canopy hooks install" || fail "agent-guide is missing canopy hooks"
 
 step "canopy pr says when a repo's origin is not on GitHub"
 if "$cli" pr feat/term --repo demo --json > "$work/pr-local.json" 2>/dev/null; then fail "expected failure"; fi

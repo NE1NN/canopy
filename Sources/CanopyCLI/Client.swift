@@ -26,9 +26,12 @@ struct Client {
     }
 
     /// Every failure, whether it happens here or in the app, ends in `fail`, so `--json` always prints an error object.
-    func call(_ method: String, _ params: some Encodable, launchIfNeeded: Bool = true) -> JSONValue {
+    /// `waitingUpTo` replaces the method's usual wait for its reply, in seconds.
+    func call(
+        _ method: String, _ params: some Encodable, launchIfNeeded: Bool = true, waitingUpTo: TimeInterval? = nil
+    ) -> JSONValue {
         do {
-            return try send(method, params, launchIfNeeded: launchIfNeeded)
+            return try send(method, params, launchIfNeeded: launchIfNeeded, waitingUpTo: waitingUpTo)
         } catch let error as ControlError {
             fail(error)
         } catch let error as ControlClientError {
@@ -40,9 +43,12 @@ struct Client {
         }
     }
 
-    private func send(_ method: String, _ params: some Encodable, launchIfNeeded: Bool) throws -> JSONValue {
+    private func send(_ method: String, _ params: some Encodable, launchIfNeeded: Bool, waitingUpTo: TimeInterval?)
+        throws -> JSONValue
+    {
         let request = ControlRequest(method: method, params: try .from(params))
-        let client = ControlClient(socketPath: home.socketPath, timeout: ControlMethod.replyTimeout(for: method))
+        let client = ControlClient(
+            socketPath: home.socketPath, timeout: waitingUpTo ?? ControlMethod.replyTimeout(for: method))
         let response: ControlResponse
         do {
             response = try client.send(request)
@@ -140,9 +146,14 @@ enum AppLocator {
         guard let app = appBundle() else {
             throw CLIError("Canopy is not running and Canopy.app was not found. Set CANOPY_APP to its path.")
         }
+        var environment = ["\(CanopyHome.environmentKey)=\(home.root.path)"]
+        // The app offers to install Claude Code's hooks, in the settings of the Claude Code the caller uses.
+        if let claude = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], !claude.isEmpty {
+            environment.append("CLAUDE_CONFIG_DIR=\(claude)")
+        }
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        open.arguments = ["-g", "-n", "--env", "\(CanopyHome.environmentKey)=\(home.root.path)", app.path]
+        open.arguments = ["-g", "-n"] + environment.flatMap { ["--env", $0] } + [app.path]
         try open.run()
         open.waitUntilExit()
         guard open.terminationStatus == 0 else {
