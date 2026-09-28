@@ -27,15 +27,10 @@ struct TabBarView: View {
                 }
                 .padding(.horizontal, 6)
             }
-            Button(action: model.newTab) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+            HStack(spacing: 2) {
+                TabBarButton(systemImage: "rectangle.split.2x1", help: "Split Pane (⌘D)", action: model.splitPane)
+                TabBarButton(systemImage: "plus", help: "New Tab (⌘T)", action: model.newTab)
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .help("New Tab (⌘T)")
             .padding(.trailing, 6)
         }
         .frame(height: 34)
@@ -43,6 +38,24 @@ struct TabBarView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(.separator).frame(height: 1)
         }
+    }
+}
+
+struct TabBarButton: View {
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help(help)
     }
 }
 

@@ -285,6 +285,7 @@ If any pane's foreground process is something other than its shell, quitting ask
 ### Tabs
 
 Each row has its own tab bar.
+Its right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
 New tabs are named "Terminal", "Terminal 2", and so on, or take the name given with `--tab`.
 Double-clicking a tab renames it.
 Selecting a row that has no tabs opens one tab with one pane.

@@ -342,7 +342,8 @@ final class AppModel {
             height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
     }
 
-    /// ⌘D. Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
+    /// ⌘D and the tab bar's split button.
+    /// Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
     func splitPane() {
         guard let row = selectedRow, !row.isMissing else { return }
         terminals.addPane(for: context(for: row), fits: addRuleFits())
