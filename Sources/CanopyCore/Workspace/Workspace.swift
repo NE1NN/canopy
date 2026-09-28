@@ -41,6 +41,9 @@ public actor Workspace {
     /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
     var prStopped = false
 
+    /// Clones under way, which quitting stops without waiting for the actor.
+    nonisolated let runningClones = RunningClones()
+
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
         github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil
@@ -81,6 +84,7 @@ public actor Workspace {
 
     /// Stops watching and releases the home for another instance.
     public func stop() {
+        stopClones()
         watchers.removeAll()
         for task in pendingRefreshes.values {
             task.cancel()
@@ -122,8 +126,9 @@ public actor Workspace {
 
     // MARK: Repos
 
+    /// `clonedFrom` is what a clone was made from, for the activity log.
     @discardableResult
-    public func addRepo(path: String) async throws -> RepoSnapshot {
+    public func addRepo(path: String, clonedFrom: String? = nil) async throws -> RepoSnapshot {
         let mainPath = try await mainCheckout(for: path)
         if state.repos.contains(where: { $0.path == mainPath }) {
             return snapshot.repo(path: mainPath) ?? RepoSnapshot(path: mainPath, name: "")
@@ -131,7 +136,9 @@ public actor Workspace {
         let dirName = RepoNaming.dirName(for: mainPath, taken: Set(state.repos.map(\.dirName)))
         state.repos.append(RepoEntry(path: mainPath, dirName: dirName))
         try save()
-        activity.record(ActivityType.repoAdded, repo: snapshot.repo(path: mainPath)?.name, path: mainPath)
+        activity.record(
+            ActivityType.repoAdded, repo: snapshot.repo(path: mainPath)?.name, path: mainPath,
+            data: clonedFrom.map { ["clonedFrom": .string($0)] } ?? [:])
         await watch(repoPath: mainPath)
         await refresh(repoPath: mainPath)
         return snapshot.repo(path: mainPath) ?? RepoSnapshot(path: mainPath, name: "")

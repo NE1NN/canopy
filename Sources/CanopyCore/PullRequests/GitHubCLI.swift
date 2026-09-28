@@ -111,18 +111,8 @@ public struct GitHubCLI: Sendable {
         // gh exits 4 when it has no login, and a revoked or expired token comes back as a 401.
         if result.status == 4 || message.contains("HTTP 401") { return .failure(.notLoggedIn) }
         guard result.status == 0 else {
-            // git rewrites progress lines with a carriage return, so those end lines too.
-            let line = message.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).last.map(String.init)
-            return .failure(.failed(line.map(Self.withoutPrefix) ?? "gh exited with \(result.status)."))
+            return .failure(.failed(ToolOutput.reason(message) ?? "gh exited with \(result.status)."))
         }
         return .success(result.stdout)
-    }
-
-    /// gh's and git's own names for a message, which Canopy's messages do not need.
-    private static func withoutPrefix(_ line: String) -> String {
-        for prefix in ["gh: ", "fatal: ", "error: "] where line.hasPrefix(prefix) {
-            return String(line.dropFirst(prefix.count))
-        }
-        return line
     }
 }
