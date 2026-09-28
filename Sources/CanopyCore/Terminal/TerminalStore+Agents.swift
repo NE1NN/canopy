@@ -52,6 +52,11 @@ extension TerminalStore {
         tabs(inRow: path).compactMap(\.agentDot).max()
     }
 
+    /// The most urgent dot among several rows' panes, for a collapsed group.
+    public func agentDot(inRows paths: [String]) -> AgentDot? {
+        paths.compactMap(agentDot(inRow:)).max()
+    }
+
     /// Whether the author sees the pane: Canopy is frontmost, and the pane is in the selected row's selected tab.
     public func isOnScreen(_ pane: Pane) -> Bool {
         guard viewing.isFrontmost, let (path, tab) = tab(containing: pane.id), path == viewing.rowPath else {

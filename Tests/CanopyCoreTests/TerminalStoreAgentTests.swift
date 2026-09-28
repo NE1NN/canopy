@@ -104,6 +104,20 @@ struct TerminalStoreAgentTests {
         #expect(rows.firstTab.agentDot == .working)
     }
 
+    @Test func aGroupShowsTheMostUrgentDotOfItsRows() throws {
+        let dir = try TempDir()
+        let rows = try Rows(dir)
+        defer { rows.terminals.closeAll() }
+
+        #expect(rows.terminals.agentDot(inRows: [rows.a, rows.b]) == nil)
+        rows.otherRow.report(AgentReport(state: .working))
+        #expect(rows.terminals.agentDot(inRows: [rows.a, rows.b]) == .working)
+        rows.otherTab.report(AgentReport(state: .done))
+        #expect(rows.terminals.agentDot(inRows: [rows.a, rows.b]) == .done)
+        #expect(rows.terminals.agentDot(inRows: [rows.b]) == .working)
+        #expect(rows.terminals.agentDot(inRows: []) == nil)
+    }
+
     @Test func aWaitReturnsAtOnceForAFreshState() async throws {
         let dir = try TempDir()
         let rows = try Rows(dir)

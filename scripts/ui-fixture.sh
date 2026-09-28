@@ -166,6 +166,7 @@ first=$("$cli" term list --all --json | /usr/bin/python3 -c \
 "$cli" term new --repo web-app --row feat/onboarding-flow --run "$plain; sleep 600" >/dev/null
 "$cli" term new --repo api-server --row feat/rate-limits --run "$plain; python3 -m http.server 8080" >/dev/null
 "$cli" term new --repo web-app --row fix/login-redirect --run "$plain" >/dev/null
+"$cli" term new --repo web-app --row chore/bump-deps --run "$plain" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 # Agents in every state, reported the way agents without Claude Code's hooks report them.
@@ -179,6 +180,8 @@ pane_in() {
 "$cli" term state "$(pane_in feat/onboarding-flow Terminal)" working >/dev/null
 "$cli" term state "$(pane_in fix/login-redirect Terminal)" waiting >/dev/null
 "$cli" term state "$(pane_in feat/rate-limits Terminal)" working >/dev/null
+# Folding the Later group, which no command does, shows its done dot on the group's header.
+"$cli" term state "$(pane_in chore/bump-deps Terminal)" done >/dev/null
 
 # shellcheck source=/dev/null
 source "$state"
