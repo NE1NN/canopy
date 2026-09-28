@@ -22,9 +22,19 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         dirName = try container.decode(String.self, forKey: .dirName)
         adopted = try container.decodeIfPresent([String].self, forKey: .adopted) ?? []
         rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
-        // Groups that cannot be read are dropped on their own, so the repo and its rows still load.
-        groups = (try? container.decodeIfPresent([RowGroup].self, forKey: .groups)) ?? []
+        // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
+        let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
+        groups = decoded?.compactMap(\.value) ?? []
         cleanGroups()
+    }
+}
+
+/// A value that decodes to nil rather than failing the list it is in.
+private struct Lenient<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: any Decoder) throws {
+        value = try? Value(from: decoder)
     }
 }
 

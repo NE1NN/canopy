@@ -56,13 +56,15 @@ struct StateStoreTests {
             {"name": " Review ", "rows": ["/b", "/c", "/c"]},
             {"name": "review", "rows": ["/d"], "collapsed": true},
             {"name": "Later", "rows": ["/c", "/e"], "collapsed": true},
-            {"name": "Bad\nName", "rows": ["/f"]}
+            {"name": "Bad\nName", "rows": ["/f"]},
+            {"name": "Odd", "rows": ["/g"], "collapsed": "yes"}
         ]}]}
         """#.write(to: url, atomically: true, encoding: .utf8)
 
+        // "review" differs from "Review" only in case, so its rows join the first. "Odd" cannot be read, so it goes alone.
         var expected = RepoEntry(path: "/r", dirName: "r", rowOrder: ["/a"])
         expected.groups = [
-            RowGroup(name: "Review", rows: ["/b", "/c"]), RowGroup(name: "Later", rows: ["/e"], collapsed: true),
+            RowGroup(name: "Review", rows: ["/b", "/c", "/d"]), RowGroup(name: "Later", rows: ["/e"], collapsed: true),
         ]
         #expect(StateStore(url: url).load() == .loaded(AppState(repos: [expected])))
     }

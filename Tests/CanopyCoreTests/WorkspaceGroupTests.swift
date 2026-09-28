@@ -94,6 +94,21 @@ struct WorkspaceGroupTests {
         #expect(await arrangement(workspace) == ["main", "Review/feat/a"])
     }
 
+    @Test func deletingAMissingReposGroupCountsItsSavedRows() async throws {
+        let dir = try TempDir()
+        let (workspace, repo, paths) = try await setUp(dir, branches: ["feat/a", "feat/b"])
+        try await workspace.createGroup(repoPath: repo, name: "Review")
+        for branch in ["feat/a", "feat/b"] {
+            _ = try await workspace.moveRow(path: try #require(paths[branch]), to: .group("Review"))
+        }
+        try FileManager.default.moveItem(atPath: repo, toPath: dir.sub("moved"))
+        await workspace.refresh(repoPath: repo)
+
+        try await workspace.removeGroup(repoPath: repo, name: "Review")
+
+        #expect(await logged(workspace, "group").last?.data == ["name": "Review", "rows": 2])
+    }
+
     @Test func unadoptingARowTakesItOutOfItsGroup() async throws {
         let dir = try TempDir()
         let (workspace, repo, _) = try await setUp(dir)
@@ -260,16 +275,25 @@ struct WorkspaceGroupTests {
 }
 
 struct GroupRowCreationTests {
-    /// A workspace whose `git worktree add` waits, once the worktree exists, until the test creates `go`.
-    func stalledSetUp(_ dir: TempDir) async throws -> (Workspace, String) {
+    /// A workspace whose `git worktree add` waits until the test creates `go`: once the worktree exists, which the test
+    /// sees as `added`, or with `beforeAdding`, before git starts, which it sees as `reached`.
+    func stalledSetUp(_ dir: TempDir, beforeAdding: Bool = false) async throws -> (Workspace, String) {
         let repo = try await Fixture.repo(in: dir)
+        let wait = "while [ ! -e '\(dir.sub("go"))' ]; do sleep 0.05; done"
         let git = try Fixture.git(
             in: dir,
-            before: """
+            before: beforeAdding
+                ? """
+                if [ "$1" = worktree ] && [ "$2" = add ]; then
+                    touch '\(dir.sub("reached"))'
+                    \(wait)
+                fi
+                """
+                : """
                 if [ "$1" = worktree ] && [ "$2" = add ]; then
                     /usr/bin/git "$@"; code=$?
                     touch '\(dir.sub("added"))'
-                    while [ ! -e '\(dir.sub("go"))' ]; do sleep 0.05; done
+                    \(wait)
                     exit $code
                 fi
                 """)
@@ -326,6 +350,64 @@ struct GroupRowCreationTests {
             created.warnings == ["Group Review went away while the row was being created, so the row is ungrouped."])
         #expect(await workspace.snapshot.repos.first?.rows.map(\.displayName) == ["main", "feat/a"])
         #expect(await logged(workspace, "row").map(\.type) == ["row.created"])
+    }
+
+    @Test func aGroupRenamedWhileItsRowIsCreatedStillGetsTheRow() async throws {
+        // Renamed before git lists the row, and after a refresh has put the row in the group.
+        for beforeAdding in [true, false] {
+            let dir = try TempDir()
+            let (workspace, repo) = try await stalledSetUp(dir, beforeAdding: beforeAdding)
+
+            let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
+            #expect(
+                await eventually { FileManager.default.fileExists(atPath: dir.sub(beforeAdding ? "reached" : "added")) }
+            )
+            if !beforeAdding { await workspace.refresh(repoPath: repo) }
+            try await workspace.renameGroup(repoPath: repo, name: "review", to: "Code review")
+            FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+            let created = try await creating.value
+
+            #expect(created.row.group == "Code review" && created.warnings.isEmpty, "before adding: \(beforeAdding)")
+            let events = await logged(workspace, "row")
+            #expect(events.map(\.type) == ["row.created", "row.moved"])
+            #expect(events.last?.data == ["from": .null, "to": "Code review"])
+        }
+    }
+
+    @Test func aRowTakenOutOfItsGroupWhileBeingCreatedGetsNoWarning() async throws {
+        let dir = try TempDir()
+        let (workspace, repo) = try await stalledSetUp(dir)
+        let path = dir.sub("home/worktrees/demo/feat-a")
+
+        let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        await workspace.refresh(repoPath: repo)
+        _ = try await workspace.moveRow(path: path, to: .ungrouped)
+        FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+        let created = try await creating.value
+
+        #expect(created.row.group == nil && created.warnings.isEmpty)
+    }
+
+    @Test func aMissingGroupFailsWithoutWaitingForGit() async throws {
+        let dir = try TempDir()
+        let (workspace, repo) = try await stalledSetUp(dir)
+        let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        // Lets git go on in any case, so a create that waits behind it fails the test rather than hanging it.
+        let release = Task {
+            try await Task.sleep(for: .seconds(10))
+            FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+        }
+
+        await #expect(throws: WorkspaceError.groupNotFound("Nope", repo: "demo")) {
+            try await workspace.createRow(repoPath: repo, branch: "feat/b", group: "Nope")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: dir.sub("go")), "the create waited for git")
+        release.cancel()
+        FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+        _ = try await creating.value
     }
 
     @Test func aMissingGroupCreatesNothing() async throws {

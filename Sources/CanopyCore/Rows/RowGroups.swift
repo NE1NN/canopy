@@ -147,21 +147,24 @@ extension RepoEntry {
     }
 
     /// Makes groups read from a file follow the rules: valid names unique ignoring case, and each path in one place,
-    /// the first group that lists it.
+    /// the first group that lists it. A group whose name differs from an earlier one's only in case joins it.
     mutating func cleanGroups() {
-        var names = Set<String>()
+        var cleaned: [RowGroup] = []
         var placed = Set<String>()
-        groups = groups.compactMap { group in
-            guard let name = try? GroupName.validated(group.name), names.insert(GroupName.key(name)).inserted else {
-                return nil
+        for group in groups {
+            guard let name = try? GroupName.validated(group.name) else { continue }
+            let rows = group.rows.filter { placed.insert($0).inserted }
+            if let index = cleaned.firstIndex(where: { GroupName.key($0.name) == GroupName.key(name) }) {
+                cleaned[index].rows += rows
+            } else {
+                cleaned.append(RowGroup(name: name, rows: rows, collapsed: group.collapsed))
             }
-            return RowGroup(
-                name: name, rows: group.rows.filter { placed.insert($0).inserted }, collapsed: group.collapsed)
         }
+        groups = cleaned
         rowOrder = rowOrder.filter { placed.insert($0).inserted }
     }
 
-    private func requireGroup(_ name: String, repo: String) throws -> Int {
+    func requireGroup(_ name: String, repo: String) throws -> Int {
         guard let index = groupIndex(named: name) else {
             throw WorkspaceError.groupNotFound(name.trimmingCharacters(in: .whitespacesAndNewlines), repo: repo)
         }

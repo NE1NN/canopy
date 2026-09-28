@@ -53,6 +53,10 @@ extension Workspace {
             return (from, try entry.renameGroup(name, to: newName, repo: repo).name)
         }
         if let from, from != to {
+            for (path, joining) in rowsJoiningGroups
+            where joining.repoPath == repoPath && GroupName.key(joining.group) == GroupName.key(from) {
+                rowsJoiningGroups[path]?.group = to
+            }
             recordGroup(
                 ActivityType.groupRenamed, repoPath: repoPath, data: ["from": .string(from), "to": .string(to)])
         }
@@ -63,20 +67,18 @@ extension Workspace {
     @discardableResult
     public func removeGroup(repoPath: String, name: String) throws -> GroupInfo {
         let removed = try groupInfo(repoPath: repoPath, name: name)
-        try changeEntry(repoPath: repoPath) { entry, repo in _ = try entry.removeGroup(name, repo: repo) }
+        // Counted from the saved group, since a missing repo lists no rows.
+        let group = try changeEntry(repoPath: repoPath) { entry, repo in try entry.removeGroup(name, repo: repo) }
         recordGroup(
             ActivityType.groupRemoved, repoPath: repoPath,
-            data: ["name": .string(removed.name), "rows": .number(Double(removed.rows.count))])
+            data: ["name": .string(removed.name), "rows": .number(Double(group.rows.count))])
         return removed
     }
 
     /// Folding is how the sidebar looks, so it is saved but not logged.
     public func setGroupCollapsed(repoPath: String, name: String, collapsed: Bool) throws {
         try changeEntry(repoPath: repoPath) { entry, repo in
-            guard let index = entry.groupIndex(named: name) else {
-                throw WorkspaceError.groupNotFound(name.trimmingCharacters(in: .whitespacesAndNewlines), repo: repo)
-            }
-            entry.groups[index].collapsed = collapsed
+            entry.groups[try entry.requireGroup(name, repo: repo)].collapsed = collapsed
         }
     }
 
@@ -114,7 +116,7 @@ extension Workspace {
     func changeEntry<T>(repoPath: String, _ change: (inout RepoEntry, String) throws -> T) throws -> T {
         let index = try entryIndex(repoPath: repoPath)
         var entry = state.repos[index]
-        let result = try change(&entry, snapshot.repo(path: repoPath)?.name ?? entry.dirName)
+        let result = try change(&entry, repoName(repoPath))
         guard entry != state.repos[index] else { return result }
         state.repos[index] = entry
         try save()
@@ -130,12 +132,15 @@ extension Workspace {
         repoSnapshots[repoPath] = repo.arranged(by: entry)
     }
 
+    /// The repo's display name, or its folder name while the snapshot does not have it yet.
+    func repoName(_ repoPath: String) -> String {
+        snapshot.repo(path: repoPath)?.name ?? state.repos.first { $0.path == repoPath }?.dirName ?? ""
+    }
+
     private func groupInfo(repoPath: String, name: String) throws -> GroupInfo {
-        let repoName = snapshot.repo(path: repoPath)?.name ?? ""
         guard let repo = snapshot.repo(path: repoPath) else { throw WorkspaceError.repoNotFound(repoPath) }
-        let key = GroupName.key(name)
-        guard let group = repo.groups.first(where: { $0.id == key }) else {
-            throw WorkspaceError.groupNotFound(name.trimmingCharacters(in: .whitespacesAndNewlines), repo: repoName)
+        guard let group = repo.groups.first(where: { $0.id == GroupName.key(name) }) else {
+            throw WorkspaceError.groupNotFound(name.trimmingCharacters(in: .whitespacesAndNewlines), repo: repo.name)
         }
         return GroupInfo(repo: repo, group: group)
     }

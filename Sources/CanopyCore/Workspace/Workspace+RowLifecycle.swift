@@ -5,6 +5,12 @@ public struct CreatedRow: Sendable, Equatable {
     public var warnings: [String]
 }
 
+/// The group a row being created goes into.
+struct JoiningGroup: Sendable, Equatable {
+    var repoPath: String
+    var group: String
+}
+
 struct FetchAttempt: Sendable {
     var finishedAt: ContinuousClock.Instant
     var warning: String?
@@ -19,18 +25,22 @@ extension Workspace {
         repoPath: String, branch: String, base: String? = nil, group: String? = nil
     ) async throws -> CreatedRow {
         let requestedAt = ContinuousClock.now
+        // Checked before waiting for other git work in the repo, and again once it is this row's turn.
+        if let group {
+            _ = try joiningGroup(group, repoPath: repoPath)
+        }
         var created = try await serialized(repoPath: repoPath) {
             try await self.createRowNow(
                 repoPath: repoPath, branch: branch, base: base, group: group, requestedAt: requestedAt)
         }
         // After createRowNow, which logged the row's creation, so its move into the group is logged second.
-        if let group = rowsJoiningGroups.removeValue(forKey: created.row.path) {
+        if let joining = rowsJoiningGroups.removeValue(forKey: created.row.path) {
             created.row = snapshot.row(path: created.row.path) ?? created.row
             if let joined = created.row.group {
                 record(ActivityType.rowMoved, created.row, data: ["from": .null, "to": .string(joined)])
-            } else {
+            } else if !groupExists(joining.group, repoPath: repoPath) {
                 created.warnings.append(
-                    "Group \(group) went away while the row was being created, so the row is ungrouped.")
+                    "Group \(joining.group) went away while the row was being created, so the row is ungrouped.")
             }
         }
         return created
@@ -56,14 +66,7 @@ extension Workspace {
         let index = try entryIndex(repoPath: repoPath)
         let dirName = state.repos[index].dirName
         var warnings: [String] = []
-        let joining = try group.map { name in
-            guard let groupIndex = state.repos[index].groupIndex(named: name) else {
-                throw WorkspaceError.groupNotFound(
-                    name.trimmingCharacters(in: .whitespacesAndNewlines),
-                    repo: snapshot.repo(path: repoPath)?.name ?? dirName)
-            }
-            return state.repos[index].groups[groupIndex].name
-        }
+        let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
 
         guard FileManager.default.fileExists(atPath: repoPath) else {
             throw WorkspaceError.pathNotFound(repoPath)
@@ -115,7 +118,7 @@ extension Workspace {
         }
 
         let path = Paths.canonical(folder.path)
-        rowsJoiningGroups[path] = joining
+        rowsJoiningGroups[path] = joining.map { JoiningGroup(repoPath: repoPath, group: $0) }
         // `createRow` takes the path back out once it has logged the move, unless creating the row fails.
         var created = false
         defer { if !created { rowsJoiningGroups[path] = nil } }
@@ -134,7 +137,7 @@ extension Workspace {
         }
 
         if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].holds(path) {
-            state.repos[current].place(path, joining: joining)
+            state.repos[current].place(path, joining: rowsJoiningGroups[path]?.group)
             try save()
         }
         await refresh(repoPath: repoPath)
@@ -214,6 +217,18 @@ extension Workspace {
         }
         lastFetch[repoPath] = FetchAttempt(finishedAt: .now, warning: warning)
         return warning
+    }
+
+    /// Whether the repo still has a group of that name. A row being created into it may have been moved out since.
+    private func groupExists(_ name: String, repoPath: String) -> Bool {
+        state.repos.first { $0.path == repoPath }?.groupIndex(named: name) != nil
+    }
+
+    /// The stored name of the group a new row is to join, which must exist.
+    private func joiningGroup(_ name: String, repoPath: String) throws -> String {
+        let index = try entryIndex(repoPath: repoPath)
+        let entry = state.repos[index]
+        return entry.groups[try entry.requireGroup(name, repo: repoName(repoPath))].name
     }
 
     func entryIndex(repoPath: String) throws -> Int {

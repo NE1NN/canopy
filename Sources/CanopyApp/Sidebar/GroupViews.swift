@@ -24,6 +24,7 @@ struct GroupHeaderView: View {
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
                 .rotationEffect(.degrees(group.collapsed ? 0 : 90))
+                .animation(.easeOut(duration: 0.15), value: group.collapsed)
                 .foregroundStyle(.tertiary)
                 .frame(width: 16)
             Text(group.name)
@@ -80,7 +81,7 @@ struct GroupHeaderView: View {
     }
 
     private func toggle() {
-        withAnimation(.easeOut(duration: 0.15)) { model.setCollapsed(group, !group.collapsed, in: repo) }
+        model.setCollapsed(group, !group.collapsed, in: repo)
     }
 
     /// An empty group goes at once. One with rows asks first.

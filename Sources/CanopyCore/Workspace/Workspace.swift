@@ -27,8 +27,8 @@ public actor Workspace {
     /// refreshes leave these out of the comparison, and the operation logs how each one ended up.
     var changingRows: [String: ActivitySource] = [:]
     /// Rows being created into a group, by path, so a refresh that lists one before its creation finishes puts it
-    /// straight into the group.
-    var rowsJoiningGroups: [String: String] = [:]
+    /// straight into the group. Renaming the group renames it here too.
+    var rowsJoiningGroups: [String: JoiningGroup] = [:]
 
     let github: GitHubCLI
     let prTiming: PRTiming
@@ -346,7 +346,8 @@ public actor Workspace {
         recordRowChanges(repoPath: current.path, rows: rows)
         let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
         var reconciled = current
-        if reconciled.reconcile(present: managed.map(\.path), joining: rowsJoiningGroups) {
+        let joining = rowsJoiningGroups.filter { $0.value.repoPath == current.path }.mapValues(\.group)
+        if reconciled.reconcile(present: managed.map(\.path), joining: joining) {
             state.repos[index] = reconciled
             try? save()
         }

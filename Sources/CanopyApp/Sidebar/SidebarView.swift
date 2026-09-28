@@ -167,6 +167,8 @@ struct RepoSection: View {
             }
         }
         .padding(.top, 4)
+        // Folding a group arrives as a new snapshot, so the rows it shows or hides animate from here.
+        .animation(.easeOut(duration: 0.15), value: repo.groups)
     }
 
     private func line(for row: Row, indent: Double = 0) -> some View {
