@@ -1,14 +1,33 @@
+/// The pull request a branch was started from with `row new --pr`.
+public struct PRBinding: Codable, Sendable, Equatable {
+    public var number: Int
+    /// origin's GitHub repo, as owner/name, when the branch was made. The number means nothing in another repo.
+    public var repo: String
+
+    public init(number: Int, repo: String) {
+        self.number = number
+        self.repo = repo
+    }
+}
+
 public struct RepoEntry: Codable, Sendable, Equatable {
     public var path: String
     public var dirName: String
     public var adopted: [String]
     public var rowOrder: [String]
+    /// PRs keyed by local branch, for branches whose name cannot find their PR: a fork's, or one checked out under
+    /// another name.
+    public var prBindings: [String: PRBinding]
 
-    public init(path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = []) {
+    public init(
+        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [],
+        prBindings: [String: PRBinding] = [:]
+    ) {
         self.path = path
         self.dirName = dirName
         self.adopted = adopted
         self.rowOrder = rowOrder
+        self.prBindings = prBindings
     }
 
     public init(from decoder: any Decoder) throws {
@@ -17,6 +36,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         dirName = try container.decode(String.self, forKey: .dirName)
         adopted = try container.decodeIfPresent([String].self, forKey: .adopted) ?? []
         rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
+        // Bindings that cannot be read only cost fork rows their badges, so the repo still loads.
+        prBindings = (try? container.decodeIfPresent([String: PRBinding].self, forKey: .prBindings)) ?? [:]
     }
 }
 

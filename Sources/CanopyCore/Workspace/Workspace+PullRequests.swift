@@ -57,7 +57,26 @@ struct RepoPullRequests: Equatable {
     }
 }
 
+/// A git remote on GitHub.
+struct GitHubRemote: Sendable, Equatable {
+    /// The URL git uses for the remote.
+    var url: String
+    var repo: GitHubRepo
+}
+
 extension Workspace {
+    /// The GitHub repo behind a remote, or nil when it is not on GitHub. `git remote get-url` applies `insteadOf`
+    /// rewrites, so a mirror can hide GitHub, and then the remote's configured URL still names the repo.
+    func gitHubRemote(_ remote: String, repoPath: String) async -> GitHubRemote? {
+        for arguments in [["remote", "get-url", remote], ["config", "--get", "remote.\(remote).url"]] {
+            guard let url = try? await git.run(arguments, in: repoPath).trimmingCharacters(in: .whitespacesAndNewlines),
+                let repo = await github.repo(forRemote: url)
+            else { continue }
+            return GitHubRemote(url: url, repo: repo)
+        }
+        return nil
+    }
+
     /// Main and external rows are never looked up, and neither is a detached HEAD.
     static func looksUpPullRequest(_ row: Row) -> Bool {
         (row.rowClass == .canopy || row.rowClass == .adopted) && row.branch != nil
