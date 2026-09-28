@@ -93,16 +93,24 @@ struct RowDetailView: View {
     }
 }
 
+/// Every toast reports something that went wrong, such as git's message for a failed command.
 struct ToastView: View {
     let message: String
 
     var body: some View {
-        Text(message)
-            .font(.callout)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.separator))
-            .shadow(radius: 8, y: 2)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 560)
+        // A pill for one line, a rounded box once a long message wraps.
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).strokeBorder(.separator))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
     }
 }
