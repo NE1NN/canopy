@@ -5,14 +5,29 @@ import UniformTypeIdentifiers
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var columns = NavigationSplitViewVisibility.all
+    @State private var detailFrame = CGRect.zero
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
         } detail: {
-            RowDetailView()
+            RowDetailView(isSidebarHidden: columns == .detailOnly)
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    detailFrame = $0
+                }
+        }
+        .overlay(alignment: .topLeading) {
+            if let row = model.selectedRow, !row.isMissing {
+                TopBarView(row: row, isSidebarHidden: columns == .detailOnly)
+                    .frame(width: detailFrame.width)
+                    .offset(x: detailFrame.minX)
+                    .ignoresSafeArea(.container, edges: .top)
+            }
         }
         .frame(minWidth: 900, minHeight: 560)
         .overlay(alignment: .bottom) {
@@ -57,12 +72,13 @@ struct RootView: View {
 
 struct RowDetailView: View {
     @Environment(AppModel.self) private var model
+    let isSidebarHidden: Bool
 
     var body: some View {
         if let row = model.selectedRow {
-            RowTerminalsView(row: row)
+            // The title bar is hidden, but the title still names the window in the Window menu and Mission Control.
+            RowTerminalsView(row: row, isSidebarHidden: isSidebarHidden)
                 .navigationTitle(row.displayName)
-                .navigationSubtitle(model.snapshot.repo(path: row.repoPath)?.name ?? "")
         } else {
             ContentUnavailableView {
                 Label("No Row Selected", systemImage: "sidebar.left")

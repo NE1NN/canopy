@@ -296,8 +296,12 @@ If any pane's foreground process is something other than its shell, quitting ask
 
 ### Tabs
 
-Each row has its own tab bar.
-Its right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
+Each row has its own tab bar, which sits in the window's title bar row beside the traffic lights.
+Each tab shows an icon for its layout: one pane, panes side by side, panes stacked, or both.
+A running dot follows the name while a program runs in one of the tab's panes, and gives way to the tab's `x` on hover.
+The bar's right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
+Its empty space moves the window, and double-clicking it zooms or minimizes the window as the system's title bar setting says.
+While the sidebar is hidden, the bar starts with the row's repo and branch.
 New tabs are named "Terminal", "Terminal 2", and so on, or take the name given with `--tab`.
 Double-clicking a tab renames it.
 Selecting a row that has no tabs opens one tab with one pane.

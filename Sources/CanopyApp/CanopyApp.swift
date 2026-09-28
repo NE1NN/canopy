@@ -11,6 +11,8 @@ struct CanopyApp: App {
             RootView()
                 .environment(delegate.model)
         }
+        // The top bar draws the title bar's row itself, so its tabs and buttons get clicks.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             TerminalCommands(model: delegate.model)
             RowCommands(model: delegate.model)

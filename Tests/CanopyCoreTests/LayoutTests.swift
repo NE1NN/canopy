@@ -30,6 +30,14 @@ struct LayoutTests {
                     .column, [.split(.row, ["A", "B", "C"].map(Grid.leaf), Grid.equal(3)), .leaf("D")], [0.5, 0.5]))
     }
 
+    @Test func shapeNamesTheArrangementForATabsIcon() {
+        #expect(Grid.leaf("A").shape == .single)
+        #expect(Grid.built(["A", "B"], perLine: 3).shape == .columns(2))
+        #expect(Grid.built(["A", "B", "C"], perLine: 3).shape == .columns(3))
+        #expect(Grid.built(["A", "B"], perLine: 1).shape == .rows(2))
+        #expect(Grid.built(["A", "B", "C"], perLine: 2).shape == .grid)
+    }
+
     @Test func narrowTabsWrapSooner() {
         let row = Grid.split(.row, [.leaf("A"), .leaf("B")], [0.5, 0.5])
         #expect(Grid.built(["A", "B", "C"], perLine: 2) == .split(.column, [row, .leaf("C")], [0.5, 0.5]))

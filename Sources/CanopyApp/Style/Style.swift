@@ -34,6 +34,10 @@ enum Style {
         nsColor: NSColor(name: nil) { appearance in
             NSColor.controlAccentColor.withAlphaComponent(appearance.isDark ? 0.3 : 0.17)
         })
+    /// The top bar, pane headers, and exit strips: a step off the terminal's white in light, the window's own gray
+    /// in dark, where the terminal is the darker one.
+    static let chrome = Color(
+        nsColor: NSColor(name: nil) { $0.isDark ? .windowBackgroundColor : NSColor(hex: 0xF5F5F7) })
     static let badgeFill = Color.adaptive(
         light: .black.withAlphaComponent(0.06), dark: .white.withAlphaComponent(0.075))
 
