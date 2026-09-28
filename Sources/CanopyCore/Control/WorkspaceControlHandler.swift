@@ -79,6 +79,14 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(RepoAddParams.self)
             return try .from(RepoInfo(try await workspace.addRepo(path: params.path)))
 
+        case ControlMethod.repoClone:
+            let params = try request.decodeParams(RepoCloneParams.self)
+            // The app runs in another folder than the caller, so a relative path would land somewhere unexpected.
+            if let into = params.into, !(into as NSString).expandingTildeInPath.hasPrefix("/") {
+                throw ControlError(code: "bad_params", message: "into must be an absolute path, not \(into).")
+            }
+            return try .from(RepoInfo(try await workspace.cloneRepo(params.source, into: params.into)))
+
         case ControlMethod.repoList:
             return try .from(await workspace.snapshot.repos.map(RepoInfo.init))
 

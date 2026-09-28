@@ -15,7 +15,9 @@ public actor Workspace {
     var watchers: [String: DirectoryWatcher] = [:]
     var pendingRefreshes: [String: Task<Void, Never>] = [:]
     var refreshQueues: [String: Task<Void, Never>] = [:]
-    var gitQueues: [String: Task<Void, Never>] = [:]
+    var gitQueues = KeyedQueue()
+    /// Clones of each destination folder, apart from the git work of the repo that folder may already hold.
+    var cloneQueues = KeyedQueue()
     var instanceLock: InstanceLock?
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
@@ -40,6 +42,9 @@ public actor Workspace {
     var lastFocusRefresh: ContinuousClock.Instant?
     /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
     var prStopped = false
+
+    /// Clones under way, which quitting stops without waiting for the actor.
+    nonisolated let runningClones = RunningClones()
 
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
@@ -81,6 +86,7 @@ public actor Workspace {
 
     /// Stops watching and releases the home for another instance.
     public func stop() {
+        stopClones()
         watchers.removeAll()
         for task in pendingRefreshes.values {
             task.cancel()
@@ -122,8 +128,9 @@ public actor Workspace {
 
     // MARK: Repos
 
+    /// `clonedFrom` is what a clone was made from, for the activity log.
     @discardableResult
-    public func addRepo(path: String) async throws -> RepoSnapshot {
+    public func addRepo(path: String, clonedFrom: String? = nil) async throws -> RepoSnapshot {
         let mainPath = try await mainCheckout(for: path)
         if state.repos.contains(where: { $0.path == mainPath }) {
             return snapshot.repo(path: mainPath) ?? RepoSnapshot(path: mainPath, name: "")
@@ -131,7 +138,9 @@ public actor Workspace {
         let dirName = RepoNaming.dirName(for: mainPath, taken: Set(state.repos.map(\.dirName)))
         state.repos.append(RepoEntry(path: mainPath, dirName: dirName))
         try save()
-        activity.record(ActivityType.repoAdded, repo: snapshot.repo(path: mainPath)?.name, path: mainPath)
+        activity.record(
+            ActivityType.repoAdded, repo: snapshot.repo(path: mainPath)?.name, path: mainPath,
+            data: clonedFrom.map { ["clonedFrom": .string($0)] } ?? [:])
         await watch(repoPath: mainPath)
         await refresh(repoPath: mainPath)
         return snapshot.repo(path: mainPath) ?? RepoSnapshot(path: mainPath, name: "")
@@ -448,13 +457,7 @@ public actor Workspace {
         repoPath: String,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let previous = gitQueues[repoPath]
-        let task = Task {
-            await previous?.value
-            return try await operation()
-        }
-        gitQueues[repoPath] = Task { _ = try? await task.value }
-        return try await task.value
+        try await gitQueues.enqueue(repoPath, operation).value
     }
 
     private func requireUnregistered(_ path: String, except current: String) throws {
@@ -509,5 +512,23 @@ public actor Workspace {
             guard !Task.isCancelled else { return }
             await self?.refresh(repoPath: repoPath)
         }
+    }
+}
+
+/// Work that runs one at a time per key, in the order it was queued.
+struct KeyedQueue {
+    private var last: [String: Task<Void, Never>] = [:]
+
+    /// Starts `operation` once everything queued before it under `key` has finished.
+    mutating func enqueue<T: Sendable>(
+        _ key: String, _ operation: @escaping @Sendable () async throws -> T
+    ) -> Task<T, any Error> {
+        let previous = last[key]
+        let task = Task {
+            await previous?.value
+            return try await operation()
+        }
+        last[key] = Task { _ = try? await task.value }
+        return task
     }
 }

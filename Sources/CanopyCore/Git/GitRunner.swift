@@ -24,13 +24,14 @@ public struct GitRunner: Sendable {
         self.baseEnvironment = environment
     }
 
-    /// Runs git on a thread of its own. With a timeout, git and everything it started are killed
-    /// when it expires, and the error has `timedOut` set.
+    /// Runs git on a thread of its own. With a timeout, git and everything it started are killed when it expires, and
+    /// the error has `timedOut` set. `handle` can stop git and read its stderr as it runs.
     @discardableResult
-    public func run(_ arguments: [String], in directory: String? = nil, timeout: Duration? = nil) async throws
-        -> String
-    {
-        try await onOwnThread { Result { try runBlocking(arguments, in: directory, timeout: timeout) } }.get()
+    public func run(
+        _ arguments: [String], in directory: String? = nil, timeout: Duration? = nil, handle: SubprocessHandle? = nil
+    ) async throws -> String {
+        try await onOwnThread { Result { try runBlocking(arguments, in: directory, timeout: timeout, handle: handle) } }
+            .get()
     }
 
     /// Runs git and reports only whether it exited 0. For probes like `show-ref --verify`.
@@ -38,13 +39,16 @@ public struct GitRunner: Sendable {
         (try? await run(arguments, in: directory)) != nil
     }
 
-    private func runBlocking(_ arguments: [String], in directory: String?, timeout: Duration?) throws -> String {
+    private func runBlocking(
+        _ arguments: [String], in directory: String?, timeout: Duration?, handle: SubprocessHandle?
+    ) throws -> String {
         let result: SubprocessResult
         do {
             let environment =
                 baseEnvironment.map { GitEnvironment.build(base: $0, loginPath: nil) } ?? GitEnvironment.current
             result = try Subprocess.run(
-                executable, arguments, environment: environment, directory: directory, timeout: timeout)
+                executable, arguments, environment: environment, directory: directory, timeout: timeout,
+                handle: handle)
         } catch let error as SubprocessError {
             throw GitError(arguments: arguments, exitCode: -1, stderr: error.description)
         }

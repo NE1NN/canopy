@@ -5,6 +5,7 @@ public enum ControlMethod {
     public static let repoAdd = "repo.add"
     public static let repoList = "repo.list"
     public static let repoRemove = "repo.remove"
+    public static let repoClone = "repo.clone"
     public static let rowList = "row.list"
     public static let rowNew = "row.new"
     public static let rowRemove = "row.remove"
@@ -19,10 +20,11 @@ public enum ControlMethod {
 
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
-    /// a build does and cannot be cancelled, so the CLI waits for them without a limit. A PR lookup can queue
-    /// behind one already asking GitHub, and each may take 30 seconds. Other reads answer from memory.
+    /// a build does and cannot be cancelled, so the CLI waits for them without a limit, and so does a clone, which
+    /// takes as long as the repo is big. A PR lookup can queue behind one already asking GitHub, and each may take
+    /// 30 seconds. Other reads answer from memory.
     public static func replyTimeout(for method: String) -> TimeInterval? {
-        if [rowNew, rowRemove].contains(method) { return nil }
+        if [rowNew, rowRemove, repoClone].contains(method) { return nil }
         if method == prShow { return 90 }
         return [repoAdd, repoRemove, rowAdopt].contains(method) ? 900 : 30
     }
@@ -84,6 +86,18 @@ public struct RepoAddParams: Codable, Sendable {
 
     public init(path: String) {
         self.path = path
+    }
+}
+
+public struct RepoCloneParams: Codable, Sendable {
+    /// `owner/repo`, or a URL git can clone.
+    public var source: String
+    /// An absolute path to clone into. CANOPY_HOME/repos/<owner>/<name> when nil.
+    public var into: String?
+
+    public init(source: String, into: String? = nil) {
+        self.source = source
+        self.into = into
     }
 }
 

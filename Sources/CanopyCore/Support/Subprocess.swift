@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct SubprocessResult: Sendable {
     public var status: Int32
@@ -13,6 +14,65 @@ public struct SubprocessError: Error, Sendable, Equatable, CustomStringConvertib
 
     public var description: String {
         "Could not start \(executable): \(String(cString: strerror(code)))"
+    }
+}
+
+/// Lets other threads stop a running subprocess and read what it has written to stderr so far.
+public final class SubprocessHandle: Sendable {
+    private struct State {
+        var pid: pid_t?
+        var errors: Int32 = -1
+        var cancelled = false
+    }
+
+    private let state = Mutex(State())
+
+    public init() {}
+
+    public var isCancelled: Bool {
+        state.withLock { $0.cancelled }
+    }
+
+    /// True from when the process starts until it has exited.
+    public var isRunning: Bool {
+        state.withLock { $0.pid != nil }
+    }
+
+    /// Kills the process and everything it started. One that has not started yet is killed as it starts.
+    public func cancel() {
+        state.withLock { state in
+            state.cancelled = true
+            if let pid = state.pid { kill(-pid, SIGKILL) }
+        }
+    }
+
+    /// Up to the last `limit` bytes of stderr so far. Empty before the process starts and after it exits.
+    public func errorOutput(last limit: Int = 4096) -> Data {
+        state.withLock { state in
+            guard state.errors >= 0 else { return Data() }
+            var info = stat()
+            guard fstat(state.errors, &info) == 0 else { return Data() }
+            let count = min(Int(info.st_size), limit)
+            var buffer = [UInt8](repeating: 0, count: count)
+            let read = pread(state.errors, &buffer, count, info.st_size - off_t(count))
+            return read > 0 ? Data(buffer[0..<read]) : Data()
+        }
+    }
+
+    /// The process is at worst a zombie until it is reaped, so its pid and group cannot be reused before `exited`.
+    fileprivate func started(pid: pid_t, errors: Int32) {
+        state.withLock { state in
+            state.pid = pid
+            state.errors = errors
+            if state.cancelled { kill(-pid, SIGKILL) }
+        }
+    }
+
+    fileprivate func exited() {
+        state.withLock { state in
+            state.pid = nil
+            state.errors = -1
+        }
     }
 }
 
@@ -33,7 +93,8 @@ public enum Subprocess {
         _ arguments: [String],
         environment: [String: String],
         directory: String?,
-        timeout: Duration?
+        timeout: Duration?,
+        handle: SubprocessHandle? = nil
     ) throws -> SubprocessResult {
         let output = try temporaryFile(for: executable)
         defer { close(output) }
@@ -65,12 +126,14 @@ public enum Subprocess {
         var pid: pid_t = 0
         let spawned = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
         guard spawned == 0 else { throw SubprocessError(executable: executable, code: spawned) }
+        handle?.started(pid: pid, errors: errors)
 
         // Until waitpid reaps it, the child is at worst a zombie, so its pid and process group cannot be reused.
         let timedOut = !waitForExit(pid, timeout: timeout)
         if timedOut {
             kill(-pid, SIGKILL)
         }
+        handle?.exited()
         var status: Int32 = 0
         while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
 

@@ -315,6 +315,68 @@ struct ControlServerTests {
         #expect(calls.map(\.data["error"]) == [nil, nil, "invalid_branch"])
     }
 
+    @Test func repoCloneAnswersLikeRepoAddAndIsLogged() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let (workspace, server, client, _) = try await startServer(dir, github: try Fixture.cloningGH(in: dir))
+        defer { server.stop() }
+
+        let cloned = try await call(
+            client, ControlMethod.repoClone, RepoCloneParams(source: "acme/app"), as: RepoInfo.self)
+        let again = try await call(client, ControlMethod.repoClone, ["source": "acme/app"], as: RepoInfo.self)
+
+        #expect(cloned.name == "app")
+        #expect(cloned.path == dir.sub("home/repos/acme/app"))
+        #expect(cloned.rows == 1)
+        #expect(again == cloned)
+        let events = await logged(workspace, "repo", "cli")
+        #expect(events.map(\.type) == ["repo.added", "cli.call", "cli.call"])
+        #expect(events.allSatisfy { $0.source == .cli })
+        #expect(events[0].data["clonedFrom"] == "acme/app")
+        #expect(events[1].data["method"] == "repo.clone")
+        #expect(events[1].data["params"] == .object(["source": .string("acme/app")]))
+    }
+
+    @Test func aCloneKeepsGoingWhenTheCLIGoesAway() async throws {
+        let dir = try TempDir()
+        try await Fixture.remote(in: dir, "acme/app")
+        let started = dir.sub("started")
+        let gh = try Fixture.cloningGH(in: dir, before: "touch '\(started)'; sleep 1")
+        let (workspace, server, _, _) = try await startServer(dir, github: gh)
+        defer { server.stop() }
+
+        // Like Ctrl-C on `canopy repo clone`: the request goes out, and the connection closes before the reply.
+        let request = ControlRequest(
+            method: ControlMethod.repoClone, params: try .from(RepoCloneParams(source: "acme/app")))
+        let socketPath = CanopyHome(path: dir.sub("home")).socketPath
+        try await offPool {
+            let fd = try ControlClient.connect(to: socketPath)
+            _ = try ControlCodec.encodeLine(request).withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
+            let deadline = Date().addingTimeInterval(20)
+            while !FileManager.default.fileExists(atPath: started), Date() < deadline { usleep(20_000) }
+            close(fd)
+        }
+
+        #expect(await eventually { await workspace.snapshot.repos.map(\.name) == ["app"] })
+    }
+
+    @Test func repoCloneErrorsCarryCodes() async throws {
+        let dir = try TempDir()
+        let taken = try await Fixture.repo(in: dir, name: "taken")
+        let (_, server, client, _) = try await startServer(dir, github: try Fixture.cloningGH(in: dir))
+        defer { server.stop() }
+
+        func code(_ params: RepoCloneParams) async throws -> String? {
+            let request = ControlRequest(method: ControlMethod.repoClone, params: try .from(params))
+            return try await offPool { try client.send(request) }.error?.code
+        }
+
+        #expect(try await code(RepoCloneParams(source: "acme/app", into: taken)) == "folder_taken")
+        #expect(try await code(RepoCloneParams(source: "acme/nope")) == "clone_failed")
+        #expect(try await code(RepoCloneParams(source: "nope")) == "invalid_clone_source")
+        #expect(try await code(RepoCloneParams(source: "acme/app", into: "relative/app")) == "bad_params")
+    }
+
     @Test func commandTextIsLeftOutOfCallsWhenCommandLoggingIsOff() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)

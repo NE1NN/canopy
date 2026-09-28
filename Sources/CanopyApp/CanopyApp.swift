@@ -70,6 +70,7 @@ struct TerminalCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+            Button("Clone Repo…", action: model.showCloneSheet)
             Divider()
             Button("New Tab", action: model.newTab)
                 .keyboardShortcut("t")

@@ -76,4 +76,59 @@ struct GitRunnerTests {
         let git = try Fixture.git(in: dir, before: "sleep 0.5")
         #expect(try await git.run(["--version"]).hasPrefix("git version"))
     }
+
+    @Test func aHandleStopsGitAndEverythingItStarted() async throws {
+        let dir = try TempDir()
+        let background = dir.sub("background.pid")
+        let git = try Fixture.git(in: dir, before: "sleep 60 &\necho $! > '\(background)'\nsleep 60")
+        let handle = SubprocessHandle()
+
+        let run = Task { try await git.run(["clone"], handle: handle) }
+        #expect(await eventually { FileManager.default.fileExists(atPath: background) })
+        // Timed from the cancel: a loaded CI runner can take many seconds just to start bash.
+        let clock = ContinuousClock()
+        let start = clock.now
+        handle.cancel()
+
+        await #expect(throws: GitError.self) { try await run.value }
+        #expect(handle.isCancelled)
+        #expect(clock.now - start < .seconds(30))
+        let pid = try #require(
+            Int32(String(contentsOfFile: background, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(await eventually { kill(pid, 0) != 0 })
+    }
+
+    @Test func aHandleCancelledFirstStopsGitAsItStarts() async throws {
+        let dir = try TempDir()
+        let git = try Fixture.git(in: dir, before: "sleep 60")
+        let handle = SubprocessHandle()
+        handle.cancel()
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        await #expect(throws: GitError.self) { try await git.run(["clone"], handle: handle) }
+
+        // Well short of the sleep, with room for a loaded CI runner to start the process.
+        #expect(clock.now - start < .seconds(30))
+    }
+
+    @Test func aHandleReadsWhatGitWroteToStderrSoFar() async throws {
+        let dir = try TempDir()
+        let git = try Fixture.git(in: dir, before: "echo 'Receiving objects:  50% (1/2)' >&2\nsleep 30")
+        let handle = SubprocessHandle()
+
+        let run = Task { try await git.run(["clone"], handle: handle) }
+        let seen = await eventually {
+            String(decoding: handle.errorOutput(), as: UTF8.self).contains("Receiving objects:  50%")
+        }
+        let wasRunning = handle.isRunning
+        handle.cancel()
+        _ = try? await run.value
+
+        #expect(seen)
+        #expect(wasRunning)
+        #expect(!handle.isRunning)
+        #expect(handle.errorOutput().isEmpty)
+    }
+
 }

@@ -93,6 +93,7 @@ Everything lives in `CANOPY_HOME`, which defaults to `~/.canopy`.
   config.json                global settings
   canopy.sock                control socket
   worktrees/<repo>/<slug>/   rows created by Canopy
+  repos/<owner>/<name>/      repos cloned by Canopy
   activity/2026-09-27.jsonl  activity log, one file per local day
   shell/zsh/                 zsh startup shim for command logging
 ```
@@ -129,7 +130,28 @@ A repo is added from the UI or with `canopy repo add <path>`.
 If the path is a linked worktree, Canopy resolves it to the main checkout.
 A repo's display name is its folder name.
 If two repos share a folder name, each gets as many parent folder names as it takes to tell them apart, such as `work/client/app` and `personal/client/app`.
-Removing a repo only unregisters it and never touches files.
+Removing a repo only unregisters it and never touches files, including a folder Canopy cloned.
+
+### Cloning repos
+
+A repo can also be cloned and registered in one step, from the window or with `canopy repo clone <owner/repo | url> [--into <dir>]`.
+The clone runs in the app, and the CLI waits for it with no timeout.
+
+- `owner/repo` and GitHub URLs clone with `gh repo clone`, which uses the author's gh login and preferred git protocol.
+  A github.com page, such as a branch or a pull request, stands for its repo.
+  When gh is missing or logged out, a URL clones with `git clone` instead, and `owner/repo` fails with the fix, such as `gh auth login`.
+- Other URLs, including `file://` URLs and local paths, clone with `git clone`, since gh only clones from GitHub.
+- The clone goes in `CANOPY_HOME/repos/<owner>/<name>` unless `--into` names a folder.
+  The owner keeps two repos named `app` apart, and the naming rule above shows them as `acme/app` and `other/app`.
+  For a URL not on GitHub, the owner is the folder above the repo in the URL.
+- If the folder already holds a clone of the same repo, Canopy registers it and stops, so running the same clone twice is safe.
+  A GitHub repo is the same whatever the protocol, SSH host alias, or letter case of the folder's `origin`.
+  A folder holding anything else fails with `folder_taken`.
+- git writes into a hidden folder beside the destination, which is renamed into place once the clone is whole.
+  An empty folder already at the destination stays, and takes the clone's contents.
+  A clone that fails, is cancelled, or is still running when Canopy quits leaves nothing behind.
+- Clones of the same folder run one at a time, so a second one finds the first one's result.
+- Stopping `canopy repo clone` with Ctrl-C does not stop the clone, which finishes and registers the repo.
 
 ### Discovery
 
@@ -212,8 +234,16 @@ They get these environment variables:
 
 ## Sidebar rows
 
-A "Repos" label heads the sidebar, with a `+` that adds a repo.
-File > Add Repo… (`⇧⌘O`) and the empty sidebar's button add one too.
+A "Repos" label heads the sidebar, with a `+` menu holding "Add Local Repo…" and "Clone from GitHub…".
+File > Add Repo… (`⇧⌘O`) and the empty sidebar's button add one too, and File > Clone Repo… clones one.
+
+The clone sheet has one field that takes `owner/repo` or a URL, and says where the clone will go.
+Below it are the author's GitHub repos and their organizations' repos, the 100 most recently pushed first, filtered by what is typed.
+Clicking one fills the field.
+While gh is missing or logged out, the list's place shows the fix, and the field still clones URLs.
+The sheet shows git's progress while it clones and git's or gh's reason if the clone fails.
+Cancel stops the clone and deletes what it wrote.
+A clone from the window selects the new repo's main row.
 
 Each repo group starts with a header: a tile with the repo's first letter, its name, and its row count.
 The tile takes one of eight hues, picked by a stable hash of the repo's path, so a repo keeps its color across launches.
@@ -491,6 +521,7 @@ Every command exits non-zero on failure.
 |---|---|
 | `canopy status` | whether the app is running, its version, and `CANOPY_HOME` |
 | `canopy repo add <path>` | register a repo |
+| `canopy repo clone <owner/repo \| url> [--into <dir>]` | clone a repo and register it |
 | `canopy repo list` | list repos |
 | `canopy repo rm <name>` | unregister a repo |
 | `canopy row list [--all]` | list rows, including external ones with `--all` |
@@ -541,7 +572,7 @@ Readers skip a trailing partial line and any line they cannot read.
 
 | Type | Recorded when | `data` |
 |---|---|---|
-| `repo.added`, `repo.removed` | a repo is registered or unregistered | |
+| `repo.added`, `repo.removed` | a repo is registered or unregistered | `clonedFrom` when Canopy cloned it |
 | `row.created`, `row.adopted`, `row.removed` | a row appears, is adopted, or goes away, including being un-adopted | `class` |
 | `row.branch_changed` | a row's HEAD moves to another branch | `from`, `to`, null when detached |
 | `pr.opened` | a row's branch goes from no PR, or a closed one, to a new PR | `number`, `title`, `state`, `url` |

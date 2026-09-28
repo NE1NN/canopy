@@ -131,6 +131,32 @@ struct IconButton: View {
     }
 }
 
+/// A borderless icon that opens a menu, drawn like `IconButton`.
+struct IconMenu<Items: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder var items: Items
+    @State private var isHovering = false
+
+    var body: some View {
+        Menu {
+            items
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .frame(width: 22, height: 22)
+        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .foregroundStyle(isHovering ? .primary : .secondary)
+        .onHover { isHovering = $0 }
+        .help(title)
+        .accessibilityLabel(title)
+    }
+}
+
 /// The accent dot that marks a program running in a row, tab, or pane.
 struct RunningDot: View {
     var size = 6.0

@@ -26,6 +26,12 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case ghFailed(String)
     case portNotFound(Int)
     case portInOtherRow(Int, row: String)
+    case invalidCloneSource(String)
+    case cloneNeedsFolder(String)
+    /// `holding` says what the folder holds, such as "a clone of <url>", or is nil for anything that is not a repo.
+    case folderTaken(String, holding: String?)
+    case cloneFailed(String, reason: String)
+    case cloneCancelled
     case git(GitError)
 
     public var code: String {
@@ -57,6 +63,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .ghFailed: "gh_failed"
         case .portNotFound: "port_not_found"
         case .portInOtherRow: "port_in_other_row"
+        case .invalidCloneSource: "invalid_clone_source"
+        case .cloneNeedsFolder: "missing_target"
+        case .folderTaken: "folder_taken"
+        case .cloneFailed: "clone_failed"
+        case .cloneCancelled: "clone_cancelled"
         case .git: "git_failed"
         }
     }
@@ -95,6 +106,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "No row's process listens on port \(port). Run `canopy ports --all`; Canopy only stops its rows' ports."
         case .portInOtherRow(let port, let row):
             "Port \(port) belongs to \(row), not to this row. Pass --row \(row), or --all to stop it anywhere."
+        case .invalidCloneSource(let text): "Pass owner/repo or a URL to clone, not \"\(text)\"."
+        case .cloneNeedsFolder(let text): "Canopy cannot tell which folder \(text) goes in. Pass --into."
+        case .folderTaken(let path, let holding?):
+            "\(path) already holds \(holding). Pass --into to clone somewhere else."
+        case .folderTaken(let path, nil):
+            "\(path) is already there and is not an empty folder. Pass --into to clone somewhere else."
+        case .cloneFailed(let source, let reason): "Could not clone \(source): \(reason)"
+        case .cloneCancelled: "The clone was stopped before it finished."
         case .git(let error): error.description
         }
     }

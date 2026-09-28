@@ -65,6 +65,49 @@ enum Fixture {
             sshConfigFile: sshConfigFile)
     }
 
+    /// A bare repo with one commit at `<dir>/remotes/<owner>/<name>.git`, to clone from.
+    @discardableResult
+    static func remote(in dir: TempDir, _ nameWithOwner: String) async throws -> String {
+        let bare = dir.sub("remotes/\(nameWithOwner).git")
+        let seed = try await repo(in: dir, name: "seed-\(UUID().uuidString.prefix(6))")
+        try await git.run(["clone", "--quiet", "--bare", seed, bare])
+        return Paths.canonical(bare)
+    }
+
+    /// A GitHubCLI whose gh clones `owner/repo` from `<dir>/remotes` and points origin at GitHub, as gh would.
+    /// `before` runs first, with gh's arguments in "$@".
+    static func cloningGH(in dir: TempDir, before: String = "", sshConfigFile: String? = nil) throws -> GitHubCLI {
+        try gh(
+            in: dir, sshConfigFile: sshConfigFile,
+            """
+            \(before)
+            [[ "$1 $2" == "repo clone" ]] || exit 1
+            repo="${3#https://github.com/}"
+            repo="${repo%.git}"
+            if [[ ! -d "\(dir.path)/remotes/$repo.git" ]]; then
+                echo "GraphQL: Could not resolve to a Repository with the name '$repo'. (repository)" >&2
+                exit 1
+            fi
+            '\(gitPath)' clone "${@:6}" "file://\(dir.path)/remotes/$repo.git" "$4" || exit 1
+            '\(gitPath)' -C "$4" remote set-url origin "https://github.com/$repo.git"
+            """)
+    }
+
+    /// A GitHubCLI that finds no gh.
+    static func noGH(in dir: TempDir) -> GitHubCLI {
+        GitHubCLI(environment: ["PATH": "/usr/bin:/bin", "HOME": dir.path], fallbackFolders: [])
+    }
+
+    /// A GitRunner that fetches https://github.com/ URLs from `<dir>/remotes` instead, so plain git clones of GitHub
+    /// URLs stay on this machine.
+    static func gitRedirectingGitHub(to dir: TempDir, executable: String = gitPath) -> GitRunner {
+        var environment = Fixture.environment
+        environment["GIT_CONFIG_COUNT"] = "1"
+        environment["GIT_CONFIG_KEY_0"] = "url.file://\(dir.sub("remotes"))/.insteadOf"
+        environment["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+        return GitRunner(executable: executable, environment: environment)
+    }
+
     static func worktree(repo: String, branch: String, at path: String) async throws {
         try FileManager.default.createDirectory(
             atPath: (path as NSString).deletingLastPathComponent,

@@ -88,6 +88,7 @@ final class AppModel {
     }
 
     func shutdown() {
+        workspace.stopClones()
         portsTask?.cancel()
         activityTask?.cancel()
         server?.stop()
@@ -548,6 +549,32 @@ final class AppModel {
 
     func prune(_ repo: RepoSnapshot) {
         perform { try await $0.prune(repoPath: repo.path) }
+    }
+
+    // MARK: Cloning
+
+    /// The Repos `+` menu and File > Clone Repo….
+    var isShowingCloneSheet = false
+
+    func showCloneSheet() {
+        isShowingCloneSheet = true
+    }
+
+    func gitHubRepos() async -> Result<[GitHubRepoSummary], GHFailure> {
+        await workspace.gitHubRepos()
+    }
+
+    /// Where a clone of `text` goes, or nil while it is not something to clone.
+    func cloneFolder(for text: String) -> String? {
+        try? CloneSource(text).defaultFolder(in: home)
+    }
+
+    /// Clones a repo into its default folder and selects its main row. Cancelling the calling task stops the clone.
+    func cloneRepo(_ text: String, progress: @escaping @Sendable (CloneProgress) -> Void) async throws {
+        let repo = try await workspace.cloneRepo(text, progress: progress)
+        if let main = repo.rows.first {
+            await select(main.path)
+        }
     }
 
     // MARK: Internals
