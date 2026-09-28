@@ -130,13 +130,20 @@ extension RepoEntry {
         }
         rowOrder = rowOrder.filter { isPresent.contains($0) && placed.insert($0).inserted }
         for path in present where placed.insert(path).inserted {
-            if let name = joining[path], let index = groupIndex(named: name) {
-                groups[index].rows.append(path)
-            } else {
-                rowOrder.append(path)
-            }
+            place(path, joining: joining[path])
         }
         return self != original
+    }
+
+    /// Puts a row the entry does not hold yet at the end of its group, or of the ungrouped rows if it has none or the
+    /// group is gone.
+    mutating func place(_ path: String, joining group: String?) {
+        guard !holds(path) else { return }
+        if let group, let index = groupIndex(named: group) {
+            groups[index].rows.append(path)
+        } else {
+            rowOrder.append(path)
+        }
     }
 
     /// Makes groups read from a file follow the rules: valid names unique ignoring case, and each path in one place,

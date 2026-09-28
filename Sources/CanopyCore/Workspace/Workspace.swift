@@ -26,6 +26,9 @@ public actor Workspace {
     /// Rows Canopy is creating, removing, or pruning, with who asked. git can list a row halfway through a change, so
     /// refreshes leave these out of the comparison, and the operation logs how each one ended up.
     var changingRows: [String: ActivitySource] = [:]
+    /// Rows being created into a group, by path, so a refresh that lists one before its creation finishes puts it
+    /// straight into the group.
+    var rowsJoiningGroups: [String: String] = [:]
 
     let github: GitHubCLI
     let prTiming: PRTiming
@@ -343,7 +346,7 @@ public actor Workspace {
         recordRowChanges(repoPath: current.path, rows: rows)
         let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
         var reconciled = current
-        if reconciled.reconcile(present: managed.map(\.path)) {
+        if reconciled.reconcile(present: managed.map(\.path), joining: rowsJoiningGroups) {
             state.repos[index] = reconciled
             try? save()
         }

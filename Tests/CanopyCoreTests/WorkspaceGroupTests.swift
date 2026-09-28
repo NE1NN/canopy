@@ -259,6 +259,92 @@ struct WorkspaceGroupTests {
     }
 }
 
+struct GroupRowCreationTests {
+    /// A workspace whose `git worktree add` waits, once the worktree exists, until the test creates `go`.
+    func stalledSetUp(_ dir: TempDir) async throws -> (Workspace, String) {
+        let repo = try await Fixture.repo(in: dir)
+        let git = try Fixture.git(
+            in: dir,
+            before: """
+                if [ "$1" = worktree ] && [ "$2" = add ]; then
+                    /usr/bin/git "$@"; code=$?
+                    touch '\(dir.sub("added"))'
+                    while [ ! -e '\(dir.sub("go"))' ]; do sleep 0.05; done
+                    exit $code
+                fi
+                """)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+        try await workspace.createGroup(repoPath: repo, name: "Review")
+        return (workspace, repo)
+    }
+
+    @Test func aRowCreatedIntoAGroupNeverShowsUngrouped() async throws {
+        let dir = try TempDir()
+        let (workspace, repo) = try await stalledSetUp(dir)
+        let path = dir.sub("home/worktrees/demo/feat-a")
+        let updates = await workspace.updates()
+        let watcher = Task {
+            var groups: [String?] = []
+            for await snapshot in updates {
+                if let row = snapshot.row(path: path) { groups.append(row.group) }
+                if groups.count > 0, FileManager.default.fileExists(atPath: dir.sub("done")) { break }
+            }
+            return groups
+        }
+
+        let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "review") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        await workspace.refresh(repoPath: repo)
+        #expect(await workspace.snapshot.row(path: path)?.group == "Review")
+        FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+        let created = try await creating.value
+        FileManager.default.createFile(atPath: dir.sub("done"), contents: nil)
+        try await workspace.setGroupCollapsed(repoPath: repo, name: "Review", collapsed: true)
+
+        #expect(created.row.group == "Review" && created.warnings.isEmpty)
+        let seen = await watcher.value
+        #expect(!seen.isEmpty && seen.allSatisfy { $0 == "Review" })
+        let events = await logged(workspace, "row")
+        #expect(events.map(\.type) == ["row.created", "row.moved"])
+        #expect(events.last?.data == ["from": .null, "to": "Review"])
+    }
+
+    @Test func aGroupDeletedWhileItsRowIsCreatedLeavesTheRowUngrouped() async throws {
+        let dir = try TempDir()
+        let (workspace, repo) = try await stalledSetUp(dir)
+
+        let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        try await workspace.removeGroup(repoPath: repo, name: "Review")
+        FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
+        let created = try await creating.value
+
+        #expect(created.row.group == nil)
+        #expect(
+            created.warnings == ["Group Review went away while the row was being created, so the row is ungrouped."])
+        #expect(await workspace.snapshot.repos.first?.rows.map(\.displayName) == ["main", "feat/a"])
+        #expect(await logged(workspace, "row").map(\.type) == ["row.created"])
+    }
+
+    @Test func aMissingGroupCreatesNothing() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        await #expect(throws: WorkspaceError.groupNotFound("Nope", repo: "demo")) {
+            try await workspace.createRow(repoPath: repo, branch: "feat/a", group: " Nope ")
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: dir.sub("home/worktrees/demo/feat-a")))
+        #expect(!(await Fixture.git.succeeds(["show-ref", "--verify", "--quiet", "refs/heads/feat/a"], in: repo)))
+        #expect(await logged(workspace, "row").isEmpty)
+    }
+}
+
 /// The sidebar order and keyboard stepping, on snapshots built by hand.
 struct GroupSnapshotTests {
     static func row(_ repo: String, _ name: String, group: String? = nil, main: Bool = false) -> Row {
