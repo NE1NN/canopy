@@ -118,7 +118,7 @@ public final class Pane: Identifiable {
 
     /// The shell's working folder now, so a `cd` is remembered across relaunches.
     public var currentDirectory: String? {
-        process.flatMap { PtyProcess.currentDirectory(of: $0.pid) }
+        process.flatMap { ProcessTable.folder(of: $0.pid) }
     }
 
     /// The folder it was restored into, or the row's folder, or the home folder if both are gone.
