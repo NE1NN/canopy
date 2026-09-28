@@ -117,6 +117,8 @@ extension Workspace {
             guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
             (branch, source) = (requested, .new)
             start = try await startPoint(base, repoPath: repoPath, hasOrigin: hasOrigin)
+            // A PR bound to an old branch of this name is not the new branch's.
+            try forgetPullRequest(of: branch, repoPath: repoPath)
         }
         if branch != requested {
             notes.append("Using \(branch), the branch's own spelling.")
@@ -254,6 +256,7 @@ extension Workspace {
                 } catch {
                     return ["Removed the row, but could not delete branch \(branch): \(error)"]
                 }
+                try? forgetPullRequest(of: branch, repoPath: row.repoPath)
             }
             return []
         }

@@ -82,6 +82,28 @@ extension Workspace {
         (row.rowClass == .canopy || row.rowClass == .adopted) && row.branch != nil
     }
 
+    /// The PRs bound to `branches`, while origin is still the repo they were bound in.
+    func boundPullRequests(repoPath: String, branches: [String], repo: GitHubRepo) -> [String: Int] {
+        let bindings = state.repos.first { $0.path == repoPath }?.prBindings ?? [:]
+        var numbers: [String: Int] = [:]
+        for branch in branches {
+            guard let binding = bindings[branch], binding.repo.lowercased() == repo.nameWithOwner.lowercased() else {
+                continue
+            }
+            numbers[branch] = binding.number
+        }
+        return numbers
+    }
+
+    /// Forgets the PR bound to `branch`, which is gone, or is about to be a new branch with the same name.
+    func forgetPullRequest(of branch: String, repoPath: String) throws {
+        guard let index = try? entryIndex(repoPath: repoPath), state.repos[index].prBindings[branch] != nil else {
+            return
+        }
+        state.repos[index].prBindings[branch] = nil
+        try save()
+    }
+
     func pullRequestBranches(repoPath: String) -> [String] {
         let rows = repoSnapshots[repoPath]?.rows ?? []
         return Set(rows.filter(Self.looksUpPullRequest).compactMap(\.branch)).sorted()
@@ -149,10 +171,12 @@ extension Workspace {
         guard state.repos.contains(where: { $0.path == repoPath }), let repo = repoSnapshots[repoPath], !repo.isMissing
         else { return }
         let branches = pullRequestBranches(repoPath: repoPath)
-        let origin = try? await git.run(["remote", "get-url", "origin"], in: repoPath)
         var lookup: PRLookup?
-        if let origin, let gitHubRepo = await github.repo(forRemote: origin) {
-            lookup = branches.isEmpty ? .found([:]) : await github.pullRequests(repo: gitHubRepo, branches: branches)
+        if let origin = await gitHubRemote("origin", repoPath: repoPath) {
+            let numbers = boundPullRequests(repoPath: repoPath, branches: branches, repo: origin.repo)
+            lookup =
+                branches.isEmpty
+                ? .found([:]) : await github.pullRequests(repo: origin.repo, branches: branches, numbers: numbers)
         }
         // The repo may have been removed while gh answered.
         guard state.repos.contains(where: { $0.path == repoPath }) else { return }

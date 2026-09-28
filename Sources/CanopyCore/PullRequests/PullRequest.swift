@@ -106,21 +106,27 @@ public struct GitHubRepo: Sendable, Equatable {
 
 /// One GraphQL request per repo, with an aliased pull request search per branch.
 public enum PRQuery {
-    public static func build(repo: GitHubRepo, branches: [String]) -> String {
-        let fields = branches.enumerated().map { index, branch in
-            """
-            b\(index): pullRequests(headRefName: \(literal(branch)), first: 100, \
-            orderBy: {field: UPDATED_AT, direction: DESC}) \
-            { nodes { number title url state isDraft updatedAt isCrossRepository } }
-            """
+    static let fields = "number title url state isDraft updatedAt isCrossRepository"
+
+    /// `numbers` holds the PR bound to a branch whose name cannot find it, which is asked for by number instead.
+    public static func build(repo: GitHubRepo, branches: [String], numbers: [String: Int] = [:]) -> String {
+        let aliases = branches.enumerated().map { index, branch in
+            if let number = numbers[branch] {
+                return "b\(index): pullRequest(number: \(number)) { \(fields) }"
+            }
+            return """
+                b\(index): pullRequests(headRefName: \(literal(branch)), first: 100, \
+                orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { \(fields) } }
+                """
         }
         return "query { repository(owner: \(literal(repo.owner)), name: \(literal(repo.name))) { "
-            + fields.joined(separator: " ") + " } }"
+            + aliases.joined(separator: " ") + " } }"
     }
 
-    /// Each branch's PR: its open PR if there is one, otherwise its most recently updated. PRs from forks that
-    /// happen to use the same branch name are ignored. Comparing names instead would drop every PR of a repo that was
-    /// renamed, since GitHub answers for the old name with the new one.
+    /// Each branch's PR. A branch asked about by name gets its open PR if there is one, otherwise its most recently
+    /// updated, and PRs from forks that happen to use the same branch name are ignored. Comparing names instead would
+    /// drop every PR of a repo that was renamed, since GitHub answers for the old name with the new one. A branch
+    /// asked about by number gets that PR, from a fork or not.
     public static func parse(_ data: Data, branches: [String]) throws -> [String: PullRequest] {
         struct Node: Decodable {
             var number: Int
@@ -132,18 +138,37 @@ public enum PRQuery {
             var isCrossRepository: Bool
         }
         struct Connection: Decodable { var nodes: [Node] }
+        /// A search by name answers with a connection, and a lookup by number with the PR itself.
+        enum Field: Decodable {
+            case search([Node])
+            case bound(Node)
+
+            init(from decoder: any Decoder) throws {
+                if let connection = try? Connection(from: decoder) {
+                    self = .search(connection.nodes)
+                } else {
+                    self = .bound(try Node(from: decoder))
+                }
+            }
+        }
         struct Response: Decodable {
-            struct Payload: Decodable { var repository: [String: Connection]? }
+            struct Payload: Decodable { var repository: [String: Field?]? }
             var data: Payload?
         }
         let found = try JSONDecoder().decode(Response.self, from: data).data?.repository ?? [:]
         var result: [String: PullRequest] = [:]
         for (index, branch) in branches.enumerated() {
-            let nodes = (found["b\(index)"]?.nodes ?? []).filter { !$0.isCrossRepository }
-            guard
-                let chosen = nodes.first(where: { $0.state == "OPEN" })
-                    ?? nodes.max(by: { $0.updatedAt < $1.updatedAt })
-            else { continue }
+            let chosen: Node?
+            switch found["b\(index)"] ?? nil {
+            case .search(let nodes):
+                let own = nodes.filter { !$0.isCrossRepository }
+                chosen = own.first { $0.state == "OPEN" } ?? own.max { $0.updatedAt < $1.updatedAt }
+            case .bound(let node):
+                chosen = node
+            case nil:
+                chosen = nil
+            }
+            guard let chosen else { continue }
             result[branch] = PullRequest(
                 number: chosen.number, title: chosen.title, url: chosen.url,
                 state: PRState(gitHub: chosen.state, isDraft: chosen.isDraft), updatedAt: chosen.updatedAt)
