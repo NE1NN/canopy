@@ -1,5 +1,12 @@
 import Foundation
 
+/// Why gh could not do what it was asked.
+public enum GHFailure: Error, Sendable, Equatable {
+    case ghMissing
+    case notLoggedIn
+    case failed(String)
+}
+
 public enum PRLookup: Sendable, Equatable {
     /// Each looked-up branch that has a PR.
     case found([String: PullRequest])
@@ -40,41 +47,63 @@ public struct GitHubCLI: Sendable {
     }
 
     public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
-        await onOwnThread { lookUpBlocking(repo: repo, branches: branches) }
+        let query = PRQuery.build(repo: repo, branches: branches)
+        switch await run(["api", "graphql", "-f", "query=\(query)"]) {
+        case .failure(.ghMissing): return .ghMissing
+        case .failure(.notLoggedIn): return .notLoggedIn
+        case .failure(.failed(let message)): return .failed(message)
+        case .success(let reply):
+            guard let found = try? PRQuery.parse(reply, branches: branches) else { return .failed(Self.unreadable) }
+            return .found(found)
+        }
     }
 
-    private func lookUpBlocking(repo: GitHubRepo, branches: [String]) -> PRLookup {
+    /// One pull request of `repo`, with what starting a row from it needs. Nil when the repo has no such PR.
+    public func pullRequest(repo: GitHubRepo, number: Int) async -> Result<PullRequestHead?, GHFailure> {
+        switch await run(["api", "graphql", "-f", "query=\(PRHeadQuery.build(repo: repo, number: number))"]) {
+        case .failure(.failed(let message)) where message.hasPrefix("Could not resolve to a PullRequest"):
+            return .success(nil)
+        case .failure(let failure):
+            return .failure(failure)
+        case .success(let reply):
+            guard let head = try? PRHeadQuery.parse(reply) else { return .failure(.failed(Self.unreadable)) }
+            return .success(head)
+        }
+    }
+
+    private static let unreadable = "gh returned a reply Canopy could not read."
+
+    /// Runs gh off the Swift concurrency pool and returns what it printed.
+    private func run(_ arguments: [String]) async -> Result<Data, GHFailure> {
+        await onOwnThread { runBlocking(arguments) }
+    }
+
+    private func runBlocking(_ arguments: [String]) -> Result<Data, GHFailure> {
         var environment = environment ?? GitEnvironment.current
         let folders = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
         guard
             let executable = (folders + fallbackFolders).lazy.map({ $0 + "/gh" }).first(where: {
                 FileManager.default.isExecutableFile(atPath: $0)
             })
-        else { return .ghMissing }
+        else { return .failure(.ghMissing) }
         environment["GH_PROMPT_DISABLED"] = "1"
         environment["GH_NO_UPDATE_NOTIFIER"] = "1"
 
-        let query = PRQuery.build(repo: repo, branches: branches)
         let result: SubprocessResult
         do {
             result = try Subprocess.run(
-                executable, ["api", "graphql", "-f", "query=\(query)"], environment: environment, directory: nil,
-                timeout: timeout)
+                executable, arguments, environment: environment, directory: nil, timeout: timeout)
         } catch {
-            return .failed("\(error)")
+            return .failure(.failed("\(error)"))
         }
-        if result.timedOut { return .failed("gh did not answer in time.") }
+        if result.timedOut { return .failure(.failed("gh did not answer in time.")) }
         let message = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         // gh exits 4 when it has no login, and a revoked or expired token comes back as a 401.
-        if result.status == 4 || message.contains("HTTP 401") { return .notLoggedIn }
+        if result.status == 4 || message.contains("HTTP 401") { return .failure(.notLoggedIn) }
         guard result.status == 0 else {
             let line = message.split(separator: "\n").last.map(String.init) ?? "gh exited with \(result.status)."
-            return .failed(line.hasPrefix("gh: ") ? String(line.dropFirst(4)) : line)
+            return .failure(.failed(line.hasPrefix("gh: ") ? String(line.dropFirst(4)) : line))
         }
-        do {
-            return .found(try PRQuery.parse(result.stdout, branches: branches))
-        } catch {
-            return .failed("gh returned a reply Canopy could not read.")
-        }
+        return .success(result.stdout)
     }
 }

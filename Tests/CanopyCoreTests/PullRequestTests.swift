@@ -82,4 +82,83 @@ struct PullRequestTests {
         #expect(found["c"] == nil)
         #expect(found["d"]?.number == 3)
     }
+
+    @Test func comparesReposWithoutCase() {
+        #expect(GitHubRepo(owner: "NE1NN", name: "Canopy").matches(repo))
+        #expect(!GitHubRepo(owner: "NE1NN", name: "canopy-2").matches(repo))
+    }
+
+    @Test func reachesAForkTheWayOriginIsReached() {
+        let fork = GitHubRepo(owner: "someone", name: "canopy-fork")
+        let cases = [
+            "https://github.com/NE1NN/canopy.git": "https://github.com/someone/canopy-fork.git",
+            "https://github.com/NE1NN/canopy": "https://github.com/someone/canopy-fork",
+            "https://token@github.com/NE1NN/canopy.git/": "https://token@github.com/someone/canopy-fork.git",
+            "git@github.com:NE1NN/canopy.git": "git@github.com:someone/canopy-fork.git",
+            "git@github-work:NE1NN/canopy": "git@github-work:someone/canopy-fork",
+            "ssh://git@ssh.github.com:443/NE1NN/canopy.git": "ssh://git@ssh.github.com:443/someone/canopy-fork.git",
+        ]
+        for (origin, expected) in cases {
+            #expect(fork.url(replacingRepoIn: origin) == expected, "\(origin)")
+        }
+        #expect(fork.url(replacingRepoIn: "/local/path") == nil)
+    }
+
+    @Test func readsAPullRequestsHead() throws {
+        let json = """
+            {"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": {
+              "number": 7, "title": "Split checkout", "url": "https://github.com/NE1NN/canopy/pull/7", "state": "OPEN",
+              "isDraft": true, "updatedAt": "2026-09-28T01:00:00Z", "headRefName": "feat/split",
+              "headRefOid": "abc123", "headRef": {"name": "feat/split"}, "baseRefName": "main",
+              "isCrossRepository": true, "maintainerCanModify": true,
+              "headRepository": {"name": "canopy-fork"}, "headRepositoryOwner": {"login": "someone"}}}}}
+            """
+
+        let head = try #require(try PRHeadQuery.parse(Data(json.utf8)))
+
+        #expect(
+            head.pullRequest
+                == PullRequest(
+                    number: 7, title: "Split checkout", url: "https://github.com/NE1NN/canopy/pull/7", state: .draft,
+                    updatedAt: "2026-09-28T01:00:00Z"))
+        #expect(head.branch == "feat/split")
+        #expect(head.commit == "abc123")
+        #expect(head.branchExists)
+        #expect(head.isCrossRepository)
+        #expect(head.headRepo == GitHubRepo(owner: "someone", name: "canopy-fork"))
+        #expect(head.maintainerCanModify)
+        #expect(head.defaultBranch == "main")
+    }
+
+    @Test func readsAMergedHeadWhoseBranchAndForkAreGone() throws {
+        let json = """
+            {"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": {
+              "number": 7, "title": "t", "url": "u", "state": "MERGED", "isDraft": false, "updatedAt": "2026-09-28",
+              "headRefName": "feat/split", "headRefOid": "abc123", "headRef": null, "baseRefName": "main",
+              "isCrossRepository": true, "maintainerCanModify": false, "headRepository": null,
+              "headRepositoryOwner": null}}}}
+            """
+
+        let head = try #require(try PRHeadQuery.parse(Data(json.utf8)))
+
+        #expect(head.pullRequest.state == .merged)
+        #expect(!head.branchExists)
+        #expect(head.headRepo == nil)
+    }
+
+    @Test func aMissingPullRequestReadsAsNone() throws {
+        let json = #"{"data": {"repository": {"defaultBranchRef": {"name": "main"}, "pullRequest": null}}}"#
+
+        #expect(try PRHeadQuery.parse(Data(json.utf8)) == nil)
+    }
+
+    @Test func headQueryAsksForOnePullRequest() {
+        let query = PRHeadQuery.build(repo: repo, number: 7)
+
+        #expect(query.contains(#"repository(owner: "NE1NN", name: "canopy")"#))
+        #expect(query.contains("pullRequest(number: 7)"))
+        for field in ["headRefOid", "headRef { name }", "maintainerCanModify", "headRepositoryOwner { login }"] {
+            #expect(query.contains(field), "\(field)")
+        }
+    }
 }
