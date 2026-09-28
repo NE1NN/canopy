@@ -16,6 +16,8 @@ public struct PullRequestHead: Sendable, Equatable {
     public var maintainerCanModify: Bool
     /// The base repo's default branch.
     public var defaultBranch: String?
+    /// Nil once GitHub no longer has the author's account.
+    public var author: String? = nil
 }
 
 /// One GraphQL request for one pull request and its repo's default branch.
@@ -24,7 +26,7 @@ public enum PRHeadQuery {
         "query { repository(owner: \(PRQuery.literal(repo.owner)), name: \(PRQuery.literal(repo.name))) { "
             + "defaultBranchRef { name } pullRequest(number: \(number)) { number title url state isDraft updatedAt "
             + "headRefName headRefOid headRef { name } baseRefName isCrossRepository maintainerCanModify "
-            + "headRepository { name } headRepositoryOwner { login } } } }"
+            + "headRepository { name } headRepositoryOwner { login } author { login } } } }"
     }
 
     /// Nil when the repo has no such pull request.
@@ -45,6 +47,7 @@ public enum PRHeadQuery {
             var maintainerCanModify: Bool
             var headRepository: Name?
             var headRepositoryOwner: Login?
+            var author: Login?
         }
         struct Repository: Decodable {
             var defaultBranchRef: Name?
@@ -66,6 +69,7 @@ public enum PRHeadQuery {
                 state: PRState(gitHub: node.state, isDraft: node.isDraft), updatedAt: node.updatedAt),
             branch: node.headRefName, commit: node.headRefOid, branchExists: node.headRef != nil,
             isCrossRepository: node.isCrossRepository, headRepo: headRepo,
-            maintainerCanModify: node.maintainerCanModify, defaultBranch: repository?.defaultBranchRef?.name)
+            maintainerCanModify: node.maintainerCanModify, defaultBranch: repository?.defaultBranchRef?.name,
+            author: node.author?.login)
     }
 }

@@ -221,4 +221,37 @@ struct GitHubCLITests {
         #expect(await loggedOut.pullRequest(repo: repo, number: 7) == .failure(.notLoggedIn))
         #expect(await missing.pullRequest(repo: repo, number: 7) == .failure(.ghMissing))
     }
+
+    @Test func listsPullRequestsWithOneCall() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            printf '%s\\n' "$@" > "\(dir.sub("args"))"
+            echo '{"data": {"repository": {"pullRequests": {"nodes": [{"number": 3, "title": "Fix it", "url": "https://x/3", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28T01:00:00Z", "headRefName": "fix/it", "isCrossRepository": false, "author": {"login": "me"}}]}}}}'
+            """)
+
+        let listed = try await gh.pullRequestList(repo: repo, includeClosed: true).get()
+
+        #expect(listed.map(\.number) == [3])
+        #expect(listed.first?.author == "me")
+        let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8).split(separator: "\n")
+        #expect(Array(args.prefix(3)) == ["api", "graphql", "-f"])
+        #expect(args.dropFirst(3).first?.contains("states: [OPEN, CLOSED, MERGED]") == true)
+    }
+
+    @Test func aPullRequestListSaysWhyGHCannotAnswer() async throws {
+        let dir = try TempDir()
+        let loggedOut = try Fixture.gh(
+            in: dir, "echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4")
+        let missing = GitHubCLI(environment: ["PATH": dir.path, "HOME": dir.path], fallbackFolders: [])
+        let garbledDir = try TempDir()
+        let garbled = try Fixture.gh(in: garbledDir, "echo 'not json'")
+
+        #expect(await loggedOut.pullRequestList(repo: repo, includeClosed: false) == .failure(.notLoggedIn))
+        #expect(await missing.pullRequestList(repo: repo, includeClosed: false) == .failure(.ghMissing))
+        #expect(
+            await garbled.pullRequestList(repo: repo, includeClosed: false)
+                == .failure(.failed("gh returned a reply Canopy could not read.")))
+    }
 }
