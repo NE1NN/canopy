@@ -16,6 +16,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case branchNotFound(String, fetchFailure: String?)
     /// Local branches a PR's row could have used, none of which is the PR's.
     case branchExists([String], pr: Int)
+    case invalidPullRequest(String)
     case pullRequestInOtherRepo(String, origin: String)
     case pullRequestNotFound(Int, repo: String)
     case pullRequestFetchFailed(Int, reason: String)
@@ -63,7 +64,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .branchCheckedOut: "branch_checked_out"
         case .branchNotFound: "branch_not_found"
         case .branchExists: "branch_exists"
-        case .pullRequestInOtherRepo: "invalid_pr"
+        case .invalidPullRequest, .pullRequestInOtherRepo: "invalid_pr"
         case .pullRequestNotFound: "pr_not_found"
         case .pullRequestFetchFailed: "git_failed"
         case .worktreeDirty: "worktree_dirty"
@@ -128,6 +129,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .branchExists(let names, let number):
             "Branches \(names.joined(separator: " and ")) already exist and are not PR #\(number)'s. "
                 + "Pass --branch to name the row's branch."
+        case .invalidPullRequest(let text): "Pass a PR number, #number, or PR URL, not \"\(text)\"."
         case .pullRequestInOtherRepo(let repo, let origin):
             "That PR is in \(repo), but this repo's origin is \(origin). Pass --repo for a repo whose origin is \(repo)."
         case .pullRequestNotFound(let number, let repo): "\(repo) has no PR #\(number)."

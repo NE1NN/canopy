@@ -41,8 +41,13 @@ struct RowCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Create a row: a branch and a worktree under the Canopy folder.",
             discussion: """
-                An existing local branch is checked out. A branch that only exists on origin is tracked. \
-                Anything else is created from --from, which defaults to origin's default branch.
+                An existing local branch is checked out, after a fast-forward if it is only behind origin. A branch \
+                that only exists on origin is tracked. Anything else is created from --from, which defaults to \
+                origin's default branch, unless --existing asks to fail instead. A branch with commits of its own \
+                is never reset.
+
+                --pr checks out a pull request's branch, including one from a fork, named and tracked the way \
+                gh pr checkout does it.
 
                 The repo's setup commands from .canopy/config.json then run in the row's Setup tab, and this \
                 waits for them. If setup fails, the row stays, --run is skipped, and this exits 1.
@@ -50,11 +55,17 @@ struct RowCommand: AsyncParsableCommand {
         )
 
         @Argument(help: "Branch name, for example feat/login.")
-        var branch: String
+        var branch: String?
+        @Option(help: "Start from a pull request: its number, #number, or URL.")
+        var pr: String?
+        @Option(name: .customLong("branch"), help: ArgumentHelp("With --pr, the local branch name.", valueName: "name"))
+        var localBranch: String?
         @Option(help: "Repo name or path. Defaults to the repo you are in.")
         var repo: String?
         @Option(name: .customLong("from"), help: "Start point for a new branch.")
         var base: String?
+        @Flag(help: "Fail instead of creating a branch that is neither local nor on origin.")
+        var existing = false
         @Option(name: .customLong("run"), help: "Command to type into a new terminal once setup succeeds.")
         var command: String?
         @Flag(name: .customLong("no-setup"), help: "Skip the repo's setup commands.")
@@ -65,13 +76,32 @@ struct RowCommand: AsyncParsableCommand {
         var group: String?
         @OptionGroup var output: OutputOptions
 
+        func validate() throws {
+            guard pr != nil else {
+                if branch == nil { throw ValidationError("Pass a branch name, or --pr.") }
+                if localBranch != nil {
+                    throw ValidationError("--branch is only for --pr. Pass the branch as the argument.")
+                }
+                if existing, base != nil {
+                    throw ValidationError("--from only applies to new branches, and --existing never creates one.")
+                }
+                return
+            }
+            if branch != nil {
+                throw ValidationError(
+                    "--pr cannot be used with a branch argument. Name the local branch with --branch.")
+            }
+            if base != nil { throw ValidationError("--from only applies to new branches, and --pr uses the PR's.") }
+            if existing { throw ValidationError("--existing is for a branch name. --pr always uses the PR's branch.") }
+        }
+
         func run() async throws {
             let client = Client(json: output.json)
             let result = client.call(
                 ControlMethod.rowNew,
                 RowNewParams(
-                    target: Client.hint(repo: repo), branch: branch, base: base, select: select, setup: !noSetup,
-                    run: command, group: group)
+                    target: Client.hint(repo: repo), branch: branch ?? localBranch, pr: pr, base: base,
+                    existing: existing, select: select, setup: !noSetup, run: command, group: group)
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
@@ -86,7 +116,19 @@ struct RowCommand: AsyncParsableCommand {
         }
 
         private func summary(of created: RowNewResult) -> String {
-            var lines = ["Created \(created.row.displayName) at \(created.row.path)."]
+            let name = created.row.displayName
+            let path = created.row.path
+            var lines: [String]
+            if let pr = created.pr {
+                lines = ["Checked out PR #\(pr.number) as \(name) in \(path).", "\(pr.title): \(pr.url)"]
+            } else {
+                switch created.source {
+                case .local: lines = ["Checked out \(name) in \(path)."]
+                case .origin: lines = ["Checked out \(name), tracking origin/\(name), in \(path)."]
+                case .new: lines = ["Created new branch \(name) from \(created.base ?? "HEAD") in \(path)."]
+                }
+            }
+            lines += created.notes
             switch created.setup.status {
             case .succeeded: lines.append("Setup finished.")
             case .skipped: lines.append("Skipped setup.")
