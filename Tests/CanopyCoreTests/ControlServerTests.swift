@@ -327,6 +327,7 @@ struct ControlServerTests {
             var chunk = [UInt8](repeating: 0, count: 65_536)
             while received.filter({ $0 == 0x0A }).count < lines {
                 let count = read(fd, &chunk, chunk.count)
+                if count < 0 && errno == EINTR { continue }
                 guard count > 0 else { break }
                 received.append(contentsOf: chunk[0..<count])
             }
@@ -367,7 +368,7 @@ struct ControlServerTests {
 
         let replies = try await exchange(home.socketPath, payload, lines: 2)
 
-        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false])
+        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false], "\(replies)")
     }
 
     @Test func overLongLinesAreRejected() async throws {
