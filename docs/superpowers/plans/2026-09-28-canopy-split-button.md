@@ -17,6 +17,7 @@ Both buttons share one `TabBarButton` view so they look the same.
 - The button does exactly what `⌘D` does, with no new layout logic.
 - Its tooltip names the shortcut, like the `+` button's "New Tab (⌘T)".
 - It matches the `+` button's size, weight, and color.
+- VoiceOver reads each icon button by its name, "Split Pane" or "New Tab".
 
 ## Decisions to Review
 
@@ -41,8 +42,9 @@ Both buttons share one `TabBarButton` view so they look the same.
 -                    .frame(width: 24, height: 24)
 -                    .contentShape(Rectangle())
 +            HStack(spacing: 2) {
-+                TabBarButton(systemImage: "rectangle.split.2x1", help: "Split Pane (⌘D)", action: model.splitPane)
-+                TabBarButton(systemImage: "plus", help: "New Tab (⌘T)", action: model.newTab)
++                TabBarButton(
++                    title: "Split Pane", systemImage: "rectangle.split.2x1", shortcut: "⌘D", action: model.splitPane)
++                TabBarButton(title: "New Tab", systemImage: "plus", shortcut: "⌘T", action: model.newTab)
              }
 -            .buttonStyle(.borderless)
 -            .foregroundStyle(.secondary)
@@ -52,8 +54,9 @@ Both buttons share one `TabBarButton` view so they look the same.
 
 ```swift
 struct TabBarButton: View {
+    let title: String
     let systemImage: String
-    let help: String
+    let shortcut: String
     let action: () -> Void
 
     var body: some View {
@@ -65,7 +68,8 @@ struct TabBarButton: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
-        .help(help)
+        .help("\(title) (\(shortcut))")
+        .accessibilityLabel(title)
     }
 }
 ```
@@ -92,3 +96,14 @@ Expected: no warnings, and every run passes.
 git add Sources/CanopyApp docs/superpowers/specs
 git commit -m "feat: a split button in the tab bar"
 ```
+
+## After Review
+
+An independent reviewer read `git diff main...feat/split-pane-button` against the spec and this plan.
+
+1. **Minor: the icon buttons had no spoken name.**
+   `.help` sets only the tooltip, so VoiceOver read the split button by its symbol name.
+   `TabBarButton` now takes a title, uses it as the accessibility label, and builds the tooltip from the title and shortcut.
+   This also names the `+` button, which had the same gap before this PR.
+
+The reviewer confirmed the button runs the same code as `⌘D`, focuses the new pane the same way, and cannot appear when `splitPane` would do nothing, so it needs no disabled state.

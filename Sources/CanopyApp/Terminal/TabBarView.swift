@@ -28,8 +28,9 @@ struct TabBarView: View {
                 .padding(.horizontal, 6)
             }
             HStack(spacing: 2) {
-                TabBarButton(systemImage: "rectangle.split.2x1", help: "Split Pane (⌘D)", action: model.splitPane)
-                TabBarButton(systemImage: "plus", help: "New Tab (⌘T)", action: model.newTab)
+                TabBarButton(
+                    title: "Split Pane", systemImage: "rectangle.split.2x1", shortcut: "⌘D", action: model.splitPane)
+                TabBarButton(title: "New Tab", systemImage: "plus", shortcut: "⌘T", action: model.newTab)
             }
             .padding(.trailing, 6)
         }
@@ -42,8 +43,9 @@ struct TabBarView: View {
 }
 
 struct TabBarButton: View {
+    let title: String
     let systemImage: String
-    let help: String
+    let shortcut: String
     let action: () -> Void
 
     var body: some View {
@@ -55,7 +57,8 @@ struct TabBarButton: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
-        .help(help)
+        .help("\(title) (\(shortcut))")
+        .accessibilityLabel(title)
     }
 }
 
