@@ -108,4 +108,77 @@ struct GitHubCLITests {
         #expect(found == repo)
         #expect(elapsed < .seconds(5))
     }
+
+    @Test func clonesWithGHAndHasGitReportProgress() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(in: dir, #"printf '%s\n' "$@" > "\#(dir.sub("args"))"; mkdir "$4""#)
+        let folder = dir.sub("clone")
+
+        let failure = await gh.clone("acme/app", into: folder, handle: SubprocessHandle())
+
+        #expect(failure == nil)
+        let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8).split(separator: "\n")
+        #expect(args == ["repo", "clone", "acme/app", Substring(folder), "--", "--progress"])
+    }
+
+    @Test func cloneReportsMissingAndLoggedOutGH() async throws {
+        let dir = try TempDir()
+        let missing = GitHubCLI(environment: ["PATH": dir.path, "HOME": dir.path], fallbackFolders: [])
+        let loggedOut = try Fixture.gh(
+            in: dir, "echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4")
+
+        #expect(await missing.clone("acme/app", into: dir.sub("a"), handle: SubprocessHandle()) == .ghMissing)
+        #expect(await loggedOut.clone("acme/app", into: dir.sub("b"), handle: SubprocessHandle()) == .notLoggedIn)
+    }
+
+    @Test func cloneFailuresPassOnTheirLastLine() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            printf 'Cloning into x...\\rReceiving objects:  10%%\\r' >&2
+            echo "fatal: repository 'https://github.com/acme/nope/' not found" >&2
+            exit 1
+            """)
+
+        #expect(
+            await gh.clone("acme/nope", into: dir.sub("x"), handle: SubprocessHandle())
+                == .failed("repository 'https://github.com/acme/nope/' not found"))
+    }
+
+    @Test func listsTheViewersReposWithOneGraphQLCall() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            printf '%s\\n' "$@" > "\(dir.sub("args"))"
+            echo '{"data": {"viewer": {"repositories": {"nodes": [
+              {"nameWithOwner": "acme/app", "description": "The app", "isPrivate": true, "pushedAt": "2026-09-28T01:00:00Z"},
+              {"nameWithOwner": "me/empty", "description": null, "isPrivate": false, "pushedAt": null}]}}}}'
+            """)
+
+        let listing = await gh.viewerRepos()
+
+        #expect(
+            listing
+                == .success([
+                    GitHubRepoSummary(
+                        nameWithOwner: "acme/app", description: "The app", isPrivate: true,
+                        pushedAt: Date(timeIntervalSince1970: 1_790_557_200)),
+                    GitHubRepoSummary(nameWithOwner: "me/empty", description: nil, isPrivate: false, pushedAt: nil),
+                ]))
+        let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8)
+        #expect(args.hasPrefix("api\ngraphql\n-f\nquery=query { viewer { repositories("))
+        #expect(args.contains("orderBy: {field: PUSHED_AT, direction: DESC}"))
+        #expect(args.contains("ownerAffiliations: [OWNER, ORGANIZATION_MEMBER]"))
+    }
+
+    @Test func repoListReportsGHTrouble() async throws {
+        let (first, second) = (try TempDir(), try TempDir())
+        let loggedOut = try Fixture.gh(in: first, "exit 4")
+        let garbled = try Fixture.gh(in: second, "echo 'not json'")
+
+        #expect(await loggedOut.viewerRepos() == .failure(.notLoggedIn))
+        #expect(await garbled.viewerRepos() == .failure(.failed("gh returned a reply Canopy could not read.")))
+    }
 }
