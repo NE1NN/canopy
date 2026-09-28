@@ -80,18 +80,19 @@ struct GitRunnerTests {
     @Test func aHandleStopsGitAndEverythingItStarted() async throws {
         let dir = try TempDir()
         let background = dir.sub("background.pid")
-        let git = try Fixture.git(in: dir, before: "sleep 30 &\necho $! > '\(background)'\nsleep 30")
+        let git = try Fixture.git(in: dir, before: "sleep 60 &\necho $! > '\(background)'\nsleep 60")
         let handle = SubprocessHandle()
-        let clock = ContinuousClock()
-        let start = clock.now
 
         let run = Task { try await git.run(["clone"], handle: handle) }
         #expect(await eventually { FileManager.default.fileExists(atPath: background) })
+        // Timed from the cancel: a loaded CI runner can take many seconds just to start bash.
+        let clock = ContinuousClock()
+        let start = clock.now
         handle.cancel()
 
         await #expect(throws: GitError.self) { try await run.value }
         #expect(handle.isCancelled)
-        #expect(clock.now - start < .seconds(10))
+        #expect(clock.now - start < .seconds(30))
         let pid = try #require(
             Int32(String(contentsOfFile: background, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await eventually { kill(pid, 0) != 0 })
@@ -99,7 +100,7 @@ struct GitRunnerTests {
 
     @Test func aHandleCancelledFirstStopsGitAsItStarts() async throws {
         let dir = try TempDir()
-        let git = try Fixture.git(in: dir, before: "sleep 30")
+        let git = try Fixture.git(in: dir, before: "sleep 60")
         let handle = SubprocessHandle()
         handle.cancel()
         let clock = ContinuousClock()
@@ -107,7 +108,8 @@ struct GitRunnerTests {
 
         await #expect(throws: GitError.self) { try await git.run(["clone"], handle: handle) }
 
-        #expect(clock.now - start < .seconds(10))
+        // Well short of the sleep, with room for a loaded CI runner to start the process.
+        #expect(clock.now - start < .seconds(30))
     }
 
     @Test func aHandleReadsWhatGitWroteToStderrSoFar() async throws {

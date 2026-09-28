@@ -2980,6 +2980,14 @@ Nits, all fixed:
 
 The reviewer confirmed option injection is refused, `.` and `..` cannot escape the repos folder, the handle never touches a reused pid or fd, cancellation reaches the queued task, the control server never cancels a clone when the CLI goes away, and the e2e stand-in stays local.
 
+### CI
+
+The first CI run failed `aHandleStopsGitAndEverythingItStarted`: 16 seconds against a 10 second bound, because its clock started before a loaded runner had even started bash.
+The two handle tests now time from the cancel, with a 30 second bound on a 60 second sleep, which still proves the kill.
+`aCloneDoesNotWaitBehindTheRepositorysOtherGitWork` holds the row's fetch until it is released and checks the row was still being created when the clone returned, with no clock at all.
+Pointing clones at the repo's git queue again makes it fail, as it should.
+The progress test gives the watcher 3 seconds to see its line.
+
 ## UI checks
 
 The release Canopy hosts the agent's terminal, so macOS treats it as the app posting events, and it has no Accessibility permission.

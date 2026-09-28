@@ -82,7 +82,8 @@ struct CloneTests {
     @Test func tellsHowTheCloneIsGoing() async throws {
         let dir = try TempDir()
         try await Fixture.remote(in: dir, "acme/app")
-        let gh = try Fixture.cloningGH(in: dir, before: "echo 'Receiving objects:  50% (1/2)' >&2; sleep 1")
+        // Long enough for the watcher, which looks every 200 ms, to see the line on a loaded CI runner.
+        let gh = try Fixture.cloningGH(in: dir, before: "echo 'Receiving objects:  50% (1/2)' >&2; sleep 3")
         let workspace = try await makeWorkspace(dir, github: gh)
         let heard = Mutex<[CloneProgress]>([])
 
@@ -388,21 +389,34 @@ struct CloneTests {
     @Test func aCloneDoesNotWaitBehindTheRepositorysOtherGitWork() async throws {
         let dir = try TempDir()
         try await Fixture.remote(in: dir, "acme/app")
-        let fetching = dir.sub("fetching")
-        let wrapper = try Fixture.git(in: dir, before: #"[[ "$1" == fetch ]] && { touch "\#(fetching)"; sleep 5; }"#)
+        let (fetching, release) = (dir.sub("fetching"), dir.sub("release"))
+        // The fetch for a new row holds until released, so the clone below can only finish first if it does not queue
+        // behind it.
+        let wrapper = try Fixture.git(
+            in: dir,
+            before: #"""
+                if [[ "$1" == fetch ]]; then
+                    touch "\#(fetching)"
+                    for _ in $(seq 1 1200); do [[ -e "\#(release)" ]] && break; sleep 0.05; done
+                fi
+                """#)
         let git = Fixture.gitRedirectingGitHub(to: dir, executable: wrapper.executable)
         let workspace = try await makeWorkspace(dir, github: try Fixture.cloningGH(in: dir), git: git)
         let repo = try await workspace.cloneRepo("acme/app")
 
-        let creating = Task { try await workspace.createRow(repoPath: repo.path, branch: "feat/x") }
+        let created = Mutex(false)
+        let creating = Task {
+            defer { created.withLock { $0 = true } }
+            return try await workspace.createRow(repoPath: repo.path, branch: "feat/x")
+        }
         #expect(await eventually { FileManager.default.fileExists(atPath: fetching) })
-        let clock = ContinuousClock()
-        let start = clock.now
         let again = try await workspace.cloneRepo("acme/app")
-
-        #expect(clock.now - start < .seconds(3))
-        #expect(again.path == repo.path)
+        let rowWasStillBeingCreated = !created.withLock { $0 }
+        FileManager.default.createFile(atPath: release, contents: nil)
         _ = try await creating.value
+
+        #expect(again.path == repo.path)
+        #expect(rowWasStillBeingCreated)
     }
 
     @Test func aFolderFilledWithTheSameRepoDuringTheCloneIsRegistered() async throws {
