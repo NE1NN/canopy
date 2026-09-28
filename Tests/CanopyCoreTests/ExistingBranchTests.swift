@@ -104,6 +104,22 @@ struct ExistingBranchTests {
         #expect(created.warnings.isEmpty)
     }
 
+    /// The workspace refreshes a moment after a checkout changes branch, and a row asked for in between must not be
+    /// refused because of the branch the checkout just left.
+    @Test func aBranchTheMainCheckoutJustLeftIsFree() async throws {
+        let dir = try TempDir()
+        let (repo, _, workspace) = try await setUp(dir)
+        try await git.run(["switch", "--quiet", "-c", "feat/x"], in: repo)
+        #expect(await eventually { await workspace.snapshot.repo(path: repo)?.rows.first?.branch == "feat/x" })
+        // No watcher from here on, so the snapshot still shows feat/x however long the switch back takes.
+        await workspace.stop()
+        try await git.run(["switch", "--quiet", "main"], in: repo)
+
+        let created = try await workspace.createRow(repoPath: repo, branch: "feat/x")
+
+        #expect(created.row.branch == "feat/x")
+    }
+
     @Test func neverResetsADivergedBranch() async throws {
         let dir = try TempDir()
         let (repo, other, workspace) = try await setUp(dir)

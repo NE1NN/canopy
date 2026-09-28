@@ -97,9 +97,13 @@ extension Workspace {
             throw WorkspaceError.pathNotFound(repoPath)
         }
         try await requireValidBranchName(requested, repoPath: repoPath)
-        // Fails before fetching, since a row that has the branch will still have it after.
-        if let holder = holder(of: requested, repoPath: repoPath), !holder.isMissing {
-            throw WorkspaceError.branchCheckedOut(requested, row: holder)
+        // Fails before fetching, since a row that has the branch will still have it after. The snapshot trails a
+        // checkout that just switched branch by a moment, so a refusal waits for a fresh look.
+        if holder(of: requested, repoPath: repoPath) != nil {
+            await refresh(repoPath: repoPath)
+            if let holder = holder(of: requested, repoPath: repoPath), !holder.isMissing {
+                throw WorkspaceError.branchCheckedOut(requested, row: holder)
+            }
         }
 
         var notes: [String] = []
