@@ -83,6 +83,29 @@ struct PullRequestTests {
         #expect(found["d"]?.number == 3)
     }
 
+    @Test func asksForABoundBranchByItsNumber() throws {
+        let query = PRQuery.build(repo: repo, branches: ["feat/a", "someone/feat"], numbers: ["someone/feat": 7])
+
+        #expect(query.contains(#"b0: pullRequests(headRefName: "feat/a""#))
+        #expect(query.contains("b1: pullRequest(number: 7) { number title url state isDraft updatedAt"))
+        #expect(!query.contains(#"headRefName: "someone/feat""#))
+    }
+
+    @Test func aBoundBranchGetsItsPullRequestEvenFromAFork() throws {
+        let json = """
+            {"data": {"repository": {
+              "b0": {"nodes": []},
+              "b1": {"number": 7, "title": "t7", "url": "u7", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-27", "isCrossRepository": true},
+              "b2": null
+            }}}
+            """
+
+        let found = try PRQuery.parse(Data(json.utf8), branches: ["feat/a", "someone/feat", "gone"])
+
+        #expect(found.keys.sorted() == ["someone/feat"])
+        #expect(found["someone/feat"]?.number == 7)
+    }
+
     @Test func comparesReposWithoutCase() {
         #expect(GitHubRepo(owner: "NE1NN", name: "Canopy").matches(repo))
         #expect(!GitHubRepo(owner: "NE1NN", name: "canopy-2").matches(repo))

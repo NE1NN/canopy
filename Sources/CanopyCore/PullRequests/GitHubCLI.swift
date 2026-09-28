@@ -46,8 +46,9 @@ public struct GitHubCLI: Sendable {
         }
     }
 
-    public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
-        let query = PRQuery.build(repo: repo, branches: branches)
+    /// `numbers` holds the PR bound to a branch whose name cannot find it.
+    public func pullRequests(repo: GitHubRepo, branches: [String], numbers: [String: Int] = [:]) async -> PRLookup {
+        let query = PRQuery.build(repo: repo, branches: branches, numbers: numbers)
         switch await run(["api", "graphql", "-f", "query=\(query)"]) {
         case .failure(.ghMissing): return .ghMissing
         case .failure(.notLoggedIn): return .notLoggedIn
