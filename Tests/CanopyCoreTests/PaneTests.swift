@@ -73,6 +73,50 @@ struct PaneTests {
         #expect(pane.isBusy)
     }
 
+    @Test func aRunningProgramShowsOnceActivityRefreshes() async throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let tab = terminals.openTab(for: Fixture.context(dir.path))
+        let pane = tab.focused
+        #expect(await eventually { pane.foreground?.name == "bash" })
+
+        terminals.refreshActivity()
+        #expect(!pane.isRunningProgram)
+        #expect(!tab.isRunningProgram)
+        #expect(!terminals.isRunningProgram(inRow: dir.path))
+
+        await pane.run("sleep 30")
+        #expect(
+            await eventually {
+                terminals.refreshActivity()
+                return pane.isRunningProgram
+            })
+        #expect(tab.isRunningProgram)
+        #expect(terminals.isRunningProgram(inRow: dir.path))
+
+        pane.type("\u{3}")
+        #expect(
+            await eventually {
+                terminals.refreshActivity()
+                return !pane.isRunningProgram
+            })
+        #expect(!terminals.isRunningProgram(inRow: dir.path))
+    }
+
+    @Test func aScriptRunsUntilItExitsWithoutWaitingForARefresh() async throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 0.5")).focused
+
+        terminals.refreshActivity()
+        #expect(pane.isRunningProgram)
+
+        _ = await pane.waitForExit()
+        #expect(!pane.isRunningProgram)
+    }
+
     @Test func closingEndsTheProcessAndWakesWaiters() async throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)

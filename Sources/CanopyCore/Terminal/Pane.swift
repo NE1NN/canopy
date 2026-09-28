@@ -71,6 +71,17 @@ public final class Pane: Identifiable {
         return await withCheckedContinuation { exitWaiters.append($0) }
     }
 
+    /// `isBusy` as of the last `refreshActivity`, for views to observe. Exiting clears it at once.
+    public private(set) var isRunningProgram = false
+
+    /// Reads the foreground process again. The app calls it every second for every pane, shown or not.
+    public func refreshActivity() {
+        let busy = isBusy
+        if busy != isRunningProgram {
+            isRunningProgram = busy
+        }
+    }
+
     /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
     /// Shells without a line editor never report ready, so it types anyway after `timeout`.
     public func run(_ command: String, timeout: Duration = .seconds(10)) async {
@@ -201,6 +212,7 @@ public final class Pane: Identifiable {
         if isClosed, case .exited = status { return }
         process = nil
         status = .exited(code)
+        isRunningProgram = false
         record(ActivityType.termExited, ["code": .number(Double(code))])
         // Nothing reads input now, so hide the cursor. The soft reset in `restart` shows it again.
         emulator.feed(Data("\u{1b}[?25l".utf8))

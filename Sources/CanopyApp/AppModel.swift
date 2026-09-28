@@ -79,11 +79,12 @@ final class AppModel {
             }
         }
         await startControlServer()
-        startScanningPorts()
+        startRefreshingWhileVisible()
     }
 
     func shutdown() {
         portsTask?.cancel()
+        activityTask?.cancel()
         server?.stop()
         server = nil
         terminals.closeAll()
@@ -203,22 +204,32 @@ final class AppModel {
         let port: UInt16
     }
 
-    /// Scans every 2 seconds while any part of the window can be seen, and at once when it comes back into view.
-    private func startScanningPorts() {
-        portsTask = Task { [weak self] in
-            while !Task.isCancelled {
-                if NSApp.occlusionState.contains(.visible) {
-                    await self?.refreshPorts()
-                }
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+    @ObservationIgnored private var activityTask: Task<Void, Never>?
+
+    /// Ports scan every 2 seconds and running dots refresh every second while any part of the window can be seen,
+    /// and both at once when it comes back into view.
+    private func startRefreshingWhileVisible() {
+        portsTask = repeating(every: .seconds(2)) { await $0.refreshPorts() }
+        activityTask = repeating(every: .seconds(1)) { $0.terminals.refreshActivity() }
         occlusionObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard NSApp.occlusionState.contains(.visible) else { return }
+                self?.terminals.refreshActivity()
                 Task { await self?.refreshPorts() }
+            }
+        }
+    }
+
+    /// Runs `work` every `interval` while any part of the window can be seen.
+    private func repeating(every interval: Duration, _ work: @escaping (AppModel) async -> Void) -> Task<Void, Never> {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                if NSApp.occlusionState.contains(.visible), let self {
+                    await work(self)
+                }
+                try? await Task.sleep(for: interval)
             }
         }
     }
