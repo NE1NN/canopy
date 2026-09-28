@@ -49,16 +49,7 @@ public struct ControlClient: Sendable {
             setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
         }
 
-        let payload = try ControlCodec.encodeLine(request)
-        try payload.withUnsafeBytes { raw in
-            var offset = 0
-            while offset < raw.count {
-                let written = write(fd, raw.baseAddress! + offset, raw.count - offset)
-                if written < 0 && errno == EINTR { continue }
-                if written < 0 { throw ControlClientError.writeFailed(errno: errno) }
-                offset += written
-            }
-        }
+        try Self.write(try ControlCodec.encodeLine(request), to: fd)
 
         var received = Data()
         var chunk = [UInt8](repeating: 0, count: 65_536)
@@ -73,6 +64,36 @@ public struct ControlClient: Sendable {
         }
         let line = received.prefix { $0 != 0x0A }
         return try ControlCodec.decode(ControlResponse.self, from: Data(line))
+    }
+
+    /// Sends a request whose reply does not matter, for hooks that must never hold up what runs them. It waits at
+    /// most `timeout` seconds for the reply, because the app can lose a request from a client that closed before
+    /// the app read it.
+    public func post(_ request: ControlRequest, timeout: TimeInterval = 1) throws {
+        let fd = try Self.connect(to: socketPath)
+        defer { close(fd) }
+        var limit = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - timeout.rounded(.down)) * 1_000_000))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
+        try Self.write(try ControlCodec.encodeLine(request), to: fd)
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = read(fd, &chunk, chunk.count)
+            if count < 0 && errno == EINTR { continue }
+            if count <= 0 || chunk[0..<count].contains(0x0A) { return }
+        }
+    }
+
+    static func write(_ data: Data, to fd: Int32) throws {
+        try data.withUnsafeBytes { raw in
+            var offset = 0
+            while offset < raw.count {
+                let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
+                if written < 0 && errno == EINTR { continue }
+                if written < 0 { throw ControlClientError.writeFailed(errno: errno) }
+                offset += written
+            }
+        }
     }
 
     static func connect(to path: String) throws -> Int32 {

@@ -124,7 +124,8 @@ It does nothing, quietly, when:
 - the socket is missing or refuses the connection, as while the app is not running.
 
 It never launches the app.
-It writes the request and exits without waiting for the reply, and gives up if the socket has not accepted it within one second, so a busy app never holds Claude up.
+It waits for the app's reply for at most one second, so a busy app never holds Claude up for longer.
+It does wait that long, because the app can lose a request from a client that closed before the app read it.
 Hooks run with Claude Code's environment, which it inherited from the pane's shell, so they see the pane's variables.
 
 ### Hook mapping
