@@ -28,7 +28,7 @@ struct AgentGuide: ParsableCommand {
 
             canopy row list [--all]                       rows, and other tools' worktrees with --all
             canopy row new <branch> [--from <ref> | --existing] [--run <cmd>] [--no-setup] [--select]
-            canopy row new --pr <n | #n | URL> [--branch <name>] [--run <cmd>] [--no-setup] [--select]
+            canopy row new --pr <n | #n | URL> [--branch <name>] [--group <name>] [--run <cmd>] [--no-setup] [--select]
             canopy row rm [<branch>] [--force] [--delete-branch]
             canopy row select [<branch>]
             canopy row adopt <path>                       show another tool's worktree as a row
@@ -57,7 +57,7 @@ struct AgentGuide: ParsableCommand {
             canopy group rename <name> <new-name>
             canopy group rm <name>                        its rows become ungrouped; no worktree is touched
             canopy row move [<row>] (--group <name> | --no-group | --before <row> | --after <row>)
-            canopy row new <branch> --group <name>        create the row straight into a group
+            canopy row new <branch> --group <name>        create the row straight into a group, also with --pr
 
         A group belongs to one repo and only arranges the sidebar, where it can fold away. Names match ignoring
         case. A group that does not exist is an error (group_not_found), never created for you, so make it first

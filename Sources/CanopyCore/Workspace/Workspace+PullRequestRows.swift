@@ -2,11 +2,16 @@ import Foundation
 
 extension Workspace {
     /// Creates a row on a pull request's branch, from the repo itself or from a fork, with `gh pr checkout`'s rules for
-    /// naming the local branch and setting what it tracks. `branch` names the local branch instead.
+    /// naming the local branch and setting what it tracks. `branch` names the local branch instead. With `group`, the
+    /// row goes straight to the end of that group, which must exist.
     public func createRow(
-        repoPath: String, pullRequest reference: PRReference, branch: String? = nil
+        repoPath: String, pullRequest reference: PRReference, branch: String? = nil, group: String? = nil
     ) async throws -> CreatedRow {
         _ = try entryIndex(repoPath: repoPath)
+        // Checked before asking GitHub, and again once it is this row's turn.
+        if let group {
+            _ = try joiningGroup(group, repoPath: repoPath)
+        }
         guard FileManager.default.fileExists(atPath: repoPath) else {
             throw WorkspaceError.pathNotFound(repoPath)
         }
@@ -32,15 +37,17 @@ extension Workspace {
         case .failure(.failed(let message)):
             throw WorkspaceError.ghFailed(message)
         }
-        return try await serialized(repoPath: repoPath) {
-            try await self.createPullRequestRowNow(repoPath: repoPath, head: head, origin: origin, branch: branch)
+        return try await createRow(repoPath: repoPath, joining: group) {
+            try await self.createPullRequestRowNow(
+                repoPath: repoPath, head: head, origin: origin, branch: branch, group: group)
         }
     }
 
     private func createPullRequestRowNow(
-        repoPath: String, head: PullRequestHead, origin: GitHubRemote, branch requested: String?
+        repoPath: String, head: PullRequestHead, origin: GitHubRemote, branch requested: String?, group: String?
     ) async throws -> CreatedRow {
         let number = head.pullRequest.number
+        let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
         // A fork's branch is not on origin, and a merged PR's branch is often deleted, but origin keeps every PR's head.
         let fromPullRef = head.isCrossRepository || !head.branchExists
         let target = fromPullRef ? "refs/canopy/pr/\(number)" : "refs/remotes/origin/\(head.branch)"
@@ -56,7 +63,8 @@ extension Workspace {
         }
         do {
             let created = try await checkOut(
-                head, from: target, fromPullRef: fromPullRef, origin: origin, branch: requested, repoPath: repoPath)
+                head, from: target, fromPullRef: fromPullRef, origin: origin, branch: requested, joining: joining,
+                repoPath: repoPath)
             if fromPullRef { _ = try? await git.run(["update-ref", "-d", target], in: repoPath) }
             return created
         } catch {
@@ -68,8 +76,7 @@ extension Workspace {
     /// Checks out the PR's head, fetched to `target`, in a new row.
     private func checkOut(
         _ head: PullRequestHead, from target: String, fromPullRef: Bool, origin: GitHubRemote,
-        branch requested: String?,
-        repoPath: String
+        branch requested: String?, joining: String?, repoPath: String
     ) async throws -> CreatedRow {
         let number = head.pullRequest.number
         var notes: [String] = []
@@ -95,7 +102,9 @@ extension Workspace {
                 resetTo: fromPullRef ? fetched ?? head.commit : "origin/\(head.branch)", repoPath: repoPath)
             notes += report.notes
             warnings += report.warnings
-            added = try await addRow(repoPath: repoPath, branch: name, fastForward: report.fastForward) { [$0, name] }
+            added = try await addRow(
+                repoPath: repoPath, branch: name, joining: joining, fastForward: report.fastForward
+            ) { [$0, name] }
             source = .local
         } else {
             // Tracking is set by hand, since `--track` needs a fetch refspec that covers the head, and a shallow or
@@ -108,7 +117,7 @@ extension Workspace {
             do {
                 warnings += try await track(
                     name, head: head, origin: origin, fromPullRef: fromPullRef, repoPath: repoPath)
-                added = try await addRow(repoPath: repoPath, branch: name) { [$0, name] }
+                added = try await addRow(repoPath: repoPath, branch: name, joining: joining) { [$0, name] }
             } catch {
                 // Deleting the branch also drops the tracking set for it.
                 _ = try? await git.run(["branch", "-D", name], in: repoPath)

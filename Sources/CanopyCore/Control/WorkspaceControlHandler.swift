@@ -115,7 +115,8 @@ public struct WorkspaceControlHandler: Sendable {
                         repoPath: repo.path, branch: branch, base: params.base, existing: params.existing,
                         group: params.group)
                 case .pullRequest(let reference):
-                    try await workspace.createRow(repoPath: repo.path, pullRequest: reference, branch: params.branch)
+                    try await workspace.createRow(
+                        repoPath: repo.path, pullRequest: reference, branch: params.branch, group: params.group)
                 }
             let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
             if params.select {

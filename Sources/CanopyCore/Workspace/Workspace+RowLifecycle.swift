@@ -44,16 +44,23 @@ extension Workspace {
         repoPath: String, branch: String, base: String? = nil, existing: Bool = false, group: String? = nil
     ) async throws -> CreatedRow {
         let requestedAt = ContinuousClock.now
-        // Checked before waiting for other git work in the repo, and again once it is this row's turn.
-        if let group {
-            _ = try joiningGroup(group, repoPath: repoPath)
-        }
-        var created = try await serialized(repoPath: repoPath) {
+        return try await createRow(repoPath: repoPath, joining: group) {
             try await self.createRowNow(
                 repoPath: repoPath, branch: branch, base: base, existing: existing, group: group,
                 requestedAt: requestedAt)
         }
-        // After createRowNow, which logged the row's creation, so its move into the group is logged second.
+    }
+
+    /// Runs `create` in the repo's git queue, then logs the new row's move into the group it joined. `create` checks
+    /// the group again once it is its turn, since the group can go away while it waits.
+    func createRow(
+        repoPath: String, joining group: String?, _ create: @escaping @Sendable () async throws -> CreatedRow
+    ) async throws -> CreatedRow {
+        if let group {
+            _ = try joiningGroup(group, repoPath: repoPath)
+        }
+        var created = try await serialized(repoPath: repoPath, create)
+        // After `create`, which logged the row's creation, so its move into the group is logged second.
         if let joining = rowsJoiningGroups.removeValue(forKey: created.row.path) {
             created.row = snapshot.row(path: created.row.path) ?? created.row
             if let joined = created.row.group {

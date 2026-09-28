@@ -531,8 +531,8 @@ Every command exits non-zero on failure.
 | `canopy repo list` | list repos |
 | `canopy repo rm <name>` | unregister a repo |
 | `canopy row list [--all]` | list rows, including external ones with `--all` |
-| `canopy row new <branch> [--from <ref> \| --existing] [--run <cmd>] [--no-setup] [--select]` | create a row, run setup, and optionally start a command in a new pane after setup succeeds |
-| `canopy row new --pr <n \| #n \| URL> [--branch <name>] [--run <cmd>] [--no-setup] [--select]` | create a row on a PR's branch, including a fork's |
+| `canopy row new <branch> [--from <ref> \| --existing] [--group <name>] [--run <cmd>] [--no-setup] [--select]` | create a row, run setup, and optionally start a command in a new pane after setup succeeds |
+| `canopy row new --pr <n \| #n \| URL> [--branch <name>] [--group <name>] [--run <cmd>] [--no-setup] [--select]` | create a row on a PR's branch, including a fork's |
 | `canopy row rm <branch> [--force] [--delete-branch]` | remove or un-adopt a row |
 | `canopy row select <branch>` | select a row in the UI |
 | `canopy row adopt <path>` | adopt an external worktree |

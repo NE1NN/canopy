@@ -16,6 +16,7 @@ struct PullRequestRowTests {
         return (github, repo, workspace)
     }
 
+    @discardableResult
     func run(_ github: LocalGitHub, _ arguments: [String], in path: String) async throws -> String {
         try await github.git.run(arguments, in: path).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -45,6 +46,23 @@ struct PullRequestRowTests {
             try await run(github, ["rev-parse", "--abbrev-ref", "@{upstream}"], in: created.row.path)
                 == "origin/feat/split")
         #expect(await bindings(workspace).isEmpty)
+    }
+
+    @Test func aPullRequestRowCanStartInAGroup() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "feat/fork", of: "someone/app")
+        try await github.openPR(9, on: "acme/app", from: "feat/fork", of: "someone/app")
+        _ = try await workspace.createGroup(repoPath: repo, name: "Review")
+
+        let created = try await workspace.createRow(
+            repoPath: repo, pullRequest: PRReference(number: 9), group: "review")
+
+        #expect(created.row.group == "Review")
+        await #expect(throws: WorkspaceError.groupNotFound("Nope", repo: "demo")) {
+            try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9), group: "Nope")
+        }
     }
 
     @Test func aSameRepoPullRequestUnderAnotherName() async throws {

@@ -503,10 +503,12 @@ git -C "$work/shop" remote set-url origin https://github.com/acme/shop.git
 field() { /usr/bin/python3 -c 'import json, sys; v = json.load(open(sys.argv[1]))
 for key in sys.argv[2].split("."): v = v[key]
 print(v)' "$@"; }
-"$cli" row new --pr 21 --repo shop --no-setup --json > "$work/pr21.json"
+"$cli" group new Review --repo shop >/dev/null
+"$cli" row new --pr 21 --repo shop --group Review --no-setup --json > "$work/pr21.json"
 [[ "$(field "$work/pr21.json" row.branch)" == feat/checkout ]] || fail "PR 21 is not on feat/checkout"
 [[ "$(field "$work/pr21.json" source)" == origin ]] || fail "PR 21's branch did not come from origin"
 [[ "$(field "$work/pr21.json" pr.number)" == 21 ]] || fail "the result does not name PR 21"
+[[ "$(field "$work/pr21.json" row.group)" == Review ]] || fail "row new --pr --group did not put the row in Review"
 row21="$(field "$work/pr21.json" row.path)"
 [[ "$(git -C "$row21" rev-parse --abbrev-ref '@{upstream}')" == origin/feat/checkout ]] || fail "PR 21 tracks the wrong branch"
 "$cli" row new --pr https://github.com/acme/shop/pull/22/files --repo shop --no-setup --select > "$work/pr22.txt"

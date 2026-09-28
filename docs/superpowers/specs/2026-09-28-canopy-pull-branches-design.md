@@ -88,7 +88,7 @@ A branch created with `git checkout -b feat/x origin/main` tracks `origin/main`,
 
 ## Starting from a PR
 
-`canopy row new --pr <n | #n | PR URL> [--branch <local name>] [--run <cmd>] [--select] [--no-setup]`
+`canopy row new --pr <n | #n | PR URL> [--branch <local name>] [--group <name>] [--run <cmd>] [--select] [--no-setup]`
 
 - `--pr` cannot be combined with a branch argument, `--from`, or `--existing`.
   `--branch` names the local branch, and is only for `--pr`.
