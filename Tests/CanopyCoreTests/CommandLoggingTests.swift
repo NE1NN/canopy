@@ -94,11 +94,11 @@ struct ZshCommandLoggingTests {
         return Dictionary(uniqueKeysWithValues: paths.map { ($0, #"LOADED+=" \#($0)""#) })
     }
 
-    /// Which startup files ran, then ZDOTDIR in the shell and in its environment, what is left of Canopy's
+    /// Which startup files ran, then ZDOTDIR's value, type, and value in the environment, what is left of Canopy's
     /// variables, and the history file macOS's /etc/zshrc picked.
     static let check =
-        #"print -r -- "check:$LOADED:${ZDOTDIR-unset}:$(printenv ZDOTDIR):${CANOPY_USER_ZDOTDIR-none}:"#
-        + #"${CANOPY_COMMAND_TOKEN-none}:$HISTFILE""#
+        #"print -r -- "check:$LOADED:${ZDOTDIR-unset}:${(t)ZDOTDIR}:$(printenv ZDOTDIR):"#
+        + #"${CANOPY_USER_ZDOTDIR-none}:${CANOPY_COMMAND_TOKEN-none}:$HISTFILE""#
 
     /// Runs a last command and waits until it is logged, so every command before it is too.
     func barrier(_ pane: Pane, _ terminals: TerminalStore) async -> Bool {
@@ -139,7 +139,7 @@ struct ZshCommandLoggingTests {
 
         let loaded = " .zshenv .zprofile .zshrc .zlogin"
         let home = dir.sub("user-home")
-        #expect(await run(pane, Self.check, until: "check:\(loaded):unset::none:none:\(home)/.zsh_history"))
+        #expect(await run(pane, Self.check, until: "check:\(loaded):unset:::none:none:\(home)/.zsh_history"))
     }
 
     @Test func aZDOTDIRSetInTheUsersZshenvIsFollowed() async throws {
@@ -153,12 +153,14 @@ struct ZshCommandLoggingTests {
         let loaded = " .zshenv .config/zsh/.zprofile .config/zsh/.zshrc .config/zsh/.zlogin"
         let config = dir.sub("user-home/.config/zsh")
         #expect(
-            await run(pane, Self.check, until: "check:\(loaded):\(config):\(config):none:none:\(config)/.zsh_history"))
+            await run(
+                pane, Self.check,
+                until: "check:\(loaded):\(config):scalar-export:\(config):none:none:\(config)/.zsh_history"))
         #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == [.string(Self.check)] })
     }
 
     @Test(arguments: [false, true])
-    func aZDOTDIRFromTheEnvironmentIsKept(logsCommands: Bool) async throws {
+    func aZDOTDIRFromTheLoginSessionIsKept(logsCommands: Bool) async throws {
         let dir = try TempDir()
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(
@@ -168,9 +170,26 @@ struct ZshCommandLoggingTests {
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
         let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
-        #expect(await run(pane, Self.check, until: "check:\(loaded):\(zdot):\(zdot):none:none:\(zdot)/.zsh_history"))
+        #expect(
+            await run(
+                pane, Self.check, until: "check:\(loaded):\(zdot):scalar-export:\(zdot):none:none:\(zdot)/.zsh_history")
+        )
         let logged: [JSONValue?] = logsCommands ? [.string(Self.check)] : []
         #expect(await eventually { await commands(terminals).map(\.data["cmd"]) == logged })
+    }
+
+    @Test func anUnreadableZshenvIsSkippedQuietlyAsZshSkipsIt() async throws {
+        let dir = try TempDir()
+        let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""))
+        defer { terminals.closeAll() }
+        chmod(dir.sub("user-home/.zshenv"), 0)
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+
+        let home = dir.sub("user-home")
+        #expect(
+            await run(pane, Self.check, until: "check: .zprofile .zshrc .zlogin:unset:::none:none:\(home)/.zsh_history")
+        )
+        #expect(!pane.screen.text.contains("permission denied"))
     }
 
     @Test func anEmptyZDOTDIRIsKeptAsZshKeepsIt() async throws {
@@ -180,10 +199,11 @@ struct ZshCommandLoggingTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
 
-        #expect(await run(pane, Self.check, until: "check::::none:none:\(dir.sub("user-home"))/.zsh_history"))
+        #expect(
+            await run(pane, Self.check, until: "check:::scalar-export::none:none:\(dir.sub("user-home"))/.zsh_history"))
     }
 
-    @Test func setupScriptsReadTheAppsZDOTDIR() async throws {
+    @Test func setupScriptsReadTheLoginSessionsZDOTDIR() async throws {
         let dir = try TempDir()
         let zdot = dir.sub("user-home/z dot")
         let terminals = try Fixture.zshTerminals(

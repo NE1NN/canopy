@@ -289,8 +289,10 @@ Nothing outside the SwiftTerm implementation imports SwiftTerm.
 ### Starting a shell
 
 Each pane runs the user's login shell (`$SHELL -l`) in the row's folder, or in a saved folder when restoring.
-From the app's own environment it keeps only what a macOS login session starts with, such as `HOME`, `USER`, `LANG`, and `SSH_AUTH_SOCK`, and `ZDOTDIR`, so zsh reads the user's startup files from the same folder as outside Canopy.
+From the app's own environment it keeps only what a macOS login session starts with, such as `HOME`, `USER`, `LANG`, and `SSH_AUTH_SOCK`.
 Everything else there came from whatever launched the app, such as a Claude Code session running a dev build.
+`ZDOTDIR` comes from the login session itself, through `launchctl getenv`, as a Terminal window gets it.
+The app's own `ZDOTDIR` may come from a shell whose `~/.zshenv` exports it, and zsh started with it would skip that `~/.zshenv`.
 The environment adds:
 
 | Variable | Value |
@@ -610,7 +612,7 @@ Agents poll some of them every few seconds, which would bury everything else.
 Canopy starts zsh with `ZDOTDIR` pointing at `CANOPY_HOME/shell/zsh`, and the user's own `ZDOTDIR`, if they have one, in `CANOPY_USER_ZDOTDIR`.
 The `.zshenv` there puts the user's `ZDOTDIR` back, or unsets it, and sources the user's own `.zshenv` from `${ZDOTDIR-$HOME}`, as zsh would.
 So zsh then reads the user's `.zprofile`, `.zshrc`, and `.zlogin` from their usual place, and the user's setup is unchanged.
-It adds `preexec` and `precmd` hooks.
+The shim adds `preexec` and `precmd` hooks.
 After each command, `precmd` prints one private OSC 6973 sequence carrying the command, the folder it started in, its exit code, and its duration, percent-encoded.
 The pane reads these from its output before the terminal engine draws it, and records `term.command`.
 
@@ -618,6 +620,7 @@ Each shell gets a random token in `CANOPY_COMMAND_TOKEN`.
 The shim takes it out of the environment and puts it in every report, so output that happens to replay a report, such as `cat` of a recorded session, is ignored.
 Each hook puts the other back if the user's `.zshrc` replaces its list, and the app writes the shim again before starting zsh if it went missing, since zsh pointed at an empty folder would skip the user's startup files.
 A zsh started inside the pane, including `exec zsh`, runs without the shim, so its commands are not logged.
+A `ZDOTDIR` exported by `/etc/zshenv` takes zsh away from the shim before it runs, so that shell's commands are not logged, and `CANOPY_COMMAND_TOKEN` and `CANOPY_USER_ZDOTDIR` stay in its environment.
 
 The shim sends no OSC 133 marks.
 SwiftTerm acts on them, and a prompt mark sent from `precmd` starts a fresh line before zsh can show its `%` after output that did not end in a newline.

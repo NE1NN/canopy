@@ -1,9 +1,9 @@
 import Foundation
 
 public enum PaneEnvironment {
-    /// What a macOS login session starts with, and the folder zsh reads its startup files from, which the user may
-    /// set there. Everything else in the app's environment came from whatever launched it, such as a Claude Code
-    /// session running a dev build, and must not reach terminals.
+    /// What a macOS login session starts with, and ZDOTDIR, which `ShellSettings.current` takes from the login session
+    /// itself. Everything else in the app's environment came from whatever launched it, such as a Claude Code session
+    /// running a dev build, and must not reach terminals.
     static let inherited: Set<String> = [
         "HOME", "USER", "LOGNAME", "TMPDIR", "SSH_AUTH_SOCK", "__CF_USER_TEXT_ENCODING", "LANG", "LC_ALL", "LC_CTYPE",
         "ZDOTDIR",

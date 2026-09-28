@@ -402,12 +402,12 @@ sleep 1
 swift scripts/window-shot.swift "$(app_pid)" "$shots/clone.png"
 echo "saved $shots/clone.png"
 
-step "terminals read the ZDOTDIR Canopy started with, and still log commands"
-# The fixture's .zshrc there is what puts the stand-in gh on PATH.
-check="[[ \$ZDOTDIR == '$work/zdot' && \${commands[gh]} == '$work/bin/gh' ]] && echo zdotdir-\$((40 + 2))"
+step "terminals take ZDOTDIR from the login session, not from whatever launched Canopy, and still log commands"
+# A Terminal window would not get the ZDOTDIR this app was launched with, whose .zshrc puts the stand-in gh on PATH.
+check="[[ \${ZDOTDIR-} != '$work/zdot' && \${commands[gh]-} != '$work/bin/gh' ]] && echo zdotdir-\$((40 + 2))"
 pane=$("$cli" term new --repo acme/app --row main --run "$check" --json |
     /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
-wait_for_text zdotdir-42 || fail "the terminal did not read $work/zdot"
+wait_for_text zdotdir-42 || fail "the terminal read the ZDOTDIR the app was launched with"
 for _ in $(seq 1 50); do
     "$cli" log --type term.command | grep -q 'zdotdir-' && break
     sleep 0.1

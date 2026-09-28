@@ -85,4 +85,27 @@ struct PaneEnvironmentTests {
     @Test func loginShellIsRunnable() {
         #expect(access(LoginShell.path(), X_OK) == 0)
     }
+
+    @Test func terminalsTakeZDOTDIRFromTheLoginSessionNotFromWhateverLaunchedTheApp() {
+        // Like `canopy` run from a shell whose ~/.zshenv exports ZDOTDIR. A Terminal window would read that ~/.zshenv.
+        let launcher = ["HOME": "/Users/me", "ZDOTDIR": "/Users/me/.config/zsh"]
+        let home = CanopyHome(path: "/h/.canopy")
+
+        let unset = ShellSettings.current(
+            home: home, cliDirectory: nil, logsCommands: true, environment: launcher, sessionVariable: { _ in nil })
+        let set = ShellSettings.current(
+            home: home, cliDirectory: nil, logsCommands: true, environment: launcher,
+            sessionVariable: { $0 == "ZDOTDIR" ? "/session/zsh" : nil })
+
+        #expect(unset.baseEnvironment["ZDOTDIR"] == nil)
+        #expect(set.baseEnvironment["ZDOTDIR"] == "/session/zsh")
+        #expect(set.baseEnvironment["HOME"] == "/Users/me")
+    }
+
+    @Test func readsLaunchctlsAnswer() {
+        #expect(LoginShell.sessionValue(launchctlOutput: Data()) == nil)
+        #expect(LoginShell.sessionValue(launchctlOutput: Data("/Users/me/z dot\n".utf8)) == "/Users/me/z dot")
+        #expect(LoginShell.sessionValue(launchctlOutput: Data("\n".utf8)) == "")
+        #expect(LoginShell.sessionVariable("CANOPY_NEVER_SET_\(UUID().uuidString)") == nil)
+    }
 }

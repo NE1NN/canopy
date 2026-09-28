@@ -84,7 +84,8 @@ public enum ZshIntegration {
             preexec_functions+=(_canopy_preexec)
         fi
 
-        # zsh's own rule: a ZDOTDIR that is set, even to nothing, is used instead of HOME.
-        [[ -f ${ZDOTDIR-$HOME}/.zshenv ]] && builtin source "${ZDOTDIR-$HOME}/.zshenv"
+        # zsh's own rules: a ZDOTDIR that is set, even to nothing, is used instead of HOME, and a file it cannot read
+        # is skipped quietly.
+        [[ -f ${ZDOTDIR-$HOME}/.zshenv && -r ${ZDOTDIR-$HOME}/.zshenv ]] && builtin source "${ZDOTDIR-$HOME}/.zshenv"
         """#
 }
