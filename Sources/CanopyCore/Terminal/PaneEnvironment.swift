@@ -13,6 +13,7 @@ public enum PaneEnvironment {
         var environment = settings.baseEnvironment.filter { inherited.contains($0.key) }
         environment["HOME"] = environment["HOME"] ?? NSHomeDirectory()
         environment["LANG"] = environment["LANG"] ?? settings.language
+        environment["ZDOTDIR"] = settings.zdotdir
         environment["SHELL"] = settings.shell
         environment["PATH"] = ([settings.cliDirectory].compactMap { $0 } + [systemPath]).joined(separator: ":")
         environment["TERM"] = "xterm-256color"

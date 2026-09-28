@@ -402,6 +402,19 @@ sleep 1
 swift scripts/window-shot.swift "$(app_pid)" "$shots/clone.png"
 echo "saved $shots/clone.png"
 
+step "terminals take ZDOTDIR from the login session, not from whatever launched Canopy, and still log commands"
+# A Terminal window would not get the ZDOTDIR this app was launched with, whose .zshrc puts the stand-in gh on PATH.
+# This guards against passing the app's own ZDOTDIR on. Testing the login session's would mean changing the Mac's.
+check="[[ \${ZDOTDIR-} != '$work/zdot' && \${commands[gh]-} != '$work/bin/gh' ]] && echo zdotdir-\$((40 + 2))"
+pane=$("$cli" term new --repo acme/app --row main --run "$check" --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+wait_for_text zdotdir-42 || fail "the terminal read the ZDOTDIR the app was launched with"
+for _ in $(seq 1 50); do
+    "$cli" log --type term.command | grep -q 'zdotdir-' && break
+    sleep 0.1
+done
+"$cli" log --type term.command | grep -q 'zdotdir-' || fail "the terminal's command was not logged"
+
 step "repo rm unregisters a clone and leaves its folder"
 "$cli" repo rm acme/app >/dev/null
 [[ -d "$repos/acme/app/.git" ]] || fail "repo rm deleted the clone"

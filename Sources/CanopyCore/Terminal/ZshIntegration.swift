@@ -1,8 +1,9 @@
 import Foundation
 
 /// Canopy's zsh startup shim, which reports each command that finishes to the activity log. zsh terminals start with
-/// ZDOTDIR pointing at its folder. It puts ZDOTDIR back and loads the user's .zshenv, so zsh then reads the user's
-/// .zprofile, .zshrc, and .zlogin from their usual place, and the user's setup is unchanged.
+/// ZDOTDIR pointing at its folder, and the user's own ZDOTDIR, if any, in CANOPY_USER_ZDOTDIR. It puts ZDOTDIR back and
+/// loads the user's .zshenv, so zsh then reads the user's .zprofile, .zshrc, and .zlogin from their usual place, and
+/// the user's setup is unchanged.
 public enum ZshIntegration {
     /// The private OSC code of the shim's command reports.
     public static let reportCode = 6973
@@ -20,12 +21,17 @@ public enum ZshIntegration {
     }
 
     static let script = #"""
-        # Written by Canopy, which starts zsh with ZDOTDIR pointing here. This puts ZDOTDIR back and loads your own
-        # .zshenv, so zsh reads your .zprofile, .zshrc, and .zlogin as usual. It also reports each command that
+        # Written by Canopy, which starts zsh with ZDOTDIR pointing here. This puts your own ZDOTDIR back and loads
+        # your .zshenv, so zsh reads your .zprofile, .zshrc, and .zlogin as usual. It also reports each command that
         # finishes to Canopy's activity log. "logCommands": false in Canopy's config.json turns this off.
 
         builtin typeset -g _canopy_token=${CANOPY_COMMAND_TOKEN-}
-        builtin unset CANOPY_COMMAND_TOKEN ZDOTDIR
+        if [[ -n ${CANOPY_USER_ZDOTDIR+set} ]]; then
+            builtin export ZDOTDIR="$CANOPY_USER_ZDOTDIR"
+        else
+            builtin unset ZDOTDIR
+        fi
+        builtin unset CANOPY_COMMAND_TOKEN CANOPY_USER_ZDOTDIR
 
         # Defined before your .zshenv runs, so none of your aliases can reach into them.
         if [[ -n $_canopy_token && -o interactive ]]; then
@@ -78,6 +84,8 @@ public enum ZshIntegration {
             preexec_functions+=(_canopy_preexec)
         fi
 
-        [[ -f $HOME/.zshenv ]] && builtin source $HOME/.zshenv
+        # zsh's own rules: a ZDOTDIR that is set, even to nothing, is used instead of HOME, and a file it cannot read
+        # is skipped quietly.
+        [[ -f ${ZDOTDIR-$HOME}/.zshenv && -r ${ZDOTDIR-$HOME}/.zshenv ]] && builtin source "${ZDOTDIR-$HOME}/.zshenv"
         """#
 }

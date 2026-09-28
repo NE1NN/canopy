@@ -8,6 +8,9 @@ public struct ShellSettings: Sendable, Equatable {
     public var shell: String
     /// The app's own environment. Terminals only get what a macOS login session starts with.
     public var baseEnvironment: [String: String]
+    /// ZDOTDIR as the login session has it, which a Terminal window gets. The app's own can come from whatever launched
+    /// it, such as a shell whose ~/.zshenv exports it, and zsh started with that would skip ~/.zshenv.
+    public var zdotdir: String?
     /// The folder holding the bundled `canopy`, put on PATH so agents in a terminal can run it.
     public var cliDirectory: String?
     public var home: CanopyHome
@@ -23,17 +26,22 @@ public struct ShellSettings: Sendable, Equatable {
         cliDirectory: String?,
         home: CanopyHome,
         language: String = "en_US.UTF-8",
-        logsCommands: Bool = false
+        logsCommands: Bool = false,
+        zdotdir: String? = nil
     ) {
         self.shell = shell
         self.baseEnvironment = baseEnvironment
+        self.zdotdir = zdotdir
         self.cliDirectory = cliDirectory
         self.home = home
         self.language = language
         self.logsCommands = logsCommands
     }
 
-    public static func current(home: CanopyHome, cliDirectory: String?, logsCommands: Bool) -> ShellSettings {
+    public static func current(
+        home: CanopyHome, cliDirectory: String?, logsCommands: Bool,
+        sessionVariable: (String) -> String? = { LoginShell.sessionVariable($0) }
+    ) -> ShellSettings {
         ShellSettings(
             shell: LoginShell.path(),
             baseEnvironment: ProcessInfo.processInfo.environment,
@@ -42,7 +50,8 @@ public struct ShellSettings: Sendable, Equatable {
             language: LoginShell.language(for: Locale.current.identifier) {
                 FileManager.default.fileExists(atPath: "/usr/share/locale/\($0)")
             },
-            logsCommands: logsCommands
+            logsCommands: logsCommands,
+            zdotdir: sessionVariable("ZDOTDIR")
         )
     }
 
@@ -59,6 +68,8 @@ public struct ShellSettings: Sendable, Equatable {
         var environment = environment
         // Written again if it went missing: zsh pointed at a folder without it would skip the user's startup files.
         if reportsCommands, let commandToken, let folder = try? ZshIntegration.install(in: home) {
+            // The shim puts the user's own ZDOTDIR back from here, or unsets it if there was none.
+            environment["CANOPY_USER_ZDOTDIR"] = environment["ZDOTDIR"]
             environment["ZDOTDIR"] = folder
             environment["CANOPY_COMMAND_TOKEN"] = commandToken
         }
@@ -92,6 +103,17 @@ public enum LoginShell {
         }
         if let shell = environment["SHELL"], access(shell, X_OK) == 0 { return shell }
         return "/bin/zsh"
+    }
+
+    /// A variable as the login session has it, which `launchctl setenv` sets, or nil if it has none.
+    public static func sessionVariable(_ name: String, launchctl: String = "/bin/launchctl") -> String? {
+        let result = try? Subprocess.run(
+            launchctl, ["getenv", name], environment: [:], directory: nil, timeout: .seconds(2))
+        // launchctl prints nothing for a variable the session does not have, and the value and a newline for one it has.
+        guard let result, !result.timedOut, result.status == 0, !result.stdout.isEmpty else { return nil }
+        var value = String(decoding: result.stdout, as: UTF8.self)
+        if value.hasSuffix("\n") { value.removeLast() }
+        return value
     }
 
     /// "en_AU" and "en_AU@rg=auzzzz" become "en_AU.UTF-8" when macOS has that locale, and "en_US.UTF-8" if not.

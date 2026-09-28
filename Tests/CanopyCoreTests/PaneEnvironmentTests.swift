@@ -18,7 +18,7 @@ struct PaneEnvironmentTests {
     @Test func keepsLoginSessionVariablesAndDropsTheRest() {
         let base = [
             "HOME": "/Users/me", "USER": "me", "SSH_AUTH_SOCK": "/tmp/agent", "CLAUDE_CODE_CHILD_SESSION": "1",
-            "PATH": "/some/tool/bin:/usr/bin", "GIT_DIR": "/elsewhere/.git",
+            "PATH": "/some/tool/bin:/usr/bin", "GIT_DIR": "/elsewhere/.git", "ZDOTDIR": "/Users/me/.config/zsh",
         ]
 
         let environment = PaneEnvironment.build(settings: settings(base), context: context, pane: PaneID(12))
@@ -26,6 +26,7 @@ struct PaneEnvironmentTests {
         #expect(environment["HOME"] == "/Users/me")
         #expect(environment["USER"] == "me")
         #expect(environment["SSH_AUTH_SOCK"] == "/tmp/agent")
+        #expect(environment["ZDOTDIR"] == nil)
         #expect(environment["CLAUDE_CODE_CHILD_SESSION"] == nil)
         #expect(environment["GIT_DIR"] == nil)
         #expect(environment["PATH"] == "/App/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin")
@@ -83,5 +84,32 @@ struct PaneEnvironmentTests {
 
     @Test func loginShellIsRunnable() {
         #expect(access(LoginShell.path(), X_OK) == 0)
+    }
+
+    @Test func terminalsGetTheLoginSessionsZDOTDIRNotTheAppsOwn() {
+        // Like `canopy` run from a shell whose ~/.zshenv exports ZDOTDIR. A Terminal window would read that ~/.zshenv.
+        var launched = settings(["HOME": "/Users/me", "ZDOTDIR": "/Users/me/.config/zsh"])
+        let current = ShellSettings.current(
+            home: CanopyHome(path: "/h/.canopy"), cliDirectory: nil, logsCommands: true,
+            sessionVariable: { $0 == "ZDOTDIR" ? "/session/zsh" : nil })
+
+        #expect(PaneEnvironment.build(settings: launched, context: context, pane: PaneID(1))["ZDOTDIR"] == nil)
+        launched.zdotdir = "/session/zsh"
+        #expect(
+            PaneEnvironment.build(settings: launched, context: context, pane: PaneID(1))["ZDOTDIR"] == "/session/zsh")
+        #expect(current.zdotdir == "/session/zsh")
+    }
+
+    @Test func asksLaunchctlForTheLoginSessionsValue() async throws {
+        // echo prints its arguments and a newline, as launchctl prints a value the session has.
+        let echoed = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/bin/echo") }
+        let silent = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/usr/bin/true") }
+        let failed = try await offPool { LoginShell.sessionVariable("ZDOTDIR", launchctl: "/usr/bin/false") }
+        let unset = try await offPool { LoginShell.sessionVariable("CANOPY_NEVER_SET_\(UUID().uuidString)") }
+
+        #expect(echoed == "getenv ZDOTDIR")
+        #expect(silent == nil)
+        #expect(failed == nil)
+        #expect(unset == nil)
     }
 }
