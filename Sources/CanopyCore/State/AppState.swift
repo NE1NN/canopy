@@ -2,13 +2,18 @@ public struct RepoEntry: Codable, Sendable, Equatable {
     public var path: String
     public var dirName: String
     public var adopted: [String]
+    /// The ungrouped Canopy and adopted rows, in sidebar order. Grouped rows are in `groups`.
     public var rowOrder: [String]
+    public var groups: [RowGroup]
 
-    public init(path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = []) {
+    public init(
+        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = []
+    ) {
         self.path = path
         self.dirName = dirName
         self.adopted = adopted
         self.rowOrder = rowOrder
+        self.groups = groups
     }
 
     public init(from decoder: any Decoder) throws {
@@ -17,6 +22,9 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         dirName = try container.decode(String.self, forKey: .dirName)
         adopted = try container.decodeIfPresent([String].self, forKey: .adopted) ?? []
         rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
+        // Groups that cannot be read are dropped on their own, so the repo and its rows still load.
+        groups = (try? container.decodeIfPresent([RowGroup].self, forKey: .groups)) ?? []
+        cleanGroups()
     }
 }
 

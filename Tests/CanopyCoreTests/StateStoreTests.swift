@@ -34,6 +34,51 @@ struct StateStoreTests {
         #expect(StateStore(url: url).load() == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r")])))
     }
 
+    @Test func groupsRoundTrip() throws {
+        let dir = try TempDir()
+        let store = StateStore(url: URL(fileURLWithPath: dir.sub("state.json")))
+        var entry = RepoEntry(path: "/r", dirName: "r", rowOrder: ["/a"])
+        entry.groups = [RowGroup(name: "Review", rows: ["/b", "/c"]), RowGroup(name: "Later", collapsed: true)]
+        let state = AppState(repos: [entry])
+
+        try store.save(state)
+
+        #expect(store.load() == .loaded(state))
+    }
+
+    @Test func groupsThatCannotBeTrustedAreCleanedOnLoad() throws {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("state.json"))
+        try #"""
+        {"version": 1, "repos": [{"path": "/r", "dirName": "r", "rowOrder": ["/a", "/b"], "groups": [
+            {"rows": ["/x"]},
+            {"name": "  ", "rows": ["/y"]},
+            {"name": " Review ", "rows": ["/b", "/c", "/c"]},
+            {"name": "review", "rows": ["/d"], "collapsed": true},
+            {"name": "Later", "rows": ["/c", "/e"], "collapsed": true},
+            {"name": "Bad\nName", "rows": ["/f"]}
+        ]}]}
+        """#.write(to: url, atomically: true, encoding: .utf8)
+
+        var expected = RepoEntry(path: "/r", dirName: "r", rowOrder: ["/a"])
+        expected.groups = [
+            RowGroup(name: "Review", rows: ["/b", "/c"]), RowGroup(name: "Later", rows: ["/e"], collapsed: true),
+        ]
+        #expect(StateStore(url: url).load() == .loaded(AppState(repos: [expected])))
+    }
+
+    @Test func anUnreadableGroupsListIsDroppedAlone() throws {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("state.json"))
+        try #"""
+        {"version": 1, "repos": [{"path": "/r", "dirName": "r", "adopted": ["/a"], "rowOrder": ["/a"], "groups": 7}]}
+        """#.write(to: url, atomically: true, encoding: .utf8)
+
+        #expect(
+            StateStore(url: url).load()
+                == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r", adopted: ["/a"], rowOrder: ["/a"])])))
+    }
+
     @Test func corruptFileIsBackedUp() throws {
         let dir = try TempDir()
         let url = URL(fileURLWithPath: dir.sub("state.json"))
