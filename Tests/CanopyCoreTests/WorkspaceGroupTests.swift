@@ -291,7 +291,7 @@ struct GroupRowCreationTests {
                 """
                 : """
                 if [ "$1" = worktree ] && [ "$2" = add ]; then
-                    /usr/bin/git "$@"; code=$?
+                    '\(Fixture.gitPath)' "$@"; code=$?
                     touch '\(dir.sub("added"))'
                     \(wait)
                     exit $code
