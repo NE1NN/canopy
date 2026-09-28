@@ -128,7 +128,7 @@ A dev build therefore never touches the instance the author is working in.
 A repo is added from the UI or with `canopy repo add <path>`.
 If the path is a linked worktree, Canopy resolves it to the main checkout.
 A repo's display name is its folder name.
-If two repos share a folder name, the parent folder name is added to tell them apart.
+If two repos share a folder name, each gets as many parent folder names as it takes to tell them apart, such as `work/client/app` and `personal/client/app`.
 Removing a repo only unregisters it and never touches files.
 
 ### Discovery

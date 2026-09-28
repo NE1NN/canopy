@@ -1,20 +1,18 @@
 import Foundation
 
 public enum RepoNaming {
-    /// Folder names, with the parent folder prepended when two repos share a folder name.
+    /// Folder names. Repos that share a folder name each get as many parent folders as it takes to tell them apart.
     public static func displayNames(for paths: [String]) -> [String: String] {
-        let names = paths.map { URL(fileURLWithPath: $0).lastPathComponent }
-        var counts: [String: Int] = [:]
-        for name in names {
-            counts[name, default: 0] += 1
-        }
+        let folders = paths.map { URL(fileURLWithPath: $0).pathComponents.filter { $0 != "/" } }
         var result: [String: String] = [:]
-        for (path, name) in zip(paths, names) {
-            if counts[name, default: 0] > 1 {
-                let parent = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
-                result[path] = "\(parent)/\(name)"
-            } else {
-                result[path] = name
+        for group in Dictionary(grouping: paths.indices, by: { folders[$0].last ?? "" }).values {
+            var depth = 1
+            func name(_ index: Int) -> String { folders[index].suffix(depth).joined(separator: "/") }
+            while Set(group.map(name)).count < group.count, group.contains(where: { folders[$0].count > depth }) {
+                depth += 1
+            }
+            for index in group {
+                result[paths[index]] = name(index)
             }
         }
         return result

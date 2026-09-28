@@ -76,6 +76,20 @@ struct RepoNamingTests {
         )
     }
 
+    @Test func goesBackAsManyFoldersAsItTakesToTellReposApart() {
+        #expect(
+            RepoNaming.displayNames(for: ["/work/client/app", "/personal/client/app", "/other/app", "/web"])
+                == [
+                    "/work/client/app": "work/client/app", "/personal/client/app": "personal/client/app",
+                    "/other/app": "other/app", "/web": "web",
+                ]
+        )
+    }
+
+    @Test func aRepoAtTheTopOfItsDiskKeepsItsOneName() {
+        #expect(RepoNaming.displayNames(for: ["/app", "/x/app"]) == ["/app": "app", "/x/app": "x/app"])
+    }
+
     @Test func dirNameAvoidsTakenNames() {
         #expect(RepoNaming.dirName(for: "/x/app", taken: ["app", "app-2"]) == "app-3")
     }
