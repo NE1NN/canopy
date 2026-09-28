@@ -23,7 +23,7 @@ The control API and CLI pass the new options through, and PR B only adds list me
 - `state.json` fields decode with decodeIfPresent, so older files still load.
 - Swift 6 strict concurrency with no warnings, `swift format lint --strict` clean.
 - Markdown: one sentence per line, no em dashes.
-- Other agents change `GitHubCLI` (repo clone, gh on its own thread) and `row new` (`--group`), so changes there stay small.
+- `GitHubCLI` and `row new` are shared with repo clone (#16), the git timeout fix (#14), and row groups (#18), so changes there stay small.
 
 ## Review Focus
 
@@ -74,9 +74,9 @@ gh exits 1 with "Could not resolve to a PullRequest" for a PR that does not exis
 `Tests/CanopyCoreTests/GitHubCLITests.swift`:
 
 ```diff
-@@ -76,4 +76,44 @@ struct GitHubCLITests {
- 
-         #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .failed("gh did not answer in time."))
+@@ -181,4 +181,44 @@ struct GitHubCLITests {
+         #expect(await loggedOut.viewerRepos() == .failure(.notLoggedIn))
+         #expect(await garbled.viewerRepos() == .failure(.failed("gh returned a reply Canopy could not read.")))
      }
 +
 +    @Test func looksUpOnePullRequest() async throws {
@@ -256,43 +256,20 @@ Expected: compile errors: `PRReference`, `PRHeadQuery`, `GitHubRepo(owner:name:)
 
 - [ ] **Step 3: Implement**
 
-`GitHubCLI` gets one `run` helper for every gh call, shaped like the one feat/repo-clone adds so the two branches rebase onto each other easily.
+`pullRequest(repo:number:)` goes through the `run` helper that repo clone (#16) added for every gh call.
 The fork URL keeps everything in front of origin's path, so SSH host aliases and `insteadOf` rewrites reach the fork the way they reach origin.
 
 `Sources/CanopyCore/PullRequests/GitHubCLI.swift`:
 
 ```diff
-@@ -1,5 +1,12 @@
- import Foundation
- 
-+/// Why gh could not do what it was asked.
-+public enum GHFailure: Error, Sendable, Equatable {
-+    case ghMissing
-+    case notLoggedIn
-+    case failed(String)
-+}
-+
- public enum PRLookup: Sendable, Equatable {
-     /// Each looked-up branch that has a PR.
-     case found([String: PullRequest])
-@@ -43,45 +50,67 @@ public struct GitHubCLI: Sendable {
+@@ -58,6 +58,20 @@ public struct GitHubCLI: Sendable {
+         }
      }
  
-     public func pullRequests(repo: GitHubRepo, branches: [String]) async -> PRLookup {
-+        let query = PRQuery.build(repo: repo, branches: branches)
-+        switch await run(["api", "graphql", "-f", "query=\(query)"]) {
-+        case .failure(.ghMissing): return .ghMissing
-+        case .failure(.notLoggedIn): return .notLoggedIn
-+        case .failure(.failed(let message)): return .failed(message)
-+        case .success(let reply):
-+            guard let found = try? PRQuery.parse(reply, branches: branches) else { return .failed(Self.unreadable) }
-+            return .found(found)
-+        }
-+    }
-+
 +    /// One pull request of `repo`, with what starting a row from it needs. Nil when the repo has no such PR.
 +    public func pullRequest(repo: GitHubRepo, number: Int) async -> Result<PullRequestHead?, GHFailure> {
-+        switch await run(["api", "graphql", "-f", "query=\(PRHeadQuery.build(repo: repo, number: number))"]) {
++        let query = PRHeadQuery.build(repo: repo, number: number)
++        switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
 +        case .failure(.failed(let message)) where message.hasPrefix("Could not resolve to a PullRequest"):
 +            return .success(nil)
 +        case .failure(let failure):
@@ -303,61 +280,9 @@ The fork URL keeps everything in front of origin's path, so SSH host aliases and
 +        }
 +    }
 +
-+    private static let unreadable = "gh returned a reply Canopy could not read."
-+
-+    /// Runs gh off the Swift concurrency pool and returns what it printed.
-+    private func run(_ arguments: [String]) async -> Result<Data, GHFailure> {
-         await withCheckedContinuation { continuation in
-             DispatchQueue.global().async {
--                continuation.resume(returning: lookUpBlocking(repo: repo, branches: branches))
-+                continuation.resume(returning: runBlocking(arguments))
-             }
-         }
-     }
- 
--    private func lookUpBlocking(repo: GitHubRepo, branches: [String]) -> PRLookup {
-+    private func runBlocking(_ arguments: [String]) -> Result<Data, GHFailure> {
-         var environment = environment ?? GitEnvironment.current
-         let folders = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-         guard
-             let executable = (folders + fallbackFolders).lazy.map({ $0 + "/gh" }).first(where: {
-                 FileManager.default.isExecutableFile(atPath: $0)
-             })
--        else { return .ghMissing }
-+        else { return .failure(.ghMissing) }
-         environment["GH_PROMPT_DISABLED"] = "1"
-         environment["GH_NO_UPDATE_NOTIFIER"] = "1"
- 
--        let query = PRQuery.build(repo: repo, branches: branches)
-         let result: SubprocessResult
-         do {
-             result = try Subprocess.run(
--                executable, ["api", "graphql", "-f", "query=\(query)"], environment: environment, directory: nil,
--                timeout: timeout)
-+                executable, arguments, environment: environment, directory: nil, timeout: timeout)
-         } catch {
--            return .failed("\(error)")
-+            return .failure(.failed("\(error)"))
-         }
--        if result.timedOut { return .failed("gh did not answer in time.") }
-+        if result.timedOut { return .failure(.failed("gh did not answer in time.")) }
-         let message = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-         // gh exits 4 when it has no login, and a revoked or expired token comes back as a 401.
--        if result.status == 4 || message.contains("HTTP 401") { return .notLoggedIn }
-+        if result.status == 4 || message.contains("HTTP 401") { return .failure(.notLoggedIn) }
-         guard result.status == 0 else {
-             let line = message.split(separator: "\n").last.map(String.init) ?? "gh exited with \(result.status)."
--            return .failed(line.hasPrefix("gh: ") ? String(line.dropFirst(4)) : line)
--        }
--        do {
--            return .found(try PRQuery.parse(result.stdout, branches: branches))
--        } catch {
--            return .failed("gh returned a reply Canopy could not read.")
-+            return .failure(.failed(line.hasPrefix("gh: ") ? String(line.dropFirst(4)) : line))
-         }
-+        return .success(result.stdout)
-     }
- }
+     /// Clones with `gh repo clone`, which uses the user's login and preferred git protocol, into `folder`, which must
+     /// not exist yet. git reports progress to stderr, which `handle` reads. Nil when it cloned.
+     public func clone(_ repo: String, into folder: String, handle: SubprocessHandle) async -> GHFailure? {
 ```
 
 `Sources/CanopyCore/PullRequests/PRReference.swift` (new):
@@ -834,7 +759,7 @@ Expected: compile errors: `existing:`, `.source`, `.base`, `branchNotFound`, and
 
 The fetch gains `--prune`, so a branch deleted on GitHub is no longer on origin.
 The branch is looked up in its own spelling, claimed (pruning a missing worktree that holds it), compared with `origin/<branch>` by name, and fast-forwarded with `git update-ref <ref> <new> <old>`, which fails rather than move a branch that changed.
-`addRow` is the worktree add that Task 3 shares.
+`addRow` is the worktree add that Task 3 shares, and it places the row the way row groups (#18) does, last in the group it joins or among the ungrouped rows.
 `prune` becomes a queued wrapper around `pruneNow`, which `claim` calls from inside the repo's git queue.
 The spec's fix for a diverged branch becomes `git rebase origin/<branch>`, since `git pull --rebase` fails on a branch with no upstream.
 
@@ -948,7 +873,7 @@ extension Workspace {
 `Sources/CanopyCore/Workspace/Workspace+RowLifecycle.swift`:
 
 ```diff
-@@ -1,23 +1,45 @@
+@@ -1,7 +1,25 @@
  import Foundation
  
 +/// Where a new row's branch came from.
@@ -974,6 +899,8 @@ extension Workspace {
      public var warnings: [String]
  }
  
+@@ -13,16 +31,17 @@ struct JoiningGroup: Sendable, Equatable {
+ 
  struct FetchAttempt: Sendable {
      var finishedAt: ContinuousClock.Instant
 -    var warning: String?
@@ -985,22 +912,27 @@ extension Workspace {
 -    /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/.
 -    /// An existing local branch is checked out, a branch only on origin is tracked,
 -    /// and anything else is created from `base` (default: origin's default branch).
--    public func createRow(repoPath: String, branch: String, base: String? = nil) async throws -> CreatedRow {
 +    /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/. An existing local branch is checked out,
 +    /// after a fast-forward if it is only behind origin. A branch only on origin is tracked. Anything else is created
 +    /// from `base` (default: origin's default branch), unless `existing` asks to fail instead.
-+    public func createRow(
-+        repoPath: String, branch: String, base: String? = nil, existing: Bool = false
-+    ) async throws -> CreatedRow {
+     /// With `group`, the row goes straight to the end of that group, which must exist.
+     public func createRow(
+-        repoPath: String, branch: String, base: String? = nil, group: String? = nil
++        repoPath: String, branch: String, base: String? = nil, existing: Bool = false, group: String? = nil
+     ) async throws -> CreatedRow {
          let requestedAt = ContinuousClock.now
-         return try await serialized(repoPath: repoPath) {
--            try await self.createRowNow(repoPath: repoPath, branch: branch, base: base, requestedAt: requestedAt)
-+            try await self.createRowNow(
-+                repoPath: repoPath, branch: branch, base: base, existing: existing, requestedAt: requestedAt)
+         // Checked before waiting for other git work in the repo, and again once it is this row's turn.
+@@ -31,7 +50,8 @@ extension Workspace {
          }
-     }
- 
-@@ -33,32 +55,99 @@ extension Workspace {
+         var created = try await serialized(repoPath: repoPath) {
+             try await self.createRowNow(
+-                repoPath: repoPath, branch: branch, base: base, group: group, requestedAt: requestedAt)
++                repoPath: repoPath, branch: branch, base: base, existing: existing, group: group,
++                requestedAt: requestedAt)
+         }
+         // After createRowNow, which logged the row's creation, so its move into the group is logged second.
+         if let joining = rowsJoiningGroups.removeValue(forKey: created.row.path) {
+@@ -58,34 +78,101 @@ extension Workspace {
  
      private func createRowNow(
          repoPath: String,
@@ -1008,13 +940,15 @@ extension Workspace {
 +        branch requested: String,
          base: String?,
 +        existing: Bool,
+         group: String?,
          requestedAt: ContinuousClock.Instant
      ) async throws -> CreatedRow {
 -        let index = try entryIndex(repoPath: repoPath)
 -        let dirName = state.repos[index].dirName
 -        var warnings: [String] = []
--
 +        _ = try entryIndex(repoPath: repoPath)
+         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
+-
          guard FileManager.default.fileExists(atPath: repoPath) else {
              throw WorkspaceError.pathNotFound(repoPath)
          }
@@ -1065,7 +999,7 @@ extension Workspace {
 +            }
 +        }
 +
-+        let added = try await addRow(repoPath: repoPath, branch: branch) { folder in
++        let added = try await addRow(repoPath: repoPath, branch: branch, joining: joining) { folder in
 +            switch source {
 +            case .local: [folder, branch]
 +            case .origin: ["--track", "-b", branch, folder, "origin/\(branch)"]
@@ -1103,16 +1037,16 @@ extension Workspace {
 +    }
  
 +    /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then lists the row last among the
-+    /// repo's rows. `arguments` gets the folder and returns what follows `worktree add`. The warnings say when a
-+    /// checkout hook failed after git had made the worktree.
++    /// repo's rows, or last in the group it is `joining`. `arguments` gets the folder and returns what follows
++    /// `worktree add`. The warnings say when a checkout hook failed after git had made the worktree.
 +    func addRow(
-+        repoPath: String, branch: String, arguments: (String) -> [String]
++        repoPath: String, branch: String, joining: String? = nil, arguments: (String) -> [String]
 +    ) async throws -> (row: Row, warnings: [String]) {
 +        let dirName = state.repos[try entryIndex(repoPath: repoPath)].dirName
          // A worktree whose folder was deleted keeps its path until it is pruned, so git would refuse to reuse it.
          await refresh(repoPath: repoPath)
          let registered = Set(snapshot.repo(path: repoPath)?.allRows.map(\.path) ?? [])
-@@ -68,36 +157,16 @@ extension Workspace {
+@@ -95,28 +182,6 @@ extension Workspace {
              registered.contains(Paths.canonical($0.path)) || FileManager.default.fileExists(atPath: $0.path)
          }
  
@@ -1139,6 +1073,10 @@ extension Workspace {
 -        }
 -
          let path = Paths.canonical(folder.path)
+         rowsJoiningGroups[path] = joining.map { JoiningGroup(repoPath: repoPath, group: $0) }
+         // `createRow` takes the path back out once it has logged the move, unless creating the row fails.
+@@ -124,11 +189,13 @@ extension Workspace {
+         defer { if !created { rowsJoiningGroups[path] = nil } }
          changingRows[path] = .current
          defer { finishChanging([path], repoPath: repoPath) }
 +        var warnings: [String] = []
@@ -1153,16 +1091,16 @@ extension Workspace {
              }
              // A failing post-checkout hook makes git exit non-zero after the worktree is complete.
              await refresh(repoPath: repoPath)
-@@ -111,7 +180,7 @@ extension Workspace {
-         }
+@@ -143,7 +210,7 @@ extension Workspace {
          await refresh(repoPath: repoPath)
          guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
+         created = true
 -        return CreatedRow(row: row, warnings: warnings)
 +        return (row, warnings)
      }
  
      private func removeRowNow(path: String, force: Bool, deleteBranch: Bool) async throws -> [String] {
-@@ -171,20 +240,21 @@ extension Workspace {
+@@ -203,20 +270,21 @@ extension Workspace {
  
      /// Parallel creates queue behind each other, so a fetch that finished after this request was made
      /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
@@ -1190,13 +1128,22 @@ extension Workspace {
 +        return failure
      }
  
-     func entryIndex(repoPath: String) throws -> Int {
+     /// Whether the repo still has a group of that name. A row being created into it may have been moved out since.
+@@ -225,7 +293,7 @@ extension Workspace {
+     }
+ 
+     /// The stored name of the group a new row is to join, which must exist.
+-    private func joiningGroup(_ name: String, repoPath: String) throws -> String {
++    func joiningGroup(_ name: String, repoPath: String) throws -> String {
+         let index = try entryIndex(repoPath: repoPath)
+         let entry = state.repos[index]
+         return entry.groups[try entry.requireGroup(name, repo: repoName(repoPath))].name
 ```
 
 `Sources/CanopyCore/Workspace/Workspace.swift`:
 
 ```diff
-@@ -254,23 +254,22 @@ public actor Workspace {
+@@ -266,23 +266,22 @@ public actor Workspace {
      }
  
      public func prune(repoPath: String) async throws {
@@ -1245,7 +1192,7 @@ extension Workspace {
      case worktreeDirty(String)
      case cannotRemoveMain
      case notManaged(String)
-@@ -42,6 +45,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -53,6 +56,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .invalidBranch: "invalid_branch"
          case .invalidBase: "invalid_base"
          case .branchCheckedOut: "branch_checked_out"
@@ -1253,7 +1200,7 @@ extension Workspace {
          case .worktreeDirty: "worktree_dirty"
          case .cannotRemoveMain: "cannot_remove_main"
          case .notManaged: "not_managed"
-@@ -75,7 +79,20 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -96,7 +100,20 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .missingTarget(let flag): "Could not tell which one you mean. Pass \(flag)."
          case .invalidBranch(let name): "Not a valid branch name: \(name)"
          case .invalidBase(let ref): "No commit matches --from \(ref)."
@@ -1664,8 +1611,8 @@ struct PullRequestRowTests {
              selectedRowPath: "/x"
          )
  
-@@ -34,6 +38,17 @@ struct StateStoreTests {
-         #expect(StateStore(url: url).load() == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r")])))
+@@ -81,6 +85,17 @@ struct StateStoreTests {
+                 == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r", adopted: ["/a"], rowOrder: ["/a"])])))
      }
  
 +    @Test func unreadableBindingsAreDroppedOnTheirOwn() throws {
@@ -1849,7 +1796,7 @@ A branch Canopy creates is deleted again if its tracking or worktree fails.
 `Sources/CanopyCore/State/AppState.swift`:
 
 ```diff
-@@ -1,14 +1,33 @@
+@@ -1,3 +1,15 @@
 +/// The pull request a branch was started from with `row new --pr`.
 +public struct PRBinding: Codable, Sendable, Equatable {
 +    public var number: Int
@@ -1865,33 +1812,37 @@ A branch Canopy creates is deleted again if its tracking or worktree fails.
  public struct RepoEntry: Codable, Sendable, Equatable {
      public var path: String
      public var dirName: String
-     public var adopted: [String]
+@@ -5,15 +17,20 @@ public struct RepoEntry: Codable, Sendable, Equatable {
+     /// The ungrouped Canopy and adopted rows, in sidebar order. Grouped rows are in `groups`.
      public var rowOrder: [String]
+     public var groups: [RowGroup]
 +    /// PRs keyed by local branch, for branches whose name cannot find their PR: a fork's, or one checked out under
 +    /// another name.
 +    public var prBindings: [String: PRBinding]
  
--    public init(path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = []) {
-+    public init(
-+        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [],
+     public init(
+-        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = []
++        path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = [],
 +        prBindings: [String: PRBinding] = [:]
-+    ) {
+     ) {
          self.path = path
          self.dirName = dirName
          self.adopted = adopted
          self.rowOrder = rowOrder
+         self.groups = groups
 +        self.prBindings = prBindings
      }
  
      public init(from decoder: any Decoder) throws {
-@@ -17,6 +36,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
+@@ -22,6 +39,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
          dirName = try container.decode(String.self, forKey: .dirName)
          adopted = try container.decodeIfPresent([String].self, forKey: .adopted) ?? []
          rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
 +        // Bindings that cannot be read only cost fork rows their badges, so the repo still loads.
 +        prBindings = (try? container.decodeIfPresent([String: PRBinding].self, forKey: .prBindings)) ?? [:]
-     }
- }
+         // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
+         let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
+         groups = decoded?.compactMap(\.value) ?? []
 ```
 
 `Sources/CanopyCore/Workspace/Workspace+PullRequestRows.swift` (new):
@@ -2180,7 +2131,7 @@ extension Workspace {
      case worktreeDirty(String)
      case cannotRemoveMain
      case notManaged(String)
-@@ -46,6 +51,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -57,6 +62,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .invalidBase: "invalid_base"
          case .branchCheckedOut: "branch_checked_out"
          case .branchNotFound: "branch_not_found"
@@ -2191,7 +2142,7 @@ extension Workspace {
          case .worktreeDirty: "worktree_dirty"
          case .cannotRemoveMain: "cannot_remove_main"
          case .notManaged: "not_managed"
-@@ -93,6 +102,15 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -114,6 +123,15 @@ public enum WorkspaceError: Error, Sendable, Equatable {
              "No branch \(name) here or on origin. Leave out --existing to create it."
          case .branchNotFound(let name, let failure?):
              "No branch \(name) here or in what Canopy last saw of origin, because \(failure)."
@@ -2373,7 +2324,7 @@ The badge lookup now finds origin through `gitHubRemote`, the same way `--pr` do
 `Sources/CanopyCore/PullRequests/GitHubCLI.swift`:
 
 ```diff
-@@ -49,8 +49,9 @@ public struct GitHubCLI: Sendable {
+@@ -46,8 +46,9 @@ public struct GitHubCLI: Sendable {
          }
      }
  
@@ -2382,7 +2333,7 @@ The badge lookup now finds origin through `gitHubRemote`, the same way `--pr` do
 +    /// `numbers` holds the PR bound to a branch whose name cannot find it.
 +    public func pullRequests(repo: GitHubRepo, branches: [String], numbers: [String: Int] = [:]) async -> PRLookup {
 +        let query = PRQuery.build(repo: repo, branches: branches, numbers: numbers)
-         switch await run(["api", "graphql", "-f", "query=\(query)"]) {
+         switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
          case .failure(.ghMissing): return .ghMissing
          case .failure(.notLoggedIn): return .notLoggedIn
 ```
@@ -2528,7 +2479,7 @@ The badge lookup now finds origin through `gitHubRemote`, the same way `--pr` do
 `Sources/CanopyCore/Workspace/Workspace+RowLifecycle.swift`:
 
 ```diff
-@@ -92,6 +92,8 @@ extension Workspace {
+@@ -117,6 +117,8 @@ extension Workspace {
              guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
              (branch, source) = (requested, .new)
              start = try await startPoint(base, repoPath: repoPath, hasOrigin: hasOrigin)
@@ -2537,7 +2488,7 @@ The badge lookup now finds origin through `gitHubRemote`, the same way `--pr` do
          }
          if branch != requested {
              notes.append("Using \(branch), the branch's own spelling.")
-@@ -224,6 +226,7 @@ extension Workspace {
+@@ -254,6 +256,7 @@ extension Workspace {
                  } catch {
                      return ["Removed the row, but could not delete branch \(branch): \(error)"]
                  }
@@ -2633,7 +2584,7 @@ An empty `row.new` now decodes, and the handler refuses it with `bad_params`.
          try await workspace.start()
          let ui = RecordingUI()
          let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
-@@ -364,6 +364,54 @@ struct ControlServerTests {
+@@ -426,6 +426,54 @@ struct ControlServerTests {
          #expect(texts == [nil, "ls"])
      }
  
@@ -2703,8 +2654,8 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
 `Sources/CanopyCLI/AgentGuide.swift`:
 
 ```diff
-@@ -26,7 +26,8 @@ struct AgentGuide: ParsableCommand {
-             canopy repo add <path> | canopy repo list | canopy repo rm <name>
+@@ -27,7 +27,8 @@ struct AgentGuide: ParsableCommand {
+             canopy repo clone <owner/repo | url> [--into <dir>]
  
              canopy row list [--all]                       rows, and other tools' worktrees with --all
 -            canopy row new <branch> [--from <ref>] [--run <cmd>] [--no-setup] [--select]
@@ -2713,7 +2664,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
              canopy row rm [<branch>] [--force] [--delete-branch]
              canopy row select [<branch>]
              canopy row adopt <path>                       show another tool's worktree as a row
-@@ -35,6 +36,16 @@ struct AgentGuide: ParsableCommand {
+@@ -39,6 +40,16 @@ struct AgentGuide: ParsableCommand {
          Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
          command is not run, and `row new` exits 1. `row rm` runs teardown first, then removes the worktree.
  
@@ -2727,10 +2678,10 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
 +        tracking, and "pr" in the result is the PR. Pick the local name with `--branch`. A branch another row has
 +        fails with branch_checked_out, which names that row; use `canopy row select` or `canopy term` there instead.
 +
-         ## Terminals
+         ## Groups
  
-             canopy term list [--all]                      ID, row, tab, process, title, and folder
-@@ -80,6 +91,10 @@ struct AgentGuide: ParsableCommand {
+             canopy group list [--repo <name>]             groups and their rows
+@@ -98,6 +109,10 @@ struct AgentGuide: ParsableCommand {
              pane=$(canopy row new fix/login-redirect --run 'claude "fix the login redirect, ticket FL-123"' --json | jq -r .pane)
              canopy term read "$pane" --lines 40
  
@@ -2781,8 +2732,8 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
          @Option(name: .customLong("run"), help: "Command to type into a new terminal once setup succeeds.")
          var command: String?
          @Flag(name: .customLong("no-setup"), help: "Skip the repo's setup commands.")
-@@ -63,13 +74,32 @@ struct RowCommand: AsyncParsableCommand {
-         var select = false
+@@ -65,13 +76,32 @@ struct RowCommand: AsyncParsableCommand {
+         var group: String?
          @OptionGroup var output: OutputOptions
  
 +        func validate() throws {
@@ -2810,13 +2761,13 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
                  ControlMethod.rowNew,
                  RowNewParams(
 -                    target: Client.hint(repo: repo), branch: branch, base: base, select: select, setup: !noSetup,
--                    run: command)
+-                    run: command, group: group)
 +                    target: Client.hint(repo: repo), branch: branch ?? localBranch, pr: pr, base: base,
-+                    existing: existing, select: select, setup: !noSetup, run: command)
++                    existing: existing, select: select, setup: !noSetup, run: command, group: group)
              )
              let created = try result.decode(RowNewResult.self)
              for warning in created.warnings {
-@@ -84,7 +114,19 @@ struct RowCommand: AsyncParsableCommand {
+@@ -86,7 +116,19 @@ struct RowCommand: AsyncParsableCommand {
          }
  
          private func summary(of created: RowNewResult) -> String {
@@ -2842,7 +2793,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
 `Sources/CanopyCore/Control/ControlMethods.swift`:
 
 ```diff
-@@ -119,8 +119,13 @@ public struct RowListParams: Codable, Sendable {
+@@ -134,8 +134,13 @@ public struct RowListParams: Codable, Sendable {
  
  public struct RowNewParams: Codable, Sendable {
      public var target: TargetHint
@@ -2857,14 +2808,14 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
      public var select: Bool
      /// Runs the repo's setup commands. Off with `--no-setup`.
      public var setup: Bool
-@@ -128,12 +133,14 @@ public struct RowNewParams: Codable, Sendable {
-     public var run: String?
+@@ -145,12 +150,14 @@ public struct RowNewParams: Codable, Sendable {
+     public var group: String?
  
      public init(
 -        target: TargetHint = TargetHint(), branch: String, base: String? = nil, select: Bool = false,
--        setup: Bool = true, run: String? = nil
+-        setup: Bool = true, run: String? = nil, group: String? = nil
 +        target: TargetHint = TargetHint(), branch: String? = nil, pr: String? = nil, base: String? = nil,
-+        existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil
++        existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil, group: String? = nil
      ) {
          self.target = target
          self.branch = branch
@@ -2874,7 +2825,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
          self.select = select
          self.setup = setup
          self.run = run
-@@ -142,8 +149,14 @@ public struct RowNewParams: Codable, Sendable {
+@@ -160,8 +167,14 @@ public struct RowNewParams: Codable, Sendable {
      public init(from decoder: any Decoder) throws {
          let container = try decoder.container(keyedBy: CodingKeys.self)
          target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
@@ -2890,7 +2841,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
          select = try container.decodeIfPresent(Bool.self, forKey: .select) ?? false
          setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
          run = try container.decodeIfPresent(String.self, forKey: .run)
-@@ -152,6 +165,14 @@ public struct RowNewParams: Codable, Sendable {
+@@ -171,6 +184,14 @@ public struct RowNewParams: Codable, Sendable {
  
  public struct RowNewResult: Codable, Sendable {
      public var row: Row
@@ -2910,25 +2861,27 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
 `Sources/CanopyCore/Control/WorkspaceControlHandler.swift`:
 
 ```diff
-@@ -98,8 +98,16 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -106,9 +106,17 @@ public struct WorkspaceControlHandler: Sendable {
  
          case ControlMethod.rowNew:
              let params = try request.decodeParams(RowNewParams.self)
 +            let start = try RowStart(params)
              let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
--            let created = try await workspace.createRow(repoPath: repo.path, branch: params.branch, base: params.base)
+-            let created = try await workspace.createRow(
+-                repoPath: repo.path, branch: params.branch, base: params.base, group: params.group)
 +            let created =
 +                switch start {
 +                case .branch(let branch):
 +                    try await workspace.createRow(
-+                        repoPath: repo.path, branch: branch, base: params.base, existing: params.existing)
++                        repoPath: repo.path, branch: branch, base: params.base, existing: params.existing,
++                        group: params.group)
 +                case .pullRequest(let reference):
 +                    try await workspace.createRow(repoPath: repo.path, pullRequest: reference, branch: params.branch)
 +                }
              let preparing = await rows.prepare(created.row, repoName: repo.name, setup: params.setup, run: params.run)
              if params.select {
                  await select(created.row.path)
-@@ -107,7 +115,9 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -116,7 +124,9 @@ public struct WorkspaceControlHandler: Sendable {
              let ready = await preparing.value
              return try .from(
                  RowNewResult(
@@ -2939,7 +2892,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
  
          case ControlMethod.rowRemove:
              let params = try request.decodeParams(RowRemoveParams.self)
-@@ -204,3 +214,25 @@ public struct WorkspaceControlHandler: Sendable {
+@@ -276,3 +286,25 @@ public struct WorkspaceControlHandler: Sendable {
          await ui.selectRow(path: path)
      }
  }
@@ -2978,7 +2931,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
      case pullRequestInOtherRepo(String, origin: String)
      case pullRequestNotFound(Int, repo: String)
      case pullRequestFetchFailed(Int, reason: String)
-@@ -52,7 +53,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -63,7 +64,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .branchCheckedOut: "branch_checked_out"
          case .branchNotFound: "branch_not_found"
          case .branchExists: "branch_exists"
@@ -2987,7 +2940,7 @@ The CLI checks the same combinations in `validate()`, prints which branch it use
          case .pullRequestNotFound: "pr_not_found"
          case .pullRequestFetchFailed: "git_failed"
          case .worktreeDirty: "worktree_dirty"
-@@ -107,6 +108,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
+@@ -128,6 +129,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
          case .branchExists(let names, let number):
              "Branches \(names.joined(separator: " and ")) already exist and are not PR #\(number)'s. "
                  + "Pass --branch to name the row's branch."
@@ -3022,11 +2975,27 @@ The stand-in answers PR lookups, badge searches by name, and badge lookups by nu
 `scripts/e2e.sh`:
 
 ```diff
-@@ -267,5 +267,105 @@ done
- "$cli" log --type repo.added | grep -q demo || fail "canopy log needs the app"
- [[ -z "$(app_pid)" ]] || fail "canopy log launched the app"
+@@ -349,6 +349,8 @@ done
+ # git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
+ (ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file \
+     exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
++# Stopped later, and bash would otherwise report the job it killed.
++disown
+ for _ in $(seq 1 100); do
+     [[ -n "$(app_pid)" ]] && break
+     sleep 0.1
+@@ -411,5 +413,112 @@ if len(calls) < 5 or not any(c["data"].get("error") == "clone_failed" for c in c
+ EOF
+ "$cli" agent-guide | grep -q "canopy repo clone" || fail "agent-guide is missing repo clone"
  
 +step "row new --pr checks out a PR's branch, from the repo and from a fork"
++# The app running now answers gh from the clone steps' stand-in, so this part starts one of its own.
++kill "$(app_pid)"
++for _ in $(seq 1 50); do
++    [[ -z "$(app_pid)" ]] && break
++    sleep 0.1
++done
++[[ -z "$(app_pid)" ]] || fail "the app did not quit"
 +# A GitHub on this machine: bare repos in $work/remotes, which git reaches at https://github.com/ through a URL rewrite,
 +# and a stand-in gh that answers from the PRs in $work/prs. The app gets both only when this script launches it.
 +mkdir -p "$work/prbin" "$work/przdot" "$work/prs"
@@ -3183,3 +3152,19 @@ The fixes are one commit after Task 6, so the task code above is as first built.
     The plan's header line keeps the template's wording.
 
 The reviewer confirmed the refspecs, the tracking config, the naming rules, that nothing calls a queued method from inside the queue, the badge matching, the control API, and state compatibility.
+
+## After Rebasing
+
+This branch was rebased onto the git timeout fix (#14), repo clone (#16), and row groups (#18) as each merged.
+
+1. **CI failed twice before #14**, on timing tests this branch does not touch (`aPushRefreshesOftenForAWhile`, `worktreeCreatedWithPlainGitAppears`), with the suite taking 98 seconds against about 20 locally.
+   This branch's git-heavy tests added enough load for Dispatch's pool to run out, and each `/usr/bin/git` asked xcrun, which started xcodebuild on a fresh runner.
+   The same commits on top of #14 passed CI in draft #19, which was then closed.
+   After rebasing, `LocalGitHub`, its git wrapper, and the rebase test's runner use #14's `Fixture.gitPath` and `Fixture.environment`.
+2. **#16 brought its own `run` helper for gh**, so `pullRequest(repo:number:)` now uses it, and gh runs on a thread of its own.
+   #16's e2e section leaves an app running with its own stand-in gh, so this branch's section stops it before launching one of its own, and that launch is disowned like this branch's.
+3. **The e2e counted every dev app on the machine**, and another agent's dev app started during a run.
+   `count_apps` now counts only apps whose environment has this run's `CANOPY_HOME`.
+4. **#18 placed new rows in their group inside `createRowNow`**, which this branch had split into `addRow`.
+   The placement moved into `addRow`, and one helper now joins the group for both `createRow` calls, so `row new --pr` takes `--group` too.
+   `aPullRequestRowCanStartInAGroup` and the e2e's PR 21 row cover it, and the specs and agent guide list `--group` for both forms.
