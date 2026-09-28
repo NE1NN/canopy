@@ -185,9 +185,9 @@ struct ExistingBranchTests {
         try await commit(1, in: other)
         try await git.run(["push", "--quiet", "origin", "feat/x"], in: other)
         // Mid-rebase, git lists the worktree as detached, though it still holds feat/x.
-        var environment = ProcessInfo.processInfo.environment
+        var environment = Fixture.environment
         environment["GIT_SEQUENCE_EDITOR"] = "sed -i '' '1s/^pick/edit/'"
-        try await GitRunner(environment: environment).run(
+        try await GitRunner(executable: Fixture.gitPath, environment: environment).run(
             ["rebase", "--quiet", "-i", "HEAD~2"], in: dir.sub("rebasing"))
         let before = try await head("refs/heads/feat/x", in: repo)
 
