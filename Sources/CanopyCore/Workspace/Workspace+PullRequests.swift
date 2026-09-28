@@ -95,6 +95,19 @@ extension Workspace {
         return numbers
     }
 
+    /// The PR number in gh's message for a PR GitHub cannot find.
+    static func unresolvedNumber(_ message: String) -> Int? {
+        let prefix = "Could not resolve to a PullRequest with the number of "
+        guard message.hasPrefix(prefix) else { return nil }
+        return Int(message.dropFirst(prefix.count).prefix(while: \.isNumber))
+    }
+
+    private func forgetPullRequest(number: Int, repoPath: String) {
+        guard let index = try? entryIndex(repoPath: repoPath) else { return }
+        state.repos[index].prBindings = state.repos[index].prBindings.filter { $0.value.number != number }
+        try? save()
+    }
+
     /// Forgets the PR bound to `branch`, which is gone, or is about to be a new branch with the same name.
     func forgetPullRequest(of branch: String, repoPath: String) throws {
         guard let index = try? entryIndex(repoPath: repoPath), state.repos[index].prBindings[branch] != nil else {
@@ -173,10 +186,19 @@ extension Workspace {
         let branches = pullRequestBranches(repoPath: repoPath)
         var lookup: PRLookup?
         if let origin = await gitHubRemote("origin", repoPath: repoPath) {
-            let numbers = boundPullRequests(repoPath: repoPath, branches: branches, repo: origin.repo)
+            var numbers = boundPullRequests(repoPath: repoPath, branches: branches, repo: origin.repo)
             lookup =
                 branches.isEmpty
                 ? .found([:]) : await github.pullRequests(repo: origin.repo, branches: branches, numbers: numbers)
+            // GitHub fails the whole query over one PR it cannot find, such as one it removed, so that PR's binding
+            // goes and the branch is looked up by name again.
+            while case .failed(let message) = lookup, let missing = Self.unresolvedNumber(message),
+                numbers.values.contains(missing)
+            {
+                numbers = numbers.filter { $0.value != missing }
+                forgetPullRequest(number: missing, repoPath: repoPath)
+                lookup = await github.pullRequests(repo: origin.repo, branches: branches, numbers: numbers)
+            }
         }
         // The repo may have been removed while gh answered.
         guard state.repos.contains(where: { $0.path == repoPath }) else { return }

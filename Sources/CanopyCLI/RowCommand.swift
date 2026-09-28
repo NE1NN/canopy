@@ -78,10 +78,10 @@ struct RowCommand: AsyncParsableCommand {
 
         func validate() throws {
             guard pr != nil else {
-                if branch == nil { throw ValidationError("Pass a branch name, or --pr.") }
                 if localBranch != nil {
                     throw ValidationError("--branch is only for --pr. Pass the branch as the argument.")
                 }
+                if branch == nil { throw ValidationError("Pass a branch name, or --pr.") }
                 if existing, base != nil {
                     throw ValidationError("--from only applies to new branches, and --existing never creates one.")
                 }

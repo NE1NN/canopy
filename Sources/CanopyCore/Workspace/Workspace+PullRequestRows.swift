@@ -50,6 +50,8 @@ extension Workspace {
                 ["fetch", "--quiet", "--no-tags", "origin", "+\(source):\(target)"], in: repoPath, timeout: fetchTimeout
             )
         } catch let error as GitError {
+            // A fetch can be stopped after it wrote the ref.
+            if fromPullRef { _ = try? await git.run(["update-ref", "-d", target], in: repoPath) }
             throw WorkspaceError.pullRequestFetchFailed(number, reason: "\(error)")
         }
         do {
@@ -83,35 +85,29 @@ extension Workspace {
         let (name, exists) = try await localBranch(for: head, origin: origin, requested: requested, repoPath: repoPath)
         try await claim(branch: name, repoPath: repoPath)
         let source: BranchSource
-        let added: (row: Row, warnings: [String])
+        let added: (row: Row, report: BranchReport)
         if exists {
-            let tip = try await git.run(["rev-parse", target], in: repoPath).trimmingCharacters(
+            // The temporary ref is gone by the time anyone reads the fix commands, so they name the commit.
+            let fetched = try? await git.run(["rev-parse", target], in: repoPath).trimmingCharacters(
                 in: .whitespacesAndNewlines)
-            let report = await bringUpToDate(
+            let report = await compare(
                 name, with: target, named: fromPullRef ? "PR #\(number)'s head" : "origin/\(head.branch)",
-                resetTo: fromPullRef ? tip : "origin/\(head.branch)", repoPath: repoPath)
+                resetTo: fromPullRef ? fetched ?? head.commit : "origin/\(head.branch)", repoPath: repoPath)
             notes += report.notes
             warnings += report.warnings
-            added = try await addRow(repoPath: repoPath, branch: name) { [$0, name] }
+            added = try await addRow(repoPath: repoPath, branch: name, fastForward: report.fastForward) { [$0, name] }
             source = .local
-        } else if !fromPullRef {
-            added = try await addRow(repoPath: repoPath, branch: name) {
-                ["--track", "-b", name, $0, "origin/\(head.branch)"]
-            }
-            if name != head.branch {
-                warnings.append(
-                    "\(name) tracks origin/\(head.branch) under another name, so plain git push fails. "
-                        + "Push with `git push origin HEAD:\(head.branch)`.")
-            }
-            source = .origin
         } else {
+            // Tracking is set by hand, since `--track` needs a fetch refspec that covers the head, and a shallow or
+            // single-branch clone has none.
             do {
                 try await git.run(["branch", "--no-track", name, target], in: repoPath)
             } catch let error as GitError {
                 throw WorkspaceError.git(error)
             }
             do {
-                warnings += try await track(name, head: head, origin: origin, repoPath: repoPath)
+                warnings += try await track(
+                    name, head: head, origin: origin, fromPullRef: fromPullRef, repoPath: repoPath)
                 added = try await addRow(repoPath: repoPath, branch: name) { [$0, name] }
             } catch {
                 // Deleting the branch also drops the tracking set for it.
@@ -122,12 +118,13 @@ extension Workspace {
         }
         try bind(name, to: head, origin: origin, repoPath: repoPath)
         return CreatedRow(
-            row: added.row, source: source, base: nil, pullRequest: head.pullRequest, notes: notes,
-            warnings: warnings + added.warnings)
+            row: added.row, source: source, base: nil, pullRequest: head.pullRequest, notes: notes + added.report.notes,
+            warnings: warnings + added.report.warnings)
     }
 
     /// The local branch for the PR, and whether it exists already and is the PR's. The head's name comes first. A fork's
-    /// head falls back to `<owner>/<head>` when that name is the default branch or an unrelated branch, as in gh.
+    /// head falls back to `<owner>/<head>` when that name is the default branch or an unrelated branch, as in gh, and a
+    /// head Canopy cannot use as a branch name, or a fork GitHub no longer reports, to `pr/<number>`.
     private func localBranch(
         for head: PullRequestHead, origin: GitHubRemote, requested: String?, repoPath: String
     ) async throws -> (name: String, exists: Bool) {
@@ -135,6 +132,8 @@ extension Workspace {
         let candidates: [String]
         if let requested {
             candidates = [requested]
+        } else if !(await isValidBranchName(head.branch, repoPath: repoPath)) {
+            candidates = ["pr/\(number)"]
         } else if !head.isCrossRepository {
             candidates = [head.branch]
         } else {
@@ -146,7 +145,7 @@ extension Workspace {
                 return (candidate, false)
             }
             // A same-repo PR's head is the branch of that name, the way `row new <head>` would take it.
-            if requested == nil && !head.isCrossRepository {
+            if requested == nil && !head.isCrossRepository && candidate == head.branch {
                 return (local, true)
             }
             if await tracks(local, head: head, origin: origin, repoPath: repoPath) {
@@ -180,15 +179,22 @@ extension Workspace {
     }
 
     /// Sets what a branch made from a PR's head tracks, the way gh pr checkout does, and returns warnings about pushing.
-    /// When maintainers can push to the fork, the branch pulls from and pushes to it. Otherwise it pulls the PR's head
-    /// from origin, and cannot push.
+    /// A same-repo PR's branch tracks the head on origin. When maintainers can push to a fork, the branch pulls from and
+    /// pushes to the fork. Otherwise it pulls the PR's head from origin, and cannot push.
     private func track(
-        _ name: String, head: PullRequestHead, origin: GitHubRemote, repoPath: String
+        _ name: String, head: PullRequestHead, origin: GitHubRemote, fromPullRef: Bool, repoPath: String
     ) async throws -> [String] {
         let number = head.pullRequest.number
         var settings = [("remote", "origin"), ("merge", "refs/pull/\(number)/head")]
         var warnings: [String] = []
-        if head.isCrossRepository, head.maintainerCanModify, let fork = head.headRepo,
+        if !fromPullRef {
+            settings = [("remote", "origin"), ("merge", "refs/heads/\(head.branch)")]
+            if name != head.branch {
+                warnings.append(
+                    "\(name) tracks origin/\(head.branch) under another name, so plain git push fails. "
+                        + "Push with `git push origin HEAD:\(head.branch)`.")
+            }
+        } else if head.isCrossRepository, head.maintainerCanModify, let fork = head.headRepo,
             let url = fork.url(replacingRepoIn: origin.url)
         {
             settings = [("remote", url), ("pushRemote", url), ("merge", "refs/heads/\(head.branch)")]

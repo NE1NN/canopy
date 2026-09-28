@@ -191,6 +191,67 @@ struct PullRequestRowTests {
         #expect(await bindings(workspace) == ["someone/feat/fork": PRBinding(number: 9, repo: "acme/app")])
     }
 
+    @Test func aForkHeadThatIsNotABranchNameGetsTheNumber() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "feat/fork", of: "someone/app")
+        try await Fixture.git.run(
+            ["update-ref", "refs/heads/-M", "refs/heads/feat/fork"], in: github.bare("someone/app"))
+        try await github.openPR(9, on: "acme/app", from: "-M", of: "someone/app")
+
+        let created = try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
+
+        #expect(created.row.branch == "pr/9")
+        #expect(try await run(github, ["branch", "--show-current"], in: repo) == "main")
+        #expect(await bindings(workspace) == ["pr/9": PRBinding(number: 9, repo: "acme/app")])
+    }
+
+    @Test func aGoneForkWhoseHeadNameIsTakenGetsTheNumber() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "feat/fork", of: "someone/app")
+        try await github.openPR(9, on: "acme/app", from: "feat/fork", of: "someone/app", forkGone: true)
+        try await run(github, ["branch", "feat/fork"], in: repo)
+
+        let created = try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
+
+        #expect(created.row.branch == "pr/9")
+    }
+
+    @Test func aForkWhoseNamesAreBothTakenNeedsBranch() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "feat/fork", of: "someone/app")
+        try await github.openPR(9, on: "acme/app", from: "feat/fork", of: "someone/app")
+        try await run(github, ["branch", "feat/fork"], in: repo)
+        try await run(github, ["branch", "someone/feat/fork"], in: repo)
+
+        await #expect(throws: WorkspaceError.branchExists(["feat/fork", "someone/feat/fork"], pr: 9)) {
+            try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
+        }
+    }
+
+    @Test func worksInASingleBranchClone() async throws {
+        let dir = try TempDir()
+        let github = try LocalGitHub(dir)
+        try await github.createRepo("acme/app")
+        let tip = try await github.push(to: "feat/split", of: "acme/app")
+        try await github.openPR(7, on: "acme/app", from: "feat/split")
+        let repo = try await github.clone("acme/app", singleBranch: true)
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: github.git, github: github.gh)
+        try await workspace.start()
+        try await workspace.addRepo(path: repo)
+
+        let created = try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 7))
+
+        #expect(try await run(github, ["rev-parse", "HEAD"], in: created.row.path) == tip)
+        #expect(await config(github, "branch.feat/split.remote", in: repo) == "origin")
+        #expect(await config(github, "branch.feat/split.merge", in: repo) == "refs/heads/feat/split")
+    }
+
     @Test func reusesABranchThatTracksThePullRequest() async throws {
         let dir = try TempDir()
         let (github, repo, workspace) = try await setUp(dir)
@@ -220,6 +281,11 @@ struct PullRequestRowTests {
         await #expect(throws: WorkspaceError.branchExists(["mine"], pr: 7)) {
             try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 7), branch: "mine")
         }
+        try await run(github, ["config", "branch.mine.remote", "origin"], in: repo)
+        try await run(github, ["config", "branch.mine.merge", "refs/pull/5/head"], in: repo)
+        await #expect(throws: WorkspaceError.branchExists(["mine"], pr: 7)) {
+            try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 7), branch: "mine")
+        }
     }
 
     @Test func aPullRequestAlreadyInARowNamesTheRow() async throws {
@@ -245,6 +311,19 @@ struct PullRequestRowTests {
             return error as? WorkspaceError
         }
         #expect(failures == [.branchCheckedOut("feat/split", row: created.row)])
+    }
+
+    @Test func aForkPullRequestAlreadyInARowNamesTheRow() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace) = try await setUp(dir)
+        try await github.fork("acme/app", as: "someone/app")
+        try await github.push(to: "feat/fork", of: "someone/app")
+        try await github.openPR(9, on: "acme/app", from: "feat/fork", of: "someone/app")
+        let first = try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
+
+        await #expect(throws: WorkspaceError.branchCheckedOut("feat/fork", row: first.row)) {
+            try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
+        }
     }
 
     @Test func saysWhatIsWrongWithTheRequest() async throws {
@@ -290,6 +369,8 @@ struct PullRequestRowTests {
         try await github.push(to: "feat/fork", of: "someone/app")
         try await github.openPR(9, on: "acme/app", from: "feat/fork", of: "someone/app")
         try await Fixture.git.run(["update-ref", "-d", "refs/pull/9/head"], in: github.bare("acme/app"))
+        // What an earlier fetch killed after writing its ref would leave.
+        try await run(github, ["update-ref", "refs/canopy/pr/9", "HEAD"], in: repo)
 
         await #expect {
             try await workspace.createRow(repoPath: repo, pullRequest: PRReference(number: 9))
