@@ -19,10 +19,29 @@ public actor Workspace {
     var subscribers: [UUID: AsyncStream<WorkspaceSnapshot>.Continuation] = [:]
     public private(set) var loadNotice: String?
 
-    public init(home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60)) {
+    let github: GitHubCLI
+    let prTiming: PRTiming
+    var pullRequests: [String: RepoPullRequests] = [:]
+    /// The branches each repo's latest lookup asked about, set when it is queued.
+    var prBranchesRequested: [String: [String]] = [:]
+    var prQueues: [String: Task<Void, Never>] = [:]
+    /// A queued lookup that has not started yet, which later callers share instead of queueing another.
+    var prPending: [String: Task<Void, Never>] = [:]
+    var prTimer: Task<Void, Never>?
+    var afterPush: [String: (until: ContinuousClock.Instant, task: Task<Void, Never>)] = [:]
+    var lastFocusRefresh: ContinuousClock.Instant?
+    /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
+    var prStopped = false
+
+    public init(
+        home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
+        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard
+    ) {
         self.home = home
         self.git = git
         self.fetchTimeout = fetchTimeout
+        self.github = github
+        self.prTiming = prTiming
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),
@@ -44,6 +63,7 @@ public actor Workspace {
             loadNotice =
                 "state.json could not be read. It was moved to \(backup.lastPathComponent) and Canopy started fresh."
         }
+        startPullRequests()
         for entry in state.repos {
             await watch(repoPath: entry.path)
         }
@@ -57,6 +77,7 @@ public actor Workspace {
             task.cancel()
         }
         pendingRefreshes.removeAll()
+        stopPullRequestRefreshes()
         for subscriber in subscribers.values {
             subscriber.finish()
         }
@@ -69,6 +90,7 @@ public actor Workspace {
         let repos = state.repos.map { entry in
             var repo = repoSnapshots[entry.path] ?? RepoSnapshot(path: entry.path, name: "")
             repo.name = names[entry.path] ?? entry.dirName
+            pullRequests[entry.path]?.apply(to: &repo)
             return repo
         }
         return WorkspaceSnapshot(repos: repos, selectedRowPath: state.selectedRowPath)
@@ -114,6 +136,7 @@ public actor Workspace {
         pendingRefreshes.removeValue(forKey: path)?.cancel()
         refreshQueues[path] = nil
         repoSnapshots[path] = nil
+        forgetPullRequests(repoPath: path)
         try save()
         publish()
     }
@@ -137,6 +160,7 @@ public actor Workspace {
         pendingRefreshes.removeValue(forKey: path)?.cancel()
         refreshQueues[path] = nil
         repoSnapshots[path] = nil
+        forgetPullRequests(repoPath: path)
         try save()
         await watch(repoPath: mainPath)
         await refresh(repoPath: mainPath)
@@ -272,6 +296,9 @@ public actor Workspace {
             external: rows.filter { $0.rowClass == .external }
         )
         publish()
+        if prBranchesRequested[current.path] != pullRequestBranches(repoPath: current.path) {
+            _ = queuePullRequestRefresh(repoPath: current.path)
+        }
     }
 
     // MARK: Internals
@@ -337,12 +364,20 @@ public actor Workspace {
                 in: repoPath
             )
         else { return }
+        // The repo may have been removed while git answered.
+        guard state.repos.contains(where: { $0.path == repoPath }) else { return }
         let canonicalGitDir = Paths.canonical(gitDir.trimmingCharacters(in: .whitespacesAndNewlines))
         watchers[repoPath] = DirectoryWatcher(paths: [canonicalGitDir]) { [weak self] paths in
-            guard paths.contains(where: { GitEventFilter.isRelevant(eventPath: $0, gitDir: canonicalGitDir) }) else {
-                return
+            let worktrees = paths.contains { GitEventFilter.isRelevant(eventPath: $0, gitDir: canonicalGitDir) }
+            let pushed = paths.contains {
+                GitEventFilter.isRemoteRefLog(eventPath: $0, gitDir: canonicalGitDir)
+                    && GitReflog.lastEntryIsPush(atPath: $0)
             }
-            Task { await self?.scheduleRefresh(repoPath: repoPath) }
+            guard worktrees || pushed else { return }
+            Task {
+                if worktrees { await self?.scheduleRefresh(repoPath: repoPath) }
+                if pushed { await self?.refreshOftenAfterPush(repoPath: repoPath) }
+            }
         }
     }
 

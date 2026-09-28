@@ -1,0 +1,79 @@
+import Foundation
+import Testing
+
+@testable import CanopyCore
+
+struct GitHubCLITests {
+    let repo = GitHubRepo(remoteURL: "https://github.com/NE1NN/canopy")!
+
+    @Test func readsPullRequestsWithOneGraphQLCall() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            """
+            printf '%s\\n' "$@" > "\(dir.sub("args"))"
+            echo '{"data": {"repository": {"b0": {"nodes": [{"number": 3, "title": "Fix it", "url": "https://x/3", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28T01:00:00Z", "isCrossRepository": false}]}}}}'
+            """)
+
+        let lookup = await gh.pullRequests(repo: repo, branches: ["fix/it"])
+
+        #expect(
+            lookup
+                == .found([
+                    "fix/it": PullRequest(
+                        number: 3, title: "Fix it", url: "https://x/3", state: .open, updatedAt: "2026-09-28T01:00:00Z")
+                ]))
+        let args = try String(contentsOfFile: dir.sub("args"), encoding: .utf8).split(separator: "\n")
+        #expect(Array(args.prefix(3)) == ["api", "graphql", "-f"])
+        #expect(args.dropFirst(3).first?.hasPrefix("query=query { repository(") == true)
+    }
+
+    @Test func reportsMissingGH() async throws {
+        let dir = try TempDir()
+        let gh = GitHubCLI(environment: ["PATH": dir.path, "HOME": dir.path], fallbackFolders: [])
+
+        #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .ghMissing)
+    }
+
+    @Test func findsGHInHomebrewWhenPATHLacksIt() async throws {
+        let dir = try TempDir()
+        _ = try Fixture.gh(in: dir, #"echo '{"data": {"repository": {}}}'"#)
+        let gh = GitHubCLI(
+            environment: ["PATH": "/usr/bin:/bin", "HOME": dir.path], fallbackFolders: [dir.sub("gh-bin")])
+
+        #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .found([:]))
+    }
+
+    @Test func reportsLoggedOutGH() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir, "echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4")
+
+        #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .notLoggedIn)
+    }
+
+    @Test func treatsARejectedTokenAsLoggedOut() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(in: dir, "echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1")
+
+        #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .notLoggedIn)
+    }
+
+    @Test func passesOnOtherFailuresWithGHsMessage() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(
+            in: dir,
+            "echo 'gh: Could not resolve to a Repository with the name NE1NN/canopy.' >&2; exit 1")
+
+        #expect(
+            await gh.pullRequests(repo: repo, branches: ["a"])
+                == .failed("Could not resolve to a Repository with the name NE1NN/canopy."))
+    }
+
+    @Test func stopsAHungGH() async throws {
+        let dir = try TempDir()
+        let gh = try Fixture.gh(in: dir, "sleep 30", timeout: .milliseconds(300))
+
+        #expect(await gh.pullRequests(repo: repo, branches: ["a"]) == .failed("gh did not answer in time."))
+    }
+}

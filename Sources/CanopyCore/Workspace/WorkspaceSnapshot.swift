@@ -7,6 +7,8 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
     public var external: [Row]
     public var isMissing: Bool
     public var error: String?
+    /// Why PR badges are hidden or stale, with the fix, such as running `gh auth login`.
+    public var pullRequestWarning: String?
 
     public var id: String { path }
 

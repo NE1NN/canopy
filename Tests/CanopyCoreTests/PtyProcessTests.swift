@@ -86,7 +86,7 @@ struct PtyProcessTests {
     @Test func largeOutputArrivesWholeAndInOrder() async throws {
         let (_, recorder) = try start(["/usr/bin/seq", "1", "200000"])
 
-        #expect(await eventually(timeout: .seconds(20)) { recorder.exitCode != nil })
+        #expect(await eventually { recorder.exitCode != nil })
         #expect(recorder.text.hasSuffix("199999\r\n200000\r\n"))
         #expect(recorder.text.components(separatedBy: "\r\n").count == 200_001)
     }
@@ -114,7 +114,8 @@ struct PtyProcessTests {
 
         #expect(await eventually { process.isAtPrompt })
         #expect(process.foreground?.name == "bash")
-        process.write("sleep 3\r")
+        // Long enough that a loaded machine cannot finish it between two polls.
+        process.write("sleep 30\r")
         #expect(await eventually { process.foreground?.name == "sleep" })
         #expect(!process.isAtPrompt)
 
@@ -135,10 +136,12 @@ struct PtyProcessTests {
     }
 
     @Test func terminalHandlesUTF8Input() async throws {
-        let (_, recorder) = try start(["/bin/stty", "-a"])
+        // The program stays up after printing, so the check does not race its output against its exit. On a CI
+        // runner, stty's output once went missing when it exited straight away.
+        let (process, recorder) = try start(["/bin/sh", "-c", "stty -a; sleep 30"])
 
-        #expect(await eventually { recorder.exitCode != nil })
-        #expect(recorder.text.split(whereSeparator: \.isWhitespace).contains("iutf8"))
+        #expect(await eventually { recorder.text.split(whereSeparator: \.isWhitespace).contains("iutf8") })
+        process.terminate()
     }
 
     @Test func missingExecutableThrows() {

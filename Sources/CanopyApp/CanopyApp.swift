@@ -31,6 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await model.start() }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        let workspace = model.workspace
+        Task { await workspace.applicationBecameActive() }
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let busy = model.terminals.busyPanes.compactMap(\.foreground?.name)
         guard busy.isEmpty || confirmQuit(busy) else { return .terminateCancel }

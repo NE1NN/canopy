@@ -23,7 +23,14 @@ struct JSONValueTests {
         #expect(!remove.force && !remove.deleteBranch)
         #expect(try JSONValue.object([:]).decode(RowListParams.self).all == false)
         #expect(try JSONValue.object([:]).decode(RowRefParams.self).target == TargetHint())
+        #expect(try JSONValue.object([:]).decode(PRShowParams.self).refresh == false)
         #expect(throws: DecodingError.self) { try JSONValue.object([:]).decode(RowNewParams.self) }
+    }
+
+    @Test func aRowWithNoPullRequestSaysNull() throws {
+        let shown = PRShowResult(repo: "demo", branch: "feat/x", path: "/x", pr: nil)
+
+        #expect(String(decoding: try JSONEncoder().encode(shown), as: UTF8.self).contains(#""pr":null"#))
     }
 
     @Test func keepsIntegersIntegral() throws {
@@ -43,6 +50,8 @@ struct JSONValueTests {
         #expect(ControlMethod.replyTimeout(for: ControlMethod.repoAdd).map { $0 >= 600 } == true)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.status).map { $0 <= 60 } == true)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList).map { $0 <= 60 } == true)
+        // A refresh can wait behind a lookup already asking GitHub, and each gets 30 seconds.
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.prShow).map { $0 >= 60 } == true)
     }
 
     @Test func clientFailuresMapToStableCodes() {
