@@ -81,8 +81,8 @@ private typealias KeventCall = (
 ) -> Int32
 
 public enum Subprocess {
-    /// Runs a program in its own process group with stdin from /dev/null and no inherited descriptors,
-    /// blocking the calling thread until it exits. On timeout the whole group is killed.
+    /// Runs a program in its own process group with stdin from /dev/null, no inherited descriptors, and every signal
+    /// unblocked and at its default, blocking the calling thread until it exits. On timeout the whole group is killed.
     /// Call it through `onOwnThread`, not on a Dispatch global queue, whose threads run out.
     ///
     /// Output goes to unlinked temporary files rather than pipes: a background process the child leaves
@@ -114,7 +114,15 @@ public enum Subprocess {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        // Dispatch's threads, and threads they start, block most signals, and a child inherits the caller's mask.
+        var none = sigset_t()
+        sigemptyset(&none)
+        posix_spawnattr_setsigmask(&attributes, &none)
+        var every = sigset_t()
+        sigfillset(&every)
+        posix_spawnattr_setsigdefault(&attributes, &every)
+        let flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        posix_spawnattr_setflags(&attributes, Int16(flags))
         posix_spawnattr_setpgroup(&attributes, 0)
 
         let argv = ([executable] + arguments).map { strdup($0) } + [nil]
