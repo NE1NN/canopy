@@ -27,6 +27,8 @@ public struct MovedRow: Sendable, Equatable {
     public var row: Row
     /// False when the row was already where it was asked to go.
     public var moved: Bool
+    /// The group the row was in before, nil if it was ungrouped.
+    public var from: String?
 }
 
 /// Groups only arrange the sidebar, so changing them runs no git: each change edits the repo's entry, saves it, and
@@ -104,7 +106,7 @@ extension Workspace {
                 ActivityType.rowMoved, current,
                 data: ["from": from.map(JSONValue.string) ?? .null, "to": current.group.map(JSONValue.string) ?? .null])
         }
-        return MovedRow(row: current, moved: moved)
+        return MovedRow(row: current, moved: moved, from: from)
     }
 
     /// Applies `change` to the repo's entry, and saves and republishes it if the entry changed.

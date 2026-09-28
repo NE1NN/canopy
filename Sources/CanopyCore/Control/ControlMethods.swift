@@ -11,11 +11,12 @@ public enum ControlMethod {
     public static let rowRemove = "row.remove"
     public static let rowSelect = "row.select"
     public static let rowAdopt = "row.adopt"
+    public static let rowMove = "row.move"
     public static let prShow = "pr.show"
 
     /// Methods that only read, which the activity log leaves out: agents poll some of them every few seconds.
     public static let readOnly: Set<String> = [
-        status, repoList, rowList, prShow, TermMethod.list, TermMethod.read, PortMethod.list,
+        status, repoList, rowList, prShow, TermMethod.list, TermMethod.read, PortMethod.list, GroupMethod.list,
     ]
 
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
@@ -140,10 +141,12 @@ public struct RowNewParams: Codable, Sendable {
     public var setup: Bool
     /// A command to type into a new terminal once setup succeeds.
     public var run: String?
+    /// A group of the repo to put the row in, which must exist.
+    public var group: String?
 
     public init(
         target: TargetHint = TargetHint(), branch: String, base: String? = nil, select: Bool = false,
-        setup: Bool = true, run: String? = nil
+        setup: Bool = true, run: String? = nil, group: String? = nil
     ) {
         self.target = target
         self.branch = branch
@@ -151,6 +154,7 @@ public struct RowNewParams: Codable, Sendable {
         self.select = select
         self.setup = setup
         self.run = run
+        self.group = group
     }
 
     public init(from decoder: any Decoder) throws {
@@ -161,6 +165,7 @@ public struct RowNewParams: Codable, Sendable {
         select = try container.decodeIfPresent(Bool.self, forKey: .select) ?? false
         setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
         run = try container.decodeIfPresent(String.self, forKey: .run)
+        group = try container.decodeIfPresent(String.self, forKey: .group)
     }
 }
 

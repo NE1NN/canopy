@@ -39,6 +39,20 @@ struct AgentGuide: ParsableCommand {
         Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
         command is not run, and `row new` exits 1. `row rm` runs teardown first, then removes the worktree.
 
+        ## Groups
+
+            canopy group list [--repo <name>]             groups and their rows
+            canopy group new <name>                       an empty group, after the repo's others
+            canopy group rename <name> <new-name>
+            canopy group rm <name>                        its rows become ungrouped; no worktree is touched
+            canopy row move [<row>] (--group <name> | --no-group | --before <row> | --after <row>)
+            canopy row new <branch> --group <name>        create the row straight into a group
+
+        A group belongs to one repo and only arranges the sidebar, where it can fold away. Names match ignoring
+        case. A group that does not exist is an error (group_not_found), never created for you, so make it first
+        with `group new`. `row move --group` is safe to repeat: a row already in the group stays where it is.
+        `row list` shows each row's group, and `row list --json` carries it as "group".
+
         ## Terminals
 
             canopy term list [--all]                      ID, row, tab, process, title, and folder
@@ -92,6 +106,12 @@ struct AgentGuide: ParsableCommand {
         See which commands failed in the last hour, in any row:
 
             canopy log --since 1h --type term.command --json | jq '.[] | select(.data.exit != 0) | .data.cmd'
+
+        Keep your review rows together, and list them:
+
+            canopy group new Review
+            canopy row new feat/checkout --group Review --run claude
+            canopy row list --json | jq -r '.[] | select(.group == "Review") | .branch'
 
         Clean up when the work is merged:
 

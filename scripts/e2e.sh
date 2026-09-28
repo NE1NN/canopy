@@ -74,6 +74,49 @@ sleep 1
 swift scripts/window-shot.swift "$(app_pid)" "$shots/rows.png"
 echo "saved $shots/rows.png"
 
+step "canopy group and canopy row move arrange rows"
+group_of() {
+    "$cli" row list --repo demo --json |
+        /usr/bin/python3 -c 'import json, sys; print({r["branch"]: r.get("group") for r in json.load(sys.stdin)}[sys.argv[1]])' "$1"
+}
+"$cli" group new Review --repo demo >/dev/null
+"$cli" row new feat/grouped --repo demo --group review >/dev/null
+"$cli" row list --repo demo | grep -Eq '^feat/grouped +Review +canopy ' || fail "row list has no GROUP column"
+[[ "$(group_of feat/grouped)" == Review ]] || fail "row new --group did not put the row in the group"
+"$cli" row move feat/plain --repo demo --group Review >/dev/null
+"$cli" row move feat/plain --repo demo --before feat/grouped | grep -qx "Moved feat/plain before feat/grouped." ||
+    fail "row move --before said something else"
+"$cli" group list --repo demo --json | /usr/bin/python3 -c '
+import json, sys
+groups = json.load(sys.stdin)
+assert [(g["name"], [r["branch"] for r in g["rows"]]) for g in groups] == [("Review", ["feat/plain", "feat/grouped"])], groups
+' || fail "group list has the wrong rows"
+"$cli" row move feat/plain --repo demo --group REVIEW | grep -qx "feat/plain is already in Review." ||
+    fail "repeating row move --group was not a no-op"
+"$cli" row move feat/plain --repo demo --no-group | grep -qx "Moved feat/plain out of Review." ||
+    fail "row move --no-group said something else"
+[[ "$(group_of feat/plain)" == None ]] || fail "feat/plain is still grouped"
+if "$cli" row new feat/nogroup --repo demo --group Nope --json > "$work/nogroup.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"group_not_found"' "$work/nogroup.json" || fail "missing group_not_found"
+[[ ! -d "$CANOPY_HOME/worktrees/demo/feat-nogroup" ]] || fail "a missing group still created the row"
+if "$cli" group new " REVIEW " --repo demo --json > "$work/taken.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"group_exists"' "$work/taken.json" || fail "missing group_exists"
+if "$cli" row move feat/grouped --repo demo --json > /dev/null 2>&1; then fail "row move without a destination"; fi
+"$cli" group rename review "Code review" --repo demo | grep -qx "Renamed review to Code review." ||
+    fail "group rename said something else"
+"$cli" group rm "code REVIEW" --repo demo | grep -qx "Deleted group Code review. Its row is ungrouped." ||
+    fail "group rm said something else"
+[[ -d "$CANOPY_HOME/worktrees/demo/feat-grouped" ]] || fail "group rm touched a worktree"
+[[ "$(group_of feat/grouped)" == None ]] || fail "group rm left the row grouped"
+"$cli" log --type group | grep -q "Code review, 1 row" || fail "canopy log is missing group.removed"
+"$cli" log --type row.moved | grep -q "none -> Review" || fail "canopy log is missing row.moved"
+"$cli" agent-guide | grep -q "canopy group new" || fail "agent-guide is missing groups"
+# Kept for the relaunch check at the end.
+"$cli" group new Kept --repo demo >/dev/null
+"$cli" row move feat/grouped --repo demo --group Kept >/dev/null
+
 step "canopy row rm removes the worktree and branch"
 "$cli" row rm feat/e2e --repo demo --delete-branch
 [[ ! -d "$CANOPY_HOME/worktrees/demo/feat-e2e" ]] || fail "worktree folder still exists"
@@ -257,13 +300,25 @@ if CANOPY_APP=/nonexistent CANOPY_HOME="$work/nobody" "$cli" row list --json > "
 fi
 grep -q '"app_unavailable"' "$work/err2.json" || fail "no JSON error when the app cannot be launched"
 
+stop_app() {
+    kill "$(app_pid)"
+    for _ in $(seq 1 50); do
+        [[ -z "$(app_pid)" ]] && break
+        sleep 0.1
+    done
+    [[ -z "$(app_pid)" ]] || fail "the app did not quit"
+}
+
+step "groups come back after a relaunch"
+stop_app
+"$cli" group list --repo demo --json | /usr/bin/python3 -c '
+import json, sys
+groups = json.load(sys.stdin)
+assert [(g["name"], [r["branch"] for r in g["rows"]]) for g in groups] == [("Kept", ["feat/grouped"])], groups
+' || fail "groups did not survive a relaunch"
+
 step "canopy log works while Canopy is not running"
-kill "$(app_pid)"
-for _ in $(seq 1 50); do
-    [[ -z "$(app_pid)" ]] && break
-    sleep 0.1
-done
-[[ -z "$(app_pid)" ]] || fail "the app did not quit"
+stop_app
 "$cli" log --type repo.added | grep -q demo || fail "canopy log needs the app"
 [[ -z "$(app_pid)" ]] || fail "canopy log launched the app"
 
