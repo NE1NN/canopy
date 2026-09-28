@@ -62,6 +62,17 @@ struct AgentGuide: ParsableCommand {
         right after a push. `--refresh` asks GitHub now, for example right after `gh pr create`.
         `row list --json` also carries each row's PR as "pr" when it has one.
 
+        ## Activity
+
+            canopy log [--since <when>] [--until <when>] [--type <t>]   what happened, oldest first
+
+        Canopy logs repos and rows coming and going, rows switching branch, PRs opening and changing state, terminals
+        opening and exiting, each command that finishes in a zsh terminal with its exit code and duration, and each
+        canopy call that changes something. Each event's source says whether it came from the Canopy window (ui), a
+        canopy command (cli), or outside Canopy (git). `--since` defaults to 24 hours ago and takes 30m, 2h, 3d, today,
+        yesterday, 2026-09-27, or 2026-09-27T14:30. `--type row` matches every row event, `--type term.command` one.
+        `canopy log` reads the log files directly, so it works while Canopy is not running.
+
         ## Examples
 
         Start a parallel agent on a fix in its own row, then check on it:
@@ -73,6 +84,10 @@ struct AgentGuide: ParsableCommand {
 
             pane=$(canopy term new --tab Server --run 'bun dev' --title 'dev server' --json | jq -r .pane)
             canopy term read "$pane"
+
+        See which commands failed in the last hour, in any row:
+
+            canopy log --since 1h --type term.command --json | jq '.[] | select(.data.exit != 0) | .data.cmd'
 
         Clean up when the work is merged:
 

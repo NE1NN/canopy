@@ -10,7 +10,7 @@ struct CanopyCLI: AsyncParsableCommand {
         version: CanopyVersion.current,
         subcommands: [
             Status.self, RepoCommand.self, RowCommand.self, TermCommand.self, PortsCommand.self, PRCommand.self,
-            AgentGuide.self,
+            LogCommand.self, AgentGuide.self,
         ]
     )
 }

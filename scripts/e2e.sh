@@ -217,6 +217,36 @@ else
     echo "skipped: needs gh logged in and an origin on GitHub with a merged PR"
 fi
 
+step "canopy log shows what happened, with who did it"
+"$cli" log --json > "$work/log.json"
+/usr/bin/python3 - "$work/log.json" <<'EOF' || fail "canopy log is missing events"
+import json, sys
+events = json.load(open(sys.argv[1]))
+seen = {(e["type"], e["source"]) for e in events}
+need = {("repo.added", "cli"), ("row.created", "cli"), ("row.created", "git"), ("row.removed", "cli"),
+        ("term.opened", "cli"), ("cli.call", "cli")}
+missing = need - seen
+if missing:
+    sys.exit(f"missing {sorted(missing)}")
+if any(e["type"] == "cli.call" and e["data"]["method"] in ("row.list", "term.read") for e in events):
+    sys.exit("read-only calls were logged")
+EOF
+"$cli" log --type row.created | grep -q "feat/plain" || fail "canopy log does not show the plain git row"
+
+step "commands that finish in a zsh terminal are logged"
+if [[ "$(dscl . -read "/Users/$USER" UserShell | awk '{print $2}')" == */zsh ]]; then
+    "$cli" term new --repo demo --row feat/term --run '(exit 7)' >/dev/null
+    for _ in $(seq 1 100); do
+        "$cli" log --type term.command | grep -q "exit 7 in .*: (exit 7)" && break
+        sleep 0.1
+    done
+    "$cli" log --type term.command | grep -q "exit 7 in .*: (exit 7)" || fail "the command was not logged"
+    [[ -f "$CANOPY_HOME/shell/zsh/.zshenv" ]] || fail "the zsh shim is missing"
+else
+    echo "skipped: the login shell is not zsh"
+fi
+"$cli" agent-guide | grep -q "canopy log" || fail "agent-guide is missing canopy log"
+
 step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"invalid_branch"' "$work/err.json" || fail "missing error code"
@@ -226,6 +256,16 @@ if CANOPY_APP=/nonexistent CANOPY_HOME="$work/nobody" "$cli" row list --json > "
     fail "expected failure"
 fi
 grep -q '"app_unavailable"' "$work/err2.json" || fail "no JSON error when the app cannot be launched"
+
+step "canopy log works while Canopy is not running"
+kill "$(app_pid)"
+for _ in $(seq 1 50); do
+    [[ -z "$(app_pid)" ]] && break
+    sleep 0.1
+done
+[[ -z "$(app_pid)" ]] || fail "the app did not quit"
+"$cli" log --type repo.added | grep -q demo || fail "canopy log needs the app"
+[[ -z "$(app_pid)" ]] || fail "canopy log launched the app"
 
 echo
 echo "e2e passed"
