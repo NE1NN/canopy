@@ -51,6 +51,7 @@ struct JSONValueTests {
     @Test func writesWaitLongerThanReads() {
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowNew) == nil)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowRemove) == nil)
+        #expect(ControlMethod.replyTimeout(for: ControlMethod.repoClone) == nil)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.repoAdd).map { $0 >= 600 } == true)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.status).map { $0 <= 60 } == true)
         #expect(ControlMethod.replyTimeout(for: ControlMethod.rowList).map { $0 <= 60 } == true)

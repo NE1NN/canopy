@@ -24,12 +24,16 @@ struct AgentGuide: ParsableCommand {
         ## Repos and rows
 
             canopy repo add <path> | canopy repo list | canopy repo rm <name>
+            canopy repo clone <owner/repo | url> [--into <dir>]
 
             canopy row list [--all]                       rows, and other tools' worktrees with --all
             canopy row new <branch> [--from <ref>] [--run <cmd>] [--no-setup] [--select]
             canopy row rm [<branch>] [--force] [--delete-branch]
             canopy row select [<branch>]
             canopy row adopt <path>                       show another tool's worktree as a row
+
+        `repo clone` clones with your gh login into CANOPY_HOME/repos/<owner>/<name> and registers the repo. Run it
+        again and it registers the folder it already made. `repo rm` only unregisters and never deletes files.
 
         `row new` creates the branch and worktree, runs the repo's setup commands from .canopy/config.json in a
         Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
