@@ -15,7 +15,8 @@ extension RowLifecycle {
                         pane: pane.id.description, repo: repoNames[pane.context.repoPath] ?? pane.context.repoName,
                         row: pane.context.rowName, rowPath: path, tab: tab.name, title: pane.title,
                         folder: pane.currentDirectory ?? pane.startDirectory ?? path,
-                        foreground: pane.foreground?.name, exited: exited)
+                        foreground: pane.foreground?.name, exited: exited,
+                        agent: pane.agent.state == .none ? nil : pane.agent.state)
                 }
             }
         }
@@ -53,7 +54,7 @@ extension RowLifecycle {
         terminals.closePane(pane.id)
     }
 
-    private func terminal(_ id: String) throws -> Pane {
+    func terminal(_ id: String) throws -> Pane {
         guard let paneID = PaneID(id), let pane = terminals.pane(paneID) else { throw WorkspaceError.paneNotFound(id) }
         return pane
     }
