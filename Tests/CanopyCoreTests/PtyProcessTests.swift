@@ -86,7 +86,8 @@ struct PtyProcessTests {
     @Test func largeOutputArrivesWholeAndInOrder() async throws {
         let (_, recorder) = try start(["/usr/bin/seq", "1", "200000"])
 
-        #expect(await eventually { recorder.exitCode != nil })
+        // Throughput, not a wait for something to happen, so a loaded machine gets longer.
+        #expect(await eventually(timeout: .seconds(60)) { recorder.exitCode != nil })
         #expect(recorder.text.hasSuffix("199999\r\n200000\r\n"))
         #expect(recorder.text.components(separatedBy: "\r\n").count == 200_001)
     }
