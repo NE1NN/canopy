@@ -73,6 +73,11 @@ struct AgentGuide: ParsableCommand {
             canopy term close <id> [--force]              --force if a program still runs in it
 
         Terminal IDs such as p12 stay unique across relaunches. `term send`, `read`, and `close` never start Canopy.
+        With --enter, Return goes in as a keystroke of its own once the program has read the text, or after 2 seconds if
+        it is not reading, and a moment later; `term send` returns once it is in. Claude Code and Codex take a Return
+        that arrives with the text for part of a paste, so this is what makes a long or multi-line message submit.
+        Send to a program you just started once its prompt shows in `term read`: until it reads keys itself, the
+        terminal hands it typed-ahead lines together with their Return.
 
         ## Ports
 

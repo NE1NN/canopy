@@ -547,7 +547,7 @@ Every command exits non-zero on failure.
 | `canopy row move`, `canopy group list\|new\|rename\|rm` | arrange rows in groups, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes |
 | `canopy term list [--all]` | list panes with ID, row, tab, title, folder, and foreground process |
 | `canopy term new [--tab <name> \| --new-tab] [--run <cmd>] [--title <t>]` | add a pane using the add rule and optionally run a command |
-| `canopy term send <id> <text> [--enter]` | write text to a pane, optionally followed by Enter |
+| `canopy term send <id> <text> [--enter]` | type text into a pane; `--enter` then presses Return as a keystroke of its own, once the program has read the text (or after 2 s if it is not reading) and 200 ms more have passed, and returns once Return is in, so programs that take a burst of input for a paste still submit |
 | `canopy term read <id> [--lines N]` | print the visible screen, or the last N lines including scrollback, as plain text |
 | `canopy term close <id> [--force]` | close a pane |
 | `canopy ports [--all]` | list ports for the resolved row, or for all rows with `--all` or when no row resolves |
