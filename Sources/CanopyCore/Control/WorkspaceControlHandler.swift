@@ -48,7 +48,7 @@ public struct WorkspaceControlHandler: Sendable {
     /// into terminals are left out while command logging is off, and so is text starting with a space, which zsh keeps
     /// out of history under hist_ignore_space.
     private func record(_ request: ControlRequest, _ response: ControlResponse) {
-        guard !ControlMethod.readOnly.contains(request.method) else { return }
+        guard !ControlMethod.notLogged.contains(request.method) else { return }
         var params = request.params ?? .object([:])
         if case .object(var fields) = params {
             for key in ["run", "text"] {
@@ -248,6 +248,12 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(TermCloseParams.self)
             try await rows.closeTerminal(params)
             return .object(["pane": .string(params.pane)])
+
+        case TermMethod.state:
+            return try .from(try await rows.reportAgent(request.decodeParams(TermStateParams.self)))
+
+        case TermMethod.wait:
+            return try .from(try await rows.waitForAgents(request.decodeParams(TermWaitParams.self)))
 
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")

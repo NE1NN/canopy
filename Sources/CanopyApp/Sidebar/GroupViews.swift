@@ -14,6 +14,12 @@ struct GroupHeaderView: View {
     @State private var isRenaming = false
     @State private var isConfirmingDelete = false
 
+    /// A collapsed group shows the most urgent agent dot among the rows it hides.
+    private var agentDot: AgentDot? {
+        guard group.collapsed else { return nil }
+        return model.terminals.agentDot(inRows: repo.rows(inGroup: group.name).map(\.path))
+    }
+
     /// A collapsed group shows the selection for the row it hides, so the sidebar always says where the window is.
     private var holdsSelection: Bool {
         group.collapsed && model.selectedRow.map { $0.repoPath == repo.path && $0.group == group.name } == true
@@ -33,6 +39,9 @@ struct GroupHeaderView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            if let agentDot {
+                AgentDotView(dot: agentDot)
+            }
             if isHovering || isRenaming || isConfirmingDelete {
                 IconMenu(title: "More for \(group.name)", systemImage: "ellipsis") {
                     GroupMenuItems(rename: { isRenaming = true }, delete: requestDelete)
@@ -68,7 +77,10 @@ struct GroupHeaderView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(group.name), group, \(count == 1 ? "1 row" : "\(count) rows")")
+        .accessibilityLabel(
+            "\(group.name), group, \(count == 1 ? "1 row" : "\(count) rows")"
+                + (agentDot.map { ", \($0.label.lowercased())" } ?? "")
+        )
         .accessibilityValue(group.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toggle() }

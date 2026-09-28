@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 
 /// Facts about a running process, read from the kernel.
 public enum ProcessTable {
@@ -18,6 +19,14 @@ public enum ProcessTable {
             String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
         }
         return path.isEmpty ? nil : path
+    }
+
+    /// When the process started, to the microsecond.
+    public static func startTime(of pid: pid_t) -> Date? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000)
     }
 
     public static func name(of pid: pid_t) -> String? {

@@ -148,7 +148,7 @@ struct TabItemView: View {
                 Text(tab.name)
                     .lineLimit(1)
             }
-            // The close button and the running dot share a slot, so hovering does not shift the tab.
+            // The close button and the agent dot share a slot, so hovering does not shift the tab.
             ZStack {
                 if isHovering {
                     Button(action: onClose) {
@@ -160,8 +160,8 @@ struct TabItemView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help("Close Tab")
-                } else if tab.isRunningProgram {
-                    RunningDot(size: 5)
+                } else if let dot = tab.agentDot {
+                    AgentDotView(dot: dot, size: 5)
                 }
             }
             .frame(width: 14, height: 14)

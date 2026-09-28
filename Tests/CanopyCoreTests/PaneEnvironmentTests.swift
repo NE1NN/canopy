@@ -46,7 +46,15 @@ struct PaneEnvironmentTests {
         #expect(environment["CANOPY_ROW_PATH"] == "/w/feat-x")
         #expect(environment["CANOPY_ROOT_PATH"] == "/r/demo")
         #expect(environment["CANOPY_PANE"] == "p12")
+        #expect(environment["CANOPY_CLI"] == "/App/Contents/Resources/bin/canopy")
         #expect(environment["HOME"] == NSHomeDirectory())
+    }
+
+    @Test func aBuildWithoutItsCLILeavesItOut() {
+        var settings = settings([:])
+        settings.cliDirectory = nil
+        let environment = PaneEnvironment.build(settings: settings, context: context, pane: PaneID(12))
+        #expect(environment["CANOPY_CLI"] == nil)
     }
 
     @Test func keepsTheAppsOwnLanguage() {

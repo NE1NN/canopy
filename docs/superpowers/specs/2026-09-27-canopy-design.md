@@ -271,6 +271,7 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
 - External worktrees fold into a "3 other worktrees" row under their repo's rows.
 
 Rows can be gathered into named groups that fold away within their repo, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
+An agent in a terminal turns the running dot into an agent dot and plays a sound when it finishes, as [Agent state](2026-09-28-canopy-agent-state-design.md) describes.
 
 ## Terminals
 

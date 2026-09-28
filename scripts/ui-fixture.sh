@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots:
 # three repos, rows with open, draft, merged, and closed PRs, two groups, other worktrees, running programs,
-# listening ports, and a split tab. Nothing outside the throwaway folder is touched.
+# listening ports, a split tab, and agents in every state. Nothing outside the throwaway folder is touched.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -10,6 +10,8 @@
 # a fixture ZDOTDIR. It clones acme/billing and acme/design-system from local bare repos in $work/remotes, and fails
 # like gh for any other repo. Writing "logged-out" to $work/bin/gh-mode makes it answer like a gh with no login, and
 # writing a number of seconds to $work/bin/clone-seconds makes clones show git's progress for that long.
+#
+# UI_FIXTURE_HOOKS_OFFER=1 gives it a Claude Code config folder of its own, so it offers to install its hooks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 app="$PWD/build/Canopy Dev.app"
@@ -38,6 +40,10 @@ fi
 # The socket path must stay under 104 bytes, so the home goes in a short temporary folder.
 work=$(mktemp -d -t cnp)
 export CANOPY_HOME="$work/home"
+# The app offers to install Claude Code's hooks, and must only ever find the fixture's settings.
+export CLAUDE_CONFIG_DIR="$work/claude"
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+if [[ "${UI_FIXTURE_HOOKS_OFFER:-}" == 1 ]]; then mkdir -p "$CLAUDE_CONFIG_DIR"; fi
 
 mkdir -p "$work/bin" "$work/zdot"
 cat > "$work/bin/gh" <<'GH'
@@ -159,7 +165,23 @@ first=$("$cli" term list --all --json | /usr/bin/python3 -c \
 "$cli" term new "${row[@]}" --tab "Terminal 2" --run "$plain" >/dev/null
 "$cli" term new --repo web-app --row feat/onboarding-flow --run "$plain; sleep 600" >/dev/null
 "$cli" term new --repo api-server --row feat/rate-limits --run "$plain; python3 -m http.server 8080" >/dev/null
+"$cli" term new --repo web-app --row fix/login-redirect --run "$plain" >/dev/null
+"$cli" term new --repo web-app --row chore/bump-deps --run "$plain" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
+
+# Agents in every state, reported the way agents without Claude Code's hooks report them.
+pane_in() {
+    "$cli" term list --all --json | /usr/bin/python3 -c \
+        'import json, sys; print([t["pane"] for t in json.load(sys.stdin) if t["row"] == sys.argv[1] and t["tab"] == sys.argv[2]][0])' \
+        "$1" "$2"
+}
+"$cli" term state "$first" working >/dev/null
+"$cli" term state "$(pane_in feat/checkout-redesign agent)" done >/dev/null
+"$cli" term state "$(pane_in feat/onboarding-flow Terminal)" working >/dev/null
+"$cli" term state "$(pane_in fix/login-redirect Terminal)" waiting >/dev/null
+"$cli" term state "$(pane_in feat/rate-limits Terminal)" working >/dev/null
+# Folding the Later group, which no command does, shows its done dot on the group's header.
+"$cli" term state "$(pane_in chore/bump-deps Terminal)" done >/dev/null
 
 # shellcheck source=/dev/null
 source "$state"

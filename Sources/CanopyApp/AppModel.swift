@@ -18,6 +18,7 @@ final class AppModel {
             guard selectedRowPath != oldValue else { return }
             sidebarKeepsKeyboard = isSteppingRows
             selectionChanged()
+            updateViewing()
         }
     }
     /// True after ↑ or ↓ in the sidebar picked the row, so its terminal does not take the keyboard from the sidebar.
@@ -85,6 +86,8 @@ final class AppModel {
         }
         await startControlServer()
         startRefreshingWhileVisible()
+        startWatchingAgents()
+        await offerHooksIfNeeded()
     }
 
     func shutdown() {
@@ -363,6 +366,67 @@ final class AppModel {
             other.port != port.port && other.processes.contains { pids.contains($0.pid) }
         }
         return Set(others.map(\.port)).sorted()
+    }
+
+    // MARK: Agents
+
+    @ObservationIgnored private var activationObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored private let sounds = AgentSoundPlayer()
+
+    /// Keeps the terminals told what the author has in front of them, and plays a sound when an agent finishes or
+    /// needs the author anywhere else.
+    private func startWatchingAgents() {
+        terminals.onAgentAlert = { [weak self] _, state in self?.playSound(for: state) }
+        let names = [
+            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+            NSApplication.didChangeOcclusionStateNotification,
+        ]
+        activationObservers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateViewing() }
+            }
+        }
+        updateViewing()
+    }
+
+    private func updateViewing() {
+        let viewing = AgentViewing(
+            rowPath: selectedRowPath, isFrontmost: NSApp.isActive && NSApp.occlusionState.contains(.visible))
+        if terminals.viewing != viewing {
+            terminals.viewing = viewing
+        }
+    }
+
+    /// Reads config.json each time, so a changed sound applies without relaunching.
+    private func playSound(for state: AgentState) {
+        guard let sound = AgentSound.sound(for: state, in: GlobalConfig.load(from: home.configFile)) else { return }
+        sounds.play(sound, fallback: AgentSound.fallback(for: state))
+    }
+
+    /// The Claude Code settings file the launch offer would write, while the offer is on screen.
+    var hooksOffer: ClaudeSettingsFile?
+
+    /// Offers once per home to install Canopy's Claude Code hooks, to people who use Claude Code.
+    private func offerHooksIfNeeded() async {
+        let environment = ProcessInfo.processInfo.environment
+        let settings = ClaudeSettingsFile.resolve(
+            explicit: nil, environment: environment, homeDirectory: NSHomeDirectory())
+        let folder = ClaudeSettingsFile.configFolder(environment: environment, homeDirectory: NSHomeDirectory())
+        let offered = await workspace.agentHooksOffered
+        guard ClaudeHooksOffer.shouldOffer(alreadyOffered: offered, settings: settings, configFolder: folder) else {
+            return
+        }
+        hooksOffer = settings
+        perform { try await $0.setAgentHooksOffered() }
+    }
+
+    func installHooks(into settings: ClaudeSettingsFile) {
+        hooksOffer = nil
+        do {
+            try settings.install()
+        } catch {
+            show(error)
+        }
     }
 
     // MARK: Terminals

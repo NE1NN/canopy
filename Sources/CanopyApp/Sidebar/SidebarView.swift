@@ -283,7 +283,7 @@ struct RowLineView: View {
     @State private var isConfirmingRemove = false
     @State private var isNamingGroup = false
 
-    private var isRunning: Bool { model.terminals.isRunningProgram(inRow: row.path) }
+    private var agentDot: AgentDot? { model.terminals.agentDot(inRow: row.path) }
 
     /// Hover stops updating during a drag, so the row being dragged drops its hover look itself.
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedRow?.path == row.path }
@@ -304,8 +304,8 @@ struct RowLineView: View {
                 TagView(text: "missing")
             }
             Spacer(minLength: 4)
-            if isRunning {
-                RunningDot()
+            if let agentDot {
+                AgentDotView(dot: agentDot)
             }
             if let pr = row.pullRequest {
                 PullRequestNumber(pr: pr)
@@ -370,7 +370,7 @@ struct RowLineView: View {
         if let group = row.group { parts.append("in \(group)") }
         if let tag = row.externalTag { parts.append("from \(tag.label)") }
         if let pr = row.pullRequest { parts.append("pull request \(pr.number), \(pr.state.label)") }
-        if isRunning { parts.append("running a program") }
+        if let agentDot { parts.append(agentDot.label.lowercased()) }
         if row.isMissing { parts.append("missing") }
         return parts.joined(separator: ", ")
     }

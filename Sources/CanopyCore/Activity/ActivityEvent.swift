@@ -30,6 +30,11 @@ public enum ActivityType {
     public static let termExited = "term.exited"
     public static let termCommand = "term.command"
     public static let cliCall = "cli.call"
+
+    /// `agent.working`, `agent.waiting`, and `agent.done`, or `agent.cleared` when the state goes to none.
+    public static func agent(_ state: AgentState) -> String {
+        state == .none ? "agent.cleared" : "agent.\(state.rawValue)"
+    }
 }
 
 extension Calendar {

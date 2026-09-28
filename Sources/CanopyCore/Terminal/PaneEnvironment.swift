@@ -26,6 +26,10 @@ public enum PaneEnvironment {
         environment["CANOPY_ROW_PATH"] = context.rowPath
         environment["CANOPY_ROOT_PATH"] = context.repoPath
         environment["CANOPY_PANE"] = pane.description
+        // Claude Code's hooks run this CLI, so each Canopy's terminals report to that Canopy.
+        if let cli = settings.cliDirectory {
+            environment["CANOPY_CLI"] = cli + "/canopy"
+        }
         return environment
     }
 }

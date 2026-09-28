@@ -79,6 +79,24 @@ struct AgentGuide: ParsableCommand {
         Send to a program you just started once its prompt shows in `term read`: until it reads keys itself, the
         terminal hands it typed-ahead lines together with their Return.
 
+        ## Agent state
+
+            canopy term state [<id>] <working|waiting|done|none>   report an agent's state, your terminal's by default
+            canopy term wait <id>... [--for done|waiting|any] [--timeout 30m]
+                                                          wait until one of them is done or waiting for its user
+            canopy hooks install | uninstall | status     Claude Code hooks that report Claude's state on their own
+
+        `term list` shows each terminal's agent state: working, waiting, done, or blank. Claude Code reports its own
+        once `canopy hooks install` has added Canopy's hooks to ~/.claude/settings.json. Other agents report with
+        `term state`, for example Codex, from ~/.codex/config.toml:
+
+            notify = ["sh", "-c", "[ -z \\"$CANOPY_CLI\\" ] || \\"$CANOPY_CLI\\" term state done", "codex-notify"]
+
+        `term wait` returns at once for a terminal already in the state, unless something was typed or sent into it
+        since then, so `term send ... --enter` followed by `term wait` waits for the next finish. It prints the
+        terminal and its state, such as `p12 done`, and fails with wait_timeout, pane_closed, or agent_stopped.
+        `term state` and `term wait` never start Canopy.
+
         ## Ports
 
             canopy ports [--all]                          what the row's processes listen on, or every row's
@@ -112,6 +130,7 @@ struct AgentGuide: ParsableCommand {
         Start a parallel agent on a fix in its own row, then check on it:
 
             pane=$(canopy row new fix/login-redirect --run 'claude "fix the login redirect, ticket FL-123"' --json | jq -r .pane)
+            canopy term wait "$pane" --timeout 1h
             canopy term read "$pane" --lines 40
 
         Review a pull request in its own row:

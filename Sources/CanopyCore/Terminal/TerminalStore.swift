@@ -24,11 +24,6 @@ public final class TerminalTab: Identifiable {
         layout.leaves.compactMap { panes[$0] }
     }
 
-    /// Whether any of its panes was running a program at the last activity refresh.
-    public var isRunningProgram: Bool {
-        paneList.contains(where: \.isRunningProgram)
-    }
-
     /// The pane `⌘W` closes and typing goes to.
     public var focused: Pane {
         panes[focusedPaneID] ?? paneList[0]
@@ -61,6 +56,13 @@ public final class TerminalStore {
     /// Rows seen in a snapshot while they had terminals, so a row created a moment ago is not mistaken for one
     /// that went away.
     @ObservationIgnored private var seenRows: Set<String> = []
+    /// What the author has in front of them. The app keeps it current.
+    @ObservationIgnored public var viewing = AgentViewing() {
+        didSet { markSeenOnScreen() }
+    }
+    /// Called when a pane's agent finishes or needs the author, unless the author is focused on that pane.
+    @ObservationIgnored public var onAgentAlert: (Pane, AgentState) -> Void = { _, _ in }
+    @ObservationIgnored private var agentObservers: [UUID: (AgentEvent) -> Void] = [:]
 
     public init(engine: any TerminalEngine, settings: ShellSettings, activity: ActivityLog? = nil) {
         self.engine = engine
@@ -107,11 +109,6 @@ public final class TerminalStore {
         }
     }
 
-    /// Whether any of the row's panes was running a program at the last activity refresh.
-    public func isRunningProgram(inRow path: String) -> Bool {
-        tabs(inRow: path).contains(where: \.isRunningProgram)
-    }
-
     // MARK: Tabs
 
     /// Opens a tab with one pane at the end of the row's tab bar and selects it.
@@ -129,6 +126,7 @@ public final class TerminalStore {
         if select || selectedTabByRow[context.rowPath] == nil {
             selectedTabByRow[context.rowPath] = tab.id
         }
+        markSeenOnScreen()
         onChange()
         return tab
     }
@@ -144,6 +142,7 @@ public final class TerminalStore {
     public func selectTab(_ id: TabID, inRow path: String) {
         guard tabs(inRow: path).contains(where: { $0.id == id }) else { return }
         selectedTabByRow[path] = id
+        markSeenOnScreen()
         onChange()
     }
 
@@ -177,6 +176,7 @@ public final class TerminalStore {
         } else if wasSelected {
             selectedTabByRow[path] = tabs[min(index, tabs.count - 1)].id
         }
+        markSeenOnScreen()
         onChange()
     }
 
@@ -400,8 +400,30 @@ public final class TerminalStore {
 
     private func makePane(_ context: PaneContext, command: PaneCommand, directory: String?) -> Pane {
         defer { nextPane += 1 }
-        return Pane(
+        let pane = Pane(
             id: PaneID(nextPane), context: context, command: command, settings: settings,
             emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory)
+        pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
+        pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
+        return pane
+    }
+
+    // MARK: Agents
+
+    /// Calls `handler` with every agent change and pane close until `stopObservingAgents`.
+    public func observeAgents(_ handler: @escaping (AgentEvent) -> Void) -> UUID {
+        let id = UUID()
+        agentObservers[id] = handler
+        return id
+    }
+
+    public func stopObservingAgents(_ id: UUID) {
+        agentObservers[id] = nil
+    }
+
+    func notifyAgentObservers(_ event: AgentEvent) {
+        for observer in agentObservers.values {
+            observer(event)
+        }
     }
 }

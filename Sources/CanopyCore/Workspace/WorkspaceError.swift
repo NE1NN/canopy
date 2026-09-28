@@ -29,6 +29,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case paneNotFound(String)
     case paneBusy(String, program: String)
     case paneExited(String)
+    case waitTimeout([String], String)
+    case paneClosed(String)
+    case agentStopped(String)
+    case settingsInvalid(String, reason: String)
+    case settingsWriteFailed(String, reason: String)
     case noPullRequestLookup(String)
     case notOnGitHub(String)
     case ghUnavailable(String)
@@ -76,6 +81,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound: "pane_not_found"
         case .paneBusy: "pane_busy"
         case .paneExited: "pane_exited"
+        case .waitTimeout: "wait_timeout"
+        case .paneClosed: "pane_closed"
+        case .agentStopped: "agent_stopped"
+        case .settingsInvalid: "settings_invalid"
+        case .settingsWriteFailed: "settings_write_failed"
         case .noPullRequestLookup: "no_pr_lookup"
         case .notOnGitHub: "not_github"
         case .ghUnavailable: "gh_unavailable"
@@ -144,6 +154,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound(let id): "No terminal \(id). Run `canopy term list --all`."
         case .paneBusy(let id, let program): "\(program) is still running in \(id). Pass --force to close it anyway."
         case .paneExited(let id): "The shell in \(id) has exited. Close it, or restart it from the window."
+        case .waitTimeout(let ids, let target):
+            "\(ids.joined(separator: ", ")) did not become \(target) before the timeout."
+        case .paneClosed(let id): "\(id) closed during the wait."
+        case .agentStopped(let id):
+            "The agent in \(id) stopped without finishing: it exited, was interrupted, or was set to none."
+        case .settingsInvalid(let path, let reason):
+            "\(path) is not settings Claude Code can read (\(reason)). Nothing was changed."
+        case .settingsWriteFailed(let path, let reason): "Could not write \(path): \(reason). Nothing was changed."
         case .noPullRequestLookup(let name):
             "Canopy only looks up PRs for its own and adopted rows on a branch, and \(name) is not one."
         case .notOnGitHub(let repo): "\(repo)'s origin is not on GitHub, so its rows have no PRs."
