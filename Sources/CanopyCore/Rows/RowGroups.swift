@@ -93,7 +93,7 @@ extension RepoEntry {
     mutating func move(_ path: String, to placement: RowPlacement, repo: String) throws -> Bool {
         guard holds(path) else { throw WorkspaceError.rowNotFound(path) }
         var moved = self
-        moved.take(path)
+        moved.forget(path)
         switch placement {
         case .group(let name):
             let index = try requireGroup(name, repo: repo)
@@ -161,7 +161,8 @@ extension RepoEntry {
         return index
     }
 
-    private mutating func take(_ path: String) {
+    /// Takes a row out of whichever list holds it.
+    mutating func forget(_ path: String) {
         rowOrder.removeAll { $0 == path }
         for index in groups.indices {
             groups[index].rows.removeAll { $0 == path }

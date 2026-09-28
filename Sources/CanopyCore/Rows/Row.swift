@@ -29,6 +29,8 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
     public var isMissing: Bool
     /// Looked up only for Canopy and adopted rows on a branch.
     public var pullRequest: PullRequest?
+    /// The name of the group holding the row, nil while it is ungrouped.
+    public var group: String?
 
     public var id: String { path }
 
@@ -62,5 +64,6 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
         case externalTag = "tag"
         case isMissing = "missing"
         case pullRequest = "pr"
+        case group
     }
 }

@@ -51,16 +51,22 @@ struct RowClassifierTests {
 }
 
 struct RowOrderingTests {
+    func reconciled(_ order: [String], present: [String]) -> [String] {
+        var entry = RepoEntry(path: "/r", dirName: "r", rowOrder: order)
+        _ = entry.reconcile(present: present)
+        return entry.rowOrder
+    }
+
     @Test func keepsOrderAndAppendsNewRows() {
-        #expect(RowOrdering.reconcile(order: ["b", "a"], present: ["a", "b", "c"]) == ["b", "a", "c"])
+        #expect(reconciled(["b", "a"], present: ["a", "b", "c"]) == ["b", "a", "c"])
     }
 
     @Test func dropsRowsThatAreGone() {
-        #expect(RowOrdering.reconcile(order: ["a", "b"], present: ["b"]) == ["b"])
+        #expect(reconciled(["a", "b"], present: ["b"]) == ["b"])
     }
 
     @Test func removesDuplicates() {
-        #expect(RowOrdering.reconcile(order: ["a", "a"], present: ["a"]) == ["a"])
+        #expect(reconciled(["a", "a"], present: ["a"]) == ["a"])
     }
 }
 

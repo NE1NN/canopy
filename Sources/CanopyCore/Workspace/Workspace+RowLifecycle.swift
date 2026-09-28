@@ -105,7 +105,7 @@ extension Workspace {
             warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
         }
 
-        if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].rowOrder.contains(path) {
+        if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].holds(path) {
             state.repos[current].rowOrder.append(path)
             try save()
         }
@@ -141,7 +141,7 @@ extension Workspace {
                 throw WorkspaceError.git(error)
             }
             if let index = try? entryIndex(repoPath: row.repoPath) {
-                state.repos[index].rowOrder.removeAll { $0 == path }
+                state.repos[index].forget(path)
             }
             if state.selectedRowPath == path {
                 state.selectedRowPath = nil
