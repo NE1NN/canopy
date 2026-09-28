@@ -69,6 +69,8 @@ public struct AppState: Codable, Sendable, Equatable {
     /// The next pane number, so a pane ID an agent kept never names a different terminal after a relaunch.
     public var nextPane = 1
     public var portsCollapsed = false
+    /// Whether Canopy has offered to install its Claude Code hooks, which it does once.
+    public var agentHooksOffered = false
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -88,6 +90,7 @@ public struct AppState: Codable, Sendable, Equatable {
         // Layouts that cannot be read are dropped on their own, so repos and rows still load.
         nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
         portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
+        agentHooksOffered = try container.decodeIfPresent(Bool.self, forKey: .agentHooksOffered) ?? false
         terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
     }
 }

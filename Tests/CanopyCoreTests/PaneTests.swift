@@ -77,14 +77,11 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let tab = terminals.openTab(for: Fixture.context(dir.path))
-        let pane = tab.focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         terminals.refreshActivity()
         #expect(!pane.isRunningProgram)
-        #expect(!tab.isRunningProgram)
-        #expect(!terminals.isRunningProgram(inRow: dir.path))
 
         await pane.run("sleep 30")
         #expect(
@@ -92,8 +89,6 @@ struct PaneTests {
                 terminals.refreshActivity()
                 return pane.isRunningProgram
             })
-        #expect(tab.isRunningProgram)
-        #expect(terminals.isRunningProgram(inRow: dir.path))
 
         await pane.type("\u{3}")
         #expect(
@@ -101,7 +96,6 @@ struct PaneTests {
                 terminals.refreshActivity()
                 return !pane.isRunningProgram
             })
-        #expect(!terminals.isRunningProgram(inRow: dir.path))
     }
 
     @Test func aScriptRunsUntilItExitsWithoutWaitingForARefresh() async throws {

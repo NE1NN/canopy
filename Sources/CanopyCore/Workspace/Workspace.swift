@@ -258,6 +258,16 @@ public actor Workspace {
         try save()
     }
 
+    public var agentHooksOffered: Bool {
+        state.agentHooksOffered
+    }
+
+    public func setAgentHooksOffered() throws {
+        guard !state.agentHooksOffered else { return }
+        state.agentHooksOffered = true
+        try save()
+    }
+
     public func setSelectedRow(path: String?) throws {
         guard state.selectedRowPath != path else { return }
         state.selectedRowPath = path

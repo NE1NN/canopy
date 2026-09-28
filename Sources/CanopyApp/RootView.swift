@@ -56,6 +56,18 @@ struct RootView: View {
             Text(pending.message)
         }
         .alert(
+            "Show when Claude Code finishes?",
+            isPresented: Binding(get: { model.hooksOffer != nil }, set: { if !$0 { model.hooksOffer = nil } }),
+            presenting: model.hooksOffer
+        ) { settings in
+            Button("Add Hooks") { model.installHooks(into: settings) }
+            Button("Not Now", role: .cancel) {}
+        } message: { settings in
+            Text(
+                "Canopy can add hooks to \((settings.url.path as NSString).abbreviatingWithTildeInPath) so it knows when Claude Code in its terminals is working, done, or waiting for you. Your other hooks stay as they are, and `canopy hooks uninstall` takes Canopy's out."
+            )
+        }
+        .alert(
             "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",
             isPresented: Binding(
                 get: { model.pendingRepoRemoval != nil }, set: { if !$0 { model.pendingRepoRemoval = nil } }),

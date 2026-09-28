@@ -43,6 +43,11 @@ enum Style {
     static let badgeFill = Color.adaptive(
         light: .black.withAlphaComponent(0.06), dark: .white.withAlphaComponent(0.075))
 
+    /// An agent that finished. The system's green, which sits apart from GitHub's open-PR green in the same row.
+    static let agentDone = Color(nsColor: .systemGreen)
+    /// An agent waiting for the author. The system's yellow, darkened in light mode to hold up on white.
+    static let agentWaiting = Color.adaptive(light: 0xD49A00, dark: 0xFFD60A)
+
     /// The hues a repo's tile can take, indexed by `RepoMark.hue`.
     static let tileHues: [Color] = [
         .adaptive(light: 0x5257D6, dark: 0x8B8FF8),
@@ -159,7 +164,7 @@ struct IconMenu<Items: View>: View {
     }
 }
 
-/// The accent dot that marks a program running in a row, tab, or pane.
+/// The accent dot that marks a program running in a pane.
 struct RunningDot: View {
     var size = 6.0
 

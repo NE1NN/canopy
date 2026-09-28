@@ -93,7 +93,7 @@ struct PaneHeader: View {
     }
 }
 
-/// What a pane is doing: an idle shell, a running program, or an exit, with its code.
+/// What a pane is doing: its agent's state, an idle shell, a running program, or an exit, with its code.
 struct PaneStatusMark: View {
     let pane: Pane
     var size = 11.0
@@ -105,6 +105,8 @@ struct PaneStatusMark: View {
                 .font(.system(size: size))
                 .foregroundStyle(code == 0 ? .green : .red)
                 .accessibilityLabel(code == 0 ? "Exited" : "Exited with code \(code)")
+        case .running where pane.agent.dot != nil:
+            AgentDotView(dot: pane.agent.dot ?? .working)
         case .running where pane.isRunningProgram:
             RunningDot()
         case .running:

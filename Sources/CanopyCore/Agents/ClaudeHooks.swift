@@ -292,3 +292,14 @@ public struct ClaudeSettingsFile: Sendable {
         }
     }
 }
+
+/// Whether Canopy offers to install its hooks on launch: once, to people who use Claude Code, while the hooks are not
+/// installed and the settings can be read.
+public enum ClaudeHooksOffer {
+    public static func shouldOffer(alreadyOffered: Bool, settings: ClaudeSettingsFile, configFolder: URL) -> Bool {
+        guard !alreadyOffered, FileManager.default.fileExists(atPath: configFolder.path),
+            let status = try? settings.status()
+        else { return false }
+        return status != .installed
+    }
+}
