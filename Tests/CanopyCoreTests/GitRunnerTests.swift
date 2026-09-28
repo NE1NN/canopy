@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import CanopyCore
@@ -62,6 +63,12 @@ struct GitRunnerTests {
         }
 
         #expect(elapsed < .seconds(5))
+    }
+
+    /// Through the /usr/bin/git shim, each test's git asked xcrun, which started xcodebuild on a fresh CI runner.
+    @Test func testsRunGitWithoutTheShim() {
+        #expect(Fixture.gitPath != "/usr/bin/git")
+        #expect(FileManager.default.isExecutableFile(atPath: Fixture.gitPath))
     }
 
     @Test func noTimeoutByDefault() async throws {

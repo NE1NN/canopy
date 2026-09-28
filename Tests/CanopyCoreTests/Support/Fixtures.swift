@@ -8,11 +8,14 @@ enum Fixture {
     static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
 
     /// The git that /usr/bin/git hands off to. The shim asks xcrun on every run, and xcrun's cache starts empty on a
-    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs.
+    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs. Asking
+    /// xcrun here would start one too, while every test waits for this value, so the path comes from xcode-select.
     static let gitPath: String = {
-        let found = try? Subprocess.run(
-            "/usr/bin/xcrun", ["--find", "git"], environment: environment, directory: nil, timeout: .seconds(60))
-        let path = found.map { String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) }
+        let folder = try? Subprocess.run(
+            "/usr/bin/xcode-select", ["--print-path"], environment: environment, directory: nil, timeout: .seconds(10))
+        let path = folder.map {
+            String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) + "/usr/bin/git"
+        }
         return path.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/usr/bin/git"
     }()
 
@@ -103,9 +106,8 @@ func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -
     defer {
         for _ in 0..<limit { release.signal() }
     }
-    try await offPool {
-        for _ in 0..<limit { _ = started.wait(timeout: deadline) }
-    }
+    let allStarted = try await offPool { (0..<limit).allSatisfy { _ in started.wait(timeout: deadline) == .success } }
+    try #require(allStarted, "Dispatch never lent every thread, so the pool was never full")
     return try await body()
 }
 
