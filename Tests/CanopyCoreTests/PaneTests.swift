@@ -95,7 +95,7 @@ struct PaneTests {
         #expect(tab.isRunningProgram)
         #expect(terminals.isRunningProgram(inRow: dir.path))
 
-        pane.type("\u{3}")
+        await pane.type("\u{3}")
         #expect(
             await eventually {
                 terminals.refreshActivity()

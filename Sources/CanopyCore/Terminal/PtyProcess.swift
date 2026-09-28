@@ -100,25 +100,24 @@ public final class PtyProcess: @unchecked Sendable {
 
     public func write(_ data: Data) {
         guard !data.isEmpty else { return }
-        writeQueue.async {
-            var offset = 0
-            while offset < data.count {
-                let (count, code, fd) = self.state.withLock { state -> (Int, Int32, Int32) in
-                    guard state.fd >= 0 else { return (-1, EBADF, -1) }
-                    let count = data.withUnsafeBytes {
-                        Darwin.write(state.fd, $0.baseAddress! + offset, $0.count - offset)
-                    }
-                    return (count, errno, state.fd)
+        writeQueue.async { self.writeAll(data) }
+    }
+
+    /// Writes `data`, then `next` once the program has read everything before it and `pause` has passed, so a program
+    /// that is reading gets `next` in a read of its own, a moment later. A program that has not read it all within
+    /// `patience` gets `next` behind it anyway, as typing ahead would. Nothing else is written in between, and it
+    /// returns once `next` is written.
+    public func write(_ data: Data, then next: Data, pause: Duration = .zero, patience: Duration = .seconds(2)) async {
+        await withCheckedContinuation { (written: CheckedContinuation<Void, Never>) in
+            writeQueue.async {
+                defer { written.resume() }
+                guard self.writeAll(data) else { return }
+                let deadline = ContinuousClock.now + patience
+                while self.unreadInput > 0, ContinuousClock.now < deadline {
+                    usleep(1000)
                 }
-                if count > 0 {
-                    offset += count
-                } else if code == EAGAIN {
-                    // The program is not reading its input yet. Wait outside the lock so output keeps flowing.
-                    var poll = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                    _ = Darwin.poll(&poll, 1, 100)
-                } else if code != EINTR {
-                    return
-                }
+                Thread.sleep(forTimeInterval: pause / .seconds(1))
+                self.writeAll(next)
             }
         }
     }
@@ -131,6 +130,17 @@ public final class PtyProcess: @unchecked Sendable {
         state.withLock { state in
             guard state.fd >= 0 else { return }
             _ = canopy_pty_resize(state.fd, UInt16(clamping: size.columns), UInt16(clamping: size.rows))
+        }
+    }
+
+    /// Bytes written to the program that it has not read yet, while it reads input as it comes. In canonical mode the
+    /// terminal hands it whole lines, so a later write cannot join an earlier one's read, and nothing counts.
+    var unreadInput: Int {
+        state.withLock { state in
+            var attributes = termios()
+            guard state.fd >= 0, tcgetattr(state.fd, &attributes) == 0, attributes.c_lflag & tcflag_t(ICANON) == 0
+            else { return 0 }
+            return max(0, Int(canopy_pty_unread_input(state.fd)))
         }
     }
 
@@ -162,6 +172,33 @@ public final class PtyProcess: @unchecked Sendable {
             }
         }
         readQueue.async { self.stopReading() }
+    }
+
+    // MARK: writeQueue
+
+    /// Returns false if the terminal is gone or refused the write.
+    @discardableResult
+    private func writeAll(_ data: Data) -> Bool {
+        var offset = 0
+        while offset < data.count {
+            let (count, code, fd) = state.withLock { state -> (Int, Int32, Int32) in
+                guard state.fd >= 0 else { return (-1, EBADF, -1) }
+                let count = data.withUnsafeBytes {
+                    Darwin.write(state.fd, $0.baseAddress! + offset, $0.count - offset)
+                }
+                return (count, errno, state.fd)
+            }
+            if count > 0 {
+                offset += count
+            } else if code == EAGAIN {
+                // The program is not reading its input yet. Wait outside the lock so output keeps flowing.
+                var poll = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                _ = Darwin.poll(&poll, 1, 100)
+            } else if code != EINTR {
+                return false
+            }
+        }
+        return true
     }
 
     // MARK: readQueue

@@ -92,10 +92,23 @@ public final class Pane: Identifiable {
         process?.write(command + "\r")
     }
 
+    /// How long Return waits after the program has read the text. Codex takes an Enter that comes within 120 ms of a
+    /// burst of typed characters for part of a paste.
+    static let returnPause = Duration.milliseconds(200)
+    /// How long Return waits for a program that is not reading, before it goes in behind the text anyway.
+    @ObservationIgnored var returnPatience = Duration.seconds(2)
+
     /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
-    public func type(_ text: String) {
-        guard case .running = status else { return }
-        process?.write(text)
+    /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
+    /// it, and this returns once Return is in. Programs such as Claude Code and Codex take text and a Return that
+    /// arrive together for a paste, where Return adds a new line instead of submitting.
+    public func type(_ text: String, enter: Bool = false) async {
+        guard case .running = status, let process else { return }
+        guard enter else {
+            process.write(text)
+            return
+        }
+        await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
     }
 
     /// Starts a new shell in the same folder after the last one exited.

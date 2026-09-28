@@ -57,6 +57,62 @@ struct PtyProcessTests {
         #expect(recorder.text == "\(folder)|yes")
     }
 
+    @Test func secondPartWaitsUntilTheProgramHasReadTheFirst() async throws {
+        let dir = try TempDir()
+        let recorder = try ReadRecorder.install(in: dir)
+        let (process, output) = try start(["/bin/sh", "-c", ReadRecorder.command(recorder, paste: false)])
+        defer { process.terminate() }
+        #expect(await eventually { output.text.contains("ready") })
+
+        // Written back to back, the two parts arrived in one read about two times in three.
+        for round in 1...10 {
+            await process.write(Data("some text".utf8), then: Data("\r".utf8), patience: .seconds(60))
+            let expected = Array(repeating: ["some text", "<0d>"], count: round).flatMap { $0 }
+            _ = await eventually { ReadRecorder.reads(in: output.text) == expected }
+            #expect(ReadRecorder.reads(in: output.text) == expected)
+        }
+    }
+
+    @Test func secondPartWaitsThePauseToo() async throws {
+        let dir = try TempDir()
+        let recorder = try ReadRecorder.install(in: dir)
+        let (process, output) = try start(["/bin/sh", "-c", ReadRecorder.command(recorder, paste: false)])
+        defer { process.terminate() }
+        #expect(await eventually { output.text.contains("ready") })
+        let start = Date()
+
+        await process.write(
+            Data("some text".utf8), then: Data("\r".utf8), pause: .milliseconds(300), patience: .seconds(60))
+
+        _ = await eventually { ReadRecorder.reads(in: output.text).count == 2 }
+        let reads = ReadRecorder.timedReads(in: output.text)
+        try #require(reads.map(\.bytes) == ["some text", "<0d>"])
+        #expect(reads[1].time.timeIntervalSince(start) >= 0.3)
+    }
+
+    @Test func secondPartGoesInWhenTheProgramDoesNotReadInTime() async throws {
+        let (process, output) = try start([
+            "/usr/bin/perl", "-e", #"system("stty raw -echo"); $| = 1; print "ready\r\n"; sleep 60"#,
+        ])
+        defer { process.terminate() }
+        #expect(await eventually { output.text.contains("ready") })
+
+        await process.write(Data("abc".utf8), then: Data("\r".utf8), patience: .milliseconds(100))
+
+        #expect(process.unreadInput == 4)
+    }
+
+    /// In canonical mode the terminal hands the program whole lines, so Return cannot join an earlier chunk.
+    @Test func secondPartDoesNotWaitForAProgramThatReadsWholeLines() async throws {
+        let (process, output) = try start(["/bin/sleep", "60"])
+        defer { process.terminate() }
+
+        Task { await process.write(Data("abc\n".utf8), then: Data("\r".utf8), patience: .seconds(60)) }
+
+        // The terminal echoes each line as it arrives.
+        #expect(await eventually { output.text.contains("abc\r\n\r\n") })
+    }
+
     @Test func childGetsNoInheritedDescriptors() async throws {
         // F_DUPFD takes the lowest free number from 200 up, so it never replaces a descriptor another test uses.
         let original = open("/dev/null", O_RDONLY)

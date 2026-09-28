@@ -216,6 +216,43 @@ wait_for_text sent-text || fail "term send did not reach the terminal"
 if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
 "$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
 
+step "term send --enter presses Return as a keystroke of its own, with no paste markers"
+# Puts its terminal in raw mode, turns on bracketed paste as Claude Code and vim do, and logs each read, with Return
+# as <0d>.
+cat > "$work/reads.pl" <<'PERL'
+system("stty raw -echo");
+open(my $log, ">>", $ARGV[0]) or die;
+$log->autoflush(1);
+$| = 1;
+print "\e[?2004hready\r\n";
+while (sysread(STDIN, my $bytes, 65536)) {
+    $bytes =~ s/([^ -~])/sprintf("<%02x>", ord $1)/ge;
+    print $log "$bytes\n";
+}
+PERL
+recorder=$("$cli" term new --repo demo --row feat/term --run "exec perl '$work/reads.pl' '$work/reads.log'" --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+wait_for_reads() {
+    for _ in $(seq 1 100); do
+        [[ "$(cat "$work/reads.log" 2>/dev/null)" == "$1" ]] && return 0
+        sleep 0.1
+    done
+    echo "reads were: $(cat "$work/reads.log" 2>/dev/null)" >&2
+    return 1
+}
+for _ in $(seq 1 100); do
+    "$cli" term read "$recorder" | grep -q ready && break
+    sleep 0.1
+done
+"$cli" term read "$recorder" | grep -q ready || fail "the read recorder did not start"
+message="A message of more than sixty-four bytes, which Claude Code once kept as a new line"
+"$cli" term send "$recorder" "$message" --enter >/dev/null
+wait_for_reads "$message"$'\n'"<0d>" || fail "Return did not come in a read of its own"
+"$cli" term send "$recorder" "" --enter >/dev/null
+wait_for_reads "$message"$'\n'"<0d>"$'\n'"<0d>" || fail "a lone --enter did not send Return"
+"$cli" term close "$recorder" --force >/dev/null
+"$cli" agent-guide | grep -q "keystroke of its own" || fail "agent-guide does not say how --enter presses Return"
+
 step "canopy ports lists a server started in a row's terminal, and stops it"
 # A free port below the system's random range, where Canopy looks for servers.
 listen='my $s; for (1..200) { $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 20000 + int(rand(20000))) and last } $s or die; sleep 300'
