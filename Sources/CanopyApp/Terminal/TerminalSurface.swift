@@ -27,7 +27,11 @@ struct TerminalSurface: NSViewRepresentable {
 }
 
 final class TerminalContainerView: NSView {
-    static let padding = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 4)
+    /// No right padding: SwiftTerm already keeps `SwiftTermEmulator.scrollerWidth` free at the right edge.
+    static let padding = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 0)
+
+    /// All the width a pane spends on things other than its columns.
+    static let horizontalInset = padding.left + padding.right + SwiftTermEmulator.scrollerWidth
 
     private let emulator: SwiftTermEmulator
     var takesFocus = true

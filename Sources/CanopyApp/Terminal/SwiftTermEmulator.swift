@@ -14,13 +14,24 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         return CGSize(width: width, height: ceil(font.ascender - font.descender + font.leading))
     }()
 
-    /// Terminal.app's ANSI colors, which read well on light and dark backgrounds alike.
-    private static let palette: [SwiftTerm.Color] = [
-        (0, 0, 0), (194, 54, 33), (37, 188, 36), (173, 173, 39),
-        (73, 46, 225), (211, 56, 211), (51, 187, 200), (203, 204, 205),
-        (129, 131, 131), (252, 57, 31), (49, 231, 34), (234, 236, 35),
-        (88, 51, 255), (249, 53, 248), (20, 240, 240), (233, 235, 235),
-    ].map { (rgb: (UInt16, UInt16, UInt16)) in Color(red8: rgb.0, green8: rgb.1, blue8: rgb.2) }
+    /// The 16 ANSI colors, softened for a dark background.
+    private static let darkPalette = colors([
+        0x3A3A40, 0xF2736B, 0x7CCD80, 0xE3C46D, 0x72AAF6, 0xC895EA, 0x6DD0D9, 0xC9C9CE,
+        0x6A6A72, 0xFF8C85, 0x97DE99, 0xF0D48B, 0x8FBDFF, 0xD8AAF5, 0x90E1E8, 0xF3F3F6,
+    ])
+
+    /// The 16 ANSI colors, deepened so each still reads on white.
+    private static let lightPalette = colors([
+        0x1F1F24, 0xC4332C, 0x2B8A3E, 0x9A6A00, 0x1F5FD1, 0x8E3FB5, 0x0F7F8C, 0x8A8A92,
+        0x5E5E66, 0xE0453D, 0x37A34E, 0xB98200, 0x3B7BEF, 0xA955D6, 0x1597A6, 0xB8B8BE,
+    ])
+
+    private static func colors(_ hexes: [UInt32]) -> [SwiftTerm.Color] {
+        hexes.map { Color(red8: UInt16($0 >> 16 & 0xFF), green8: UInt16($0 >> 8 & 0xFF), blue8: UInt16($0 & 0xFF)) }
+    }
+
+    /// The width SwiftTerm keeps free for its scroller at the right edge.
+    static let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
 
     let view: NSView
     private let terminalView: TerminalView
@@ -38,7 +49,7 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         terminalView.terminalDelegate = self
         // Panes read the zsh shim's command reports from the output before it gets here.
         terminalView.getTerminal().registerOscHandler(code: ZshIntegration.reportCode) { _ in }
-        terminalView.installColors(Self.palette)
+        scroller?.alphaValue = 0
         applyAppearance(NSApp.effectiveAppearance)
     }
 
@@ -84,17 +95,19 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         terminalView.feed(byteArray: [UInt8](data)[...])
     }
 
-    /// Text and background follow the system's light or dark appearance.
+    /// Colors follow the system's light or dark appearance. In dark, the terminal sits a step below the window's
+    /// chrome, so panes have an edge.
     func applyAppearance(_ appearance: NSAppearance) {
-        var foreground = NSColor.black
-        var background = NSColor.white
-        appearance.performAsCurrentDrawingAppearance {
-            foreground = NSColor.textColor.usingColorSpace(.sRGB) ?? foreground
-            background = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? background
-        }
-        self.background = background
-        terminalView.nativeForegroundColor = foreground
+        let isDark = appearance.isDark
+        background = NSColor(hex: isDark ? 0x161618 : 0xFFFFFF)
+        terminalView.nativeForegroundColor = NSColor(hex: isDark ? 0xDCDCE1 : 0x1F1F24)
         terminalView.nativeBackgroundColor = background
+        terminalView.installColors(isDark ? Self.darkPalette : Self.lightPalette)
+    }
+
+    /// SwiftTerm keeps its scroller private, so it is found among the view's subviews.
+    private var scroller: NSScroller? {
+        terminalView.subviews.lazy.compactMap { $0 as? NSScroller }.first
     }
 
     // MARK: TerminalViewDelegate
@@ -113,7 +126,15 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         onInput?(Data(data))
     }
 
-    func scrolled(source: TerminalView, position: Double) {}
+    /// The scroller shows only while the view is scrolled back from the bottom, into the scrollback.
+    func scrolled(source: TerminalView, position: Double) {
+        let isScrolledBack = position < 1
+        guard let scroller, (scroller.alphaValue > 0) != isScrolledBack else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = isScrolledBack ? 0.1 : 0.4
+            scroller.animator().alphaValue = isScrolledBack ? 1 : 0
+        }
+    }
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 

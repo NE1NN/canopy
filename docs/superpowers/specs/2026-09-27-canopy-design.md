@@ -268,7 +268,9 @@ The environment adds:
 Agents inside any Canopy terminal can therefore run `canopy` without arguments naming the repo or row.
 
 The font is the system monospaced font at 13 points.
-Colors follow the system light or dark appearance.
+Colors follow the system light or dark appearance, with Canopy's own 16 ANSI colors for each.
+In dark, the terminal's background sits a step below the window's chrome, so panes have an edge.
+The scroller shows only while the terminal is scrolled back into its scrollback.
 Scrollback holds 10,000 lines per pane.
 
 ### Pane chrome
@@ -327,7 +329,7 @@ The add rule fills the bottom line of panes to the right until panes would get t
    A last line that is not a `row` split becomes one, holding the old line and the new pane.
 5. Otherwise add the pane as a new line at the bottom of the root, wrapping the root in a `column` split if needed, and make the line heights equal.
 
-The minimum pane width is 80 columns in the current font plus pane padding.
+The minimum pane width is 80 columns in the current font plus pane padding and the room kept for the scroller.
 It is configurable as `minPaneColumns` in `config.json`.
 
 ```

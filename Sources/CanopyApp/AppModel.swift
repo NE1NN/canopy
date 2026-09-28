@@ -358,7 +358,7 @@ final class AppModel {
         let cell = SwiftTermEmulator.cellSize
         let padding = TerminalContainerView.padding
         return CGSize(
-            width: 20 * cell.width + padding.left + padding.right,
+            width: 20 * cell.width + TerminalContainerView.horizontalInset,
             height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
     }
 
@@ -372,9 +372,8 @@ final class AppModel {
 
     /// Whether a line of that many panes keeps each at least `minPaneColumns` wide in the current grid.
     private func addRuleFits() -> (Int) -> Bool {
-        let padding = TerminalContainerView.padding
         let minimumWidth =
-            Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + padding.left + padding.right
+            Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + TerminalContainerView.horizontalInset
         let width = gridSize.width
         return { width / Double($0) >= minimumWidth }
     }
