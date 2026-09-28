@@ -40,6 +40,7 @@ struct GitRunnerTests {
             #expect(error.timedOut)
         }
 
+        print("DIAGELAPSED timeoutKills \(clock.now - start)")
         #expect(clock.now - start < .seconds(5))
     }
 
@@ -61,6 +62,7 @@ struct GitRunnerTests {
             return clock.now - start
         }
 
+        print("DIAGELAPSED timeoutHolds \(elapsed)")
         #expect(elapsed < .seconds(5))
     }
 

@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
-# Runs the tests. If they are still running after 8 minutes, prints every thread's stack in the test process and
-# fails, so a hang on CI shows where it is stuck instead of running into the job's time limit.
+# DIAGNOSTIC ONLY: records test events, xcodebuild processes, and the timed tests' elapsed times on CI.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+mkdir -p diag
 
-make test &
+swift build --build-tests $(scripts/test-flags.sh) > diag/build.txt 2>&1
+LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --skip-build $(scripts/test-flags.sh) \
+    --experimental-event-stream-output diag/events.jsonl --experimental-event-stream-version 0 > diag/test-output.txt 2>&1 &
 tests=$!
+
+(
+    while kill -0 "$tests" 2>/dev/null; do
+        {
+            echo "=== $(date +%s) $(uptime | sed 's/.*load/load/') procs=$(ps -A | wc -l)"
+            ps -Ao pid,ppid,etime,pcpu,state,command | grep -E 'xcodebuild|xcrun' | grep -v grep | cut -c1-220
+        } >> diag/ps.txt
+        sleep 1
+    done
+) &
+
 for _ in $(seq 1 480); do
     if ! kill -0 "$tests" 2>/dev/null; then
         wait "$tests"
-        exit $?
+        code=$?
+        cat diag/test-output.txt
+        exit $code
     fi
     sleep 1
 done
-
-echo "Tests are still running after 8 minutes. Stacks of the test processes follow."
-for pid in $(pgrep -f 'swiftpm-testing-helper|xctest|CanopyPackageTests'); do
-    echo "=== pid $pid: $(ps -o command= -p "$pid" | cut -c1-120)"
-    sample "$pid" 2 -mayDie 2>/dev/null | sed -n '/Call graph:/,/Total number in stack/p' | head -300
-done
 kill "$tests" 2>/dev/null
+cat diag/test-output.txt
 exit 1

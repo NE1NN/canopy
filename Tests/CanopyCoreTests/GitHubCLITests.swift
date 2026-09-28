@@ -88,6 +88,7 @@ struct GitHubCLITests {
             return (lookup, clock.now - start)
         }
 
+        print("DIAGELAPSED hungGH \(elapsed)")
         #expect(lookup == .failed("gh did not answer in time."))
         #expect(elapsed < .seconds(5))
     }
@@ -105,6 +106,7 @@ struct GitHubCLITests {
             return (found, clock.now - start)
         }
 
+        print("DIAGELAPSED sshAlias \(elapsed)")
         #expect(found == repo)
         #expect(elapsed < .seconds(5))
     }
