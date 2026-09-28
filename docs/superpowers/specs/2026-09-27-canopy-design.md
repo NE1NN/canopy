@@ -165,7 +165,7 @@ Clicking an external row adopts it and selects it.
 
 From the `+` button next to a repo, or `canopy row new <branch>`:
 
-1. Run `git fetch origin`.
+1. Run `git fetch --prune origin`.
 2. Pick the folder `CANOPY_HOME/worktrees/<repo>/<slug>`, where the slug is the branch name with `/` replaced by `-`.
    If the folder exists, append `-2`, `-3`, and so on.
 3. Run `git worktree add`:
@@ -177,6 +177,8 @@ From the `+` button next to a repo, or `canopy row new <branch>`:
    CLI-created rows do not steal focus by default.
 
 If setup fails, the row still exists and the Setup tab stays open showing the failure.
+
+Starting a row from a PR, and how an existing branch is brought up to date, are in [Rows from a PR or an existing branch](2026-09-28-canopy-pull-branches-design.md).
 
 ### Removing a row
 
@@ -392,6 +394,7 @@ Rows come from git, so only layouts are lost.
 For each repo, Canopy makes one `gh api graphql` call.
 The query has one aliased `pullRequests(headRefName:)` field per canopy or adopted row, ordered by last update, and only counts PRs whose head repository is the repo itself, so forks with the same branch name are ignored.
 Main rows and external rows are not looked up.
+A branch started from a fork's PR, or from a PR under another name, is looked up by the PR's number instead.
 
 A row's PR is its open PR if there is one, otherwise its most recently updated PR.
 The state maps to the badge color as described above, with an open draft shown as draft.
@@ -494,7 +497,8 @@ Every command exits non-zero on failure.
 | `canopy repo list` | list repos |
 | `canopy repo rm <name>` | unregister a repo |
 | `canopy row list [--all]` | list rows, including external ones with `--all` |
-| `canopy row new <branch> [--from <ref>] [--run <cmd>] [--no-setup] [--select]` | create a row, run setup, and optionally start a command in a new pane after setup succeeds |
+| `canopy row new <branch> [--from <ref> \| --existing] [--run <cmd>] [--no-setup] [--select]` | create a row, run setup, and optionally start a command in a new pane after setup succeeds |
+| `canopy row new --pr <n \| #n \| URL> [--branch <name>] [--run <cmd>] [--no-setup] [--select]` | create a row on a PR's branch, including a fork's |
 | `canopy row rm <branch> [--force] [--delete-branch]` | remove or un-adopt a row |
 | `canopy row select <branch>` | select a row in the UI |
 | `canopy row adopt <path>` | adopt an external worktree |
