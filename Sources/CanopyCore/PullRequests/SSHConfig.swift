@@ -2,8 +2,8 @@ import Foundation
 
 /// What ssh would do for a host, for remotes that use an alias from ~/.ssh/config.
 public enum SSHConfig {
-    /// The host an SSH alias connects to. Blocks while ssh reads its config, so call it off the Swift concurrency
-    /// pool. `ssh -G` only prints the settings it would use; it never connects.
+    /// The host an SSH alias connects to. Blocks while ssh reads its config, so call it through `onOwnThread`.
+    /// `ssh -G` only prints the settings it would use; it never connects.
     public static func hostName(
         for alias: String, configFile: String? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment

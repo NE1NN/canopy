@@ -77,18 +77,34 @@ func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async thro
     try await onOwnThread { Result { try work() } }.get()
 }
 
+/// One test at a time takes every Dispatch thread, or two would each hold part of the pool and wait for the rest.
+private let everyDispatchThreadGate = DispatchSemaphore(value: 1)
+
 /// Runs `body` while blocks hold every thread Dispatch lends its global queues, as dozens of tests running git at once
-/// did on a 3-CPU CI runner. Anything queued there meanwhile waits until `body` returns, or ten seconds at most.
+/// did on a 3-CPU CI runner. `body` starts only once they all hold one: while Dispatch is still adding threads, it gives
+/// the next to the most urgent work waiting, so work at a higher priority would slip through. Work queued meanwhile at
+/// any priority waits until `body` returns, or ten seconds at most.
 func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -> T {
-    var limit: UInt32 = 0
+    var threads: UInt32 = 0
     var size = MemoryLayout<UInt32>.size
-    try #require(sysctlbyname("kern.wq_max_constrained_threads", &limit, &size, nil, 0) == 0)
+    try #require(sysctlbyname("kern.wq_max_constrained_threads", &threads, &size, nil, 0) == 0)
+    let limit = threads
+    try await offPool { everyDispatchThreadGate.wait() }
+    defer { everyDispatchThreadGate.signal() }
+    let started = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
+    let deadline = DispatchTime.now() + 10
     for _ in 0..<limit {
-        DispatchQueue.global().async { _ = release.wait(timeout: .now() + 10) }
+        DispatchQueue.global().async {
+            started.signal()
+            _ = release.wait(timeout: deadline)
+        }
     }
     defer {
         for _ in 0..<limit { release.signal() }
+    }
+    try await offPool {
+        for _ in 0..<limit { _ = started.wait(timeout: deadline) }
     }
     return try await body()
 }

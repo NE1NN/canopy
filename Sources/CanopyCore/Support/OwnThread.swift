@@ -5,6 +5,8 @@ import Foundation
 /// too, and a timeout counted inside one starts late.
 func onOwnThread<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
     await withCheckedContinuation { continuation in
-        Thread { continuation.resume(returning: work()) }.start()
+        let thread = Thread { continuation.resume(returning: work()) }
+        thread.name = "canopy.blocking"
+        thread.start()
     }
 }
