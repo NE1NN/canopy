@@ -12,6 +12,11 @@ public enum ControlMethod {
     public static let rowAdopt = "row.adopt"
     public static let prShow = "pr.show"
 
+    /// Methods that only read, which the activity log leaves out: agents poll some of them every few seconds.
+    public static let readOnly: Set<String> = [
+        status, repoList, rowList, prShow, TermMethod.list, TermMethod.read, PortMethod.list,
+    ]
+
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
     /// a build does and cannot be cancelled, so the CLI waits for them without a limit. A PR lookup can queue

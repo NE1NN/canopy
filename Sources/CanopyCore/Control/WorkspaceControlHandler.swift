@@ -27,6 +27,12 @@ public struct WorkspaceControlHandler: Sendable {
                 )
             )
         }
+        let response = await ActivitySource.$current.withValue(.cli) { await respond(to: request) }
+        record(request, response)
+        return response
+    }
+
+    private func respond(to request: ControlRequest) async -> ControlResponse {
         do {
             return .success(id: request.id, result: try await result(for: request))
         } catch let error as WorkspaceError {
@@ -36,6 +42,26 @@ public struct WorkspaceControlHandler: Sendable {
         } catch {
             return .failure(id: request.id, error: ControlError(code: "internal", message: "\(error)"))
         }
+    }
+
+    /// Logs calls that change something, with their params as sent and the error code if they failed. Commands typed
+    /// into terminals are left out while command logging is off, and so is text starting with a space, which zsh keeps
+    /// out of history under hist_ignore_space.
+    private func record(_ request: ControlRequest, _ response: ControlResponse) {
+        guard !ControlMethod.readOnly.contains(request.method) else { return }
+        var params = request.params ?? .object([:])
+        if case .object(var fields) = params {
+            for key in ["run", "text"] {
+                guard case .string(let typed) = fields[key] else { continue }
+                if !workspace.activity.logsCommands || typed.hasPrefix(" ") { fields[key] = nil }
+            }
+            params = .object(fields)
+        }
+        var data: [String: JSONValue] = ["method": .string(request.method), "params": params]
+        if let error = response.error {
+            data["error"] = .string(error.code)
+        }
+        workspace.activity.record(ActivityType.cliCall, source: .cli, data: data)
     }
 
     private func result(for request: ControlRequest) async throws -> JSONValue {
