@@ -254,22 +254,23 @@ public actor Workspace {
     }
 
     public func prune(repoPath: String) async throws {
-        try await serialized(repoPath: repoPath) { try await self.pruneNow(repoPath: repoPath) }
-    }
-
-    /// Prunes worktrees whose folders are gone. The caller holds the repo's git queue.
-    func pruneNow(repoPath: String) async throws {
         let missing = snapshot.repo(path: repoPath)?.allRows.filter(\.isMissing).map(\.path) ?? []
         for path in missing {
             changingRows[path] = .current
         }
         defer { finishChanging(missing, repoPath: repoPath) }
         do {
-            try await git.run(["worktree", "prune"], in: repoPath)
-        } catch let error as GitError {
+            try await serialized(repoPath: repoPath) {
+                do {
+                    try await self.git.run(["worktree", "prune"], in: repoPath)
+                } catch let error as GitError {
+                    throw WorkspaceError.git(error)
+                }
+            }
+        } catch {
             // git may have pruned some rows before it failed, and they are the caller's doing too.
             await refresh(repoPath: repoPath)
-            throw WorkspaceError.git(error)
+            throw error
         }
         await refresh(repoPath: repoPath)
     }

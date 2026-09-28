@@ -92,6 +92,8 @@ extension Workspace {
             guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
             (branch, source) = (requested, .new)
             start = try await startPoint(base, repoPath: repoPath, hasOrigin: hasOrigin)
+        }
+        if source != .local {
             // A PR bound to an old branch of this name is not the new branch's.
             try forgetPullRequest(of: branch, repoPath: repoPath)
         }
@@ -100,19 +102,21 @@ extension Workspace {
         }
         try await claim(branch: branch, repoPath: repoPath)
 
+        var fastForward: FastForward?
         if source == .local, hasOrigin {
             let remote = "refs/remotes/origin/\(branch)"
             if await git.succeeds(["show-ref", "--verify", "--quiet", remote], in: repoPath) {
-                let report = await bringUpToDate(
+                let report = await compare(
                     branch, with: remote, named: "origin/\(branch)", resetTo: "origin/\(branch)", repoPath: repoPath)
                 notes += report.notes
                 warnings += report.warnings
+                fastForward = report.fastForward
             } else if fetchFailure == nil, let warning = await goneUpstreamWarning(branch, repoPath: repoPath) {
                 warnings.append(warning)
             }
         }
 
-        let added = try await addRow(repoPath: repoPath, branch: branch) { folder in
+        let added = try await addRow(repoPath: repoPath, branch: branch, fastForward: fastForward) { folder in
             switch source {
             case .local: [folder, branch]
             case .origin: ["--track", "-b", branch, folder, "origin/\(branch)"]
@@ -120,17 +124,18 @@ extension Workspace {
             }
         }
         return CreatedRow(
-            row: added.row, source: source, base: start, pullRequest: nil, notes: notes,
-            warnings: warnings + added.warnings)
+            row: added.row, source: source, base: start, pullRequest: nil, notes: notes + added.report.notes,
+            warnings: warnings + added.report.warnings)
+    }
+
+    func requireValidBranchName(_ branch: String, repoPath: String) async throws {
+        guard await isValidBranchName(branch, repoPath: repoPath) else { throw WorkspaceError.invalidBranch(branch) }
     }
 
     /// `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
-    func requireValidBranchName(_ branch: String, repoPath: String) async throws {
-        guard !branch.hasPrefix("-"), branch != "HEAD",
-            await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
-        else {
-            throw WorkspaceError.invalidBranch(branch)
-        }
+    func isValidBranchName(_ branch: String, repoPath: String) async -> Bool {
+        guard !branch.hasPrefix("-"), branch != "HEAD" else { return false }
+        return await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
     }
 
     private func startPoint(_ base: String?, repoPath: String, hasOrigin: Bool) async throws -> String {
@@ -143,12 +148,12 @@ extension Workspace {
         return base
     }
 
-    /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then lists the row last among the
-    /// repo's rows. `arguments` gets the folder and returns what follows `worktree add`. The warnings say when a
-    /// checkout hook failed after git had made the worktree.
+    /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then `fastForward` in it, and lists
+    /// the row last among the repo's rows. `arguments` gets the folder and returns what follows `worktree add`. The
+    /// report says how the fast-forward went, and warns when a checkout hook failed after git had made the worktree.
     func addRow(
-        repoPath: String, branch: String, arguments: (String) -> [String]
-    ) async throws -> (row: Row, warnings: [String]) {
+        repoPath: String, branch: String, fastForward: FastForward? = nil, arguments: (String) -> [String]
+    ) async throws -> (row: Row, report: BranchReport) {
         let dirName = state.repos[try entryIndex(repoPath: repoPath)].dirName
         // A worktree whose folder was deleted keeps its path until it is pruned, so git would refuse to reuse it.
         await refresh(repoPath: repoPath)
@@ -162,7 +167,7 @@ extension Workspace {
         let path = Paths.canonical(folder.path)
         changingRows[path] = .current
         defer { finishChanging([path], repoPath: repoPath) }
-        var warnings: [String] = []
+        var report = BranchReport()
         do {
             try await git.run(["worktree", "add"] + arguments(folder.path), in: repoPath)
         } catch let error as GitError {
@@ -173,7 +178,7 @@ extension Workspace {
             // A failing post-checkout hook makes git exit non-zero after the worktree is complete.
             await refresh(repoPath: repoPath)
             guard snapshot.row(path: path)?.branch == branch else { throw WorkspaceError.git(error) }
-            warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
+            report.warnings.append("git worktree add reported an error, but the worktree was created: \(error)")
         }
 
         if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].rowOrder.contains(path) {
@@ -181,8 +186,14 @@ extension Workspace {
             try save()
         }
         await refresh(repoPath: repoPath)
-        guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
-        return (row, warnings)
+        guard var row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
+        if let fastForward {
+            let done = await self.fastForward(fastForward, in: row)
+            report.notes += done.notes
+            report.warnings += done.warnings
+            row = snapshot.row(path: path) ?? row
+        }
+        return (row, report)
     }
 
     private func removeRowNow(path: String, force: Bool, deleteBranch: Bool) async throws -> [String] {

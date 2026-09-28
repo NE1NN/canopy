@@ -160,7 +160,9 @@ struct ExistingBranchTests {
         let dir = try TempDir()
         let (repo, _, workspace) = try await setUp(dir)
         let gone = try await workspace.createRow(repoPath: repo, branch: "feat/held")
+        let other = try await workspace.createRow(repoPath: repo, branch: "feat/other")
         try FileManager.default.removeItem(atPath: gone.row.path)
+        try FileManager.default.removeItem(atPath: other.row.path)
         await workspace.refresh(repoPath: repo)
 
         let created = try await workspace.createRow(repoPath: repo, branch: "feat/held")
@@ -168,6 +170,34 @@ struct ExistingBranchTests {
         #expect(created.source == .local)
         #expect(FileManager.default.fileExists(atPath: created.row.path))
         #expect(await workspace.snapshot.repos.first?.rows.filter { $0.branch == "feat/held" }.count == 1)
+        // Only the worktree that held the branch goes. Other missing rows stay until the user prunes them.
+        #expect(await workspace.snapshot.row(path: other.row.path)?.isMissing == true)
+    }
+
+    @Test func neverMovesABranchThatIsBeingRebasedElsewhere() async throws {
+        let dir = try TempDir()
+        let (repo, other, workspace) = try await setUp(dir)
+        try await git.run(["worktree", "add", "--quiet", "-b", "feat/x", dir.sub("rebasing"), "main"], in: repo)
+        try await commit(2, in: dir.sub("rebasing"))
+        try await git.run(["push", "--quiet", "origin", "feat/x"], in: repo)
+        try await git.run(["fetch", "--quiet"], in: other)
+        try await git.run(["switch", "--quiet", "feat/x"], in: other)
+        try await commit(1, in: other)
+        try await git.run(["push", "--quiet", "origin", "feat/x"], in: other)
+        // Mid-rebase, git lists the worktree as detached, though it still holds feat/x.
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_SEQUENCE_EDITOR"] = "sed -i '' '1s/^pick/edit/'"
+        try await GitRunner(environment: environment).run(
+            ["rebase", "--quiet", "-i", "HEAD~2"], in: dir.sub("rebasing"))
+        let before = try await head("refs/heads/feat/x", in: repo)
+
+        await #expect {
+            try await workspace.createRow(repoPath: repo, branch: "feat/x")
+        } throws: { error in
+            guard case WorkspaceError.branchCheckedOut("feat/x", _) = error else { return false }
+            return true
+        }
+        #expect(try await head("refs/heads/feat/x", in: repo) == before)
     }
 
     @Test func namesTheRowThatHasTheBranch() async throws {
@@ -208,18 +238,21 @@ struct ExistingBranchTests {
                 "canopy row adopt \(dir.sub("theirs"))"))
     }
 
-    @Test func usesABranchsOwnSpelling() async throws {
+    @Test(arguments: [false, true]) func usesABranchsOwnSpelling(packed: Bool) async throws {
         let dir = try TempDir()
-        FileManager.default.createFile(atPath: dir.sub("case"), contents: nil)
-        // Only a case-insensitive file system lets a ref typed in another case find the branch.
-        guard FileManager.default.fileExists(atPath: dir.sub("CASE")) else { return }
         let (repo, _, workspace) = try await setUp(dir)
         try await git.run(["branch", "feat/lower"], in: repo)
+        try await git.run(["commit", "--quiet", "--allow-empty", "-m", "main moves on"], in: repo)
+        if packed {
+            try await git.run(["pack-refs", "--all"], in: repo)
+        }
+        let before = try await head("feat/lower", in: repo)
 
-        let created = try await workspace.createRow(repoPath: repo, branch: "Feat/Lower", existing: true)
+        let created = try await workspace.createRow(repoPath: repo, branch: "Feat/Lower")
 
         #expect(created.row.branch == "feat/lower")
         #expect(created.source == .local)
         #expect(created.notes == ["Using feat/lower, the branch's own spelling."])
+        #expect(try await head("feat/lower", in: repo) == before)
     }
 }

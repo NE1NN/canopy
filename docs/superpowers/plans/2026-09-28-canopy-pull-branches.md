@@ -17,8 +17,7 @@ The control API and CLI pass the new options through, and PR B only adds list me
 
 - Tests never reach the network: a local bare origin with `refs/pull/<n>/head` pushed into it, `GIT_CONFIG_COUNT` rewriting `https://github.com/` to that folder, and a stand-in gh.
 - Canopy runs git itself and never calls `gh pr checkout`.
-- Never reset a branch.
-  A fast-forward uses `git update-ref` with the old value, so it can only move forward from what was read.
+- Never reset a branch, and only fast-forward one that has no commits of its own.
 - `source` is `local`, `origin`, or `new`.
 - Error codes: `branch_not_found`, `branch_exists`, `invalid_pr`, `pr_not_found`, and `branch_checked_out` naming where the branch is.
 - `state.json` fields decode with decodeIfPresent, so older files still load.
@@ -3142,3 +3141,45 @@ Expected: "e2e passed", with `build/e2e/pr-fork.png` showing `feat/fork` with a 
 git add scripts/e2e.sh
 git commit -m "test: e2e cases for row new --pr and --existing"
 ```
+
+## After Review
+
+An independent reviewer (opus) read `git diff main...feat/pull-branches` against the spec and this plan.
+It found four Important and seven Minor issues, and nothing Critical.
+Each was reproduced or traced in the code before it was fixed, and each fix has a test that failed first.
+The fixes are one commit after Task 6, so the task code above is as first built.
+
+1. **Important: a packed branch typed in another case was hidden by a new branch.**
+   `existingBranch` matched without regard to case only when `show-ref` found the name, which it does for loose refs and not for packed ones.
+   `row new Feat` next to a packed `feat` then created a loose `Feat`, and on APFS `feat` read that file and pointed at main.
+   The lookup now lists refs with `for-each-ref` and matches without regard to case on any file system, exact spelling first.
+   `usesABranchsOwnSpelling` runs with loose and packed refs, and checks that the branch did not move.
+2. **Important: a PR's head name went into git arguments unchecked.**
+   A fork branch named `-M` would have made `git branch --no-track -M refs/canopy/pr/9` rename the main checkout's branch.
+   Head names now pass the same check as `--branch`, and a head that fails it gets `pr/<n>`.
+3. **Important: `row new <branch>` kept a stale binding when it created the branch from origin.**
+   Only the `new` source dropped it.
+   Now every branch Canopy creates drops it.
+4. **Important: one bound PR that GitHub cannot find broke every badge in the repo.**
+   gh exits 1 when any alias fails to resolve, so the whole lookup failed until the branch was deleted.
+   The lookup now drops the binding gh names and asks again, and both stand-in gh's fail the way gh does.
+5. **Minor: the fast-forward read the branch and its target twice**, so a force-push between the reads could move the branch to a commit that does not descend from it.
+6. **Minor: the fast-forward ran before git had checked that no other worktree holds the branch.**
+   A worktree in the middle of a rebase lists as detached, so `claim` missed it, and `update-ref` moved the branch under the rebase.
+   `compare` now reads both commits once and counts between them.
+   The fast-forward runs as `git merge --ff-only <commit>` in the new row, after `worktree add` has succeeded, as gh does.
+   `neverMovesABranchThatIsBeingRebasedElsewhere` covers it.
+7. **Minor: `claim` pruned every missing worktree**, not only the one holding the branch, against the spec.
+   It now runs `git worktree remove` on that one worktree, which works on a missing folder, and the `pruneNow` split is gone.
+8. **Minor: a same-repo PR failed in a single-branch clone**, because `--track` needs a fetch refspec that covers the head.
+   Every PR branch is now made with `--no-track`, and its tracking is set by hand.
+9. **Minor: a failed fetch could leave the temporary ref behind**, when the fetch wrote it before failing or an earlier run had.
+   It is now deleted on that path too.
+10. **Minor: `canopy row new --branch x` said to pass a branch name.**
+    It now says `--branch` is only for `--pr`.
+11. **Minor: missing tests.**
+    Added: a fork PR already in a row, both fork names taken, a gone fork whose head name is taken, and `--branch` naming a branch that tracks another PR.
+    The case test no longer returns early on a case-sensitive file system, since the lookup no longer depends on it.
+    The plan's header line keeps the template's wording.
+
+The reviewer confirmed the refspecs, the tracking config, the naming rules, that nothing calls a queued method from inside the queue, the badge matching, the control API, and state compatibility.

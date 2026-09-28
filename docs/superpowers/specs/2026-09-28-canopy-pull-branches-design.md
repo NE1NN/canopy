@@ -40,7 +40,7 @@ Every action in the sheet has one CLI command an agent can use without the windo
 | A PR's badge when its branch name cannot find it | The PR number is saved for the local branch in `state.json` | A binding on the branch follows `git switch` inside the row. A same-repo PR checked out under its own name keeps the name lookup, which also finds a later PR from the same branch. |
 | How a fork is reached | origin's URL with the fork's owner and name, stored on the branch, not as a named remote | The fork is reached the way origin is: the same protocol, SSH host alias, and URL rewrites. gh also stores the URL rather than adding a remote. |
 | Fetching for `row new <branch>` | `git fetch --prune origin` | Without pruning, a branch deleted on GitHub still looks like it is on origin. |
-| Worktrees whose folder was deleted | `git worktree prune` runs when one holds the requested branch | That is the case where git refuses the add, and other missing rows stay until the user prunes them. |
+| Worktrees whose folder was deleted | `git worktree remove` on the one that holds the requested branch | That is the case where git refuses the add. Other missing rows stay until the user prunes them. |
 | What `row new` reports | `source`, plus separate lists of notes and warnings | Warnings say something may need fixing. Notes say what Canopy did, such as a fast-forward. |
 | Which URL names origin's GitHub repo | `git remote get-url origin`, then origin's configured URL when the first is not on GitHub | A mirror set up with `insteadOf` still has PRs on GitHub. Tests use the same rewrite to fetch from a local repo while origin reads as GitHub. |
 
@@ -50,7 +50,7 @@ Every action in the sheet has one CLI command an agent can use without the windo
 
 1. Canopy runs `git fetch --prune origin`, unless a fetch that finished after this request was made already covers it.
 2. It picks the branch:
-   - **local**: a local branch has that name.
+   - **local**: a local branch has that name, in any case.
    - **origin**: `origin/<branch>` exists, and a local branch tracking it is created.
    - **new**: nothing matches, and a branch is created from `--from`, defaulting to origin's default branch.
      With `--existing`, this fails with `branch_not_found` instead.
@@ -73,15 +73,15 @@ Agents that mean to pick up someone else's work pass `--existing`.
 
 | Case | Canopy |
 |---|---|
-| The local branch is only behind `origin/<branch>` | Fast-forwards it before checking it out, the way `gh pr checkout` runs `merge --ff-only`, and notes how many commits it moved. |
+| The local branch is only behind `origin/<branch>` | Checks it out, then fast-forwards it with `git merge --ff-only` in the row, as `gh pr checkout` does, and notes how many commits it moved. Moving it in its own worktree means git has already made sure no other worktree holds it, such as one in the middle of a rebase. |
 | The local branch is only ahead | Checks it out as it is and notes the unpushed commits. |
 | The local branch has diverged | Checks it out as it is and warns with both counts and the two ways to fix it: `git rebase origin/<branch>` to keep the local commits on top, or `git reset --hard origin/<branch>` to drop them. Canopy never resets on its own. |
 | The branch exists locally but not on origin | Checks it out as it is. If its upstream is set but gone from origin, warns that it was probably merged and deleted. If the fetch failed, keeps the warning that the row starts from local refs. |
 | The branch already has a Canopy or adopted row | Fails with `branch_checked_out`, naming the row's path and `canopy row select`. |
 | The branch is checked out in the main checkout | Fails with `branch_checked_out`, naming the main checkout. |
 | The branch is checked out in another tool's worktree | Fails with `branch_checked_out`, naming the path and `canopy row adopt <path>`. |
-| The branch is held by a worktree whose folder was deleted | Runs `git worktree prune`, then creates the row. Git would otherwise refuse with "already used by worktree". |
-| The name is typed in the wrong case | Uses the branch's own spelling and notes it. On a case-insensitive file system a loose `refs/heads/Feat` file finds `feat`, and git would otherwise check out a second name for the same ref. |
+| The branch is held by a worktree whose folder was deleted | Runs `git worktree remove` on that worktree, then creates the row. Git would otherwise refuse with "already used by worktree". |
+| The name is typed in the wrong case | Uses the branch's own spelling and notes it. On a case-insensitive file system `Feat` and `feat` share one ref file, so checking out `Feat` would give one ref two names, and creating `Feat` next to a packed `feat` would hide it. |
 
 Comparisons are with `origin/<branch>` by name, not with a configured upstream.
 A branch created with `git checkout -b feat/x origin/main` tracks `origin/main`, and fast-forwarding it there would be wrong.
@@ -114,11 +114,12 @@ The new branch tracks `refs/pull/<n>/head` on origin, and a warning says the bra
 1. `git fetch --quiet --no-tags origin +refs/pull/<n>/head:refs/canopy/pr/<n>`.
 2. The local branch is `<head>`.
    It is `<owner>/<head>` instead when `<head>` is origin's default branch or an unrelated local branch has that name, and `pr/<n>` when GitHub no longer reports the fork's owner.
+   A head that is not a usable branch name, such as one starting with `-`, is always `pr/<n>`.
    `--branch` overrides both.
 3. A local branch whose upstream is this PR is reused, with the fast-forward rule.
    Its upstream is this PR when it tracks `refs/pull/<n>/head` on origin, or `refs/heads/<head>` on the fork.
    A `--branch` naming any other existing branch fails with `branch_exists`.
-4. Otherwise Canopy runs `git branch --no-track <local> refs/canopy/pr/<n>` and sets its tracking the way `gh pr checkout` does:
+4. Otherwise Canopy runs `git branch --no-track <local> refs/canopy/pr/<n>` and sets its tracking by hand, the way `gh pr checkout` does, since `--track` needs a fetch refspec that a single-branch clone lacks:
    - If maintainers can edit the PR, `branch.<local>.remote` and `branch.<local>.pushRemote` are the fork's URL, and `branch.<local>.merge` is `refs/heads/<head>`.
    - Otherwise `remote` is `origin` and `merge` is `refs/pull/<n>/head`.
 5. `git worktree add <path> <local>`, then the temporary ref is deleted.
@@ -151,6 +152,7 @@ So when either is true, the repo's entry in `state.json` saves the PR for the lo
 
 For a bound branch, the badge query asks for `pullRequest(number: 7)` in the same GraphQL call.
 The binding is used only while origin still points at the repo it names, and it is dropped when Canopy deletes the branch or creates a new branch with that name.
+GitHub fails the whole query over one PR number it cannot find, so a binding to such a PR is dropped too, and the query runs again.
 `prBindings` decodes with decodeIfPresent, so older files still load.
 
 ## Listing PRs and branches

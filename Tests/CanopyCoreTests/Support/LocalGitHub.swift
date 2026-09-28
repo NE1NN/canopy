@@ -37,6 +37,13 @@ struct LocalGitHub {
                 exit 1
             fi
             printf '%s\\n' "$query" >> "\(dir.sub("gh-calls"))"
+            for number in $(grep -oE 'pullRequest\\(number: [0-9]+\\)' <<< "$query" | grep -oE '[0-9]+'); do
+                if [[ ! -f "\(dir.sub("gh-prs"))/$number.json" ]]; then
+                    echo '{"data": {"repository": {}}}'
+                    echo "gh: Could not resolve to a PullRequest with the number of $number." >&2
+                    exit 1
+                fi
+            done
             cat "\(dir.sub("gh-reply"))" 2>/dev/null || echo '{"data": {"repository": {}}}'
             """)
     }
@@ -62,9 +69,11 @@ struct LocalGitHub {
     }
 
     /// Clones `nameWithOwner` into `<dir>/<name>` with origin at its GitHub URL, as `gh repo clone` does.
-    func clone(_ nameWithOwner: String, name: String = "demo") async throws -> String {
+    func clone(_ nameWithOwner: String, name: String = "demo", singleBranch: Bool = false) async throws -> String {
         let path = dir.sub(name)
-        try await git.run(["clone", "--quiet", "https://github.com/\(nameWithOwner).git", path])
+        try await git.run(
+            ["clone", "--quiet"] + (singleBranch ? ["--single-branch"] : [])
+                + ["https://github.com/\(nameWithOwner).git", path])
         try await git.run(["config", "user.email", "test@example.com"], in: path)
         try await git.run(["config", "user.name", "Test"], in: path)
         return Paths.canonical(path)
@@ -115,6 +124,11 @@ struct LocalGitHub {
             "headRepositoryOwner": forkGone ? NSNull() : ["login": String(parts[0])],
         ]
         try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: "\(prs)/\(number).json"))
+    }
+
+    /// Makes GitHub forget PR `number`, as when it removes a spam PR.
+    func deletePR(_ number: Int) {
+        try? FileManager.default.removeItem(atPath: "\(prs)/\(number).json")
     }
 
     /// What gh answers every query that is not a PR's lookup.

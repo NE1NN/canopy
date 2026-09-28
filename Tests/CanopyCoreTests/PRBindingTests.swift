@@ -71,6 +71,33 @@ struct PRBindingTests {
         #expect(github.calls.last?.contains("b0: pullRequest(number: 9)") == true)
     }
 
+    @Test func aPullRequestGitHubCannotFindLosesItsBinding() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace, created) = try await setUp(dir)
+        github.deletePR(9)
+        github.reply(#"{"data": {"repository": {"b0": {"nodes": []}}}}"#)
+
+        await workspace.refreshPullRequests(repoPath: repo)
+
+        #expect(await bindings(workspace).isEmpty)
+        #expect(await workspace.snapshot.repos.first?.pullRequestWarning == nil)
+        #expect(await workspace.snapshot.row(path: created.row.path)?.pullRequest == nil)
+        #expect(github.calls.last?.contains(#"b0: pullRequests(headRefName: "feat/fork""#) == true)
+    }
+
+    @Test func aBranchFromOriginWithTheSameNameForgetsThePullRequest() async throws {
+        let dir = try TempDir()
+        let (github, repo, workspace, created) = try await setUp(dir)
+        try await workspace.removeRow(path: created.row.path)
+        try await github.git.run(["branch", "-D", "feat/fork"], in: repo)
+        try await github.push(to: "feat/fork", of: "acme/app")
+
+        let again = try await workspace.createRow(repoPath: repo, branch: "feat/fork")
+
+        #expect(again.source == .origin)
+        #expect(await bindings(workspace).isEmpty)
+    }
+
     @Test func aNewBranchWithTheSameNameForgetsThePullRequest() async throws {
         let dir = try TempDir()
         let (github, repo, workspace, created) = try await setUp(dir)

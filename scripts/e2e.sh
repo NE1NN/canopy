@@ -316,7 +316,12 @@ def node(pr):
 everything = [load(name[:-5]) for name in os.listdir(prs)]
 repo = {}
 for alias, number in re.findall(r"(b\d+): pullRequest\(number: (\d+)\)", query):
-    repo[alias] = node(load(number)) if load(number) else None
+    if load(number) is None:
+        # Like gh: GitHub fails the whole query, and gh exits 1.
+        print(json.dumps({"data": {"repository": {alias: None}}}))
+        sys.stderr.write(f"gh: Could not resolve to a PullRequest with the number of {number}.\n")
+        sys.exit(1)
+    repo[alias] = node(load(number))
 for alias, branch in re.findall(r'(b\d+): pullRequests\(headRefName: "([^"]*)"', query):
     repo[alias] = {"nodes": [node(pr) for pr in everything if pr["headRefName"] == branch]}
 print(json.dumps({"data": {"repository": repo}}))
