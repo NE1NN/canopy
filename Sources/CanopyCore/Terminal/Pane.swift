@@ -33,6 +33,13 @@ public final class Pane: Identifiable {
     /// Reads the shell's command reports, while commands are logged.
     @ObservationIgnored private var commandMarks: CommandMarkScanner?
 
+    /// What the agent in it is doing, as its hooks or `canopy term state` report it.
+    public private(set) var agent = PaneAgent()
+    /// Called after each change to `agent`.
+    @ObservationIgnored public var onAgentChange: ((Pane, AgentChange) -> Void)?
+    /// Called when the pane closes for good, before its agent state clears.
+    @ObservationIgnored public var onClose: ((Pane) -> Void)?
+
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
 
@@ -75,11 +82,27 @@ public final class Pane: Identifiable {
     public private(set) var isRunningProgram = false
 
     /// Reads the foreground process again. The app calls it every second for every pane, shown or not.
+    /// The shell coming back to the foreground means the agent's program exited, so its state clears.
     public func refreshActivity() {
         let busy = isBusy
         if busy != isRunningProgram {
             isRunningProgram = busy
+            if !busy { agentChanged(agent.ended(at: Date())) }
         }
+    }
+
+    /// Applies a report of the agent's state. Returns the change, or nil when it was ignored or changed nothing.
+    @discardableResult
+    public func report(_ report: AgentReport, now: Date = Date()) -> AgentChange? {
+        let change = agent.apply(report, now: now)
+        agentChanged(change)
+        return change
+    }
+
+    /// The author saw the pane. Returns whether a green dot went away.
+    @discardableResult
+    public func markSeen() -> Bool {
+        agent.seen()
     }
 
     /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
@@ -99,16 +122,16 @@ public final class Pane: Identifiable {
     @ObservationIgnored var returnPatience = Duration.seconds(2)
 
     /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
-    /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
-    /// it, and this returns once Return is in. Programs such as Claude Code and Codex take text and a Return that
-    /// arrive together for a paste, where Return adds a new line instead of submitting.
     public func type(_ text: String, enter: Bool = false) async {
         guard case .running = status, let process else { return }
+        agentChanged(agent.typed(Data(text.utf8), at: Date()))
         guard enter else {
             process.write(text)
             return
         }
         await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
+        // Return reaches the key rules as the key of its own that the program gets.
+        agentChanged(agent.typed(Data("\r".utf8), at: Date()))
     }
 
     /// Starts a new shell in the same folder after the last one exited.
@@ -124,6 +147,7 @@ public final class Pane: Identifiable {
     public func close() {
         guard !isClosed else { return }
         isClosed = true
+        onClose?(self)
         process?.terminate()
         if case .running = status {
             processExited(Self.closedExitCode)
@@ -204,6 +228,7 @@ public final class Pane: Identifiable {
         switch status {
         case .running:
             process?.write(data)
+            agentChanged(agent.typed(data, at: Date()))
         case .exited:
             if data == Data("\r".utf8) { restart() }
         }
@@ -220,6 +245,18 @@ public final class Pane: Identifiable {
             data: data.merging(["pane": .string(id.description)]) { value, _ in value })
     }
 
+    private func agentChanged(_ change: AgentChange?) {
+        guard let change else { return }
+        var data: [String: JSONValue] = [
+            "from": change.from == .none ? .null : .string(change.from.rawValue), "via": .string(change.via),
+        ]
+        if let session = change.session {
+            data["session"] = .string(session)
+        }
+        record(ActivityType.agent(change.to), data)
+        onAgentChange?(self, change)
+    }
+
     private func processExited(_ code: Int32) {
         // A closed pane already reported its exit. An exit status that was on its way when it closed changes nothing.
         if isClosed, case .exited = status { return }
@@ -227,6 +264,7 @@ public final class Pane: Identifiable {
         status = .exited(code)
         isRunningProgram = false
         record(ActivityType.termExited, ["code": .number(Double(code))])
+        agentChanged(agent.ended(at: Date()))
         // Nothing reads input now, so hide the cursor. The soft reset in `restart` shows it again.
         emulator.feed(Data("\u{1b}[?25l".utf8))
         let waiters = exitWaiters
