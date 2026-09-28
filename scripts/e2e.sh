@@ -33,7 +33,14 @@ git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q --a
 git -C "$work/demo" push -q origin main
 git -C "$work/demo" remote set-head origin main
 
-count_apps() { { pgrep -f "Canopy Dev.app/Contents/MacOS/Canopy" || true; } | wc -l; }
+# Only apps on this run's home: other checkouts run dev builds of their own at the same time.
+count_apps() {
+    local count=0 pid
+    for pid in $(pgrep -f "Canopy Dev.app/Contents/MacOS/Canopy" || true); do
+        ps eww -p "$pid" -o command= | tr ' ' '\n' | grep -qxF "CANOPY_HOME=$CANOPY_HOME" && count=$((count + 1))
+    done
+    echo "$count"
+}
 
 step "two CLI calls at once launch exactly one app"
 running_before=$(count_apps)
