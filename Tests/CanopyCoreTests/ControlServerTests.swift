@@ -555,6 +555,32 @@ struct ControlServerTests {
         #expect(replies.first?.contains(#""id":"a""#) == true)
     }
 
+    /// Every child a test starts gets a copy of the client's socket and closes it as it starts. A port scan reading
+    /// that copy at that moment drains the socket, and a read that sleeps on a drained socket fails with EBADF even
+    /// once the reply is there, which failed a different test in about one loaded full run in six.
+    @Test func aReplyArrivesOnADrainedSocket() async throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        let server = ControlServer(socketPath: home.socketPath) { request in
+            try? await Task.sleep(for: .milliseconds(300))
+            return .success(id: request.id, result: .bool(true))
+        }
+        try await server.start()
+        defer { server.stop() }
+        let socketPath = home.socketPath
+
+        let (drained, response) = try await offPool {
+            let fd = try ControlClient.connect(to: socketPath)
+            defer { close(fd) }
+            let drained = drainSocket(fd)
+            return (drained, try ControlClient(socketPath: socketPath).send(ControlRequest(method: "slow"), over: fd))
+        }
+
+        try #require(drained)
+        #expect(response.result == .bool(true))
+    }
+
     @Test func repliesComeInRequestOrder() async throws {
         let dir = try TempDir()
         let home = CanopyHome(path: dir.sub("home"))
