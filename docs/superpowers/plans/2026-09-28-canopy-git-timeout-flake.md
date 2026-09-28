@@ -3,10 +3,12 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stop child-process waits from taking every thread Dispatch lends, so git and gh timeouts hold on a small machine and `GitRunnerTests.timeoutKillsGitAndEverythingItStarted` stops flaking on CI.
+Also stop the tests' git calls from each starting `xcodebuild` on a fresh CI runner, which is what kept those threads waiting for tens of seconds.
 
 **Architecture:** A new `onOwnThread` helper in `CanopyCore` runs blocking work on a thread of its own.
 `GitRunner.run` and both `GitHubCLI` lookups use it instead of `DispatchQueue.global()`, since each one blocks for as long as its child process runs.
 Short scans, such as the port scans, stay on Dispatch.
+The tests resolve the git that `/usr/bin/git` hands off to once, and run it directly.
 
 **Tech Stack:** Swift 6.2, Foundation `Thread`, Swift Testing.
 
@@ -44,6 +46,26 @@ A stalled `git fetch` holds a thread for its 60 s timeout, and a hung `gh` for 3
 With enough of them, every git and gh call in the app waits, and their timeouts start late.
 `GitHubCLI.pullRequests` and `GitHubCLI.repo(forRemote:)` block the same way, on `gh api graphql` and `ssh -G`.
 
+### Why git took tens of seconds on CI
+
+With the thread fix alone, CI still had a stall of 18 to 29 s, and a bare `git --version` test still took 51 to 68 s.
+A second throwaway draft PR (15, closed) recorded Swift Testing's timestamped events, logged processes every second, and ran a probe that timed a plain `/usr/bin/git --version` from its own thread.
+
+- All 324 tests start within 60 ms of each other.
+- In the first seconds, 107 `/usr/bin/git` processes ran at once, with 214 `xcodebuild` processes under them, and the load average rose to 150 on 3 CPUs.
+- Each was `sh -c xcodebuild -sdk .../MacOSX26.5.sdk -find git`, started by the `/usr/bin/git` shim.
+- The probe's single `git --version` took 54 s during the stall.
+
+`/usr/bin/git` asks xcrun which git to run, and xcrun caches the answer in `$TMPDIR/xcrun_db` under a key that includes `SDKROOT`.
+`swift test` sets `SDKROOT` for the test process, and a fresh runner's cache has no entry for that key, or for the plain one.
+So the first wave of tests' git calls each missed the cache at once and started xcodebuild, and the three CPUs spent tens of seconds on them.
+Outside the tests, a warm `/usr/bin/git --version` takes 10 to 40 ms on the same runner.
+With the tests running git directly, the process log shows no xcodebuild at all.
+
+The app runs git without `SDKROOT`, since launchd never sets it.
+Its first git calls after `$TMPDIR` is emptied, as after a restart, can still miss xcrun's cache on a Mac with Xcode selected.
+That is left for a follow-up; see "Decisions to Review".
+
 ## Global Constraints
 
 - Swift 6 language mode with strict concurrency, and no warnings.
@@ -68,11 +90,16 @@ With enough of them, every git and gh call in the app waits, and their timeouts 
 
 1. **A new thread per call, with no cap.**
    A cap would bring back the queueing that started timeouts late.
-   A thread costs far less than the git process it waits on, and the app runs at most a few hundred at once.
+   A thread costs far less than the git process it waits on, and the app runs a few dozen at most: one lookup chain per repo, plus agents' requests.
+   Each running subprocess holds three descriptors, two output files and a kqueue, and an app opened from Finder has a soft limit of 256.
+   That leaves ample room at a few dozen, but raising the limit at launch would be cheap insurance for a follow-up.
    The alternative, waiting on exits with Dispatch sources and no thread at all, needs its own handling of the exit event arriving before `waitpid` can reap, which CI has shown before.
 2. **The port scans stay on `DispatchQueue.global()`.**
    They read the process table and return; they never wait on a child.
 3. **The test helper `offPool` now calls `onOwnThread`,** so one function spawns threads for blocking work.
+4. **Only the tests stop going through the `/usr/bin/git` shim.**
+   The app keeps running `/usr/bin/git`, so it follows `xcode-select` like every other tool.
+   Resolving git once in the app too would skip xcrun on every call, but it is a product change for its own PR.
 
 ---
 
@@ -291,10 +318,142 @@ git add Sources/CanopyCore/PullRequests/GitHubCLI.swift Tests/CanopyCoreTests/Gi
 git commit -m "fix: run gh and ssh lookups on a thread of their own"
 ```
 
-## Task 3: The merge bar
+## Task 3: Run git in the tests without the xcrun shim
+
+**Files:**
+- Modify: `Tests/CanopyCoreTests/Support/Fixtures.swift`
+- Modify: `Tests/CanopyCoreTests/RowActivityTests.swift`
+- Modify: `Tests/CanopyCoreTests/WorkspaceTests.swift`
+
+**Interfaces:**
+- Produces (tests): `Fixture.environment: [String: String]` and `Fixture.gitPath: String`.
+
+There is no failing test for this task: the storm needs a fresh runner's empty xcrun cache, which a developer's Mac never has again after its first run.
+CI's timings are the check, in Step 4.
+
+- [ ] **Step 1: Resolve git once and run it directly**
+
+In `Tests/CanopyCoreTests/Support/Fixtures.swift`, replace the start of `enum Fixture`:
+
+```swift
+enum Fixture {
+    /// This process's environment without the SDKROOT that `swift test` adds and the app never has.
+    static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
+
+    /// The git that /usr/bin/git hands off to. The shim asks xcrun on every run, and xcrun's cache starts empty on a
+    /// fresh CI runner, so the first hundred tests to run git each started xcodebuild at once on three CPUs.
+    static let gitPath: String = {
+        let found = try? Subprocess.run(
+            "/usr/bin/xcrun", ["--find", "git"], environment: environment, directory: nil, timeout: .seconds(60))
+        let path = found.map { String(decoding: $0.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) }
+        return path.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? "/usr/bin/git"
+    }()
+
+    /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
+    static let git = GitRunner(executable: gitPath, environment: environment)
+```
+
+In `Fixture.git(in:before:)`:
+
+```swift
+        let body = "#!/bin/bash\n\(before)\nexec '\(gitPath)' \"$@\"\n"
+        try body.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        return GitRunner(executable: script, environment: environment)
+```
+
+- [ ] **Step 2: Point the hand-written wrappers at it**
+
+In `RowActivityTests.swift` and `WorkspaceTests.swift`, every `/usr/bin/git` inside a wrapper script becomes `'\(Fixture.gitPath)'`, and the `GitRunner` in `WorkspaceTests` takes `environment: Fixture.environment`.
+After this, `grep -rn "/usr/bin/git" Tests` finds only the fallback and the comment in `Fixtures.swift`.
+
+- [ ] **Step 3: Run the suite**
+
+Run: `make test`
+Expected: all pass.
+
+- [ ] **Step 4: Check CI's timings**
+
+In the CI log, `returnsStdout` finishes within the first seconds, and no stretch of more than a few seconds passes with no test finishing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Tests/CanopyCoreTests/Support/Fixtures.swift Tests/CanopyCoreTests/RowActivityTests.swift \
+    Tests/CanopyCoreTests/WorkspaceTests.swift
+git commit -m "test: run the git that /usr/bin/git hands off to, so no test waits on xcrun starting xcodebuild"
+```
+
+## Task 4: The merge bar
 
 - [ ] `make lint` and `make build` with 0 warnings.
 - [ ] Three clean `make test` runs under the shared lock: `lockf -k /tmp/canopy-merge-bar.lock sh -c 'make test && make test && make test'`.
 - [ ] `make e2e`.
 - [ ] An independent opus reviewer on `git diff main...HEAD`, with findings fixed and listed under "After Review".
 - [ ] CI `check` green, and its log shows `returnsStdout` and `timeoutKillsGitAndEverythingItStarted` finishing in seconds, with no long stall.
+
+## After Review
+
+An independent reviewer (opus) read `git diff main...HEAD` with this plan and the spec.
+It found nothing critical or important, and these minor points.
+
+1. **The busy-pool tests would miss a regression to a higher-priority global queue.**
+   True, but not for the reason given, and its suggested fix, holding the threads at `.userInteractive`, would have made the tests miss the original `DispatchQueue.global()` code too.
+   A small standalone experiment showed what matters: while Dispatch is still adding threads, it hands the next one to the most urgent work waiting, so a block at a higher priority than the fillers slips through.
+   Once every filler holds a thread, a block at any priority waits.
+   So `withEveryDispatchThreadBusy` now fills at the default priority and waits until every filler has started before it runs `body`.
+   A gate lets one test at a time do this, since two at once would each hold part of the pool and wait for the rest.
+   Mutation check: with `GitRunner.run` put back on `DispatchQueue.global()` at each of the five priorities, `timeoutHoldsWhenDispatchHasNoThreadsLeft` fails at 10.3 s every time, and passes in 0.31 s with the fix.
+2. **"Ten seconds at most" was not true,** since each filler started its own 10 s only once it ran.
+   The fillers now share one deadline, set before any is queued.
+3. **"A few hundred at once" in Decision 1 was wrong.**
+   The app runs a few dozen at most, and each running subprocess holds three descriptors against a soft limit of 256 for an app opened from Finder.
+   Decision 1 now says so, and suggests raising the limit at launch as a follow-up.
+4. **The Root Cause did not explain why git took tens of seconds.**
+   It now has a section on the xcrun cache misses, and Task 3 covers the tests' change.
+5. **Two synchronous tests blocked a Swift concurrency thread:** `readsTheHostAnSSHAliasConnectsTo` ran two `ssh -G` directly, and `waitingGivesUpAfterTheTimeout` waited 300 ms for a lock.
+   Both are now async and wait through `offPool`.
+
+Nits, both done: `SSHConfig.hostName`'s comment now says to call it through `onOwnThread`, and `onOwnThread` names its threads `canopy.blocking`, so a `sample` shows them.
+
+The final helper:
+
+```swift
+/// One test at a time takes every Dispatch thread, or two would each hold part of the pool and wait for the rest.
+private let everyDispatchThreadGate = DispatchSemaphore(value: 1)
+
+/// Runs `body` while blocks hold every thread Dispatch lends its global queues, as dozens of tests running git at once
+/// did on a 3-CPU CI runner. `body` starts only once they all hold one: while Dispatch is still adding threads, it gives
+/// the next to the most urgent work waiting, so work at a higher priority would slip through. Work queued meanwhile at
+/// any priority waits until `body` returns, or ten seconds at most.
+func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -> T {
+    var threads: UInt32 = 0
+    var size = MemoryLayout<UInt32>.size
+    try #require(sysctlbyname("kern.wq_max_constrained_threads", &threads, &size, nil, 0) == 0)
+    let limit = threads
+    try await offPool { everyDispatchThreadGate.wait() }
+    defer { everyDispatchThreadGate.signal() }
+    let started = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    let deadline = DispatchTime.now() + 10
+    for _ in 0..<limit {
+        DispatchQueue.global().async {
+            started.signal()
+            _ = release.wait(timeout: deadline)
+        }
+    }
+    defer {
+        for _ in 0..<limit { release.signal() }
+    }
+    try await offPool {
+        for _ in 0..<limit { _ = started.wait(timeout: deadline) }
+    }
+    return try await body()
+}
+```
+
+### Also seen
+
+One of eleven local full runs failed `ControlServerTests.repoAndRowFlowOverTheSocket` with "Canopy closed the connection before replying", while other agents ran their suites on the same Mac.
+That is the known rare ControlServerTests failure from the handover: the client's read fails on a socket that is still open.
+It did not come back in the next 10 full runs, and nothing in this branch touches the control server or its socket.
