@@ -23,6 +23,7 @@ private typealias KeventCall = (
 public enum Subprocess {
     /// Runs a program in its own process group with stdin from /dev/null and no inherited descriptors,
     /// blocking the calling thread until it exits. On timeout the whole group is killed.
+    /// Call it through `onOwnThread`, not on a Dispatch global queue, whose threads run out.
     ///
     /// Output goes to unlinked temporary files rather than pipes: a background process the child leaves
     /// behind (a daemon started by a shell's rc files, say) can keep a pipe open forever, but a file is

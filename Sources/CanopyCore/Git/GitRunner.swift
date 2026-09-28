@@ -24,17 +24,13 @@ public struct GitRunner: Sendable {
         self.baseEnvironment = environment
     }
 
-    /// Runs git off the Swift concurrency pool. With a timeout, git and everything it started are killed
+    /// Runs git on a thread of its own. With a timeout, git and everything it started are killed
     /// when it expires, and the error has `timedOut` set.
     @discardableResult
     public func run(_ arguments: [String], in directory: String? = nil, timeout: Duration? = nil) async throws
         -> String
     {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(with: Result { try runBlocking(arguments, in: directory, timeout: timeout) })
-            }
-        }
+        try await onOwnThread { Result { try runBlocking(arguments, in: directory, timeout: timeout) } }.get()
     }
 
     /// Runs git and reports only whether it exited 0. For probes like `show-ref --verify`.

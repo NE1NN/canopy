@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 
 @testable import CanopyCore
 
@@ -61,9 +62,23 @@ enum Fixture {
 /// Runs blocking work (socket reads, lock waits) on its own thread. On a Swift concurrency thread it would
 /// hold one of the few threads the server needs to answer it, and a small CI machine deadlocks.
 func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        Thread { continuation.resume(with: Result { try work() }) }.start()
+    try await onOwnThread { Result { try work() } }.get()
+}
+
+/// Runs `body` while blocks hold every thread Dispatch lends its global queues, as dozens of tests running git at once
+/// did on a 3-CPU CI runner. Anything queued there meanwhile waits until `body` returns, or ten seconds at most.
+func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -> T {
+    var limit: UInt32 = 0
+    var size = MemoryLayout<UInt32>.size
+    try #require(sysctlbyname("kern.wq_max_constrained_threads", &limit, &size, nil, 0) == 0)
+    let release = DispatchSemaphore(value: 0)
+    for _ in 0..<limit {
+        DispatchQueue.global().async { _ = release.wait(timeout: .now() + 10) }
     }
+    defer {
+        for _ in 0..<limit { release.signal() }
+    }
+    return try await body()
 }
 
 /// Polls until `condition` holds or the timeout passes. Returns whether it held. The timeout is long because a loaded CI
