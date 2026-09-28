@@ -6,10 +6,11 @@
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
 #
-# PR badges and the clone sheet's repo list come from a stand-in gh, which the app finds first on its login PATH through
-# a fixture ZDOTDIR. It clones acme/billing and acme/design-system from local bare repos in $work/remotes, and fails
-# like gh for any other repo. Writing "logged-out" to $work/bin/gh-mode makes it answer like a gh with no login, and
-# writing a number of seconds to $work/bin/clone-seconds makes clones show git's progress for that long.
+# PR badges and the clone sheet's repo list come from a stand-in gh, which the app and its terminals find first on their
+# login PATH through a fixture ZDOTDIR. It clones acme/billing and acme/design-system from local bare repos in
+# $work/remotes, and fails like gh for any other repo. Writing "logged-out" to $work/bin/gh-mode makes it answer like a
+# gh with no login, and writing a number of seconds to $work/bin/clone-seconds makes clones show git's progress for that
+# long.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 app="$PWD/build/Canopy Dev.app"

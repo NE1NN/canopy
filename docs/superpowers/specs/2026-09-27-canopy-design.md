@@ -289,6 +289,8 @@ Nothing outside the SwiftTerm implementation imports SwiftTerm.
 ### Starting a shell
 
 Each pane runs the user's login shell (`$SHELL -l`) in the row's folder, or in a saved folder when restoring.
+From the app's own environment it keeps only what a macOS login session starts with, such as `HOME`, `USER`, `LANG`, and `SSH_AUTH_SOCK`, and `ZDOTDIR`, so zsh reads the user's startup files from the same folder as outside Canopy.
+Everything else there came from whatever launched the app, such as a Claude Code session running a dev build.
 The environment adds:
 
 | Variable | Value |
@@ -605,8 +607,9 @@ Agents poll some of them every few seconds, which would bury everything else.
 
 ### Command logging
 
-Canopy starts zsh with `ZDOTDIR` pointing at `CANOPY_HOME/shell/zsh`.
-The `.zshenv` there puts `ZDOTDIR` back and sources the user's own `.zshenv`, so zsh then reads the user's `.zprofile`, `.zshrc`, and `.zlogin` from their usual place, and the user's setup is unchanged.
+Canopy starts zsh with `ZDOTDIR` pointing at `CANOPY_HOME/shell/zsh`, and the user's own `ZDOTDIR`, if they have one, in `CANOPY_USER_ZDOTDIR`.
+The `.zshenv` there puts the user's `ZDOTDIR` back, or unsets it, and sources the user's own `.zshenv` from `${ZDOTDIR-$HOME}`, as zsh would.
+So zsh then reads the user's `.zprofile`, `.zshrc`, and `.zlogin` from their usual place, and the user's setup is unchanged.
 It adds `preexec` and `precmd` hooks.
 After each command, `precmd` prints one private OSC 6973 sequence carrying the command, the folder it started in, its exit code, and its duration, percent-encoded.
 The pane reads these from its output before the terminal engine draws it, and records `term.command`.
