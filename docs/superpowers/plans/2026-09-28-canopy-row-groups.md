@@ -4147,3 +4147,34 @@ Each is listed in the PR under "Decisions to review" too.
 - A grouped row's selection and hover fills keep the full width, and only its content indents.
 - Creating a row from the sheet into a collapsed group unfolds it.
 - No code scrolls the list during a drag, since AppKit already does.
+
+## After Review
+
+An independent opus review found no blockers, two important issues, and eight minor ones.
+One commit, `fix: address review of row groups`, fixes both important issues and six of the minors, each with a test that failed first where one can, and the branch is the reference for it:
+
+- Renaming a group while `row new --group` for it ran gave a result that depended on timing, and warned that the group went away when it had only been renamed.
+  `rowsJoiningGroups` now holds the repo and the group, a rename updates it, and the warning only shows when no group of that name is left.
+  `aGroupRenamedWhileItsRowIsCreatedStillGetsTheRow` stalls git before and after the worktree exists, and `aRowTakenOutOfItsGroupWhileBeingCreatedGetsNoWarning` covers a row moved out meanwhile.
+- Folding a group never animated, because `withAnimation` wrapped a call that only starts a task, and the new snapshot arrives later.
+  The chevron and the repo's section now animate on the groups' change itself, which frames shot mid-fold in the dev app confirm.
+- Deleting a group of a missing repo logged 0 rows, since the snapshot lists none; the count now comes from the saved group.
+- One unreadable group in `state.json` dropped every group; each group now decodes on its own.
+- Two groups whose names differed only in case in a hand-edited file lost the second one's rows to the ungrouped rows; they now merge into the first.
+- `row new --group` with a missing group waited behind other git work in the repo before failing; it now checks first, and again once it is its turn.
+- The group lookup is shared, and `groupInfo` reads the snapshot once.
+
+Two minors stay:
+
+- `group rename` prints the name as it was typed, such as "Renamed review to Code review." when the group was "Review".
+- SwiftUI's `onDrag` gives no signal when a drag ends, so the dragged row stops dimming once the pointer leaves the list, and `draggedRow` stays set after a cancelled drag until the next drag replaces it.
+
+A row moved out of its group while it is still being created logs its `row.moved` before its `row.created`, which only a move of a half-made row can cause.
+
+### A flake that is not from this branch
+
+Full `make test` runs failed about once in seven while other sessions built on the machine (load average 15 and up), always in the control socket tests, with "Canopy closed the connection before replying."
+It also failed on the plan commit, which has `main`'s Swift.
+Logging showed the client's `read` fails with `EBADF` on its own socket while the descriptor is still open: the client's `close` right after succeeds.
+Tracing every `close` in Canopy's code and tests showed none touched that descriptor, and a stress test starting and stopping 300 listeners beside 600 requests failed none.
+It is written up for a separate fix.
