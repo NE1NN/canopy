@@ -233,6 +233,7 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
 - The selected row has a rounded highlight, tinted with the accent color while the sidebar has the keyboard.
   `↑` and `↓` then move the selection.
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order.
+- A row selected any other way than by clicking it, such as with `⌘1` or `canopy row select`, scrolls into view.
 - A detached HEAD shows the short commit hash in place of a branch name.
 - External worktrees fold into a "3 other worktrees" row under their repo's rows.
 

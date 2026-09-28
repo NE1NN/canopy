@@ -28,6 +28,17 @@ struct SidebarView: View {
     }
 
     private var repoList: some View {
+        ScrollViewReader { proxy in
+            repoScroll
+                // A row picked with ⌘1 to ⌘9 or `canopy row select` scrolls into view.
+                .onChange(of: model.selectedRowPath) {
+                    guard let path = model.selectedRowPath else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(path) }
+                }
+        }
+    }
+
+    private var repoScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if !model.snapshot.repos.isEmpty {
@@ -98,6 +109,7 @@ struct RepoSection: View {
                     row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
                     shortcut: model.shortcut(for: row), removable: row.rowClass != .main
                 )
+                .id(row.path)
                 .contextMenu {
                     if row.isMissing {
                         Button("Prune Missing Worktrees") { model.prune(repo) }
@@ -110,7 +122,9 @@ struct RepoSection: View {
                     ForEach(repo.external) { row in
                         RowLineView(
                             row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
-                            shortcut: nil, removable: false)
+                            shortcut: nil, removable: false
+                        )
+                        .id(row.path)
                     }
                 }
             }
