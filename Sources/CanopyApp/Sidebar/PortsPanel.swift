@@ -8,25 +8,16 @@ struct PortsPanel: View {
     private var count: Int { (model.ports ?? []).reduce(0) { $0 + $1.ports.count } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.easeOut(duration: 0.15)) { model.portsCollapsed.toggle() }
             } label: {
-                HStack(spacing: 5) {
+                SectionLabel(title: "Ports", count: count > 0 ? count : nil) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
                         .rotationEffect(.degrees(model.portsCollapsed ? 0 : 90))
-                    Text("Ports")
-                        .textCase(.uppercase)
-                    if model.portsCollapsed, count > 0 {
-                        Text(verbatim: "\(count)")
-                            .monospacedDigit()
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer(minLength: 0)
+                        .frame(width: 22, height: 22)
                 }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -35,11 +26,13 @@ struct PortsPanel: View {
             if !model.portsCollapsed, let groups = model.ports {
                 if groups.isEmpty {
                     Text("Nothing is listening in your rows.")
-                        .font(.caption)
+                        .font(Style.meta)
                         .foregroundStyle(.tertiary)
+                        .padding(.leading, 8)
+                        .padding(.bottom, 4)
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
                             ForEach(groups, id: \.rowPath) { group in
                                 PortGroupView(group: group)
                             }
@@ -58,37 +51,69 @@ struct PortsPanel: View {
 struct PortGroupView: View {
     @Environment(AppModel.self) private var model
     let group: PortGroup
+    @State private var isHovering = false
 
-    private var name: String { model.snapshot.row(path: group.rowPath)?.displayName ?? group.rowPath }
+    private var row: Row? { model.snapshot.row(path: group.rowPath) }
+    private var name: String { row?.displayName ?? group.rowPath }
 
     private var isStopping: Bool { group.ports.allSatisfy { model.isStopping($0, inRow: group.rowPath) } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 4) {
-                Button(name) { model.selectedRowPath = group.rowPath }
-                    .buttonStyle(.plain)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help("Show \(name)")
-                Spacer(minLength: 4)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
                 Button {
-                    model.stop(group.ports, inRow: group.rowPath)
+                    model.selectedRowPath = group.rowPath
                 } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption2.weight(.semibold))
+                    HStack(spacing: 8) {
+                        Group {
+                            if let row { RowMark(row: row, size: 12) }
+                        }
+                        .frame(width: 16)
+                        Text(name)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 4)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .disabled(isStopping)
-                .help(group.ports.count == 1 ? "Stop what listens here" : "Stop everything listening here")
+                .buttonStyle(.plain)
+                .help("Show \(name)")
+                if isHovering {
+                    Button {
+                        model.stop(group.ports, inRow: group.rowPath)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isStopping)
+                    .help(group.ports.count == 1 ? "Stop what listens here" : "Stop everything listening here")
+                }
             }
-            .font(.callout)
+            .font(Style.body)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 7)
+            .padding(.trailing, 5)
+            .frame(height: 24)
+            .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
+            .onHover { isHovering = $0 }
+            // The stop button shows on hover only, so VoiceOver and the context menu reach it too.
+            .accessibilityAction(named: "Stop Everything Listening Here") {
+                model.stop(group.ports, inRow: group.rowPath)
+            }
+            .contextMenu {
+                Button("Stop Everything Listening Here") { model.stop(group.ports, inRow: group.rowPath) }
+                    .disabled(isStopping)
+            }
             FlowLayout(spacing: 4) {
                 ForEach(group.ports, id: \.port) { port in
                     PortBadge(port: port, rowPath: group.rowPath)
                 }
             }
+            .padding(.leading, 31)
+            .padding(.bottom, 6)
         }
     }
 }
@@ -98,36 +123,47 @@ struct PortBadge: View {
     @Environment(\.openURL) private var openURL
     let port: RowPort
     let rowPath: String
+    @State private var isHovering = false
 
     private var isStopping: Bool { model.isStopping(port, inRow: rowPath) }
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             Button {
                 if let url = URL(string: "http://localhost:\(port.port)") { openURL(url) }
             } label: {
                 Text(verbatim: "\(port.port)")
-                    .monospacedDigit()
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
             }
             .buttonStyle(.plain)
             .help(openHelp)
-            Button {
-                model.stop([port], inRow: rowPath)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+            if isHovering, !isStopping {
+                Button {
+                    model.stop([port], inRow: rowPath)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(stopHelp)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help(stopHelp)
         }
-        .font(.caption)
         .padding(.leading, 7)
-        .padding(.trailing, 6)
-        .padding(.vertical, 3)
-        .background(.quaternary, in: Capsule())
+        .padding(.trailing, isHovering && !isStopping ? 3 : 7)
+        .frame(height: 20)
+        .background(
+            isHovering ? Style.selectionFill : Style.badgeFill, in: RoundedRectangle(cornerRadius: Style.badgeRadius)
+        )
         .opacity(isStopping ? 0.4 : 1)
         .disabled(isStopping)
+        .onHover { isHovering = $0 }
+        .accessibilityAction(named: "Stop") { model.stop([port], inRow: rowPath) }
+        .contextMenu {
+            Button("Stop") { model.stop([port], inRow: rowPath) }
+        }
     }
 
     // Tooltips are built as plain strings: in a string literal, SwiftUI would format the numbers, as in "3,000".

@@ -11,6 +11,8 @@ struct CanopyApp: App {
             RootView()
                 .environment(delegate.model)
         }
+        // The top bar draws the title bar's row itself, so its tabs and buttons get clicks.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             TerminalCommands(model: delegate.model)
             RowCommands(model: delegate.model)
@@ -66,6 +68,9 @@ struct TerminalCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            Divider()
             Button("New Tab", action: model.newTab)
                 .keyboardShortcut("t")
                 .disabled(!model.canOpenTerminal)

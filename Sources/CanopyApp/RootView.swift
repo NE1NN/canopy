@@ -1,16 +1,33 @@
 import AppKit
 import CanopyCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var columns = NavigationSplitViewVisibility.all
+    @State private var detailFrame = CGRect.zero
 
     var body: some View {
-        NavigationSplitView {
+        @Bindable var model = model
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
         } detail: {
             RowDetailView()
+                .onGeometryChange(for: CGRect.self) {
+                    $0.frame(in: .global)
+                } action: {
+                    detailFrame = $0
+                }
+        }
+        .overlay(alignment: .topLeading) {
+            if let row = model.selectedRow, !row.isMissing {
+                TopBarView(row: row, isSidebarHidden: columns == .detailOnly)
+                    .frame(width: detailFrame.width)
+                    .offset(x: detailFrame.minX)
+                    .ignoresSafeArea(.container, edges: .top)
+            }
         }
         .frame(minWidth: 900, minHeight: 560)
         .overlay(alignment: .bottom) {
@@ -21,6 +38,7 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: model.toast)
+        .fileImporter(isPresented: $model.isChoosingFolder, allowedContentTypes: [.folder]) { model.folderChosen($0) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }
@@ -57,29 +75,41 @@ struct RowDetailView: View {
 
     var body: some View {
         if let row = model.selectedRow {
+            // The title bar is hidden, but the title still names the window in the Window menu and Mission Control.
             RowTerminalsView(row: row)
                 .navigationTitle(row.displayName)
-                .navigationSubtitle(model.snapshot.repo(path: row.repoPath)?.name ?? "")
         } else {
-            ContentUnavailableView(
-                "No Row Selected",
-                systemImage: "sidebar.left",
-                description: Text("Pick a row in the sidebar, or add a repo to get started.")
-            )
+            ContentUnavailableView {
+                Label("No Row Selected", systemImage: "sidebar.left")
+            } description: {
+                Text("Pick a row in the sidebar, or add a repo to get started.")
+            } actions: {
+                if model.snapshot.repos.isEmpty {
+                    Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
+                }
+            }
         }
     }
 }
 
+/// Every toast reports something that went wrong, such as git's message for a failed command.
 struct ToastView: View {
     let message: String
 
     var body: some View {
-        Text(message)
-            .font(.callout)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.separator))
-            .shadow(radius: 8, y: 2)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .frame(maxWidth: 560)
+        // A pill for one line, a rounded box once a long message wraps.
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).strokeBorder(.separator))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
     }
 }

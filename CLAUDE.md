@@ -9,6 +9,7 @@ The design lives in `docs/superpowers/specs/2026-09-27-canopy-design.md`.
 - `make app` builds `build/Canopy Dev.app` (data in `~/.canopy-dev`)
 - `make e2e` drives a dev build through the CLI against a temporary `CANOPY_HOME`
 - `make signing-cert` once per machine before `make app`
+- UI checks: `scripts/ui-fixture.sh` opens the dev build on a throwaway home with something in every part of the window, `scripts/ui.swift` posts keys and clicks to it, and `scripts/window-shot.swift` captures its window alone. Never take full-screen shots.
 
 Use `make test`, not bare `swift test`: Command Line Tools need extra search paths for Swift Testing.
 

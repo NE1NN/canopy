@@ -18,7 +18,7 @@ struct GridView: View {
                     if let pane = tab.panes[id], let frame = frames[id] {
                         PaneView(
                             pane: pane,
-                            isFocusedPane: tab.focusedPaneID == id,
+                            isFocusedPane: tab.focusedPaneID == id && !model.sidebarKeepsKeyboard,
                             onClose: { model.requestClose(pane) },
                             onFocus: { model.terminals.focus(id) },
                             onDragStart: { model.draggedPane = id },

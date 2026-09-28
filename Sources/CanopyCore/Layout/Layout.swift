@@ -14,6 +14,17 @@ public enum Edge: Sendable, CaseIterable {
     var putsMovedFirst: Bool { self == .left || self == .top }
 }
 
+/// The overall arrangement of a layout, for a tab's icon.
+public enum LayoutShape: Equatable, Sendable {
+    case single
+    /// Panes side by side.
+    case columns(Int)
+    /// Panes stacked.
+    case rows(Int)
+    /// Anything with both.
+    case grid
+}
+
 /// A tab's arrangement of panes: a single pane, or a split whose children each take a share of its extent.
 /// Every operation returns a normalized layout: no split has one child, and no split sits directly inside a
 /// split of the same axis.
@@ -26,6 +37,18 @@ public indirect enum Layout<Leaf: Hashable & Sendable>: Hashable, Sendable {
         switch self {
         case .leaf(let leaf): [leaf]
         case .split(_, let children, _): children.flatMap(\.leaves)
+        }
+    }
+
+    public var shape: LayoutShape {
+        switch self {
+        case .leaf: .single
+        case .split(let axis, let children, _):
+            if children.allSatisfy({ if case .leaf = $0 { true } else { false } }) {
+                axis == .row ? .columns(children.count) : .rows(children.count)
+            } else {
+                .grid
+            }
         }
     }
 

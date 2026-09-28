@@ -128,7 +128,7 @@ A dev build therefore never touches the instance the author is working in.
 A repo is added from the UI or with `canopy repo add <path>`.
 If the path is a linked worktree, Canopy resolves it to the main checkout.
 A repo's display name is its folder name.
-If two repos share a folder name, the parent folder name is added to tell them apart.
+If two repos share a folder name, each gets as many parent folder names as it takes to tell them apart, such as `work/client/app` and `personal/client/app`.
 Removing a repo only unregisters it and never touches files.
 
 ### Discovery
@@ -212,17 +212,30 @@ They get these environment variables:
 
 ## Sidebar rows
 
-A row line reads, left to right: icon, branch name, then a right-aligned PR number when a PR exists.
+A "Repos" label heads the sidebar, with a `+` that adds a repo.
+File > Add Repo… (`⇧⌘O`) and the empty sidebar's button add one too.
 
-- The icon is a branch glyph when the row has no PR, and a pull request glyph when it has one.
+Each repo group starts with a header: a tile with the repo's first letter, its name, and its row count.
+The tile takes one of eight hues, picked by a stable hash of the repo's path, so a repo keeps its color across launches.
+On hover, the count gives way to a `…` menu and a `+` that creates a row.
+
+A row line reads, left to right: icon, branch name, then a right-aligned running dot and PR number.
+
+- The icon is a pull request glyph when the row has a PR, a trunk glyph for the main checkout, and a branch glyph otherwise.
 - The PR glyph and number are colored by state:
   green for open, gray for draft, purple for merged, red for closed.
+  They keep their colors on the selected row.
+- The running dot shows while a program other than the shell runs in one of the row's terminals.
+  It is refreshed every second while the window can be seen.
 - Clicking the PR number opens the PR in the default browser.
   Clicking anywhere else on the row selects it.
 - On hover, the PR number slides left to make room for the row's shortcut hint (`⌘8`) and an `x`.
-- The selected row has a rounded highlight.
+- The selected row has a rounded highlight, tinted with the accent color while the sidebar has the keyboard.
+  `↑` and `↓` then move the selection, and the rows they pick leave the keyboard with the sidebar until it lets go.
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order.
+- A row selected any other way than by clicking it, such as with `⌘1` or `canopy row select`, scrolls into view.
 - A detached HEAD shows the short commit hash in place of a branch name.
+- External worktrees fold into a "3 other worktrees" row under their repo's rows.
 
 ## Terminals
 
@@ -256,19 +269,22 @@ The environment adds:
 Agents inside any Canopy terminal can therefore run `canopy` without arguments naming the repo or row.
 
 The font is the system monospaced font at 13 points.
-Colors follow the system light or dark appearance.
+Colors follow the system light or dark appearance, with Canopy's own 16 ANSI colors for each.
+In dark, the terminal's background sits a step below the window's chrome, so panes have an edge.
+The scroller shows only while the terminal is scrolled back into its scrollback.
 Scrollback holds 10,000 lines per pane.
 
 ### Pane chrome
 
-Each pane has a thin header with its title and a close button.
+Each pane has a thin header with a status mark, its title, and a close button that shows on hover.
+The mark is a terminal glyph while the shell is idle, a running dot while a program runs, and a green check or red cross after the shell exits.
 The title comes from the running program when it sets one, and falls back to the foreground process name.
 The header is the drag handle.
 The focused pane's header is highlighted.
 
 ### Process exit
 
-When a pane's shell exits, the pane shows "exited (code N)".
+When a pane's shell exits, a strip at the bottom of the pane says "Exited", or "Exited with code N" for a nonzero code.
 Enter restarts the shell in the same folder, and `⌘W` closes the pane.
 
 ### Hidden panes
@@ -284,8 +300,12 @@ If any pane's foreground process is something other than its shell, quitting ask
 
 ### Tabs
 
-Each row has its own tab bar.
-Its right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
+Each row has its own tab bar, which sits in the window's title bar row beside the traffic lights.
+Each tab shows an icon for its layout: one pane, panes side by side, panes stacked, or both.
+A running dot follows the name while a program runs in one of the tab's panes, and gives way to the tab's `x` on hover.
+The bar's right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
+Its empty space moves the window, and double-clicking it zooms or minimizes the window as the system's title bar setting says.
+While the sidebar is hidden, the bar starts with the row's repo and branch.
 New tabs are named "Terminal", "Terminal 2", and so on, or take the name given with `--tab`.
 Double-clicking a tab renames it.
 Selecting a row that has no tabs opens one tab with one pane.
@@ -310,7 +330,7 @@ The add rule fills the bottom line of panes to the right until panes would get t
    A last line that is not a `row` split becomes one, holding the old line and the new pane.
 5. Otherwise add the pane as a new line at the bottom of the root, wrapping the root in a `column` split if needed, and make the line heights equal.
 
-The minimum pane width is 80 columns in the current font plus pane padding.
+The minimum pane width is 80 columns in the current font plus pane padding and the room kept for the scroller.
 It is configurable as `minPaneColumns` in `config.json`.
 
 ```
@@ -413,7 +433,8 @@ A row can own any number of ports.
 ### Panel
 
 The ports panel sits at the bottom of the sidebar and can collapse.
-It groups ports under their row's branch name, ordered like the sidebar, with ports sorted by number.
+Its "Ports" label shows how many ports are listening.
+It groups ports under their row's mark and branch name, ordered like the sidebar, with ports sorted by number.
 
 ```
 feat/new-feature                x
@@ -426,9 +447,9 @@ feat/new-feature-2              x
 - Clicking a branch heading selects that row.
 - Clicking a badge opens `http://localhost:<port>`.
 - Hovering a badge shows the process name and PID.
-- A badge's `x` stops the process listening on that port.
+- A badge's `x`, shown on hover, stops the process listening on that port.
   Its tooltip names the process, because stopping it also closes any other ports it holds.
-- A group's `x` stops every process holding a port in that row.
+- A group's `x`, shown while hovering its branch name, stops every process holding a port in that row.
 - Stopping sends SIGTERM, then SIGKILL if the port is still listening after 3 seconds.
 - Badges wrap onto new lines.
 
@@ -570,7 +591,7 @@ A command starting with a space is left out when the user has `hist_ignore_space
 
 - **Git and setup failures**: the UI shows git's message in a toast.
   The CLI exits non-zero, and with `--json` prints `{"error": {"code", "message"}}`.
-- **Missing repo folder**: the repo group shows "missing" with Locate and Remove.
+- **Missing repo folder**: the repo header shows "missing" and a Locate… button, and its `…` menu holds Remove.
 - **Missing worktree folder**: the row shows "missing" with Prune.
 - **`gh` unavailable**: covered under PR badges.
 - **Shell exits**: covered under Terminals.

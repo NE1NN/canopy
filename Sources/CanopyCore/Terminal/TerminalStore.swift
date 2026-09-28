@@ -24,6 +24,11 @@ public final class TerminalTab: Identifiable {
         layout.leaves.compactMap { panes[$0] }
     }
 
+    /// Whether any of its panes was running a program at the last activity refresh.
+    public var isRunningProgram: Bool {
+        paneList.contains(where: \.isRunningProgram)
+    }
+
     /// The pane `⌘W` closes and typing goes to.
     public var focused: Pane {
         panes[focusedPaneID] ?? paneList[0]
@@ -93,6 +98,18 @@ public final class TerminalStore {
 
     public func busyPanes(inRow path: String) -> [Pane] {
         tabs(inRow: path).flatMap(\.paneList).filter(\.isBusy)
+    }
+
+    /// Updates every pane's `isRunningProgram`.
+    public func refreshActivity() {
+        for pane in panes {
+            pane.refreshActivity()
+        }
+    }
+
+    /// Whether any of the row's panes was running a program at the last activity refresh.
+    public func isRunningProgram(inRow path: String) -> Bool {
+        tabs(inRow: path).contains(where: \.isRunningProgram)
     }
 
     // MARK: Tabs

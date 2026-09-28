@@ -15,9 +15,14 @@ final class AppModel {
     private(set) var toast: String?
     var selectedRowPath: String? {
         didSet {
-            if selectedRowPath != oldValue { selectionChanged() }
+            guard selectedRowPath != oldValue else { return }
+            sidebarKeepsKeyboard = isSteppingRows
+            selectionChanged()
         }
     }
+    /// True after ↑ or ↓ in the sidebar picked the row, so its terminal does not take the keyboard from the sidebar.
+    private(set) var sidebarKeepsKeyboard = false
+    @ObservationIgnored private var isSteppingRows = false
     private var started = false
     private var toastTask: Task<Void, Never>?
     private var server: ControlServer?
@@ -79,11 +84,12 @@ final class AppModel {
             }
         }
         await startControlServer()
-        startScanningPorts()
+        startRefreshingWhileVisible()
     }
 
     func shutdown() {
         portsTask?.cancel()
+        activityTask?.cancel()
         server?.stop()
         server = nil
         terminals.closeAll()
@@ -116,6 +122,22 @@ final class AppModel {
         let rows = snapshot.visibleRows
         guard number >= 1, number <= rows.count else { return }
         selectedRowPath = rows[number - 1].path
+    }
+
+    /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last.
+    func selectRow(offset: Int) {
+        let rows = snapshot.visibleRows
+        guard !rows.isEmpty else { return }
+        let index =
+            rows.firstIndex { $0.path == selectedRowPath }.map { $0 + offset } ?? (offset > 0 ? 0 : rows.count - 1)
+        isSteppingRows = true
+        defer { isSteppingRows = false }
+        selectedRowPath = rows[min(max(index, 0), rows.count - 1)].path
+    }
+
+    /// Once the sidebar lets go of the keyboard, rows selected later hand it to their terminal again.
+    func sidebarLostKeyboard() {
+        sidebarKeepsKeyboard = false
     }
 
     func menuTitle(forRow number: Int) -> String {
@@ -203,22 +225,33 @@ final class AppModel {
         let port: UInt16
     }
 
-    /// Scans every 2 seconds while any part of the window can be seen, and at once when it comes back into view.
-    private func startScanningPorts() {
-        portsTask = Task { [weak self] in
-            while !Task.isCancelled {
-                if NSApp.occlusionState.contains(.visible) {
-                    await self?.refreshPorts()
-                }
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+    @ObservationIgnored private var activityTask: Task<Void, Never>?
+
+    /// Ports scan every 2 seconds and running dots refresh every second while any part of the window can be seen,
+    /// and both at once when it comes back into view.
+    private func startRefreshingWhileVisible() {
+        portsTask = repeating(every: .seconds(2)) { await $0.refreshPorts() }
+        activityTask = repeating(every: .seconds(1)) { $0.terminals.refreshActivity() }
         occlusionObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard NSApp.occlusionState.contains(.visible) else { return }
+                self?.terminals.refreshActivity()
                 Task { await self?.refreshPorts() }
+            }
+        }
+    }
+
+    /// Runs `work` every `interval` while any part of the window can be seen.
+    private func repeating(every interval: Duration, _ work: @escaping (AppModel) async -> Void) -> Task<Void, Never> {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if NSApp.occlusionState.contains(.visible) {
+                    await work(self)
+                }
+                try? await Task.sleep(for: interval)
             }
         }
     }
@@ -338,7 +371,7 @@ final class AppModel {
         let cell = SwiftTermEmulator.cellSize
         let padding = TerminalContainerView.padding
         return CGSize(
-            width: 20 * cell.width + padding.left + padding.right,
+            width: 20 * cell.width + TerminalContainerView.horizontalInset,
             height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
     }
 
@@ -352,9 +385,8 @@ final class AppModel {
 
     /// Whether a line of that many panes keeps each at least `minPaneColumns` wide in the current grid.
     private func addRuleFits() -> (Int) -> Bool {
-        let padding = TerminalContainerView.padding
         let minimumWidth =
-            Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + padding.left + padding.right
+            Double(config.minPaneColumns) * SwiftTermEmulator.cellSize.width + TerminalContainerView.horizontalInset
         let width = gridSize.width
         return { width / Double($0) >= minimumWidth }
     }
@@ -452,8 +484,27 @@ final class AppModel {
 
     // MARK: Repos
 
-    func addRepo(_ url: URL) {
-        perform { try await $0.addRepo(path: url.path) }
+    enum FolderRequest {
+        case addRepo
+        case locate(RepoSnapshot)
+    }
+
+    /// SwiftUI resets `isChoosingFolder` before calling the completion, so the request lives in its own property.
+    var isChoosingFolder = false
+    private(set) var folderRequest = FolderRequest.addRepo
+
+    /// The sidebar's +, File > Add Repo…, the empty states, and Locate… for a missing repo.
+    func chooseFolder(for request: FolderRequest) {
+        folderRequest = request
+        isChoosingFolder = true
+    }
+
+    func folderChosen(_ result: Result<URL, any Error>) {
+        switch (result, folderRequest) {
+        case (.success(let url), .addRepo): perform { try await $0.addRepo(path: url.path) }
+        case (.success(let url), .locate(let repo)): relocateRepo(repo, to: url)
+        case (.failure(let error), _): show(error)
+        }
     }
 
     /// A repo removal waiting for the user to confirm, because programs still run in its terminals.
