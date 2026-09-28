@@ -10,7 +10,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case missingTarget(flag: String)
     case invalidBranch(String)
     case invalidBase(String)
-    case branchCheckedOut(String)
+    /// `row` is where the branch is checked out, when Canopy knows.
+    case branchCheckedOut(String, row: Row?)
+    /// `fetchFailure` says why origin's branches may be out of date.
+    case branchNotFound(String, fetchFailure: String?)
     case worktreeDirty(String)
     case cannotRemoveMain
     case notManaged(String)
@@ -53,6 +56,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .invalidBranch: "invalid_branch"
         case .invalidBase: "invalid_base"
         case .branchCheckedOut: "branch_checked_out"
+        case .branchNotFound: "branch_not_found"
         case .worktreeDirty: "worktree_dirty"
         case .cannotRemoveMain: "cannot_remove_main"
         case .notManaged: "not_managed"
@@ -96,7 +100,20 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .missingTarget(let flag): "Could not tell which one you mean. Pass \(flag)."
         case .invalidBranch(let name): "Not a valid branch name: \(name)"
         case .invalidBase(let ref): "No commit matches --from \(ref)."
-        case .branchCheckedOut(let name): "Branch \(name) is already checked out in another worktree."
+        case .branchCheckedOut(let name, let row?):
+            switch row.rowClass {
+            case .main: "Branch \(name) is checked out in the main checkout at \(row.path)."
+            case .canopy, .adopted:
+                "Branch \(name) already has a row at \(row.path). Run `canopy row select \(name)` to show it."
+            case .external:
+                "Branch \(name) is checked out in another tool's worktree at \(row.path). "
+                    + "Run `canopy row adopt \(row.path)` to show it as a row."
+            }
+        case .branchCheckedOut(let name, nil): "Branch \(name) is already checked out in another worktree."
+        case .branchNotFound(let name, nil):
+            "No branch \(name) here or on origin. Leave out --existing to create it."
+        case .branchNotFound(let name, let failure?):
+            "No branch \(name) here or in what Canopy last saw of origin, because \(failure)."
         case .worktreeDirty(let path): "\(path) has uncommitted changes. Pass --force to remove it anyway."
         case .cannotRemoveMain: "The main checkout cannot be removed."
         case .notManaged(let path): "\(path) belongs to another tool. Adopt it first."
