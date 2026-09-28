@@ -18,7 +18,7 @@ struct LocalGitHub {
 
     init(_ dir: TempDir) throws {
         self.dir = dir
-        git = GitRunner(environment: Self.rewriting(to: dir.sub("remotes")))
+        git = GitRunner(executable: Fixture.gitPath, environment: Self.rewriting(to: dir.sub("remotes")))
         try FileManager.default.createDirectory(atPath: dir.sub("gh-prs"), withIntermediateDirectories: true)
         gh = try Fixture.gh(
             in: dir,
@@ -50,7 +50,7 @@ struct LocalGitHub {
 
     /// This process's environment, with https://github.com/ rewritten to `remotes`.
     static func rewriting(to remotes: String) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
+        var environment = Fixture.environment
         environment["GIT_CONFIG_COUNT"] = "1"
         environment["GIT_CONFIG_KEY_0"] = "url.\(remotes)/.insteadOf"
         environment["GIT_CONFIG_VALUE_0"] = "https://github.com/"
@@ -152,7 +152,7 @@ struct LocalGitHub {
     /// A GitRunner like `git` whose git first runs `before` (bash, with the arguments in "$@").
     func git(before: String) throws -> GitRunner {
         let script = dir.sub("git-wrapper-\(UUID().uuidString.prefix(6))")
-        try "#!/bin/bash\n\(before)\nexec /usr/bin/git \"$@\"\n".write(
+        try "#!/bin/bash\n\(before)\nexec '\(Fixture.gitPath)' \"$@\"\n".write(
             toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
         return GitRunner(executable: script, environment: Self.rewriting(to: remotes))

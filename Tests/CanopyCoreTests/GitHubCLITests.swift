@@ -107,6 +107,7 @@ struct GitHubCLITests {
 
         #expect(found == repo)
         #expect(elapsed < .seconds(5))
+    }
 
     @Test func looksUpOnePullRequest() async throws {
         let dir = try TempDir()
