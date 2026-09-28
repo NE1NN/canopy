@@ -138,7 +138,7 @@ struct TerminalStoreAgentTests {
         defer { rows.terminals.closeAll() }
         let pane = rows.otherRow
         pane.report(AgentReport(state: .done))
-        pane.type("next step\r")
+        await pane.type("next step", enter: true)
 
         let waiting = Task { try await rows.terminals.waitForAgents([pane.id], for: .done, timeout: .seconds(20)) }
         try await Task.sleep(for: .milliseconds(100))
@@ -174,7 +174,7 @@ struct TerminalStoreAgentTests {
             try await rows.terminals.waitForAgents([rows.beside.id], for: .done, timeout: .seconds(20))
         }
         try await Task.sleep(for: .milliseconds(100))
-        rows.beside.type("\u{3}")
+        await rows.beside.type("\u{3}")
         await #expect(throws: WorkspaceError.agentStopped(rows.beside.id.description)) { try await stopping.value }
     }
 

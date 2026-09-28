@@ -43,13 +43,33 @@ struct PaneAgentStateTests {
         #expect(pane.agent.state == .none)
 
         _ = pane.report(AgentReport(state: .waiting, event: "PermissionRequest"))
-        pane.type("\r")
+        await pane.type("", enter: true)
         #expect(pane.agent.state == .working)
 
         let events = await logged(terminals, "agent")
         #expect(events.map(\.type) == ["agent.working", "agent.cleared", "agent.waiting", "agent.working"])
         #expect(events.map { $0.data["via"] } == ["term.state", "key", "PermissionRequest", "key"])
         #expect(events[1].data["session"] == nil)
+    }
+
+    @Test func returnFromTermSendAnswersAPromptOnceItIsIn() async throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        #expect(await eventually { pane.foreground?.name == "bash" })
+
+        // `canopy term send <pane> 1 --enter` picks an option: the text alone leaves the prompt, and Return answers it.
+        pane.report(AgentReport(state: .waiting, event: "PermissionRequest"))
+        await pane.type("1", enter: true)
+        #expect(pane.agent.state == .working)
+        let events = await logged(terminals, "agent")
+        #expect(events.last?.data["via"] == "key")
+
+        // An answer typed at the agent's own input line waits for the next prompt's hook instead.
+        pane.report(AgentReport(state: .waiting, event: "Stop", question: true))
+        await pane.type("No, it is sunny.", enter: true)
+        #expect(pane.agent.state == .waiting)
     }
 
     @Test func theProgramExitingClearsTheState() async throws {
@@ -68,7 +88,7 @@ struct PaneAgentStateTests {
             })
         _ = pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
         #expect(pane.agent.state == .done)
-        pane.type("\u{4}")
+        await pane.type("\u{4}")
 
         #expect(
             await eventually {
@@ -104,7 +124,7 @@ struct PaneAgentStateTests {
         await pane.run("cat")
         #expect(await eventually { pane.isBusy })
         pane.report(AgentReport(state: .done))
-        pane.type("\u{4}")
+        await pane.type("\u{4}")
         #expect(await eventually { !pane.isBusy })
 
         pane.refreshActivity()
