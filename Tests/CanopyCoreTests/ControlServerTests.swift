@@ -222,6 +222,71 @@ struct ControlServerTests {
         #expect(main.error?.code == "no_pr_lookup")
     }
 
+    @Test func portsAnswerOverTheSocket() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let feature = dir.sub("home/worktrees/demo/feat-web")
+        try await Fixture.worktree(repo: repo, branch: "feat/web", at: feature)
+        let (_, server, client, _) = try await startServer(dir)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        // Started in the main row's terminal but working in /, so only the terminal ties it to the row.
+        let listener = "cd / && perl -MIO::Socket::INET -e '\(ListeningChild.bindSparePort) sleep 120'"
+        let pane = try await call(
+            client, TermMethod.new, TermNewParams(target: TargetHint(repo: "demo", row: "main"), run: listener),
+            as: TermNewResult.self)
+        // Started outside Canopy, in the feature row's folder.
+        let outside = try await ListeningChild.start(in: feature)
+        defer { outside.process.terminate() }
+        // A port from the system's random range, like an agent's MCP server, is not something to open or stop.
+        let tool = try await ListeningChild.start(in: feature, anyPort: true)
+        defer { tool.process.terminate() }
+
+        var all: [PortInfo] = []
+        #expect(
+            await eventually {
+                all = (try? await call(client, PortMethod.list, PortsListParams(all: true), as: [PortInfo].self)) ?? []
+                return all.count == 2
+            })
+        #expect(all.map(\.row) == ["main", "feat/web"])
+        #expect(all.first?.process == "perl")
+        #expect(all.last?.port == Int(outside.port.port))
+        let featureOnly = try await call(
+            client, PortMethod.list, PortsListParams(target: TargetHint(repo: "demo", row: "feat/web")),
+            as: [PortInfo].self)
+        #expect(featureOnly.map(\.pid) == [outside.port.pid])
+        #expect(!all.contains { $0.pid == tool.port.pid })
+        // An agent in the main row stopping the feature row's port is refused, unless it asks for any row.
+        let fromMain = try await offPool {
+            try client.send(
+                ControlRequest(
+                    method: PortMethod.stop,
+                    params: try .from(
+                        PortsStopParams(port: Int(outside.port.port), target: TargetHint(repo: "demo", row: "main")))))
+        }
+        #expect(fromMain.error?.code == "port_in_other_row")
+        #expect(fromMain.error?.message.contains("feat/web") == true)
+
+        let stopped = try await call(
+            client, PortMethod.stop,
+            PortsStopParams(port: Int(outside.port.port), target: TargetHint(repo: "demo", row: "main"), all: true),
+            as: PortsStopResult.self)
+
+        #expect(stopped.stopped.map(\.pid) == [outside.port.pid])
+        #expect(stopped.killed.isEmpty)
+        #expect(await eventually { !outside.process.isRunning })
+        // This test process listens too, but its folder is no row's, so the port is not Canopy's to stop.
+        let stranger = try Listener()
+        let strangerPort = Int(stranger.port)
+        let refused = try await offPool {
+            try client.send(
+                ControlRequest(method: PortMethod.stop, params: try .from(PortsStopParams(port: strangerPort))))
+        }
+        #expect(refused.error?.code == "port_not_found")
+        _ = stranger
+        _ = try await call(client, TermMethod.close, TermCloseParams(pane: pane.pane, force: true), as: JSONValue.self)
+    }
+
     @Test func errorsCarryCodes() async throws {
         let dir = try TempDir()
         let (_, server, client, _) = try await startServer(dir)
@@ -277,6 +342,7 @@ struct ControlServerTests {
             var chunk = [UInt8](repeating: 0, count: 65_536)
             while received.filter({ $0 == 0x0A }).count < lines {
                 let count = read(fd, &chunk, chunk.count)
+                if count < 0 && errno == EINTR { continue }
                 guard count > 0 else { break }
                 received.append(contentsOf: chunk[0..<count])
             }
@@ -317,7 +383,7 @@ struct ControlServerTests {
 
         let replies = try await exchange(home.socketPath, payload, lines: 2)
 
-        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false])
+        #expect(replies.map { $0.contains(#""id":"first""#) } == [true, false], "\(replies)")
     }
 
     @Test func overLongLinesAreRejected() async throws {

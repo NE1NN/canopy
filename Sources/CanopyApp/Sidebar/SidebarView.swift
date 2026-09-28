@@ -61,14 +61,21 @@ struct SidebarView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                chooseFolder(for: .addRepo)
-            } label: {
-                Label("Add Repo", systemImage: "plus")
+            VStack(spacing: 0) {
+                Divider()
+                PortsPanel()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+                Button {
+                    chooseFolder(for: .addRepo)
+                } label: {
+                    Label("Add Repo", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.borderless)
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sheet(item: $newRowRepo) { repo in
             NewRowSheet(repo: repo)
@@ -201,7 +208,7 @@ struct PullRequestNumber: View {
         Button {
             if let url = URL(string: pr.url) { openURL(url) }
         } label: {
-            Text("#\(pr.number)")
+            Text(verbatim: "#\(pr.number)")
                 .font(.callout)
                 .monospacedDigit()
                 .foregroundStyle(pr.state.style(on: prominence))

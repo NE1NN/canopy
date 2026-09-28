@@ -395,6 +395,8 @@ Repos whose `origin` is not on GitHub show no badges.
 Every 2 seconds while the window is visible, and on demand for the CLI, Canopy lists every TCP socket in the listening state owned by the current user.
 It reads this with libproc (`proc_listpids`, `proc_pidinfo`, `proc_pidfdinfo`) rather than running `lsof`.
 IPv4 and IPv6 sockets on the same port and process count as one port.
+Ports in the system's random range (49152 and up by default) are left out.
+Programs get those when they ask for any free port, as agents' MCP servers and debuggers do, and they are not servers to open or stop.
 
 ### Attribution
 

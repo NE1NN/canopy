@@ -137,10 +137,8 @@ public final class PtyProcess: @unchecked Sendable {
     /// The process group the terminal is running in the foreground, such as `claude` or the shell itself.
     public var foreground: ForegroundProcess? {
         let group = state.withLock { $0.fd >= 0 ? tcgetpgrp($0.fd) : -1 }
-        guard group > 0 else { return nil }
-        var name = [CChar](repeating: 0, count: 256)
-        guard proc_name(group, &name, UInt32(name.count)) > 0 else { return nil }
-        return ForegroundProcess(pid: group, name: name.withUnsafeBufferPointer { String(cString: $0.baseAddress!) })
+        guard group > 0, let name = ProcessTable.name(of: group) else { return nil }
+        return ForegroundProcess(pid: group, name: name)
     }
 
     /// True while the process itself is in the foreground with its line editor waiting for input.
@@ -266,17 +264,6 @@ public final class PtyProcess: @unchecked Sendable {
     private func stopReading() {
         readSource?.cancel()
         readSource = nil
-    }
-
-    /// The working folder of a process, read from the kernel.
-    public static func currentDirectory(of pid: pid_t) -> String? {
-        var info = proc_vnodepathinfo()
-        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
-        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { raw in
-            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
-        }
-        return path.isEmpty ? nil : path
     }
 
     static func exitCode(fromWaitStatus status: Int32) -> Int32 {

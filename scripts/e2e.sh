@@ -166,6 +166,25 @@ wait_for_text sent-text || fail "term send did not reach the terminal"
 if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
 "$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
 
+step "canopy ports lists a server started in a row's terminal, and stops it"
+# A free port below the system's random range, where Canopy looks for servers.
+listen='my $s; for (1..200) { $s = IO::Socket::INET->new(Listen => 5, LocalAddr => "127.0.0.1", LocalPort => 20000 + int(rand(20000))) and last } $s or die; sleep 300'
+server=$("$cli" term new --repo demo --row feat/term --run "cd / && perl -MIO::Socket::INET -e '$listen'" --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+port=""
+for _ in $(seq 1 100); do
+    port=$("$cli" ports --repo demo --row feat/term --json |
+        /usr/bin/python3 -c 'import json, sys; ports = json.load(sys.stdin); print(ports[0]["port"] if ports else "")')
+    [[ -n "$port" ]] && break
+    sleep 0.1
+done
+[[ -n "$port" ]] || fail "canopy ports did not list the server"
+"$cli" ports --all | grep -q "^$port " || fail "ports --all is missing $port"
+"$cli" ports stop "$port" | grep -q "Stopped perl" || fail "ports stop did not stop the server"
+if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $port is still listed"; fi
+"$cli" term close "$server" >/dev/null
+"$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
+
 step "canopy pr says when a repo's origin is not on GitHub"
 if "$cli" pr feat/term --repo demo --json > "$work/pr-local.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"not_github"' "$work/pr-local.json" || fail "missing not_github"
