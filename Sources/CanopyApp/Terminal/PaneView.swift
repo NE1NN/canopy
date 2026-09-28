@@ -14,7 +14,7 @@ struct PaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PaneHeader(title: pane.title, isFocused: isFocused, onClose: onClose)
+            PaneHeader(pane: pane, isFocused: isFocused, onClose: onClose)
                 // The header is the handle for dragging the pane onto another one.
                 .onDrag {
                     onDragStart()
@@ -30,7 +30,7 @@ struct PaneView: View {
                 onSizeChange: onSizeChange
             )
             if case .exited(let code) = pane.status {
-                ExitStrip(code: code)
+                ExitStrip(pane: pane, code: code)
             }
         }
         .task(id: pane.id) {
@@ -44,60 +44,95 @@ struct PaneView: View {
 }
 
 struct PaneHeader: View {
-    static let height = 24.0
+    static let height = Style.paneHeaderHeight
 
-    let title: String
+    let pane: Pane
     let isFocused: Bool
     let onClose: () -> Void
     @Environment(\.controlActiveState) private var activeState
+    @State private var isHovering = false
 
     private var isHighlighted: Bool { isFocused && activeState == .key }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(title.isEmpty ? "Terminal" : title)
-                .font(.system(size: 11, weight: isHighlighted ? .semibold : .regular))
+        HStack(spacing: 7) {
+            PaneStatusMark(pane: pane)
+                .frame(width: 12)
+            Text(pane.title.isEmpty ? "Terminal" : pane.title)
+                .font(Style.meta.weight(isHighlighted ? .semibold : .regular))
                 .foregroundStyle(isHighlighted ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+            if isHovering {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Close Terminal (⌘W)")
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .help("Close Terminal (⌘W)")
         }
         .padding(.leading, 10)
-        .padding(.trailing, 6)
+        .padding(.trailing, 5)
         .frame(height: Self.height)
-        .background(isHighlighted ? Color.accentColor.opacity(0.14) : Color(nsColor: .windowBackgroundColor))
+        .background {
+            Style.chrome
+                .overlay(isHighlighted ? Color.accentColor.opacity(0.14) : .clear)
+        }
         .overlay(alignment: .bottom) {
             Rectangle().fill(.separator).frame(height: 1)
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Close Terminal", onClose)
+    }
+}
+
+/// What a pane is doing: an idle shell, a running program, or an exit, with its code.
+struct PaneStatusMark: View {
+    let pane: Pane
+    var size = 11.0
+
+    var body: some View {
+        switch pane.status {
+        case .exited(let code):
+            Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.system(size: size))
+                .foregroundStyle(code == 0 ? .green : .red)
+                .accessibilityLabel(code == 0 ? "Exited" : "Exited with code \(code)")
+        case .running where pane.isRunningProgram:
+            RunningDot()
+        case .running:
+            Image(systemName: "terminal")
+                .font(.system(size: size))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
     }
 }
 
 struct ExitStrip: View {
+    let pane: Pane
     let code: Int32
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                .foregroundStyle(code == 0 ? .green : .red)
-            Text("exited (code \(code))")
-                .fontWeight(.medium)
-            Text("Return restarts the shell. ⌘W closes the terminal.")
+        HStack(spacing: 8) {
+            PaneStatusMark(pane: pane, size: 13)
+            Text(code == 0 ? "Exited" : "Exited with code \(code)")
+                .font(Style.body.weight(.semibold))
+            Text("Return restarts the shell. ⌘W closes it.")
+                .font(Style.meta)
                 .foregroundStyle(.secondary)
             Spacer()
         }
-        .font(.callout)
         .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(.bar)
+        .frame(height: 30)
+        .background(Style.chrome)
         .overlay(alignment: .top) {
             Rectangle().fill(.separator).frame(height: 1)
         }

@@ -273,14 +273,15 @@ Scrollback holds 10,000 lines per pane.
 
 ### Pane chrome
 
-Each pane has a thin header with its title and a close button.
+Each pane has a thin header with a status mark, its title, and a close button that shows on hover.
+The mark is a terminal glyph while the shell is idle, a running dot while a program runs, and a green check or red cross after the shell exits.
 The title comes from the running program when it sets one, and falls back to the foreground process name.
 The header is the drag handle.
 The focused pane's header is highlighted.
 
 ### Process exit
 
-When a pane's shell exits, the pane shows "exited (code N)".
+When a pane's shell exits, a strip at the bottom of the pane says "Exited", or "Exited with code N" for a nonzero code.
 Enter restarts the shell in the same folder, and `⌘W` closes the pane.
 
 ### Hidden panes
