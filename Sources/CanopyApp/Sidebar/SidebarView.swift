@@ -7,6 +7,8 @@ struct SidebarView: View {
     @State private var newRow: NewRowRequest?
     /// Repos whose other worktrees are shown.
     @State private var expanded: Set<String> = []
+    /// Where each line a dragged row can land sits in the list.
+    @State private var dropSlots: [DropSlot] = []
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -65,6 +67,14 @@ struct SidebarView: View {
                     )
                 }
             }
+            .coordinateSpace(.rowList)
+            .onPreferenceChange(DropSlotsKey.self) { dropSlots = $0 }
+            .overlay(alignment: .topLeading) {
+                if let target = model.rowDropTarget {
+                    RowDropIndicator(target: target, slots: dropSlots)
+                }
+            }
+            .onDrop(of: [.canopyRow], delegate: RowDropDelegate(model: model, slots: dropSlots))
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
             // Fills the column even with no repos, so the empty state gets the whole width.
@@ -131,7 +141,11 @@ struct RepoSection: View {
                     let rows = repo.rows(inGroup: group.name)
                     GroupHeaderView(
                         repo: repo, group: group, count: rows.count, isFocused: isFocused,
-                        onNewRow: { onNewRow(group.name) })
+                        isDropTarget: model.draggedRow?.repoPath == repo.path
+                            && model.rowDropTarget?.indicator == .header(group.name),
+                        onNewRow: { onNewRow(group.name) }
+                    )
+                    .dropSlot(repo: repo.path, .header(group.name))
                     if !group.collapsed {
                         ForEach(rows) { row in
                             line(for: row, indent: Style.groupIndent)
@@ -160,6 +174,7 @@ struct RepoSection: View {
             row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
             shortcut: model.shortcut(for: row), removable: row.rowClass != .main, indent: indent
         )
+        .dropSlot(repo: repo.path, row.rowClass == .main ? .main(row.path) : .row(row.path, group: row.group))
         .id(row.path)
     }
 }
@@ -268,6 +283,9 @@ struct RowLineView: View {
 
     private var isRunning: Bool { model.terminals.isRunningProgram(inRow: row.path) }
 
+    /// Hover stops updating during a drag, so the row being dragged drops its hover look itself.
+    private var isDragged: Bool { model.isDraggingRowOverList && model.draggedRow?.path == row.path }
+
     var body: some View {
         HStack(spacing: 8) {
             RowMark(row: row)
@@ -290,7 +308,7 @@ struct RowLineView: View {
             if let pr = row.pullRequest {
                 PullRequestNumber(pr: pr)
             }
-            if isHovering || isConfirmingRemove {
+            if (isHovering && !isDragged) || isConfirmingRemove {
                 if let shortcut {
                     Text(verbatim: "⌘\(shortcut)")
                         .font(Style.meta)
@@ -321,6 +339,9 @@ struct RowLineView: View {
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
         .contentShape(Rectangle())
         .onTapGesture { model.selectedRowPath = row.path }
+        .rowDragSource(row, model: model)
+        // The dragged row dims in place while its image follows the pointer over the list.
+        .opacity(isDragged ? 0.4 : 1)
         .contextMenu { RowMenuItems(row: row, onNewGroup: { isNamingGroup = true }) }
         .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
             GroupNamePopover(title: "New Group", actionTitle: "Create and Move", isPresented: $isNamingGroup) { name in
@@ -339,7 +360,7 @@ struct RowLineView: View {
 
     private var fill: Color {
         if isSelected { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
-        return isHovering ? Style.hoverFill : .clear
+        return isHovering && !isDragged ? Style.hoverFill : .clear
     }
 
     private var accessibilityLabel: String {

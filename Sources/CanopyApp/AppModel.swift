@@ -254,6 +254,13 @@ final class AppModel {
         perform { try await $0.setGroupCollapsed(repoPath: repo.path, name: group.name, collapsed: collapsed) }
     }
 
+    /// The row being dragged in the sidebar, set when its drag starts, so drops only react to Canopy's own rows.
+    var draggedRow: Row?
+    /// Whether that drag is over the repo list, where the row dims in place.
+    var isDraggingRowOverList = false
+    /// Where the dragged row would land, which the list draws.
+    var rowDropTarget: RowDropTarget?
+
     /// Move to Group and drops. A failure shows in a toast.
     func move(_ row: Row, to placement: RowPlacement) {
         perform { _ = try await $0.moveRow(path: row.path, to: placement) }
