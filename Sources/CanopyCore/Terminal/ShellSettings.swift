@@ -13,22 +13,27 @@ public struct ShellSettings: Sendable, Equatable {
     public var home: CanopyHome
     /// LANG for terminals when the app has none, as Terminal sets it.
     public var language: String
+    /// Whether zsh terminals start through Canopy's shim, which reports the commands they run. Off with
+    /// "logCommands": false in config.json.
+    public var logsCommands: Bool
 
     public init(
         shell: String,
         baseEnvironment: [String: String],
         cliDirectory: String?,
         home: CanopyHome,
-        language: String = "en_US.UTF-8"
+        language: String = "en_US.UTF-8",
+        logsCommands: Bool = false
     ) {
         self.shell = shell
         self.baseEnvironment = baseEnvironment
         self.cliDirectory = cliDirectory
         self.home = home
         self.language = language
+        self.logsCommands = logsCommands
     }
 
-    public static func current(home: CanopyHome, cliDirectory: String?) -> ShellSettings {
+    public static func current(home: CanopyHome, cliDirectory: String?, logsCommands: Bool) -> ShellSettings {
         ShellSettings(
             shell: LoginShell.path(),
             baseEnvironment: ProcessInfo.processInfo.environment,
@@ -36,13 +41,28 @@ public struct ShellSettings: Sendable, Equatable {
             home: home,
             language: LoginShell.language(for: Locale.current.identifier) {
                 FileManager.default.fileExists(atPath: "/usr/share/locale/\($0)")
-            }
+            },
+            logsCommands: logsCommands
         )
     }
 
-    /// An interactive login shell, started the way Terminal starts one: argv[0] is "-zsh".
-    public func interactiveShell(environment: [String: String], directory: String) -> TerminalLaunch {
-        TerminalLaunch(
+    /// Whether interactive shells report the commands they run. Only zsh has a shim.
+    var reportsCommands: Bool {
+        logsCommands && Self.name(of: shell) == "zsh"
+    }
+
+    /// An interactive login shell, started the way Terminal starts one: argv[0] is "-zsh". zsh starts through
+    /// Canopy's shim while commands are logged, and signs its reports with `commandToken`.
+    public func interactiveShell(
+        environment: [String: String], directory: String, commandToken: String? = nil
+    ) -> TerminalLaunch {
+        var environment = environment
+        // Written again if it went missing: zsh pointed at a folder without it would skip the user's startup files.
+        if reportsCommands, let commandToken, let folder = try? ZshIntegration.install(in: home) {
+            environment["ZDOTDIR"] = folder
+            environment["CANOPY_COMMAND_TOKEN"] = commandToken
+        }
+        return TerminalLaunch(
             executable: shell, arguments: ["-" + Self.name(of: shell)], environment: environment, directory: directory)
     }
 

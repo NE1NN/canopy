@@ -28,7 +28,9 @@ final class AppModel {
         let activity = ActivityLog(folder: home.activityFolder, logsCommands: config.logCommands)
         let workspace = Workspace(home: home, activity: activity)
         let terminals = TerminalStore(
-            engine: SwiftTermEngine(), settings: .current(home: home, cliDirectory: Self.bundledCLIDirectory()),
+            engine: SwiftTermEngine(),
+            settings: .current(
+                home: home, cliDirectory: Self.bundledCLIDirectory(), logsCommands: config.logCommands),
             activity: activity)
         self.config = config
         self.activity = activity

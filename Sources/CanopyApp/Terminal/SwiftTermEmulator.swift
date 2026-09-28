@@ -36,6 +36,8 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         view = terminalView
         super.init()
         terminalView.terminalDelegate = self
+        // Panes read the zsh shim's command reports from the output before it gets here.
+        terminalView.getTerminal().registerOscHandler(code: ZshIntegration.reportCode) { _ in }
         terminalView.installColors(Self.palette)
         applyAppearance(NSApp.effectiveAppearance)
     }

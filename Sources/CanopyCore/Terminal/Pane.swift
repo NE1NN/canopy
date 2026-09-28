@@ -30,6 +30,8 @@ public final class Pane: Identifiable {
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
     @ObservationIgnored private var isClosed = false
     @ObservationIgnored private var isScript = false
+    /// Reads the shell's command reports, while commands are logged.
+    @ObservationIgnored private var commandMarks: CommandMarkScanner?
 
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
@@ -133,15 +135,19 @@ public final class Pane: Identifiable {
     private func start(_ command: PaneCommand) {
         if case .script = command { isScript = true } else { isScript = false }
         let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
+        // A new secret for each shell, so only reports this shell prints count.
+        let token = settings.reportsCommands ? UUID().uuidString : nil
         let launch =
             switch command {
-            case .shell: settings.interactiveShell(environment: environment, directory: directory)
+            case .shell:
+                settings.interactiveShell(environment: environment, directory: directory, commandToken: token)
             case .script(let script): settings.script(script, environment: environment, directory: directory)
             }
+        commandMarks = launch.environment["CANOPY_COMMAND_TOKEN"].map(CommandMarkScanner.init(token:))
         do {
             process = try PtyProcess(
                 launch, size: emulator.size,
-                onOutput: { [weak self] in self?.emulator.feed($0) },
+                onOutput: { [weak self] in self?.output($0) },
                 onExit: { [weak self] in self?.processExited($0) }
             )
             status = .running
@@ -153,6 +159,21 @@ public final class Pane: Identifiable {
             emulator.feed(Data("\(error)\r\n".utf8))
             processExited(127)
         }
+    }
+
+    private func output(_ data: Data) {
+        // A closed pane already logged its exit, and output still on its way from before then comes after it.
+        let marks = isClosed ? [] : commandMarks?.scan(data) ?? []
+        for mark in marks {
+            var report: [String: JSONValue] = [
+                "cmd": .string(mark.command), "cwd": .string(mark.directory), "exit": .number(Double(mark.exitCode)),
+            ]
+            if let duration = mark.durationMs {
+                report["durationMs"] = .number(Double(duration))
+            }
+            record(ActivityType.termCommand, report, source: .ui)
+        }
+        emulator.feed(data)
     }
 
     private func input(_ data: Data) {
@@ -169,9 +190,9 @@ public final class Pane: Identifiable {
         refreshTitle()
     }
 
-    private func record(_ type: String, _ data: [String: JSONValue] = [:]) {
+    private func record(_ type: String, _ data: [String: JSONValue] = [:], source: ActivitySource = .current) {
         activity.record(
-            type, repo: context.repoName, row: context.rowName, path: context.rowPath,
+            type, repo: context.repoName, row: context.rowName, path: context.rowPath, source: source,
             data: data.merging(["pane": .string(id.description)]) { value, _ in value })
     }
 
