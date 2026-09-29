@@ -423,12 +423,20 @@ extension Workspace {
     }
 
     /// Unfolds whatever hides a row, its repo and its group or its plugin's section, so selecting the row shows it.
+    /// A repo and its group unfold in one change, so the sidebar gets both back in one snapshot.
     public func revealRow(path: String) throws {
-        for fold in snapshot.folds(hiding: path) {
-            switch fold {
-            case .repo(let repoPath): try setRepoCollapsed(repoPath: repoPath, collapsed: false)
-            case .group(let repoPath, let name): try setGroupCollapsed(repoPath: repoPath, name: name, collapsed: false)
-            case .plugin(let id): try setPluginCollapsed(id, collapsed: false)
+        let folds = snapshot.folds(hiding: path)
+        if case .plugin(let id) = folds.first {
+            return try setPluginCollapsed(id, collapsed: false)
+        }
+        guard !folds.isEmpty, let row = snapshot.row(path: path) else { return }
+        try changeEntry(repoPath: row.repoPath) { entry, repo in
+            for fold in folds {
+                switch fold {
+                case .repo: entry.collapsed = false
+                case .group(_, let name): entry.groups[try entry.requireGroup(name, repo: repo)].collapsed = false
+                case .plugin: break
+                }
             }
         }
     }
@@ -784,7 +792,7 @@ struct RepoHeaderView: View {
     /// A folded repo shows the most urgent agent dot among the rows it hides.
     private var agentDot: AgentDot? {
         guard repo.collapsed else { return nil }
-        return model.terminals.agentDot(inRows: repo.allRows.map(\.path))
+        return model.terminals.agentDot(inRows: repo.rows.map(\.path))
     }
 
     var body: some View {
@@ -835,7 +843,6 @@ struct RepoHeaderView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
-        .help(repo.path)
         .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
         .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
             GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
@@ -846,15 +853,23 @@ struct RepoHeaderView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        // The header reads as one button, so its own buttons are reached as named actions.
+        .accessibilityActions {
+            if repo.isMissing {
+                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
+            } else {
+                Button("New Row…", action: onNewRow)
+            }
+        }
     }
 
     /// A folded repo holding the selected row shows the selection, so the sidebar always says where the window is.
+    private var holdsSelection: Bool { model.selectionFold == .repo(repo.path) }
+
     private var fill: Color {
-        if model.selectionFold == .repo(repo.path) {
-            return isFocused ? Style.focusedSelectionFill : Style.selectionFill
-        }
+        if holdsSelection { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
         return isHovering ? Style.hoverFill : .clear
     }
 
@@ -983,3 +998,23 @@ git commit -am "docs: folding repos and plugin sections in the specs"
 - [ ] Window shots in dark and light, checking the chevron, dot, and count line up with the group headers'.
 - [ ] `make lint`, `make build` and `swift build --build-tests $(scripts/test-flags.sh)` with 0 warnings, three `make test` runs under the shared lock, `make e2e`, on a branch rebased onto the current `origin/main`.
 - [ ] An independent reviewer on `git diff origin/main...HEAD` with the specs and this plan, its findings fixed and listed under After Review below.
+
+## After Review
+
+An independent Opus reviewer read `git diff origin/main...HEAD` with the specs and this plan.
+It found no high or medium issues, and these low ones, fixed in one commit unless noted:
+
+1. A missing repo's Locate… button was merged into the header's single VoiceOver button.
+   The repo header now offers Locate… or New Row… as named accessibility actions, and a plugin header offers its new row action.
+2. A folded header holding the selection did not tell VoiceOver.
+   Repo, group, and plugin headers now add the selected trait while they hold the selection.
+3. The repo header gained a tooltip of its path that nothing asked for, so it is gone.
+4. New Group… in a folded repo made a group nobody could see.
+   Creating a group from the window now unfolds its repo; `canopy group new` leaves the fold alone, since an agent does not look at the sidebar.
+5. A folded repo's agent dot counted other tools' worktrees while its count did not, so the dot now reads the same rows as the count.
+6. Two comments still spoke only of groups, one comment ran past 120 columns, and one agent guide sentence read as if the fold commands stayed where they were; all rewritten.
+7. The main spec's plugin command row did not mention folding; it does now.
+8. Revealing a row hidden by both its repo and its group saved and published twice.
+   `revealRow` now unfolds both in one `changeEntry`, so the sidebar gets one snapshot.
+9. Not changed: the list does not scroll to a folded header that holds the selection after a relaunch, since headers have no scroll id.
+   Collapsed groups already behave this way, and every selection made from outside the list unfolds first, so only a relaunch shows it.

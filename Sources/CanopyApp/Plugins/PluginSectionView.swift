@@ -82,15 +82,18 @@ struct PluginHeaderView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(section.collapsed ? "Collapsed" : "Expanded")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        .accessibilityActions {
+            Button("\(section.info.newRowTitle)…", action: onNewRow)
+        }
     }
 
     /// A folded section holding the selected row shows the selection, so the sidebar always says where the window is.
+    private var holdsSelection: Bool { model.selectionFold == .plugin(section.id) }
+
     private var fill: Color {
-        if model.selectionFold == .plugin(section.id) {
-            return isFocused ? Style.focusedSelectionFill : Style.selectionFill
-        }
+        if holdsSelection { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
         return isHovering ? Style.hoverFill : .clear
     }
 

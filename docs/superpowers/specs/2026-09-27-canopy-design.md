@@ -283,6 +283,7 @@ A repo folds away under its header, so one repo with thirty rows does not bury t
   It is the group header's chevron, the same glyph, size, and color, pointing right while the repo is folded and down while it is open.
   It follows the name rather than sitting in the mark column, because the tile holds that column and lines up with the rows' marks below it.
 - Clicking the header anywhere but its buttons folds or unfolds the repo, as a group header does.
+- New Group… in a folded repo's menu unfolds it, so the new group shows.
 - A folded repo shows its header alone: no PR warning, main row, ungrouped rows, groups, or other worktrees.
 - While folded, the header shows the most urgent agent dot among the repo's rows before its count, as a folded group's header does.
   The count stays the count of every row but external ones.
@@ -297,6 +298,7 @@ A repo folds away under its header, so one repo with thirty rows does not bury t
 - A folded repo's header is not a drop target, and a drag hovering over it does not unfold it.
   Rows only move within their own repo, and a folded repo shows no row to drag, so no drop ever needs it.
 - VoiceOver reads the header as one button, such as "web-app, repo, 7 rows, agent waiting for you", with the value collapsed or expanded, and its action folds or unfolds the repo.
+  It is selected while it holds the selection, and New Row… or Locate… are its named actions.
 - The ports panel still lists the ports of rows in folded repos, and picking one unfolds the repo.
 - The fold is saved in the repo's entry in `state.json` as `collapsed`, which decodes as open when it is missing or cannot be read, and it is kept across relaunches.
   Folding is how the sidebar looks, so it logs no event of its own, only the `cli.call` of a `canopy` command.
@@ -598,7 +600,7 @@ Every command exits non-zero on failure.
 | `canopy pr show [<row>] [--refresh]` | show a row's PR; `canopy pr` alone does the same |
 | `canopy pr list [--query <text>] [--closed]` | list the repo's PRs and the row that has each |
 | `canopy branch list [--query <text>] [--no-fetch]` | list local and origin branches and the row that has each |
-| `canopy plugin list\|enable\|disable\|items\|new\|collapse\|expand` | list plugins, turn them on and off, and open rows for their items, as [Plugins](2026-09-29-canopy-plugins-design.md) describes |
+| `canopy plugin list\|enable\|disable\|items\|new\|collapse\|expand` | list plugins, turn them on and off, open rows for their items, and fold their sections, as [Plugins](2026-09-29-canopy-plugins-design.md) describes |
 | `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events, from 24 hours ago by default |
 | `canopy agent-guide` | print a manual written for agents |
 

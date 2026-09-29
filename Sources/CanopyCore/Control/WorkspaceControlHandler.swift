@@ -433,7 +433,7 @@ public struct WorkspaceControlHandler: Sendable {
         return found.path
     }
 
-    /// A row hidden in a collapsed group unfolds first, so the sidebar shows what is selected.
+    /// A row hidden in a folded repo, group, or plugin section unfolds first, so the sidebar shows what is selected.
     private func select(_ path: String) async {
         try? await workspace.revealRow(path: path)
         try? await workspace.setSelectedRow(path: path)

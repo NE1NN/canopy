@@ -236,7 +236,7 @@ struct RepoHeaderView: View {
     /// A folded repo shows the most urgent agent dot among the rows it hides.
     private var agentDot: AgentDot? {
         guard repo.collapsed else { return nil }
-        return model.terminals.agentDot(inRows: repo.allRows.map(\.path))
+        return model.terminals.agentDot(inRows: repo.rows.map(\.path))
     }
 
     var body: some View {
@@ -287,7 +287,6 @@ struct RepoHeaderView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
-        .help(repo.path)
         .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
         .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
             GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
@@ -298,15 +297,23 @@ struct RepoHeaderView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        // The header reads as one button, so its own buttons are reached as named actions.
+        .accessibilityActions {
+            if repo.isMissing {
+                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
+            } else {
+                Button("New Row…", action: onNewRow)
+            }
+        }
     }
 
     /// A folded repo holding the selected row shows the selection, so the sidebar always says where the window is.
+    private var holdsSelection: Bool { model.selectionFold == .repo(repo.path) }
+
     private var fill: Color {
-        if model.selectionFold == .repo(repo.path) {
-            return isFocused ? Style.focusedSelectionFill : Style.selectionFill
-        }
+        if holdsSelection { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
         return isHovering ? Style.hoverFill : .clear
     }
 

@@ -75,8 +75,8 @@ struct AgentGuide: ParsableCommand {
 
         A group belongs to one repo and only arranges the sidebar, where it can fold away. Names match ignoring
         case. A group that does not exist is an error (group_not_found), never created for you, so make it first
-        with `group new`. `row move --group` is safe to repeat: a row already in the group stays where it is, and so
-        are `group collapse` and `group expand`, which fold it like `repo collapse` folds a repo.
+        with `group new`. `row move --group` is safe to repeat: a row already in the group stays where it is.
+        `group collapse` and `group expand` fold a group like `repo collapse` folds a repo, and are safe to repeat too.
         `row list` shows each row's group, and `row list --json` carries it as "group".
 
         ## Plugin rows

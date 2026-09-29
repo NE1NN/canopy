@@ -16,15 +16,20 @@ extension Workspace {
     }
 
     /// Unfolds whatever hides a row, its repo and its group or its plugin's section, so selecting the row shows it.
+    /// A repo and its group unfold in one change, so the sidebar gets both back in one snapshot.
     public func revealRow(path: String) throws {
-        for fold in snapshot.folds(hiding: path) {
-            switch fold {
-            case .repo(let repoPath):
-                try setRepoCollapsed(repoPath: repoPath, collapsed: false)
-            case .group(let repoPath, let name):
-                try setGroupCollapsed(repoPath: repoPath, name: name, collapsed: false)
-            case .plugin(let id):
-                try setPluginCollapsed(id, collapsed: false)
+        let folds = snapshot.folds(hiding: path)
+        if case .plugin(let id) = folds.first {
+            return try setPluginCollapsed(id, collapsed: false)
+        }
+        guard !folds.isEmpty, let row = snapshot.row(path: path) else { return }
+        try changeEntry(repoPath: row.repoPath) { entry, repo in
+            for fold in folds {
+                switch fold {
+                case .repo: entry.collapsed = false
+                case .group(_, let name): entry.groups[try entry.requireGroup(name, repo: repo)].collapsed = false
+                case .plugin: break
+                }
             }
         }
     }

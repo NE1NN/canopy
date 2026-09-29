@@ -106,8 +106,8 @@ public struct WorkspaceSnapshot: Sendable, Equatable {
     }
 
     /// The row `↑` or `↓` picks. From a row hidden in a folded repo, group, or plugin section, the next visible row
-    /// after the fold or the last before it, and nil if there is none. From no row, or one the sidebar does not step through, the first
-    /// or the last.
+    /// after the fold or the last before it, and nil if there is none. From no row, or one the sidebar does not step
+    /// through, the first or the last.
     public func steppingRow(from path: String?, offset: Int) -> SidebarRow? {
         let visible = visibleRows
         guard !visible.isEmpty else { return nil }

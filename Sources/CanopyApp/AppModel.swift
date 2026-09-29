@@ -153,7 +153,7 @@ final class AppModel {
     }
 
     /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last. From a row hidden in a
-    /// collapsed group, they go on from the group's place.
+    /// folded repo, group, or plugin section, they go on from the fold's place.
     func selectRow(offset: Int) {
         guard let row = snapshot.steppingRow(from: selectedRowPath, offset: offset) else { return }
         isSteppingRows = true
@@ -290,9 +290,12 @@ final class AppModel {
 
     // MARK: Groups
 
-    /// Returns an error message for the name popover to show, or nil.
+    /// Returns an error message for the name popover to show, or nil. A folded repo unfolds, so the new group shows.
     func createGroup(in repo: RepoSnapshot, name: String) async -> String? {
-        await message { try await $0.createGroup(repoPath: repo.path, name: name) }
+        await message { workspace in
+            try await workspace.createGroup(repoPath: repo.path, name: name)
+            try await workspace.setRepoCollapsed(repoPath: repo.path, collapsed: false)
+        }
     }
 
     /// The row menu's New Group…: makes the group, then moves the row into it.

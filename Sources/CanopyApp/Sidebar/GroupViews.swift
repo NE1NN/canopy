@@ -77,7 +77,7 @@ struct GroupHeaderView: View {
                 + (agentDot.map { ", \($0.label.lowercased())" } ?? "")
         )
         .accessibilityValue(group.collapsed ? "Collapsed" : "Expanded")
-        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
     }
 
