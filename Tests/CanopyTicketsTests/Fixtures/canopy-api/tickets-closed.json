@@ -1,0 +1,22 @@
+{
+  "tickets": [
+    {
+      "customer": "shathrem",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000848",
+      "id": "0000000000000000000010004tickets",
+      "lastActivityAt": 1789853600000,
+      "name": "closed-0848-shathrem",
+      "number": "0848",
+      "openedAt": 1789814000000,
+      "owner": {
+        "at": 1789850000000,
+        "email": "hindie@example.com",
+        "initials": "HI",
+        "via": "reply"
+      },
+      "staleHours": null,
+      "status": "closed",
+      "waiting": false
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "tickets": [
+    {
+      "customer": "shathrem",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000848",
+      "id": "0000000000000000000010004tickets",
+      "lastActivityAt": 1789853600000,
+      "name": "closed-0848-shathrem",
+      "number": "0848",
+      "openedAt": 1789814000000,
+      "owner": {
+        "at": 1789850000000,
+        "email": "hindie@example.com",
+        "initials": "HI",
+        "via": "reply"
+      },
+      "staleHours": null,
+      "status": "closed",
+      "waiting": false
+    },
+    {
+      "customer": "sameergoyal",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853",
+      "id": "0000000000000000000010001tickets",
+      "lastActivityAt": 1790004800000,
+      "name": "ticket-0853-sameergoyal",
+      "number": "0853",
+      "openedAt": 1789922000000,
+      "owner": {
+        "at": 1790001200000,
+        "email": "hindie@example.com",
+        "initials": "HI",
+        "via": "action"
+      },
+      "staleHours": 7,
+      "status": "open",
+      "waiting": true
+    },
+    {
+      "customer": "oldco",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000801",
+      "id": "0000000000000000000010005tickets",
+      "lastActivityAt": 1786790000000,
+      "name": "ticket-0801-oldco",
+      "number": "0801",
+      "openedAt": 1786790000000,
+      "owner": null,
+      "staleHours": null,
+      "status": "archived",
+      "waiting": false
+    }
+  ]
+}

@@ -17,19 +17,23 @@ let package = Package(
         .target(name: "CanopyCore", dependencies: ["CPty"]),
         // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
         .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
+        .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
         .executableTarget(
             name: "CanopyApp",
             dependencies: [
-                "CanopyCore", "CanopyFixturePlugin", .product(name: "SwiftTerm", package: "SwiftTerm"),
+                "CanopyCore", "CanopyFixturePlugin", "CanopyTickets",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ]
         ),
         .executableTarget(
             name: "CanopyCLI",
             dependencies: [
-                "CanopyCore",
+                "CanopyCore", "CanopyTickets",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
         .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"]),
+        .testTarget(
+            name: "CanopyTicketsTests", dependencies: ["CanopyCore", "CanopyTickets"], resources: [.copy("Fixtures")]),
     ]
 )
