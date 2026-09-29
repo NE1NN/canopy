@@ -27,7 +27,7 @@ struct ControlServerTests {
                 RowLifecycle(workspace: workspace, terminals: terminals),
                 PluginHost(
                     workspace: workspace, terminals: terminals, plugins: [], secrets: MemorySecretStore(),
-                    bundleID: "test", trash: MovingTrash(into: dir.sub("trash")))
+                    bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
             )
         }
         let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: ui)

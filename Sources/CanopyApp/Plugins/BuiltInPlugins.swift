@@ -23,6 +23,17 @@ enum BuiltInPlugins {
         #endif
         return plugins
     }
+
+    /// Where removed plugin rows' folders go: the Trash, or in a dev build launched with CANOPY_TRASH_FOLDER, that
+    /// folder, so end-to-end runs and UI checks on a throwaway home leave nothing in the author's Trash.
+    static func trash(environment: [String: String]) -> any FolderTrash {
+        #if DEBUG
+            if let folder = environment["CANOPY_TRASH_FOLDER"], !folder.isEmpty {
+                return FolderMovingTrash(into: folder)
+            }
+        #endif
+        return SystemTrash()
+    }
 }
 
 extension PluginColor {

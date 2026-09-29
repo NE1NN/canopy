@@ -15,7 +15,7 @@ struct FixturePluginTests {
         try await workspace.start()
         let host = PluginHost(
             workspace: workspace, terminals: Fixture.terminals(dir), plugins: [FixturePlugin()],
-            secrets: MemorySecretStore(), bundleID: "test", trash: MovingTrash(into: dir.sub("trash")))
+            secrets: MemorySecretStore(), bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
         await host.start()
         return host
     }

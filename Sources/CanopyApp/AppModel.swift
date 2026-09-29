@@ -46,11 +46,13 @@ final class AppModel {
         self.workspace = workspace
         self.terminals = terminals
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
-        let builtInPlugins = BuiltInPlugins.make(environment: ProcessInfo.processInfo.environment)
+        let environment = ProcessInfo.processInfo.environment
+        let builtInPlugins = BuiltInPlugins.make(environment: environment)
         self.builtInPlugins = builtInPlugins
         self.plugins = PluginHost(
             workspace: workspace, terminals: terminals, plugins: builtInPlugins.map(\.plugin),
-            secrets: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")
+            secrets: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy",
+            trash: BuiltInPlugins.trash(environment: environment))
     }
 
     /// The bundle's folder holding `canopy`, which terminals get on their PATH.

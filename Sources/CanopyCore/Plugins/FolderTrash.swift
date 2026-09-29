@@ -16,3 +16,20 @@ public struct SystemTrash: FolderTrash {
         return result as URL?
     }
 }
+
+/// Moves folders into a folder of its own instead of the Trash, so tests and dev builds on a throwaway home never touch
+/// the user's.
+public struct FolderMovingTrash: FolderTrash {
+    public let folder: String
+
+    public init(into folder: String) {
+        self.folder = folder
+    }
+
+    public func trash(_ url: URL) throws -> URL? {
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let destination = URL(fileURLWithPath: folder).appending(path: "\(url.lastPathComponent)-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: url, to: destination)
+        return destination
+    }
+}

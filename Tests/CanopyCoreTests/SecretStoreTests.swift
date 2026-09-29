@@ -40,7 +40,7 @@ struct SecretStoreTests {
         let folder = dir.sub("row")
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         try "note".write(toFile: folder + "/note.txt", atomically: true, encoding: .utf8)
-        let trash = MovingTrash(into: dir.sub("trash"))
+        let trash = FolderMovingTrash(into: dir.sub("trash"))
 
         let first = try #require(try trash.trash(URL(fileURLWithPath: folder)))
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)

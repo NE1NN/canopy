@@ -30,7 +30,7 @@ struct PluginControlTests {
             let terminals = Fixture.terminals(dir)
             let host = PluginHost(
                 workspace: workspace, terminals: terminals, plugins: [plugin], secrets: MemorySecretStore(),
-                bundleID: "test", trash: MovingTrash(into: dir.sub("trash")))
+                bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
             host.ui = ui
             return (RowLifecycle(workspace: workspace, terminals: terminals), host)
         }

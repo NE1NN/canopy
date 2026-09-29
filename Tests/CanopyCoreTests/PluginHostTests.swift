@@ -25,7 +25,7 @@ struct PluginHostTests {
         let terminals = Fixture.terminals(dir)
         let host = PluginHost(
             workspace: workspace, terminals: terminals, plugins: plugins, secrets: MemorySecretStore(),
-            bundleID: "test", trash: MovingTrash(into: dir.sub("trash")))
+            bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
         let ui = RecordingUI()
         host.ui = ui
         await host.start()
