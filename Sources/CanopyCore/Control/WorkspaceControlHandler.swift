@@ -99,6 +99,13 @@ public struct WorkspaceControlHandler: Sendable {
             try await rows.removeRepo(path: repo.path)
             return try .from(RepoInfo(repo))
 
+        case ControlMethod.repoCollapse, ControlMethod.repoExpand:
+            let params = try request.decodeParams(RepoFoldParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            try await workspace.setRepoCollapsed(
+                repoPath: repo.path, collapsed: request.method == ControlMethod.repoCollapse)
+            return try .from(RepoInfo(await workspace.snapshot.repo(path: repo.path) ?? repo))
+
         case ControlMethod.rowList:
             let params = try request.decodeParams(RowListParams.self)
             let snapshot = await workspace.snapshot
@@ -228,6 +235,13 @@ public struct WorkspaceControlHandler: Sendable {
             let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
             return try .from(try await workspace.removeGroup(repoPath: repo.path, name: params.name))
 
+        case GroupMethod.collapse, GroupMethod.expand:
+            let params = try request.decodeParams(GroupParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(
+                try await workspace.setGroupCollapsed(
+                    repoPath: repo.path, name: params.name, collapsed: request.method == GroupMethod.collapse))
+
         case ControlMethod.prShow:
             let params = try request.decodeParams(PRShowParams.self)
             let snapshot = await workspace.snapshot
@@ -330,6 +344,10 @@ public struct WorkspaceControlHandler: Sendable {
             }
             let query = try plugin.filters.query(text: params.query, filters: params.filters, plugin: plugin.info.name)
             return try .from(try await plugins.items(params.plugin, matching: query))
+
+        case PluginMethod.collapse, PluginMethod.expand:
+            let params = try request.decodeParams(PluginFoldParams.self)
+            return try .from(try await plugins.setCollapsed(params.plugin, request.method == PluginMethod.collapse))
 
         case PluginMethod.new:
             let params = try request.decodeParams(PluginNewParams.self)

@@ -11,7 +11,7 @@ struct GroupCommand: AsyncParsableCommand {
             Names are matched ignoring case. Put rows in a group with `canopy row move --group` or \
             `canopy row new --group`.
             """,
-        subcommands: [List.self, New.self, Rename.self, Remove.self]
+        subcommands: [List.self, New.self, Rename.self, Remove.self, Collapse.self, Expand.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -82,6 +82,34 @@ struct GroupCommand: AsyncParsableCommand {
         }
     }
 
+    struct Collapse: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Fold a group away in the sidebar. Safe to repeat.")
+
+        @Argument(help: "The group's name.")
+        var name: String
+        @Option(help: "Repo name or path. Defaults to the repo you are in.")
+        var repo: String?
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(GroupMethod.collapse, name: name, repo: repo, json: output.json) { "Collapsed \($0)." }
+        }
+    }
+
+    struct Expand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Unfold a group in the sidebar. Safe to repeat.")
+
+        @Argument(help: "The group's name.")
+        var name: String
+        @Option(help: "Repo name or path. Defaults to the repo you are in.")
+        var repo: String?
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(GroupMethod.expand, name: name, repo: repo, json: output.json) { "Expanded \($0)." }
+        }
+    }
+
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "rm",
@@ -106,5 +134,15 @@ struct GroupCommand: AsyncParsableCommand {
                 }
             }
         }
+    }
+}
+
+/// `group collapse` and `group expand`, which say what they did as "group Review in web-app".
+private func fold(_ method: String, name: String, repo: String?, json: Bool, message: (String) -> String) throws {
+    let client = Client(json: json)
+    let result = client.call(method, GroupParams(target: Client.hint(repo: repo), name: name))
+    try client.print(result) {
+        let group = try result.decode(GroupInfo.self)
+        return message("group \(group.name) in \(group.repo)")
     }
 }

@@ -4,6 +4,17 @@ public enum PluginMethod {
     public static let disable = "plugin.disable"
     public static let items = "plugin.items"
     public static let new = "plugin.new"
+    public static let collapse = "plugin.collapse"
+    public static let expand = "plugin.expand"
+}
+
+/// The plugin whose section `plugin.collapse` or `plugin.expand` folds.
+public struct PluginFoldParams: Codable, Sendable {
+    public var plugin: String
+
+    public init(plugin: String) {
+        self.plugin = plugin
+    }
 }
 
 public struct PluginEnableParams: Codable, Sendable {

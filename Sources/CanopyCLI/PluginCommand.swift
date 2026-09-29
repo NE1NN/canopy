@@ -12,7 +12,7 @@ struct PluginCommand: AsyncParsableCommand {
             with files about its item. A plugin does nothing until it is turned on, which writes its section of \
             config.json.
             """,
-        subcommands: [List.self, Enable.self, Disable.self, Items.self, New.self]
+        subcommands: [List.self, Enable.self, Disable.self, Items.self, New.self, Collapse.self, Expand.self]
     )
 
     struct List: AsyncParsableCommand {
@@ -149,4 +149,39 @@ struct PluginCommand: AsyncParsableCommand {
             }
         }
     }
+
+    struct Collapse: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Fold a plugin's section away in the sidebar. Safe to repeat.",
+            discussion: "The fold is kept while the plugin is off. Selecting one of its rows expands it."
+        )
+
+        @Argument(help: "The plugin's id, as `canopy plugin list` shows it.")
+        var plugin: String
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(PluginMethod.collapse, plugin: plugin, json: output.json) { "Collapsed \($0)." }
+        }
+    }
+
+    struct Expand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Unfold a plugin's section in the sidebar. Safe to repeat.")
+
+        @Argument(help: "The plugin's id, as `canopy plugin list` shows it.")
+        var plugin: String
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(PluginMethod.expand, plugin: plugin, json: output.json) { "Expanded \($0)." }
+        }
+    }
+}
+
+/// `plugin collapse` and `plugin expand`, which say what they did with the plugin's name.
+private func fold(_ method: String, plugin: String, json: Bool, message: (String) -> String) throws {
+    let client = Client(json: json)
+    let result = client.call(method, PluginFoldParams(plugin: plugin))
+    try client.print(result) { message(try result.decode(PluginListing.self).name) }
 }

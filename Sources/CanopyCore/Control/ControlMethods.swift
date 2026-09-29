@@ -6,6 +6,8 @@ public enum ControlMethod {
     public static let repoList = "repo.list"
     public static let repoRemove = "repo.remove"
     public static let repoClone = "repo.clone"
+    public static let repoCollapse = "repo.collapse"
+    public static let repoExpand = "repo.expand"
     public static let rowList = "row.list"
     public static let rowNew = "row.new"
     public static let rowRemove = "row.remove"
@@ -83,6 +85,8 @@ public struct RepoInfo: Codable, Sendable, Equatable {
     public var rows: Int
     public var external: Int
     public var missing: Bool
+    /// Whether the sidebar folds the repo.
+    public var collapsed: Bool
 
     public init(_ repo: RepoSnapshot) {
         name = repo.name
@@ -90,6 +94,21 @@ public struct RepoInfo: Codable, Sendable, Equatable {
         rows = repo.rows.count
         external = repo.external.count
         missing = repo.isMissing
+        collapsed = repo.collapsed
+    }
+}
+
+/// The repo `repo.collapse` or `repo.expand` folds, resolved the usual way.
+public struct RepoFoldParams: Codable, Sendable {
+    public var target: TargetHint
+
+    public init(target: TargetHint = TargetHint()) {
+        self.target = target
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
     }
 }
 
