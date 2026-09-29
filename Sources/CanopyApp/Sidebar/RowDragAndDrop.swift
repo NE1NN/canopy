@@ -144,9 +144,9 @@ struct RowDropIndicator: View {
     let pluginSlots: [PluginDropSlot]
 
     var body: some View {
-        if let (y, indent) = placement {
+        if let (y, depth) = placement {
             GeometryReader { geometry in
-                let leading = 7 + indent
+                let leading = Style.leadingInset(depth)
                 let width = max(geometry.size.width - leading - 4, 0)
                 HStack(spacing: 0) {
                     Circle()
@@ -164,7 +164,7 @@ struct RowDropIndicator: View {
     }
 
     /// Where the line goes down the list, and how far in it starts. A header shows the drop itself instead.
-    private var placement: (Double, Double)? {
+    private var placement: (Double, SidebarDepth)? {
         let (path, below): (String, Bool)
         switch target.indicator {
         case .header: return nil
@@ -172,11 +172,12 @@ struct RowDropIndicator: View {
         case .below(let under): (path, below) = (under, true)
         }
         if let slot = pluginSlots.first(where: { $0.path == path }) {
-            return (below ? slot.maxY : slot.minY, 0)
+            return (below ? slot.maxY : slot.minY, .section)
         }
-        guard let slot = slots.first(where: { $0.kind.rowPath == path }) else { return nil }
-        let indent = if case .row(_, group: _?) = slot.kind { Style.groupIndent } else { 0.0 }
-        return (below ? slot.maxY : slot.minY, indent)
+        guard let slot = slots.first(where: { $0.kind.rowPath == path }), let depth = slot.kind.sidebarDepth else {
+            return nil
+        }
+        return (below ? slot.maxY : slot.minY, depth)
     }
 }
 

@@ -15,8 +15,13 @@ enum Style {
     static let row = Font.system(size: 13)
 
     static let rowHeight = 26.0
-    /// How far a group's rows sit in, so their marks line up under the group's name.
-    static let groupIndent = 24.0
+    /// One step of the sidebar's tree: a mark's width and its gap, so a line's mark sits under its header's name.
+    static let indentStep = 24.0
+
+    /// Where a sidebar line's content starts inside its fill, which always spans the list.
+    static func leadingInset(_ depth: SidebarDepth) -> Double {
+        7 + Double(depth.rawValue) * indentStep
+    }
     static let headerHeight = 28.0
     /// The window toolbar's height, so the tabs line up with the traffic lights.
     static let topBarHeight = 52.0

@@ -50,7 +50,7 @@ struct GroupHeaderView: View {
                     .padding(.trailing, 5)
             }
         }
-        .padding(.leading, 7)
+        .padding(.leading, Style.leadingInset(.section))
         .padding(.trailing, 3)
         .frame(height: Style.rowHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
