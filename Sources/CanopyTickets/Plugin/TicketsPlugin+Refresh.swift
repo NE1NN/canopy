@@ -6,6 +6,7 @@ extension TicketsPlugin {
     func startRefreshing(_ context: PluginContext) {
         let generation = self.generation
         schedule = RefreshSchedule()
+        for id in malformed { schedule.exclude(id) }
         watch = RefreshSchedule.Watch(isVisible: false, hasRows: false, selected: nil)
         wasFrontmost = false
         isLoopAsleep = false
@@ -75,11 +76,7 @@ extension TicketsPlugin {
         do {
             switch job {
             case .rows: try await refreshRows()
-            case .ticket(let id):
-                // An id ticket-manager called malformed is never asked about again, and one it no longer has waits
-                // five minutes between tries.
-                guard !malformed.contains(id) else { break }
-                try await fetchTicket(id)
+            case .ticket(let id): try await fetchTicket(id)
             }
         } catch let error as TicketError {
             succeeded = !error.backsOff

@@ -109,6 +109,28 @@ struct TicketsRefreshTests {
         #expect(await count(harness, "/api/v1/tickets/from-another-deployment") <= 1)
     }
 
+    @Test func aSelectedMalformedTicketNeitherWakesTheLoopNorResetsBackoff() async throws {
+        let dir = try TempDir()
+        let (harness, _) = try await connectedWithRows(dir, ["853"])
+        let stray = try await harness.addRowByHand(item: "from-another-deployment", title: "0700-stray")
+        await harness.transport.markMalformed("from-another-deployment")
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.select(stray.path)
+        #expect(await eventually { await harness.section()?.rows.first { $0.path == stray.path }?.isMissing == true })
+        await harness.settle()
+        await harness.transport.failEverything(URLError(.cannotConnectToHost))
+        await harness.transport.clearRequests()
+
+        // Rows fail at 60, 180, and 420 seconds, waiting twice as long each time. Nothing about the stray row may
+        // count as ticket-manager answering and bring the waits back to a minute.
+        for _ in 0..<23 {
+            harness.clock.advance(by: .seconds(30))
+            await harness.settle()
+        }
+        #expect(await requests(harness).filter { $0.hasPrefix("/api/v1/tickets?ids=") }.count == 3)
+        #expect(await count(harness, "/api/v1/tickets/from-another-deployment") == 0)
+    }
+
     @Test func selectingOrComingToTheFrontFetchesAtMostEveryFifteenSeconds() async throws {
         let dir = try TempDir()
         let (harness, rows) = try await connectedWithRows(dir, ["853", "849"])

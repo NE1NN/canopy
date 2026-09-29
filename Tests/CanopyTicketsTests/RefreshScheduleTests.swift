@@ -109,6 +109,19 @@ struct RefreshScheduleTests {
         #expect(schedule.due(at: at(30), seen) == [.ticket("a")])
     }
 
+    @Test func aMalformedTicketIsNeverDueEvenSelectedOrQueuedAndStaysSoWhenForgotten() {
+        var schedule = RefreshSchedule()
+        let alone = RefreshSchedule.Watch(isVisible: true, hasRows: false, selected: "a")
+        schedule.exclude("a")
+        schedule.queue("a")
+        schedule.nudge("a")
+        #expect(schedule.due(at: at(0), alone).isEmpty)
+        #expect(schedule.nextDue(after: at(0), alone) == nil)
+        schedule.forget("a")
+        schedule.queue("a")
+        #expect(schedule.due(at: at(0), alone).isEmpty)
+    }
+
     @Test func aJobInFlightIsNeverDue() {
         var schedule = RefreshSchedule()
         schedule.started(.rows, at: at(0))

@@ -37,6 +37,8 @@ public struct RefreshSchedule: Sendable, Equatable {
     private var pending: Set<String> = []
     /// Tickets ticket-manager no longer has, asked for again only every five minutes.
     private var gone: Set<String> = []
+    /// Tickets ticket-manager calls malformed, never asked for.
+    private var excluded: Set<String> = []
 
     public init() {}
 
@@ -53,11 +55,13 @@ public struct RefreshSchedule: Sendable, Equatable {
     /// The ticket was just selected, or the window came to the front with it selected: due at once, unless it was tried
     /// in the last 15 seconds.
     public mutating func nudge(_ ticket: String) {
+        guard !excluded.contains(ticket) else { return }
         pending.insert(ticket)
     }
 
     /// A row's ticket changed on ticket-manager: fetch it once at the next chance.
     public mutating func queue(_ ticket: String) {
+        guard !excluded.contains(ticket) else { return }
         pending.insert(ticket)
     }
 
@@ -84,6 +88,12 @@ public struct RefreshSchedule: Sendable, Equatable {
         if isGone { gone.insert(ticket) } else { gone.remove(ticket) }
     }
 
+    /// A ticket ticket-manager calls malformed is never asked for again, selected or not.
+    public mutating func exclude(_ ticket: String) {
+        excluded.insert(ticket)
+        pending.remove(ticket)
+    }
+
     /// Forgets a ticket that no longer has a row and is not selected.
     public mutating func forget(_ ticket: String) {
         let job = Job.ticket(ticket)
@@ -101,7 +111,7 @@ public struct RefreshSchedule: Sendable, Equatable {
             found.append((.rows, periodic(.rows, every: Self.rowsEvery)))
         }
         var tickets: [String: ContinuousClock.Instant?] = [:]
-        if let selected = watch.selected, !inFlight.contains(.ticket(selected)) {
+        if let selected = watch.selected, !inFlight.contains(.ticket(selected)), !excluded.contains(selected) {
             tickets[selected] = periodic(.ticket(selected), every: Self.selectedEvery)
         }
         for ticket in pending where !inFlight.contains(.ticket(ticket)) {

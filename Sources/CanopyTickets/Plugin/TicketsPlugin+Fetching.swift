@@ -104,7 +104,7 @@ extension TicketsPlugin {
         } catch TicketError.badRequest {
             guard generation == self.generation else { return [] }
             guard ids.count > 1 else {
-                malformed.insert(ids[0])
+                markMalformed(ids[0])
                 return []
             }
             let half = ids.count / 2
@@ -136,6 +136,7 @@ extension TicketsPlugin {
                 await store.setFetching(id, false)
                 switch error {
                 case .notFound, .badRequest:
+                    if case .badRequest = error { markMalformed(id) }
                     await setMissing(id, true)
                     await showLooks()
                 default:
@@ -145,6 +146,13 @@ extension TicketsPlugin {
             if case .badRequest = error { throw TicketError.notFound(id) }
             throw error
         }
+    }
+
+    /// An id ticket-manager answers 400 for, such as one from another deployment: its row shows missing, and it is
+    /// never asked about again while the plugin runs.
+    func markMalformed(_ id: String) {
+        malformed.insert(id)
+        schedule.exclude(id)
     }
 
     /// Whether ticket-manager no longer has the ticket, for its row's look, its panel, and how often it is asked for.
