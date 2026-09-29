@@ -64,7 +64,7 @@ Items 1 and 2 have Core tests in Task 1, and every item is a UI check in Task 3.
 **Interfaces:**
 - Produces: `public enum SidebarDepth: Int { case header, section, group }`, `Row.sidebarDepth: SidebarDepth`, `DropSlot.Kind.sidebarDepth: SidebarDepth?` (nil for a group header's slot, which shows the drop as a fill and has no row depth).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```swift
 import Testing
@@ -104,12 +104,12 @@ struct SidebarDepthTests {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(scripts/test-flags.sh) --filter SidebarDepthTests`
 Expected: a build failure, `value of type 'Row' has no member 'sidebarDepth'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```swift
 /// How many steps in from its section's header a sidebar line sits. Each step is the same size, so the sidebar reads
@@ -143,12 +143,12 @@ extension DropSlot.Kind {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(scripts/test-flags.sh) --filter SidebarDepthTests`
 Expected: 4 tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/CanopyCore/Rows/SidebarDepth.swift Tests/CanopyCoreTests/SidebarDepthTests.swift
@@ -169,7 +169,7 @@ git commit -m "feat: say how deep each sidebar line sits"
 - Consumes: `SidebarDepth`, `Row.sidebarDepth`, `DropSlot.Kind.sidebarDepth` from Task 1.
 - Produces: `Style.leadingInset(_ depth: SidebarDepth) -> Double`.
 
-- [ ] **Step 1: Replace `groupIndent` in `Style`**
+- [x] **Step 1: Replace `groupIndent` in `Style`**
 
 ```swift
     /// One step of the sidebar's tree: a mark's width and its gap, so a line's mark sits under its header's name.
@@ -181,7 +181,7 @@ git commit -m "feat: say how deep each sidebar line sits"
     }
 ```
 
-- [ ] **Step 2: Headers use depth 0**
+- [x] **Step 2: Headers use depth 0**
 
 In `RepoHeaderView` and `PluginHeaderView`, `.padding(.leading, 7)` becomes `.padding(.leading, Style.leadingInset(.header))`.
 `RepoHeaderView`'s comment on the chevron no longer says the tile lines up with the rows' marks, since the marks now line up with the name:
@@ -190,16 +190,16 @@ In `RepoHeaderView` and `PluginHeaderView`, `.padding(.leading, 7)` becomes `.pa
             // The tile holds the header's mark column, so the chevron follows the name.
 ```
 
-- [ ] **Step 3: A repo's own lines use depth 1**
+- [x] **Step 3: A repo's own lines use depth 1**
 
 `GroupHeaderView`, `OtherWorktreesToggle`, `RepoWarningView`, and `PluginRowLineView` each change `.padding(.leading, 7)` to `.padding(.leading, Style.leadingInset(.section))`.
 
-- [ ] **Step 4: Rows take their own depth**
+- [x] **Step 4: Rows take their own depth**
 
 `RowLineView` drops its `indent` property and pads with `Style.leadingInset(row.sidebarDepth)`, so a group's rows and other worktrees get depth 2 without their caller saying so.
 `RepoSection.line(for:)` loses its `indent` parameter, and the group's `ForEach` calls `line(for: row)`.
 
-- [ ] **Step 5: The drop line starts at the landing depth**
+- [x] **Step 5: The drop line starts at the landing depth**
 
 ```swift
         if let slot = pluginSlots.first(where: { $0.path == path }) {
@@ -213,12 +213,12 @@ In `RepoHeaderView` and `PluginHeaderView`, `.padding(.leading, 7)` becomes `.pa
 
 with `placement` returning `(Double, SidebarDepth)?` and `let leading = Style.leadingInset(depth)`.
 
-- [ ] **Step 6: Build and lint**
+- [x] **Step 6: Build and lint**
 
 Run: `make lint && make build 2>&1 | grep -c "warning:"`
 Expected: lint clean, 0 warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git commit -am "fix: indent rows under their repo"
@@ -229,7 +229,7 @@ git commit -am "fix: indent rows under their repo"
 **Files:**
 - Modify: `docs/superpowers/specs/2026-09-27-canopy-design.md` (Sidebar rows, Folding repos)
 
-- [ ] **Step 1: Amend the spec**
+- [x] **Step 1: Amend the spec**
 
 Sidebar rows gains a paragraph on depth after the repo header's description:
 
@@ -247,7 +247,7 @@ Folding repos' chevron bullet stops saying the tile lines up with the rows' mark
   It follows the name rather than sitting in the mark column, because the tile holds that column.
 ```
 
-- [ ] **Step 2: UI checks**
+- [x] **Step 2: UI checks**
 
 `make app`, then `scripts/ui-fixture.sh dark` and `scripts/ui-fixture.sh light`.
 The fixture has three repos with api-server folded, web-app's Review group open and Later folded, other worktrees, PR rows in every state, agent dots, a selected row, and two plugin sections.
@@ -261,14 +261,43 @@ Check in both appearances:
 - plugin rows and the plugin warning sit one step in under the plugin's name
 - dragging a row shows the drop line's ring at the mark of the depth it would land at
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "docs: rows sit one step in under their repo"
 ```
+
+## After Review
+
+An independent reviewer read the branch against both specs and this plan and found nothing blocking.
+Every line in the tree takes its inset from its depth, and the drop line lands at the depth the row would take in every case.
+
+- **The narrowest sidebar (fixed).**
+  At the old 220 point minimum, a hovered group row with a PR squeezed its PR number to `#…` and its name to a clipped `fe`, since the extra step took 24 points from every row.
+  The PR number, the `⌘N` hint, tags, and link chips now keep their own width, so only the branch name gives way.
+  The minimum grows by one step to 244 points, so a row keeps the room it had at the minimum before, and the hovered row reads `f…w` beside a whole `#142`.
+  The default width stays 270, and widths already saved are kept.
+  The main spec says both.
+- **`Style` layout (fixed).** `leadingInset(_:)` moved below the size constants, and `indentStep` is private to it.
+- **`DropSlot.Kind.rowPath` (fixed).** It moved into CanopyCore beside `DropSlot`, with a test, so the drop line's row and depth come from one place.
+- **The row groups spec's diagram (fixed).** Its steps are now two characters each, as the sidebar's steps are now equal.
+- **The plan's header puts two sentences on one line (not changed).** It is the plan template's fixed header.
+
+## UI checks done
+
+On `scripts/ui-fixture.sh` in dark and light, before on origin/main and after:
+- `main` and the ungrouped rows' marks sit under the repo name, and a group's rows' marks under the group's name.
+- Group chevrons and the other worktrees chevron share the main row's mark column, and other worktrees, expanded, sit one step in under the fold.
+- The selection fill, focused and not, and the hover fill span the list at every depth, and a folded repo holding the selection lines up with them.
+- The `⌘N` hint, the `x`, PR numbers, link chips, and agent dots stay at the trailing edge.
+- Plugin rows and the fixture plugin's warning sit one step in under the plugin's name.
+- Dragging a row shows the drop line's ring at the group rows' mark column over a group row, and at the ungrouped rows' mark column between ungrouped rows.
+- At the minimum width, names truncate in the middle and PR numbers stay whole.
+- The New Row sheet's tags look as they did.
 
 ## Decisions to review
 
 - Rows inside the other worktrees fold sit two steps in, under the fold, as a group's rows do, instead of level with the fold.
 - Fills keep spanning the list's width at every depth, as a group's rows already did, rather than starting at the indent.
 - The step stays 24 points, the existing group indent, so a line's mark sits under its header's name.
+- The sidebar's minimum width grows from 220 to 244 points, one step, so rows keep the room they had at the minimum; the default stays 270.
