@@ -324,16 +324,20 @@ The tests cover each error case, the shape of each response, a ticket whose cust
 
 `url` is required.
 `run` is optional, and is the command every new ticket row starts with unless `--run` gives another.
+`web` is optional: ticket-manager's page for a ticket, with `{id}` where the ticket's id goes, which the panel's ticket-manager button opens.
+The API gives no such address, so without `web` the button says how to set it.
 
 ### Connecting
 
-`canopy ticket connect <url>` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
+`canopy ticket connect <url> [--web <template>]` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
+The URL must be `https://`, or `http://` on this Mac alone, so a token never crosses the network in the clear, and requests never follow redirects.
 The app checks it against `/api/v1/me`, saves the token in the Keychain, and turns the plugin on with `url` in its section.
 A token the endpoint rejects saves nothing.
-`canopy ticket disconnect` turns the plugin off, deletes the token, and keeps the rows for when it is connected again.
+`canopy ticket disconnect [--force]` turns the plugin off, deletes the token, and keeps the rows for when it is connected again.
+Like `plugin disable`, it refuses with `plugin_busy` while a program runs in a ticket row, unless `--force`, and then deletes nothing.
 
-In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off.
-It opens a sheet with the URL and token fields, which does the same as `connect`.
+In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off, and so do the File menu and the empty sidebar.
+It opens a sheet with the URL and token fields and an optional ticket page, which sends the same `tickets.connect` as the CLI.
 The section's `…` menu holds "Disconnect".
 
 ### Tickets and references
@@ -375,7 +379,8 @@ From top to bottom:
 - **Fix rows**, the worktree rows linked to the ticket.
 - **Footer**: when the ticket was last fetched, and a refresh button.
 
-The panel keeps its place when new messages arrive, and follows them only while scrolled to the bottom.
+The panel opens at the end of the conversation, keeps its place when new messages arrive, and follows them only while that end is in view.
+The API names no channels, so a channel mention shows the ticket's own name or a named thread's, and `#channel` otherwise.
 A fetch that fails keeps what the panel shows, and a banner says what went wrong and when the panel was last updated.
 
 ### Files in the row's folder
@@ -393,7 +398,11 @@ Canopy asks ticket-manager for anything only while its window can be seen, or wh
 - The picker fetches when it opens and when the Closed toggle changes, and filters and searches what it fetched.
 - `canopy ticket list` and `canopy ticket show --refresh` fetch at once.
 
+- A row's ticket whose summary changed since its copy was fetched is fetched once, so `ticket.md` stays current in rows that are not selected.
+- `canopy ticket show` uses a copy under 30 seconds old unless `--refresh`.
+
 After a failure the plugin waits twice as long each time, up to five minutes, and returns to the usual pace after a success.
+A batch of ids that ticket-manager answers 400 for is split until the malformed id is alone; that row shows as missing and is left out of later refreshes, so it never stops the others.
 
 ### Commands
 
@@ -437,7 +446,11 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
 | ticket-manager cannot be reached, times out after 15 seconds, or answers 5xx | The panel's banner and `canopy plugin list` say so and when the last fetch succeeded. Commands fail with `tickets_unreachable`, except `ticket show`, which prints the cached ticket with a note saying how old it is. |
 | A reference matches nothing | `ticket_not_found`. |
 | A number matches more than one ticket | `ticket_ambiguous`, naming each match. |
-| The Keychain refuses a read or a write | The plugin cannot start, and the warning names the Keychain's error. |
+| The Keychain refuses a read or a write | The plugin cannot start, and the warning names the Keychain's error. Commands that need it fail with `keychain_failed`. |
+| The plugin is on but could not start, such as without a token | The warning says why, and commands fail with `plugin_not_started` and the fix. |
+| An address that is not `https://`, or `http://` off this Mac, or a `web` without `{id}` | `invalid_url`, and nothing is saved. |
+| ticket-manager answers something that is not its API, such as HTML, a redirect, or a 404 for `me` | `bad_response`, saying to check it is the `.convex.site` address. |
+| `ticket select` or `ticket rm` for a ticket without a row | `ticket_has_no_row`, with the `ticket new` command. |
 | `config.json` cannot be written | `plugin.enable` fails with the file system's message, and nothing changes. |
 
 ## Testing
@@ -480,4 +493,5 @@ Item 3 needs item 2, but not item 1, since it runs against the stub.
 - The base's UI is checked with a fixture plugin that only a dev build started with `CANOPY_FIXTURE_PLUGIN=1` turns on.
 - `ticket.md` holds the handover block only, and handover notes show in the panel but not in the file.
 - Tokens are made with `npx convex run`, and ticket-manager gets no screen for them.
+- Settled while building the Tickets plugin: the `web` template and `--web`; `http://` only on this Mac; no redirects; `ticket disconnect --force`; `plugin_off` naming each plugin's own command, such as `canopy ticket connect <url>`; the `bad_response`, `plugin_not_started`, `invalid_url`, `keychain_failed`, and `ticket_has_no_row` codes; malformed ids shown as missing; rows' changed tickets fetched for their files; `ticket show`'s 30 seconds; the panel opening at the conversation's end; and "Connect Tickets…" in the File menu and the empty sidebar too.
 - Settled while building the plugin base: `canopy plugin enable`, `disable`, `items`, and `new`, so every picker action and the section's Turn Off have a command; `--no-link`; `row move` for plugin rows; `plugin_busy` and `row_busy` in place of asking from the CLI; a failed fill behaving like a failed setup; a dev build's `CANOPY_TRASH_FOLDER`; and the panel's title strip.
