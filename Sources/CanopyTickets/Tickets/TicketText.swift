@@ -63,6 +63,12 @@ public enum TicketText {
         return clean(lines.joined(separator: "\n"))
     }
 
+    /// `canopy ticket show --md`: `ticket.md` as Canopy writes it from this copy, starting with the note about customers'
+    /// messages, without the final newline the terminal's print adds back.
+    public static func markdown(_ detail: TicketDetail) -> String {
+        String(TicketFiles.markdown(handover: detail.handover).dropLast())
+    }
+
     /// Text with control characters taken out, but for newlines and tabs, so customer text can never send a terminal
     /// escape sequence.
     public static func clean(_ text: String) -> String {

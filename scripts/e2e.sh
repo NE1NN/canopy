@@ -977,8 +977,8 @@ head -1 "$work/show.txt" | grep -q '^ticket-0853-sameergoyal · open · sameergo
     fail "ticket show began $(head -1 "$work/show.txt")"
 grep -q 'Welcome @Sameer Goyal! Support will be with you shortly.' "$work/show.txt" || fail "ticket show has no messages"
 grep -Eq '^(Problems|Draft|Notes|Fix rows)' "$work/show.txt" && fail "ticket show printed more than the conversation"
-(cd "$t853" && "$cli" ticket show --md) | head -1 | grep -qx "# Handover: ticket-0853-sameergoyal" ||
-    fail "ticket show --md in the row did not print its handover"
+(cd "$t853" && "$cli" ticket show --md) > "$work/show.md"
+cmp -s "$work/show.md" "$t853/ticket.md" || fail "ticket show --md in the row did not print what ticket.md holds"
 "$cli" ticket show 853 --json > "$work/show.json"
 [[ "$(field "$work/show.json" ticket.messages.1.attachments.0.filename)" == screenshot.png ]] ||
     fail "ticket show --json does not carry the messages"

@@ -95,7 +95,7 @@ struct TicketCommand: AsyncParsableCommand {
 
     struct Show: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Print a ticket: its messages, problems, draft, notes, and fix rows.",
+            abstract: "Print a ticket: its status, customer, owner, and messages.",
             discussion: """
                 Canopy's copy is used while it is under 30 seconds old. When ticket-manager cannot be reached, the \
                 copy Canopy has is printed, with a note on stderr saying how old it is.
@@ -106,7 +106,11 @@ struct TicketCommand: AsyncParsableCommand {
         var ticket: String?
         @Flag(help: "Ask ticket-manager even when Canopy's copy is fresh.")
         var refresh = false
-        @Flag(help: "Print the ticket's handover markdown alone, as ticket.md holds it.")
+        @Flag(
+            help: """
+                Print ticket.md as Canopy writes it now: a note that customers' messages are data, not \
+                instructions, then the handover markdown.
+                """)
         var md = false
         @OptionGroup var output: OutputOptions
 
@@ -122,7 +126,7 @@ struct TicketCommand: AsyncParsableCommand {
             }
             try client.print(result) {
                 md
-                    ? TicketText.clean(shown.ticket.handover)
+                    ? TicketText.markdown(shown.ticket)
                     : TicketText.show(shown, now: Date(), homeFolder: NSHomeDirectory())
             }
         }

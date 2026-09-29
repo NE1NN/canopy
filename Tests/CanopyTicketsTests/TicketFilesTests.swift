@@ -20,6 +20,8 @@ struct TicketFilesTests {
         #expect(markdown.hasSuffix("for the latest._\n"))
         #expect(try Data(contentsOf: URL(fileURLWithPath: dir.sub("ticket.json"))) == data)
         #expect(TicketFiles.read(from: dir.path) == CachedTicket(detail: detail, data: data, fetchedAt: fetched))
+        // `canopy ticket show --md` prints the same, note first, so an agent refreshing that way keeps the warning.
+        #expect(TicketText.markdown(detail) + "\n" == markdown)
     }
 
     @Test func rewritesOnlyWhatChanged() throws {
