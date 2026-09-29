@@ -39,12 +39,7 @@ struct GroupHeaderView: View {
                 }
                 IconButton(title: "New Row in \(group.name)…", systemImage: "plus", action: onNewRow)
             } else {
-                Text(verbatim: "\(count)")
-                    .font(Style.meta)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 5)
-                    .accessibilityHidden(true)
+                HeaderCount(count: count)
             }
         }
         .padding(.leading, Style.leadingInset(.section))
@@ -70,9 +65,7 @@ struct GroupHeaderView: View {
         }
     }
 
-    /// The chevron and name, which VoiceOver reads as one button that folds the group, its label saying the row count and
-    /// agent dot too. The header's buttons stay controls of their own: combined into it, they would make it a menu
-    /// button.
+    /// What VoiceOver reads as the header's one button. Its buttons stay separate, so it never becomes a menu button.
     private var summary: some View {
         HStack(spacing: 8) {
             DisclosureChevron(isExpanded: !group.collapsed)
@@ -91,7 +84,7 @@ struct GroupHeaderView: View {
         .accessibilityValue(group.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
-        // `+` shows only on hover, so what it does is also here as a named action.
+        // `+` shows only on hover.
         .accessibilityActions {
             Button("New Row…", action: onNewRow)
         }

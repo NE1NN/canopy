@@ -204,6 +204,21 @@ struct DisclosureChevron: View {
     }
 }
 
+/// A foldable header's row count. It keeps its width beside a long name, and VoiceOver hears it in the header's label.
+struct HeaderCount: View {
+    let count: Int
+
+    var body: some View {
+        Text(verbatim: "\(count)")
+            .font(Style.meta)
+            .monospacedDigit()
+            .foregroundStyle(.tertiary)
+            .fixedSize()
+            .padding(.trailing, 5)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A small outlined label, such as "missing" or the tool that made a worktree.
 struct TagView: View {
     let text: String

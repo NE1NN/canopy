@@ -59,12 +59,7 @@ struct PluginHeaderView: View {
                 }
                 IconButton(title: "\(section.info.newRowTitle)…", systemImage: "plus", action: onNewRow)
             } else {
-                Text(verbatim: "\(section.rows.count)")
-                    .font(Style.meta)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 5)
-                    .accessibilityHidden(true)
+                HeaderCount(count: section.rows.count)
             }
         }
         .padding(.leading, Style.leadingInset(.header))
@@ -77,9 +72,7 @@ struct PluginHeaderView: View {
         .contextMenu { PluginMenuItems(section: section, onNewRow: onNewRow) }
     }
 
-    /// The tile and name, which VoiceOver reads as one button that folds the section, its label saying the row count and
-    /// agent dot too. The header's buttons stay controls of their own: combined into it, they would make it a menu
-    /// button.
+    /// What VoiceOver reads as the header's one button. Its buttons stay separate, so it never becomes a menu button.
     private var summary: some View {
         HStack(spacing: 8) {
             PluginTile(info: section.info)
@@ -96,6 +89,7 @@ struct PluginHeaderView: View {
         .accessibilityValue(section.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        // `+` shows only on hover.
         .accessibilityActions {
             Button("\(section.info.newRowTitle)…", action: onNewRow)
         }

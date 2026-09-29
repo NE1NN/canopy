@@ -256,12 +256,7 @@ struct RepoHeaderView: View {
                 RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
                 IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
             } else {
-                Text(verbatim: "\(repo.rows.count)")
-                    .font(Style.meta)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 5)
-                    .accessibilityHidden(true)
+                HeaderCount(count: repo.rows.count)
             }
         }
         .padding(.leading, Style.leadingInset(.header))
@@ -280,9 +275,8 @@ struct RepoHeaderView: View {
         }
     }
 
-    /// The tile, name, and tags, which VoiceOver reads as one button that folds the repo, its label saying the row count
-    /// and agent dot too. The header's buttons stay controls of their own: combined into it, they would make it a menu
-    /// button. It keeps its width before them, so a narrow sidebar shortens "Locate…" before the name.
+    /// What VoiceOver reads as the header's one button. Its buttons stay separate, so it never becomes a menu button, and
+    /// it keeps its width before them, so a narrow sidebar shortens "Locate…" before the name.
     private var summary: some View {
         HStack(spacing: 8) {
             RepoTile(mark: repo.mark, isDimmed: repo.isMissing)
@@ -311,7 +305,7 @@ struct RepoHeaderView: View {
         .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
-        // The buttons beside it show only on hover, so what they do is also here as named actions.
+        // `+` shows only on hover, and a missing repo's `Locate…` is here too, so the header offers what its buttons do.
         .accessibilityActions {
             if repo.isMissing {
                 Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
