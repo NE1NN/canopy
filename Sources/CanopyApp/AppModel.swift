@@ -11,6 +11,8 @@ final class AppModel {
     let terminals: TerminalStore
     let rows: RowLifecycle
     let plugins: PluginHost
+    /// The app's one list of built-in plugins, with the panel each draws.
+    let builtInPlugins: [BuiltInPlugin]
     let activity: ActivityLog
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
@@ -44,9 +46,11 @@ final class AppModel {
         self.workspace = workspace
         self.terminals = terminals
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
+        let builtInPlugins = BuiltInPlugins.make(environment: ProcessInfo.processInfo.environment)
+        self.builtInPlugins = builtInPlugins
         self.plugins = PluginHost(
-            workspace: workspace, terminals: terminals, plugins: [], secrets: KeychainSecretStore(),
-            bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")
+            workspace: workspace, terminals: terminals, plugins: builtInPlugins.map(\.plugin),
+            secrets: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")
     }
 
     /// The bundle's folder holding `canopy`, which terminals get on their PATH.
@@ -57,8 +61,14 @@ final class AppModel {
         return bin.path
     }
 
+    /// The selected worktree row, nil while a plugin's row is selected.
     var selectedRow: Row? {
         selectedRowPath.flatMap { snapshot.row(path: $0) }
+    }
+
+    /// The selected row, a worktree's or a plugin's.
+    var selection: SidebarRow? {
+        selectedRowPath.flatMap { snapshot.sidebarRow(path: $0) }
     }
 
     func start() async {
@@ -78,6 +88,13 @@ final class AppModel {
             show(notice)
         }
         portsCollapsed = await workspace.portsCollapsed
+        let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
+        plugins.ui = bridge
+        plugins.onNotice = { [weak self] in self?.show($0) }
+        plugins.onClosingRows = { [weak self] in self?.setAside($0) }
+        updateViewing()
+        // Before layouts are restored, so a plugin row's folder deleted outside Canopy is back for its shells.
+        await plugins.start()
         let saved = await workspace.savedTerminals
         terminals.continueNumbering(from: await workspace.savedNextPane)
         snapshot = await workspace.snapshot
@@ -118,9 +135,9 @@ final class AppModel {
 
     // MARK: Rows
 
-    /// ⌘1 to ⌘9, in sidebar order across repos.
-    func shortcut(for row: Row) -> Int? {
-        guard let index = snapshot.visibleRows.firstIndex(where: { $0.path == row.path }), index < 9 else {
+    /// ⌘1 to ⌘9, in sidebar order across repos, then plugins.
+    func shortcut(for path: String) -> Int? {
+        guard let index = snapshot.visibleRows.firstIndex(where: { $0.path == path }), index < 9 else {
             return nil
         }
         return index + 1
@@ -307,6 +324,116 @@ final class AppModel {
         }
     }
 
+    // MARK: Plugins
+
+    func builtIn(_ id: String) -> BuiltInPlugin? {
+        builtInPlugins.first { $0.plugin.info.id == id }
+    }
+
+    /// The picker's model for a plugin's section, made once per sheet.
+    func picker(for section: PluginSection) -> PluginPicker? {
+        guard let plugin = builtIn(section.id)?.plugin else { return nil }
+        let host = plugins
+        let id = section.id
+        return PluginPicker(
+            plugin: section.info, filters: plugin.filters,
+            items: { query in try await host.items(id, matching: query) },
+            command: { plugin.pickerCommand(for: $0) })
+    }
+
+    /// Does what the picker picked, as its command would, and selects the row. Returns an error for the sheet to show.
+    func open(_ action: PluginPickerAction, in section: PluginSection) async -> String? {
+        switch action {
+        case .select(let row):
+            await select(row.path)
+            return nil
+        case .create(let item):
+            do {
+                let created = try await plugins.createRow(section.id, reference: item.id, run: nil, select: true)
+                if let fillError = created.fillError {
+                    show(fillError)
+                }
+                return nil
+            } catch WorkspaceError.itemHasRow(let path) {
+                // The item got a row after the list was made, and the list would have opened it.
+                await select(path)
+                return nil
+            } catch {
+                return PluginHost.message(error)
+            }
+        }
+    }
+
+    /// The remove popover has asked already, so programs running in the row stop. Returns an error to show.
+    func removePluginRow(_ row: PluginRow) async -> String? {
+        do {
+            _ = try await plugins.removeRow(row, force: true)
+            return nil
+        } catch {
+            return PluginHost.message(error)
+        }
+    }
+
+    /// The plugin row being dragged in the sidebar.
+    var draggedPluginRow: PluginRow?
+
+    func movePluginRow(_ row: PluginRow, to placement: RowPlacement) {
+        perform { _ = try await $0.movePluginRow(path: row.path, to: placement) }
+    }
+
+    /// A plugin to turn off once the author confirms, because programs run in its rows.
+    struct PendingTurnOff {
+        let section: PluginSection
+        let busyTerminals: Int
+    }
+
+    var pendingTurnOff: PendingTurnOff?
+
+    func turnOff(_ section: PluginSection) {
+        let busy = section.rows.reduce(0) { $0 + terminals.busyPanes(inRow: $1.path).count }
+        if busy > 0 {
+            pendingTurnOff = PendingTurnOff(section: section, busyTerminals: busy)
+        } else {
+            confirmTurnOff(section)
+        }
+    }
+
+    func confirmTurnOff(_ section: PluginSection) {
+        pendingTurnOff = nil
+        Task {
+            do {
+                _ = try await plugins.disable(section.id, force: true)
+            } catch {
+                show(error)
+            }
+        }
+    }
+
+    /// Panel widths as dragged in this session, which the saved ones catch up with.
+    private(set) var draggedPanelWidths: [String: Double] = [:]
+
+    static let defaultPanelWidth = 340.0
+    static let minimumPanelWidth = 260.0
+
+    /// The plugin's panel width: as dragged, else as saved, else the default, and never under the minimum or over half
+    /// the detail area.
+    func panelWidth(for plugin: String, detailWidth: Double) -> Double {
+        let width = draggedPanelWidths[plugin] ?? snapshot.section(plugin)?.panelWidth ?? Self.defaultPanelWidth
+        return min(max(width, Self.minimumPanelWidth), max(Self.minimumPanelWidth, detailWidth / 2))
+    }
+
+    func dragPanel(_ plugin: String, to width: Double) {
+        draggedPanelWidths[plugin] = width
+    }
+
+    /// Saves the width the drag ended at, as it was shown. The dragged width stays in place, so the panel does not jump
+    /// back while the save is on its way.
+    func endPanelDrag(_ plugin: String, detailWidth: Double) {
+        let width = panelWidth(for: plugin, detailWidth: detailWidth)
+        draggedPanelWidths[plugin] = width
+        perform { try await $0.setPluginPanelWidth(width, plugin: plugin) }
+    }
+
     // MARK: Ports
 
     /// Nil until the first scan, so the panel never says nothing is listening before it has looked.
@@ -419,11 +546,12 @@ final class AppModel {
     }
 
     private func updateViewing() {
-        let viewing = AgentViewing(
-            rowPath: selectedRowPath, isFrontmost: NSApp.isActive && NSApp.occlusionState.contains(.visible))
+        let isVisible = NSApp.occlusionState.contains(.visible)
+        let viewing = AgentViewing(rowPath: selectedRowPath, isFrontmost: NSApp.isActive && isVisible)
         if terminals.viewing != viewing {
             terminals.viewing = viewing
         }
+        plugins.viewing = PluginViewing(isWindowVisible: isVisible, isFrontmost: viewing.isFrontmost)
     }
 
     /// Reads config.json each time, so a changed sound applies without relaunching.
@@ -460,8 +588,8 @@ final class AppModel {
 
     // MARK: Terminals
 
-    func context(for row: Row) -> PaneContext {
-        PaneContext(row: row, repoName: snapshot.repo(path: row.repoPath)?.name ?? "")
+    func context(for row: SidebarRow) -> PaneContext {
+        PaneContext(row, repoName: row.worktree.flatMap { snapshot.repo(path: $0.repoPath)?.name } ?? "")
     }
 
     /// A close waiting for the user to confirm, because a program still runs in the terminal.
@@ -479,16 +607,30 @@ final class AppModel {
     var pendingClose: PendingClose?
 
     var selectedTab: TerminalTab? {
-        selectedRow.flatMap { terminals.selectedTab(inRow: $0.path) }
+        selection.flatMap { terminals.selectedTab(inRow: $0.path) }
     }
 
+    /// A worktree whose folder is gone has nowhere for a shell. A plugin row's folder comes back when it is needed.
     var canOpenTerminal: Bool {
-        selectedRow.map { !$0.isMissing } ?? false
+        guard let selection else { return false }
+        return !(selection.worktree?.isMissing ?? false)
     }
 
     func newTab() {
-        guard let row = selectedRow, !row.isMissing else { return }
-        terminals.openTab(for: context(for: row))
+        guard canOpenTerminal, let row = selection else { return }
+        withFolder(of: row) { self.terminals.openTab(for: self.context(for: row)) }
+    }
+
+    /// Runs `open` at once for a worktree row, and for a plugin row once its folder is there again.
+    private func withFolder(of row: SidebarRow, _ open: @escaping () -> Void) {
+        guard case .plugin(let pluginRow) = row, !FileManager.default.fileExists(atPath: pluginRow.path) else {
+            open()
+            return
+        }
+        Task {
+            await plugins.ensureFolder(pluginRow)
+            open()
+        }
     }
 
     /// Closes a terminal, first asking if a program other than the shell still runs in it.
@@ -544,9 +686,11 @@ final class AppModel {
     /// ⌘D and the tab bar's split button.
     /// Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
     func splitPane() {
-        guard let row = selectedRow, !row.isMissing else { return }
-        terminals.addPane(for: context(for: row), fits: addRuleFits())
-        focusSelectedTerminal()
+        guard canOpenTerminal, let row = selection else { return }
+        withFolder(of: row) {
+            self.terminals.addPane(for: self.context(for: row), fits: self.addRuleFits())
+            self.focusSelectedTerminal()
+        }
     }
 
     /// Whether a line of that many panes keeps each at least `minPaneColumns` wide in the current grid.
@@ -559,7 +703,7 @@ final class AppModel {
 
     /// ⌘⌥ and an arrow.
     func focusNeighbor(_ direction: Direction) {
-        guard let row = selectedRow else { return }
+        guard let row = selection else { return }
         if terminals.focusNeighbor(inRow: row.path, toward: direction, in: CGRect(origin: .zero, size: gridSize))
             != nil
         {
@@ -598,12 +742,14 @@ final class AppModel {
     /// Restores deferred rows that came back, and forgets rows git no longer lists once every repo refreshed cleanly.
     private func restoreDeferredTerminals() {
         let allHealthy = snapshot.repos.allSatisfy { !$0.isMissing && $0.error == nil }
+        // Rows of a plugin that is off wait for it to be on again.
+        let pluginRows = Set(snapshot.plugins.flatMap(\.rows).map(\.path))
         for (path, rowTerminals) in deferredTerminals {
-            if let row = snapshot.row(path: path) {
-                guard !row.isMissing else { continue }
+            if let row = snapshot.sidebarRow(path: path) {
+                guard !(row.worktree?.isMissing ?? false) else { continue }
                 terminals.restore(rowTerminals, for: context(for: row))
                 deferredTerminals[path] = nil
-            } else if allHealthy {
+            } else if allHealthy, !pluginRows.contains(path) {
                 deferredTerminals[path] = nil
             }
         }
@@ -616,6 +762,15 @@ final class AppModel {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
             await saveTerminals()
+        }
+    }
+
+    /// Keeps the layouts of rows whose terminals are about to close because their plugin turned off, for when it is on
+    /// again.
+    private func setAside(_ paths: [String]) {
+        let saved = terminals.saved()
+        for path in paths {
+            deferredTerminals[path] = saved[path] ?? deferredTerminals[path]
         }
     }
 
@@ -644,7 +799,7 @@ final class AppModel {
     }
 
     func selectTab(offset: Int) {
-        guard let row = selectedRow else { return }
+        guard let row = selection else { return }
         terminals.selectTab(offset: offset, inRow: row.path)
     }
 
@@ -751,9 +906,9 @@ final class AppModel {
         if terminalsRestored, !deferredTerminals.isEmpty {
             restoreDeferredTerminals()
         }
-        if selectedRowPath == nil, let saved = snapshot.selectedRowPath, snapshot.row(path: saved) != nil {
+        if selectedRowPath == nil, let saved = snapshot.selectedRowPath, snapshot.sidebarRow(path: saved) != nil {
             selectedRowPath = saved
-        } else if let path = selectedRowPath, snapshot.row(path: path) == nil {
+        } else if let path = selectedRowPath, snapshot.sidebarRow(path: path) == nil {
             selectedRowPath = nil
         }
     }
@@ -765,8 +920,11 @@ final class AppModel {
         }
         perform { try await $0.setSelectedRow(path: path) }
         // Selecting a row with no tabs opens one. A row whose tabs were all closed stays empty until then.
-        if let row = selectedRow {
-            terminals.ensureTab(for: context(for: row))
+        if let row = selection {
+            withFolder(of: row) {
+                guard self.selectedRowPath == row.path else { return }
+                self.terminals.ensureTab(for: self.context(for: row))
+            }
         }
     }
 

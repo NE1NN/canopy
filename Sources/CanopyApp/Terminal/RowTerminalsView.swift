@@ -19,24 +19,34 @@ struct RowTerminalsView: View {
                 }
             }
         } else {
-            VStack(spacing: 0) {
-                // RootView draws the top bar over this space.
-                Color.clear.frame(height: Style.topBarHeight)
-                if let tab = model.terminals.selectedTab(inRow: row.path) {
-                    GridView(tab: tab)
-                        .id(tab.id)
-                } else {
-                    ContentUnavailableView {
-                        Label("No Terminals", systemImage: "apple.terminal")
-                    } description: {
-                        Text("Press ⌘T to open one in \(row.displayName).")
-                    } actions: {
-                        Button("New Terminal") { model.newTab() }
-                    }
+            TerminalArea(path: row.path, name: row.displayName)
+                // In a window the top bar takes the title bar's row. The title bar is hidden, so clicks reach it.
+                .ignoresSafeArea(.container, edges: topBarFillsTitleBar ? .top : [])
+        }
+    }
+}
+
+/// Room for the top bar, which RootView draws over it, then the selected tab's terminals.
+struct TerminalArea: View {
+    @Environment(AppModel.self) private var model
+    let path: String
+    let name: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: Style.topBarHeight)
+            if let tab = model.terminals.selectedTab(inRow: path) {
+                GridView(tab: tab)
+                    .id(tab.id)
+            } else {
+                ContentUnavailableView {
+                    Label("No Terminals", systemImage: "apple.terminal")
+                } description: {
+                    Text("Press ⌘T to open one in \(name).")
+                } actions: {
+                    Button("New Terminal") { model.newTab() }
                 }
             }
-            // In a window the top bar takes the title bar's row. The title bar is hidden, so clicks reach it.
-            .ignoresSafeArea(.container, edges: topBarFillsTitleBar ? .top : [])
         }
     }
 }

@@ -465,7 +465,7 @@ public final class PluginHost {
             type, row: row.title, path: row.path, data: ["plugin": .string(row.plugin), "item": .string(row.item)])
     }
 
-    static func message(_ error: any Error) -> String {
+    public static func message(_ error: any Error) -> String {
         switch error {
         case let error as WorkspaceError: error.message
         case let error as ControlError: error.message

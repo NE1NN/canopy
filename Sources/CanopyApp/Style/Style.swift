@@ -43,6 +43,8 @@ enum Style {
     /// in dark, where the terminal is the darker one.
     static let chrome = Color(
         nsColor: NSColor(name: nil) { $0.isDark ? .windowBackgroundColor : NSColor(hex: 0xF5F5F7) })
+    /// A plugin's panel beside the terminals: the terminal's white in light, a step above it in dark.
+    static let panelBackground = Color(nsColor: .textBackgroundColor)
     static let badgeFill = Color.adaptive(
         light: .black.withAlphaComponent(0.06), dark: .white.withAlphaComponent(0.075))
 

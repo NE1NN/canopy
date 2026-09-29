@@ -6,7 +6,7 @@ import SwiftUI
 /// like a title bar. Double-click a tab to rename it.
 struct TopBarView: View {
     @Environment(AppModel.self) private var model
-    let row: Row
+    let row: SidebarRow
     /// While the sidebar is hidden, the bar names the row.
     let isSidebarHidden: Bool
     /// The traffic lights and the sidebar toggle sit over the bar's leading end.
@@ -17,7 +17,8 @@ struct TopBarView: View {
         let tabs = model.terminals.tabs(inRow: row.path)
         let selected = model.terminals.selectedTab(inRow: row.path)?.id
         HStack(spacing: 2) {
-            if isSidebarHidden {
+            // A plugin row's panel names it already.
+            if isSidebarHidden, let row = row.worktree {
                 RowCrumb(row: row)
             }
             ScrollView(.horizontal, showsIndicators: false) {
