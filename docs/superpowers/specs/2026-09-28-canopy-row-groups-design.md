@@ -129,8 +129,8 @@ Within each repo, the sidebar shows:
 |   main                   |
 |   fix/login              |
 |   v Review           2   |
-|       feat/checkout #145 |
-|       feat/onboarding    |
+|     feat/checkout   #145 |
+|     feat/onboarding      |
 |   > Spikes           1   |
 |   > 3 other worktrees    |
 +--------------------------+
