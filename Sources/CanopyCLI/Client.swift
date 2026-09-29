@@ -10,6 +10,15 @@ struct CLIError: Error, CustomStringConvertible {
     }
 }
 
+/// How long a command waits for the app's reply.
+enum ReplyWait {
+    /// The method's usual wait.
+    case usual
+    case upTo(TimeInterval)
+    /// As long as the app takes, for work such as making a row.
+    case forever
+}
+
 struct OutputOptions: ParsableArguments {
     @Flag(help: "Print machine-readable JSON.")
     var json = false
@@ -26,12 +35,11 @@ struct Client {
     }
 
     /// Every failure, whether it happens here or in the app, ends in `fail`, so `--json` always prints an error object.
-    /// `waitingUpTo` replaces the method's usual wait for its reply, in seconds.
-    func call(
-        _ method: String, _ params: some Encodable, launchIfNeeded: Bool = true, waitingUpTo: TimeInterval? = nil
-    ) -> JSONValue {
+    func call(_ method: String, _ params: some Encodable, launchIfNeeded: Bool = true, wait: ReplyWait = .usual)
+        -> JSONValue
+    {
         do {
-            return try send(method, params, launchIfNeeded: launchIfNeeded, waitingUpTo: waitingUpTo)
+            return try send(method, params, launchIfNeeded: launchIfNeeded, wait: wait)
         } catch let error as ControlError {
             fail(error)
         } catch let error as ControlClientError {
@@ -43,12 +51,17 @@ struct Client {
         }
     }
 
-    private func send(_ method: String, _ params: some Encodable, launchIfNeeded: Bool, waitingUpTo: TimeInterval?)
-        throws -> JSONValue
+    private func send(_ method: String, _ params: some Encodable, launchIfNeeded: Bool, wait: ReplyWait) throws
+        -> JSONValue
     {
         let request = ControlRequest(method: method, params: try .from(params))
-        let client = ControlClient(
-            socketPath: home.socketPath, timeout: waitingUpTo ?? ControlMethod.replyTimeout(for: method))
+        let timeout: TimeInterval? =
+            switch wait {
+            case .usual: ControlMethod.replyTimeout(for: method)
+            case .upTo(let seconds): seconds
+            case .forever: nil
+            }
+        let client = ControlClient(socketPath: home.socketPath, timeout: timeout)
         let response: ControlResponse
         do {
             response = try client.send(request)

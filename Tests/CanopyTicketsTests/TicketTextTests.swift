@@ -69,3 +69,19 @@ struct TicketTextTests {
         }
     }
 }
+
+struct TicketsGuideTests {
+    @Test func theGuideShowsOnlyWhileTicketsIsOn() throws {
+        let dir = try TempDir()
+        let file = URL(fileURLWithPath: dir.sub("config.json"))
+        #expect(!TicketsGuide.isOn(configFile: file))
+        for off in ["{}", #"{"plugins": {"tickets": {"enabled": false, "url": "u"}}}"#, "{not json"] {
+            try off.write(to: file, atomically: true, encoding: .utf8)
+            #expect(!TicketsGuide.isOn(configFile: file), "\(off)")
+        }
+        try #"{"plugins": {"tickets": {"url": "u"}}}"#.write(to: file, atomically: true, encoding: .utf8)
+        #expect(TicketsGuide.isOn(configFile: file))
+        #expect(TicketsGuide.text.hasPrefix("## Tickets\n"))
+        #expect(TicketsGuide.text.contains("canopy ticket new 853 --run 'claude \"$(cat ticket.md)\"'"))
+    }
+}

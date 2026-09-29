@@ -1,5 +1,6 @@
 import ArgumentParser
 import CanopyCore
+import CanopyTickets
 import Foundation
 
 struct RowCommand: AsyncParsableCommand {
@@ -68,7 +69,7 @@ struct RowCommand: AsyncParsableCommand {
                 gh pr checkout does it.
 
                 Run in a plugin's row, such as a ticket's, the new row is linked to that row's item, unless \
-                --no-link.
+                --no-link. --ticket links it to a ticket from anywhere.
 
                 The repo's setup commands from .canopy/config.json then run in the row's Setup tab, and this \
                 waits for them. If setup fails, the row stays, --run is skipped, and this exits 1.
@@ -97,9 +98,14 @@ struct RowCommand: AsyncParsableCommand {
         var group: String?
         @Flag(name: .customLong("no-link"), help: "Do not link the row to the item of the plugin row you are in.")
         var noLink = false
+        @Option(help: ArgumentHelp("Link the row to this ticket, such as 853.", valueName: "ticket"))
+        var ticket: String?
         @OptionGroup var output: OutputOptions
 
         func validate() throws {
+            if ticket != nil, noLink {
+                throw ValidationError("--ticket links the row and --no-link leaves the link out. Pass one of them.")
+            }
             guard pr != nil else {
                 if localBranch != nil {
                     throw ValidationError("--branch is only for --pr. Pass the branch as the argument.")
@@ -125,7 +131,7 @@ struct RowCommand: AsyncParsableCommand {
                 RowNewParams(
                     target: Client.hint(repo: repo), branch: branch ?? localBranch, pr: pr, base: base,
                     existing: existing, select: select, setup: !noSetup, run: command, group: group,
-                    link: noLink ? nil : RowLinkParams(environment: ProcessInfo.processInfo.environment))
+                    link: link)
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
@@ -137,6 +143,12 @@ struct RowCommand: AsyncParsableCommand {
                 FileHandle.standardError.write(Data("error: \(created.setup.message ?? "Setup failed.")\n".utf8))
                 throw ExitCode(1)
             }
+        }
+
+        /// `--ticket`'s ticket, or the item of the plugin row this runs in, unless --no-link.
+        private var link: RowLinkParams? {
+            if let ticket { return RowLinkParams(plugin: TicketMethod.plugin, reference: ticket) }
+            return noLink ? nil : RowLinkParams(environment: ProcessInfo.processInfo.environment)
         }
 
         private func summary(of created: RowNewResult) -> String {
