@@ -2477,3 +2477,64 @@ Also at the coordinator's request:
 - The author chose a panel that keeps to the conversation.
   Problems, the draft with Copy, notes, and fix rows left the panel and `canopy ticket show`, and their models went with them: Canopy no longer decodes those fields.
   Linked fix rows, their `#0853` chip, and `row new --ticket` stay.
+
+### The second review
+
+A second independent reviewer (Opus) read the follow-up round, `git diff b9151c5..22e5f10`.
+It found one critical bug, three important issues, and seven minors, and the coordinator added one more.
+Each was checked in the code before it was changed:
+
+1. **A customer's `<t:-9223372036854775808>` crashed Canopy at every launch.**
+   `abs(Int64.min)` traps, and the saved `ticket.json` of the selected row renders before any network call.
+   A timestamp is now Discord's own pattern, an optional minus and up to 17 digits, and its range is checked with `magnitude`.
+   A seeded run over 3,000 texts of hostile markup, and every message field at its extremes through `ticket show`, found no other trap.
+   `timestampsShowAsDates`, `noTextCrashesTheParser`, `extremeMessagesPrintWithoutCrashing`.
+2. **The 20 MB image cap did not limit memory, and an oversized image downloaded again every time.**
+   `RemoteImageLoader` in `CanopyTickets` replaces the panel's `RemoteImages`.
+   An image whose declared size is over the cap is a file chip and is never downloaded.
+   Anything else streams with a running byte count off the main actor, so a missing or false Content-Length cannot let more in, and a file found too big is remembered while Canopy runs.
+   ImageIO decodes it downsampled off the main actor, refuses more than 50 megapixels, and the cache counts decoded bytes.
+   A file that was too big, or would not load, shows as a file chip, never as expired.
+   `RemoteImageDecodingTests`, `RemoteImageDownloadTests` against a stub `URLProtocol`, `RemoteImageLoaderTests`, `AttachmentDisplayTests`.
+3. **`canopy ticket show --md` left out the note about customers' messages.**
+   It prints what `ticket.md` holds, note first, its help says so, and the e2e check compares the two byte for byte.
+4. **A malformed id counted as a successful refresh.**
+   The schedule leaves out ids ticket-manager answers 400 for, selected or queued, so the loop no longer wakes to skip one and reset an outage's backoff.
+   `aSelectedMalformedTicketNeitherWakesTheLoopNorResetsBackoff`, `aMalformedTicketIsNeverDueEvenSelectedOrQueuedAndStaysSoWhenForgotten`.
+5. **`settle()` could return before the plugin saw a frontmost change.**
+   It compares the whole `PluginState` the plugin last took in.
+6. **`row new --ticket` and `plugin items|new tickets` said `plugin_not_started` after the Keychain refused.**
+   The plugin host keeps a failed start's error, and one with a code of its own fails every command with it.
+   `aStartThatFailedWithItsOwnCodeFailsEveryCommandWithIt`, `aKeychainThatRefusesFailsWithKeychainFailed`.
+7. **Leftover references to the removed sections.**
+   The help, the agent guide, and the spec say what `ticket.md` and the panel hold now, the spec's Refreshing section gives the five-minute wait for a gone ticket, and `PluginContext.linkedRows(item:)` is gone.
+8. **`TokenInput` read 4 KB at a time, returned partial text at the time limit, and spun on a `poll` error.**
+   It reads byte by byte up to the newline, a line that does not end in time is a time-out, a bad descriptor or a `poll` or `read` error fails at once, and a line over 64 KB is refused.
+   `TokenInputTests`.
+9. **House style.**
+   The As Built and After Review entries put one sentence on each line, and the conversation view's doc comment wraps at 120.
+10. **A missing ticket with no saved copy spun forever.**
+    `TicketViewState.placeholder` says Canopy has no copy once ticket-manager no longer has the ticket.
+    The spec says what a panel without a copy shows.
+    `aGoneTicketWithNoCopyShowsItIsMissingRatherThanASpinner`.
+11. **The picker's footer read `canopy row select /priva…s/tickets/0855-mayaperez` for a ticket with a row.**
+    `pickerCommand` takes the picker's action, so Tickets shows `canopy ticket select 0855-mayaperez`, and the fixture plugin keeps the generic commands.
+
+An independent Opus reviewer then read this round, `git diff 22e5f10..HEAD`, and confirmed each of the eleven.
+It found one important issue, older than the round, and five minors, all fixed:
+
+1. **Every panel spun while Tickets was on but could not start**, such as when the Keychain refused at launch, though each row's `ticket.json` was on disk.
+   A failed start loads those copies, and a row without one says Tickets is not running and that the section's warning says why.
+   `aPluginThatCouldNotStartStillShowsTheSavedTicketsAndSaysWhyForTheRest`.
+2. **Two views could download one image twice** when the second checked the cache just before the first stored it.
+   The cache is checked again under the lock that guards the downloads in flight.
+3. **Thumbnails were larger than the panel draws them, and downloads ran all at once.**
+   An image decodes to the box its view draws it in, twice its height cap and at most 1,800 pixels wide, so a phone screenshot takes about 0.4 MB rather than 4.7.
+   Four downloads run at a time.
+   `aTallImageIsDecodedToTheBoxItIsDrawnIn`, `fourDownloadsRunAtOnceAndTheRestWait`.
+4. **The body was read one byte at a time and copied at the end.**
+   It arrives through a data-task delegate in the pieces the network sends, into `Data` sized from Content-Length.
+5. **Four doc comments and a string were over 120 characters.**
+   They wrap, with two older ones from main.
+6. **The spec did not give the attachment rules.**
+   It says when an image is a file link, how images download and decode, and that only a link past its expiry shows as expired.
