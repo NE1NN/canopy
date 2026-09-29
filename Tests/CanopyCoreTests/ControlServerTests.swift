@@ -449,6 +449,39 @@ struct ControlServerTests {
         #expect(created.pr?.number == 7)
     }
 
+    @Test func pullRequestAndBranchListsAnswerOverTheSocket() async throws {
+        let dir = try TempDir()
+        let github = try LocalGitHub(dir)
+        try await github.createRepo("acme/app")
+        try await github.push(to: "feat/split", of: "acme/app")
+        try await github.push(to: "feat/other", of: "acme/app")
+        try await github.openPR(7, on: "acme/app", from: "feat/split", title: "Split checkout")
+        try await github.openPR(8, on: "acme/app", from: "feat/other", state: "MERGED")
+        let repo = try await github.clone("acme/app")
+        let (workspace, server, client, _) = try await startServer(dir, git: github.git, github: github.gh)
+        defer { server.stop() }
+        _ = try await call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let row = try await workspace.createRow(repoPath: repo, branch: "feat/split", existing: true).row
+        let target = TargetHint(repo: "demo")
+
+        let open = try await call(
+            client, ControlMethod.prList, PRListParams(target: target), as: [ListedPullRequest].self)
+        let all = try await call(
+            client, ControlMethod.prList, PRListParams(target: target, closed: true), as: [ListedPullRequest].self)
+        let merged = try await call(
+            client, ControlMethod.prList, PRListParams(target: target, query: "#8"), as: [ListedPullRequest].self)
+        let branches = try await call(
+            client, ControlMethod.branchList, BranchListParams(target: target, query: "feat"), as: BranchListing.self)
+
+        #expect(open.map(\.number) == [7])
+        #expect(open.first?.row == BranchHolder(row))
+        #expect(Set(all.map(\.number)) == [7, 8])
+        #expect(merged.map(\.state) == [.merged])
+        #expect(Set(branches.branches.map(\.name)) == ["feat/split", "feat/other"])
+        #expect(branches.branches.first { $0.name == "feat/split" }?.row == BranchHolder(row))
+        #expect(branches.defaultBase == "origin/main")
+    }
+
     @Test func rowNewRefusesOptionsThatDoNotGoTogether() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir, origin: true)

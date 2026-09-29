@@ -13,11 +13,13 @@ public enum ControlMethod {
     public static let rowAdopt = "row.adopt"
     public static let rowMove = "row.move"
     public static let prShow = "pr.show"
+    public static let prList = "pr.list"
+    public static let branchList = "branch.list"
 
     /// Methods that only read, which the activity log leaves out: agents poll some of them every few seconds.
     public static let readOnly: Set<String> = [
-        status, repoList, rowList, prShow, TermMethod.list, TermMethod.read, TermMethod.wait, PortMethod.list,
-        GroupMethod.list,
+        status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
+        PortMethod.list, GroupMethod.list,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
@@ -28,12 +30,13 @@ public enum ControlMethod {
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
     /// a build does and cannot be cancelled, so the CLI waits for them without a limit, and so does a clone, which
     /// takes as long as the repo is big. A PR lookup can queue behind one already asking GitHub, and each may take
-    /// 30 seconds. `term.wait` has its own timeout, which the CLI waits out. Other reads answer from memory.
+    /// 30 seconds. Listing branches fetches in the repo's git queue. `term.wait` has its own timeout, which the CLI
+    /// waits out. Other reads answer from memory.
     public static func replyTimeout(for method: String) -> TimeInterval? {
         if [rowNew, rowRemove, repoClone].contains(method) { return nil }
-        if method == prShow { return 90 }
+        if [prShow, prList].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
-        return [repoAdd, repoRemove, rowAdopt].contains(method) ? 900 : 30
+        return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
     }
 }
 
@@ -282,5 +285,48 @@ public struct PRShowResult: Codable, Sendable {
         try container.encode(branch, forKey: .branch)
         try container.encode(path, forKey: .path)
         try container.encode(pr, forKey: .pr)
+    }
+}
+
+public struct PRListParams: Codable, Sendable {
+    public var target: TargetHint
+    /// Keeps the PRs whose number, title, head branch, or author holds each word. A PR number, `#number`, or URL looks
+    /// that PR up in any state.
+    public var query: String?
+    /// Lists closed and merged PRs too.
+    public var closed: Bool
+
+    public init(target: TargetHint = TargetHint(), query: String? = nil, closed: Bool = false) {
+        self.target = target
+        self.query = query
+        self.closed = closed
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        query = try container.decodeIfPresent(String.self, forKey: .query)
+        closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+    }
+}
+
+public struct BranchListParams: Codable, Sendable {
+    public var target: TargetHint
+    /// Keeps the branches whose name holds each word.
+    public var query: String?
+    /// Fetches origin first. Off to list only what the repo already has.
+    public var fetch: Bool
+
+    public init(target: TargetHint = TargetHint(), query: String? = nil, fetch: Bool = true) {
+        self.target = target
+        self.query = query
+        self.fetch = fetch
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        target = try container.decodeIfPresent(TargetHint.self, forKey: .target) ?? TargetHint()
+        query = try container.decodeIfPresent(String.self, forKey: .query)
+        fetch = try container.decodeIfPresent(Bool.self, forKey: .fetch) ?? true
     }
 }

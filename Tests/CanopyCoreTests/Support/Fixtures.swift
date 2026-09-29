@@ -22,6 +22,14 @@ enum Fixture {
     /// Tests pass an explicit environment so they never depend on the login shell of whoever runs them.
     static let git = GitRunner(executable: gitPath, environment: environment)
 
+    /// A GitRunner whose commits are made at `date`, such as 2026-09-01T10:00:00Z, or now when it is nil.
+    static func git(committingAt date: String?) -> GitRunner {
+        guard let date else { return git }
+        return GitRunner(
+            executable: gitPath,
+            environment: environment.merging(["GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date]) { $1 })
+    }
+
     /// Creates `<dir>/<name>` with one commit on `main`. With `origin`, also creates a bare
     /// `<dir>/<name>-origin.git`, pushes to it, and sets origin/HEAD.
     @discardableResult

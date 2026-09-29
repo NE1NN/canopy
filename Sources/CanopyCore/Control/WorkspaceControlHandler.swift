@@ -203,6 +203,19 @@ public struct WorkspaceControlHandler: Sendable {
                     repo: snapshot.repo(path: row.repoPath)?.name ?? "", branch: row.displayName, path: row.path,
                     pr: pr))
 
+        case ControlMethod.prList:
+            let params = try request.decodeParams(PRListParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(
+                try await workspace.listPullRequests(
+                    repoPath: repo.path, query: params.query, includeClosed: params.closed))
+
+        case ControlMethod.branchList:
+            let params = try request.decodeParams(BranchListParams.self)
+            let repo = try TargetResolver.repo(for: params.target, in: await workspace.snapshot)
+            return try .from(
+                try await workspace.listBranches(repoPath: repo.path, query: params.query, fetch: params.fetch))
+
         case PortMethod.list:
             let params = try request.decodeParams(PortsListParams.self)
             let row = try await rowUnlessAll(params.target, all: params.all)

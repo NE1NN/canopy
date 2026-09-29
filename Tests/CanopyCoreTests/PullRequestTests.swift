@@ -134,7 +134,8 @@ struct PullRequestTests {
               "isDraft": true, "updatedAt": "2026-09-28T01:00:00Z", "headRefName": "feat/split",
               "headRefOid": "abc123", "headRef": {"name": "feat/split"}, "baseRefName": "main",
               "isCrossRepository": true, "maintainerCanModify": true,
-              "headRepository": {"name": "canopy-fork"}, "headRepositoryOwner": {"login": "someone"}}}}}
+              "headRepository": {"name": "canopy-fork"}, "headRepositoryOwner": {"login": "someone"},
+              "author": {"login": "someone"}}}}}
             """
 
         let head = try #require(try PRHeadQuery.parse(Data(json.utf8)))
@@ -151,6 +152,7 @@ struct PullRequestTests {
         #expect(head.headRepo == GitHubRepo(owner: "someone", name: "canopy-fork"))
         #expect(head.maintainerCanModify)
         #expect(head.defaultBranch == "main")
+        #expect(head.author == "someone")
     }
 
     @Test func readsAMergedHeadWhoseBranchAndForkAreGone() throws {
@@ -183,5 +185,73 @@ struct PullRequestTests {
         for field in ["headRefOid", "headRef { name }", "maintainerCanModify", "headRepositoryOwner { login }"] {
             #expect(query.contains(field), "\(field)")
         }
+    }
+
+    @Test func readsAListOfPullRequests() throws {
+        let json = """
+            {"data": {"repository": {"pullRequests": {"nodes": [
+              {"number": 9, "title": "From a fork", "url": "https://github.com/NE1NN/canopy/pull/9", "state": "OPEN",
+               "isDraft": true, "updatedAt": "2026-09-28T02:00:00Z", "headRefName": "feat/x",
+               "isCrossRepository": true, "author": {"login": "someone"}},
+              {"number": 4, "title": "Old", "url": "https://github.com/NE1NN/canopy/pull/4", "state": "MERGED",
+               "isDraft": false, "updatedAt": "2026-09-27T02:00:00Z", "headRefName": "fix/y",
+               "isCrossRepository": false, "author": null}
+            ]}}}}
+            """
+
+        let listed = try PRListQuery.parse(Data(json.utf8))
+
+        #expect(
+            listed == [
+                ListedPullRequest(
+                    number: 9, title: "From a fork", url: "https://github.com/NE1NN/canopy/pull/9", state: .draft,
+                    author: "someone", headBranch: "feat/x", isFork: true, updatedAt: "2026-09-28T02:00:00Z"),
+                ListedPullRequest(
+                    number: 4, title: "Old", url: "https://github.com/NE1NN/canopy/pull/4", state: .merged,
+                    author: nil, headBranch: "fix/y", isFork: false, updatedAt: "2026-09-27T02:00:00Z"),
+            ])
+    }
+
+    @Test func listQueryAsksForTheNewestPullRequests() {
+        let open = PRListQuery.build(repo: repo, includeClosed: false)
+        let all = PRListQuery.build(repo: repo, includeClosed: true)
+
+        #expect(open.contains(#"repository(owner: "NE1NN", name: "canopy")"#))
+        #expect(
+            open.contains("pullRequests(states: [OPEN], first: 100, orderBy: {field: UPDATED_AT, direction: DESC})"))
+        #expect(all.contains("pullRequests(states: [OPEN, CLOSED, MERGED], first: 100,"))
+        for field in ["headRefName", "isCrossRepository", "author { login }"] {
+            #expect(open.contains(field), "\(field)")
+        }
+    }
+
+    @Test func aListedPullRequestNamesItsRowForAgents() throws {
+        var listed = ListedPullRequest(
+            number: 9, title: "t", url: "u", state: .open, author: nil, headBranch: "feat/x", isFork: true,
+            updatedAt: "2026-09-28T02:00:00Z")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+
+        #expect(
+            String(decoding: try encoder.encode(listed), as: UTF8.self)
+                == #"{"author":null,"fork":true,"headBranch":"feat\/x","number":9,"row":null,"state":"open","#
+                + #""title":"t","updatedAt":"2026-09-28T02:00:00Z","url":"u"}"#)
+        listed.row = BranchHolder(path: "/w/someone-feat-x", branch: "someone/feat/x", rowClass: .canopy)
+        let json = String(decoding: try encoder.encode(listed), as: UTF8.self)
+        #expect(json.contains(#""row":{"branch":"someone\/feat\/x","class":"canopy","path":"\/w\/someone-feat-x"}"#))
+        #expect(try JSONDecoder().decode(ListedPullRequest.self, from: Data(json.utf8)) == listed)
+    }
+
+    @Test func aLookedUpPullRequestListsLikeTheRest() throws {
+        let head = PullRequestHead(
+            pullRequest: PullRequest(number: 7, title: "t", url: "u", state: .closed, updatedAt: "2026-09-28"),
+            branch: "feat/split", commit: "abc", branchExists: true, isCrossRepository: false, headRepo: nil,
+            maintainerCanModify: false, defaultBranch: "main", author: "me")
+
+        #expect(
+            ListedPullRequest(head)
+                == ListedPullRequest(
+                    number: 7, title: "t", url: "u", state: .closed, author: "me", headBranch: "feat/split",
+                    isFork: false, updatedAt: "2026-09-28"))
     }
 }

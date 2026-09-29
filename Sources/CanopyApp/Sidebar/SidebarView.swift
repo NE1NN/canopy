@@ -25,7 +25,7 @@ struct SidebarView: View {
             }
         }
         .sheet(item: $newRow) { request in
-            NewRowSheet(repo: request.repo, group: request.group)
+            NewRowSheet(repo: request.repo, group: request.group, picker: request.picker)
         }
     }
 
@@ -63,7 +63,10 @@ struct SidebarView: View {
                             get: { expanded.contains(repo.path) },
                             set: { if $0 { expanded.insert(repo.path) } else { expanded.remove(repo.path) } }),
                         isFocused: isFocused,
-                        onNewRow: { newRow = NewRowRequest(repo: repo, group: $0) }
+                        onNewRow: {
+                            newRow = NewRowRequest(
+                                repo: repo, group: $0, picker: NewRowPicker(sources: model.newRowSources(for: repo)))
+                        }
                     )
                 }
             }
@@ -113,6 +116,8 @@ struct SidebarView: View {
 struct NewRowRequest: Identifiable {
     let repo: RepoSnapshot
     let group: String?
+    /// Made here, once per sheet, since the sheet's view is made again whenever the sidebar updates.
+    let picker: NewRowPicker
 
     var id: String { repo.path }
 }

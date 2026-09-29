@@ -49,6 +49,7 @@ struct AgentGuide: ParsableCommand {
         `row new --pr` checks out a pull request's branch, including one from a fork, with gh pr checkout's names and
         tracking, and "pr" in the result is the PR. Pick the local name with `--branch`. A branch another row has
         fails with branch_checked_out, which names that row; use `canopy row select` or `canopy term` there instead.
+        To find what to start from, list the repo's PRs and branches (see Pull requests and branches below).
 
         ## Groups
 
@@ -106,13 +107,24 @@ struct AgentGuide: ParsableCommand {
         works in. `ports stop` only stops your row's ports, or any row's with --all, never a port no row owns.
         Ports the system picks at random (49152 and up) are left out: they are tools like MCP servers.
 
-        ## Pull requests
+        ## Pull requests and branches
 
-            canopy pr [<branch>] [--refresh]              the row's PR: number, state, title, and URL
+            canopy pr show [<branch>] [--refresh]         the row's PR: number, state, title, and URL
+            canopy pr list [--query <text>] [--closed]    the repo's open PRs, most recently updated first
+            canopy branch list [--query <text>]           local and origin branches, newest commit first
 
-        Canopy looks up PRs with your `gh` login for its own and adopted rows, about once a minute and more often
-        right after a push. `--refresh` asks GitHub now, for example right after `gh pr create`.
-        `row list --json` also carries each row's PR as "pr" when it has one.
+        `canopy pr` alone is `pr show`. Canopy looks up PRs with your `gh` login for its own and adopted rows, about
+        once a minute and more often right after a push. `--refresh` asks GitHub now, for example right after
+        `gh pr create`. `row list --json` also carries each row's PR as "pr" when it has one.
+
+        `pr list` shows the 100 most recently updated open PRs, or PRs in any state with `--closed`. `--query` keeps
+        those whose number, title, head branch, or author holds each word, and a number, #number, or URL looks that PR
+        up even when it is closed. `branch list` fetches origin first, unless you pass `--no-fetch`. It says where each
+        branch is ("where": local, origin, or both) and how many commits the local branch is "ahead" of or "behind"
+        origin's. In both lists "row" is the row or worktree that has the item checked out, or null. Start a row on an
+        item without one with `row new --pr <n>` or `row new <branch> --existing`, show one that has a row with
+        `row select`, and adopt one in another tool's worktree ("class": "external") with `row adopt <path>`. These
+        are the lists the New Row sheet shows.
 
         ## Activity
 
@@ -136,6 +148,11 @@ struct AgentGuide: ParsableCommand {
         Review a pull request in its own row:
 
             canopy row new --pr 123 --run 'claude "review this PR"'
+
+        Review every open PR that has no row yet:
+
+            canopy pr list --json | jq -r '.[] | select(.row == null) | .number' |
+                while read -r n; do canopy row new --pr "$n" --run 'claude "review this PR"'; done
 
         Run a dev server in its own tab of your row and watch it:
 

@@ -186,7 +186,7 @@ Canopy and adopted rows can also be gathered into named groups after the ungroup
 
 ### Creating a row
 
-From the `+` button next to a repo, or `canopy row new <branch>`:
+From the `+` button next to a repo, whose sheet lists the repo's open PRs and branches to start from, or `canopy row new <branch>`:
 
 1. Run `git fetch --prune origin`.
 2. Pick the folder `CANOPY_HOME/worktrees/<repo>/<slug>`, where the slug is the branch name with `/` replaced by `-`.
@@ -448,7 +448,7 @@ Refresh triggers:
 - every 10 seconds for two minutes after a push is detected.
   Canopy watches the reflogs of remote-tracking branches in `.git/logs/refs/remotes/`, where git records each push as `update by push`.
   Fetches and pulls move the same branches but are not pushes, so they do not count.
-- `canopy pr --refresh`
+- `canopy pr show --refresh`
 
 If `gh` is missing or not logged in, badges are hidden and the repo header shows a warning with the fix, such as `gh auth login`.
 The GitHub repo is taken from the `origin` remote.
@@ -553,7 +553,9 @@ Every command exits non-zero on failure.
 | `canopy term close <id> [--force]` | close a pane |
 | `canopy ports [--all]` | list ports for the resolved row, or for all rows with `--all` or when no row resolves |
 | `canopy ports stop <port>` | stop the process holding a port |
-| `canopy pr [--refresh]` | show the current row's PR |
+| `canopy pr show [<row>] [--refresh]` | show a row's PR; `canopy pr` alone does the same |
+| `canopy pr list [--query <text>] [--closed]` | list the repo's PRs and the row that has each |
+| `canopy branch list [--query <text>] [--no-fetch]` | list local and origin branches and the row that has each |
 | `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events, from 24 hours ago by default |
 | `canopy agent-guide` | print a manual written for agents |
 

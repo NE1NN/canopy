@@ -73,6 +73,17 @@ public struct GitHubCLI: Sendable {
         }
     }
 
+    /// The repo's 100 most recently updated pull requests, only the open ones unless `includeClosed`.
+    public func pullRequestList(repo: GitHubRepo, includeClosed: Bool) async -> Result<[ListedPullRequest], GHFailure> {
+        let query = PRListQuery.build(repo: repo, includeClosed: includeClosed)
+        switch await run(["api", "graphql", "-f", "query=\(query)"], timeout: timeout) {
+        case .failure(let failure): return .failure(failure)
+        case .success(let reply):
+            guard let listed = try? PRListQuery.parse(reply) else { return .failure(.failed(Self.unreadable)) }
+            return .success(listed)
+        }
+    }
+
     /// Clones with `gh repo clone`, which uses the user's login and preferred git protocol, into `folder`, which must
     /// not exist yet. git reports progress to stderr, which `handle` reads. Nil when it cloned.
     public func clone(_ repo: String, into folder: String, handle: SubprocessHandle) async -> GHFailure? {
