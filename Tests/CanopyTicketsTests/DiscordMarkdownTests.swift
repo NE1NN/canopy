@@ -104,6 +104,9 @@ struct DiscordMarkdownTests {
         let shown = spans("at <t:1790000000:d>")
         #expect(shown.count == 1 && shown[0].text.hasPrefix("at ") && shown[0].text.contains("2026"))
         #expect(spans("<t:nope>") == [span("<t:nope>")])
+        for literal in ["<t:nan>", "<t:1e300>", "<t:1.5>", "<t:99999999999999999999>"] {
+            #expect(spans(literal) == [span(literal)], "\(literal)")
+        }
     }
 
     @Test func quotes() {

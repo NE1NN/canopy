@@ -426,8 +426,11 @@ private struct InlineParser {
     /// `t:seconds` and `t:seconds:style`, in the styles Discord knows.
     private static func timestamp(_ text: String) -> String? {
         let parts = text.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2 || parts.count == 3, parts[0] == "t", let seconds = Double(parts[1]) else { return nil }
-        let date = Date(timeIntervalSince1970: seconds)
+        // Whole seconds, within the range Discord's clients can show, as Discord itself accepts.
+        guard parts.count == 2 || parts.count == 3, parts[0] == "t", let seconds = Int64(parts[1]),
+            abs(seconds) <= 8_640_000_000_000
+        else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(seconds))
         switch parts.count == 3 ? String(parts[2]) : "f" {
         case "t": return date.formatted(date: .omitted, time: .shortened)
         case "T": return date.formatted(date: .omitted, time: .standard)
