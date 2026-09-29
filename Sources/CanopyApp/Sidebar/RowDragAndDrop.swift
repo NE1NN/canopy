@@ -180,12 +180,3 @@ struct RowDropIndicator: View {
         return (below ? slot.maxY : slot.minY, depth)
     }
 }
-
-extension DropSlot.Kind {
-    var rowPath: String? {
-        switch self {
-        case .main(let path), .row(let path, _): path
-        case .header: nil
-        }
-    }
-}

@@ -22,6 +22,16 @@ public struct DropSlot: Sendable, Equatable {
     }
 }
 
+extension DropSlot.Kind {
+    /// The row this slot is, by path. A group's header is none.
+    public var rowPath: String? {
+        switch self {
+        case .main(let path), .row(let path, _): path
+        case .header: nil
+        }
+    }
+}
+
 /// Where a dropped row goes, and how the sidebar shows it while the row hovers there.
 public struct RowDropTarget: Sendable, Equatable {
     public enum Indicator: Sendable, Equatable {
