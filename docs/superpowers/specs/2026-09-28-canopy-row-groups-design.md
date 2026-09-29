@@ -138,6 +138,7 @@ Within each repo, the sidebar shows:
 
 A repo with no groups looks exactly as it does today.
 A missing repo shows no groups, as it shows no rows.
+A folded repo shows only its header, hiding its groups with its rows, as the main spec's Folding repos describes.
 The repo header's count still counts every row but external ones, grouped or not.
 The ports panel lists rows in the same order, and still lists the ports of rows inside collapsed groups.
 
@@ -153,6 +154,8 @@ The ports panel lists rows in the same order, and still lists the ports of rows 
   `…` holds Rename… and Delete Group….
   The header's context menu holds the same items.
 - A collapsed group that holds the selected row draws its header with the selection fill, accent-tinted while the sidebar has the keyboard like a selected row, so the sidebar always shows where the window is.
+  When the group's repo is folded too, the repo's header holds the selection instead.
+- The chevron is the one repo headers, plugin section headers, and the other worktrees fold use.
 - VoiceOver reads the header as one button, such as "Review, group, 2 rows, collapsed".
   A row inside a group adds "in Review" to its label.
 
@@ -187,7 +190,7 @@ A repo with no groups gets the sheet as it is today.
 ### Selection and collapsed groups
 
 - Collapsing the group that holds the selected row keeps the row selected and its terminals on screen.
-- Selecting a row hidden in a collapsed group unfolds the group, so the row scrolls into view.
+- Selecting a row hidden in a collapsed group unfolds the group, and its repo if that is folded too, so the row scrolls into view.
   That happens when the row is picked from the ports panel, with `canopy row select`, or with `canopy row new --select`.
 
 ## Drag and drop
@@ -224,10 +227,11 @@ It starts at the indent the row would land at, so the end of a group reads diffe
 ## Keyboard
 
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order: each repo's main row, its ungrouped rows, then the rows of each group that is not collapsed.
-  Rows in collapsed groups and external rows get no number.
+  Rows in collapsed groups, rows of folded repos and folded plugin sections, and external rows get no number.
 - The `⌘N` hints on hover and the row items in the menu bar follow the same numbering.
 - `↑` and `↓` step through the same visible rows.
   From a selected row hidden in a collapsed group, `↓` goes to the first visible row after the group and `↑` to the last visible row before it.
+  A row hidden in a folded repo or plugin section goes on from the repo's or section's place the same way.
 
 ## CLI
 
@@ -239,11 +243,12 @@ It starts at the indent the row would land at, so the end of a group reads diffe
 | `canopy group new <name> [--repo <name>]` | create an empty group after the repo's other groups |
 | `canopy group rename <name> <new-name> [--repo <name>]` | rename a group |
 | `canopy group rm <name> [--repo <name>]` | delete a group, moving its rows to the end of the ungrouped rows |
+| `canopy group collapse <name> [--repo <name>]`, `canopy group expand <name> [--repo <name>]` | fold or unfold a group in the sidebar; safe to repeat |
 | `canopy row move [<row>] (--group <name> \| --no-group \| --before <row> \| --after <row>) [--repo <name>]` | move a row into a group, out of one, or next to another row |
 | `canopy row new <branch> [...] [--group <name>]` | create the row straight into a group |
 | `canopy row list [--all]` | now shows each row's group |
 
-- `group new`, `group rename`, and `group rm` act on the repo resolved the usual way: `--repo`, then `CANOPY_REPO`, then the worktree containing the current folder.
+- `group new`, `group rename`, `group rm`, `group collapse`, and `group expand` act on the repo resolved the usual way: `--repo`, then `CANOPY_REPO`, then the worktree containing the current folder.
 - `group list` without `--repo` lists every repo's groups, like `row list`.
 - `row move` resolves its row like `row rm`: the argument, a branch or a path, or else the row you are in.
   `--repo` settles a branch that exists in several repos.
@@ -282,6 +287,7 @@ In text, the commands confirm what they did:
 - `Created group Review in web-app.`
 - `Renamed Review to Code review.`
 - `Deleted group Review. Its 2 rows are ungrouped.`
+- `Collapsed group Review in web-app.` and `Expanded group Review in web-app.`
 - `Moved feat/checkout to Review.`, `Moved feat/checkout out of Review.`, or `Moved feat/checkout after fix/login.`
 - `feat/checkout is already in Review.` for a move that changed nothing.
 
@@ -310,6 +316,7 @@ canopy row list --json | jq -r '.[] | select(.group == "Review") | .branch'
 | `group.new` | `target`, `name` | the group |
 | `group.rename` | `target`, `name`, `newName` | the group |
 | `group.remove` | `target`, `name` | the group as it was |
+| `group.collapse`, `group.expand` | `target`, `name` | the group, folded or unfolded |
 | `row.move` | `target`, and exactly one of `group`, `noGroup: true`, `before`, `after` | `row`, `moved`, false for a move that changed nothing, and `from`, the group it was in |
 | `row.new` | gains `group` | as before, its row carrying the group |
 
@@ -387,7 +394,8 @@ These go beyond what was approved in conversation, each picked as the conservati
 
 1. `row move --before` and `--after`, so dragging between rows has a CLI equivalent.
 2. Names cannot contain control characters, and lookups ignore case.
-3. No CLI command folds or unfolds a group, since that is view state like the ports panel's fold, but `group list --json` reports it.
+3. No CLI command folded or unfolded a group at first, since that is view state like the ports panel's fold, but `group list --json` reported it.
+   Since repos fold too, `canopy group collapse` and `canopy group expand` fold a group the way `canopy repo collapse` and `expand` fold a repo, so every fold in the sidebar has a command.
 4. A collapsed group holding the selected row shows the selection on its header, and selecting a row hidden inside one, from the ports panel or the CLI, unfolds it.
 5. `--group` for a row already in that group changes nothing rather than moving the row to the end.
 6. Only group changes log `row.moved`, and deleting a group logs one event rather than one per row.
