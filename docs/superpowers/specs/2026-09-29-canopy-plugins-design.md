@@ -76,7 +76,8 @@ A plugin gives the base:
 - a new row's seed for an item: its title and folder name, or an error such as `ticket_not_found`
 - how to fill a row's folder, such as writing `ticket.md`
 - how to resolve a reference an agent typed, such as `853`, to an item
-- its control methods, such as `tickets.list`, which get the CLI's target hint
+- its control methods, such as `tickets.list`, which get the CLI's target hint and the plugin row it points at, and which reach the plugin while it is off too, so `tickets.connect` can turn it on
+- the picker footer's command for an item, when it has one of its own, such as `canopy ticket new 853 --select`
 
 The base gives each plugin a `PluginContext` with:
 
@@ -85,7 +86,8 @@ The base gives each plugin a `PluginContext` with:
 - the activity log
 - its rows, which row is selected, and whether the window is visible, as a stream of changes
 - a way to set each row's look: its title, a short label such as `#0853`, accessories, and whether it is missing
-- a way to set a warning for its section, with the fix
+- a way to set a warning for its section, as markdown with the fix in it, as a repo's PR warning reads
+- a way to turn itself on and off, create and remove its rows, and select a row, for its own commands
 
 Accessories are a small fixed set the sidebar knows how to draw: a colored dot, a tag such as "closed", and initials on a colored circle.
 The sidebar therefore stays in the base, and a plugin never draws into it.
@@ -121,10 +123,14 @@ An older `state.json` without `plugins` loads as having none.
 **Creating.** `PluginHost` asks the plugin for the seed first, so a ticket that does not exist creates nothing.
 The folder is `CANOPY_HOME/plugins/<plugin>/<folder name>`, with `-2`, `-3`, and so on appended if it exists, and is created with mode 0700.
 The host records the row, lets the plugin fill the folder, logs `plugin.row.created`, and then runs `--run` in a new pane, as `row new --run` does.
+A fill that fails keeps the row, skips `--run`, and makes the command exit 1, as a failed setup does.
+The folder name drops path separators, control characters, and leading dots, and never reuses the path of a row whose folder is gone.
 The row is selected when it was created from the window or with `--select`.
 
 **Removing.** The host closes the row's terminals, asking first if any runs a program, which `--force` skips.
 It moves the folder to the Trash, forgets the row, and logs `plugin.row.removed`.
+The result says where the folder went.
+A dev build launched with `CANOPY_TRASH_FOLDER` moves it into that folder instead, so end-to-end runs and UI checks on a throwaway home leave the Trash alone.
 Links to the item stay, so opening the same ticket again later shows its fix rows again.
 
 **A missing folder.** A folder deleted outside Canopy is recreated and filled again at launch and before a terminal opens in it.
@@ -164,12 +170,15 @@ A warning the plugin sets shows under the header with its fix, as a PR warning s
 A plugin row's line reads: the plugin's symbol, the title, the plugin's accessories, then the running or agent dot.
 On hover the right side shows the row's shortcut and an `x`.
 Rows can be dragged to reorder them within their section, and never into another section or a repo.
+`canopy row move <path> --before <path>` and `--after` do the same from the CLI.
+The section's `…` menu holds New Row…, which opens the picker, and Turn Off, which does what `canopy plugin disable` does and asks first while programs run in its rows.
 `⌘1` to `⌘9` and the arrow keys take plugin rows after every repo's rows, in section order.
 
 ### Detail
 
 A plugin row shows the plugin's panel at the left of the detail area, then the tab bar and terminal grid.
 The top bar starts at the panel's right edge, so the tabs stay above the terminals they switch.
+Above the panel, level with the top bar, a strip names the plugin and the row, and moves the window like the title bar.
 The panel is 340 points wide by default, can be dragged between 260 points and half the detail area, and its width is saved per plugin.
 A plugin row with no tabs opens one tab with one pane when selected, like any row.
 
@@ -178,7 +187,8 @@ A plugin row with no tabs opens one tab with one pane when selected, like any ro
 The base draws one picker for every plugin, as a sheet like the New Row sheet.
 It has a search field, the plugin's filter chips, and a list of items, each with a title, a subtitle, accessories, and a mark when the item already has a row.
 Return or a click opens a row for the item and selects it, or selects the row the item already has.
-The footer shows the `canopy` command that does the same.
+The footer shows the `canopy` command that does the same, `canopy plugin new <plugin> <item> --select` unless the plugin has its own, `canopy row select <path>` for an item with a row, and `canopy plugin items <plugin>` before anything is picked.
+The picker asks the plugin afresh when it opens and when a toggle changes, and otherwise lets the plugin narrow what it already fetched.
 While items load the list shows a spinner, and a plugin's error shows in its place with the fix.
 
 ### Turning plugins on and off
@@ -190,6 +200,8 @@ A plugin whose `start` fails still shows its section and rows, with the failure 
 `plugin.enable` and `plugin.disable` turn a plugin on or off while the app runs.
 Each writes the plugin's section of `config.json` through a temp file and an atomic rename, keeping every other key as it was.
 The Tickets plugin's `connect` and `disconnect` go through them.
+`plugin.enable` on a plugin that is on starts it again when its section changed.
+`plugin.disable` refuses with `plugin_busy` while a program runs in one of its rows, unless `force`, and then closes its rows' terminals, whose layouts come back with the rows when it is on again.
 
 ### Secrets
 
@@ -202,15 +214,19 @@ The Keychain sits behind a `SecretStore` interface, with an in-memory store for 
 
 | Command | Method | Effect |
 |---|---|---|
-| `canopy plugin list` | `plugin.list` | each built-in plugin, whether it is on, and its status line, such as "connected as hindie@… to https://….convex.site, updated 20 s ago" |
-| | `plugin.enable`, `plugin.disable` | used by plugin commands such as `ticket connect` |
+| `canopy plugin list` | `plugin.list` | each built-in plugin, whether it is on, and its status line, such as "connected as hindie@… to https://….convex.site, updated 20 s ago", with its warning and filters |
+| `canopy plugin enable <plugin>`, `canopy plugin disable <plugin> [--force]` | `plugin.enable`, `plugin.disable` | turn a plugin on or off; plugin commands such as `ticket connect` use them too |
+| `canopy plugin items <plugin> [--query <text>] [--filter <id>]...` | `plugin.items` | what the picker lists, with each item's row |
+| `canopy plugin new <plugin> <reference> [--run <cmd>] [--select]` | `plugin.new` | what picking an item without a row does; an item with a row fails with `item_has_row`, naming it |
 | `canopy row list` | `row.list` | also lists plugin rows, under each plugin's name, with `plugin`, `item`, `title`, and `path` in `--json` |
-| `canopy row select`, `canopy row rm` | `row.select`, `row.remove` | also take a plugin row's path |
+| `canopy row select`, `canopy row rm`, `canopy row move --before\|--after` | `row.select`, `row.remove`, `row.move` | also take a plugin row's path; `row rm` refuses a running program without `--force` |
+| `canopy row new … --no-link` | `row.new` | leaves out the link the CLI sends from a plugin row |
 | `canopy row new … [--ticket <ticket>]` | `row.new` | `--ticket` sends a `link` to the Tickets plugin |
 | `canopy term …` | `term.*` | resolve plugin rows from `CANOPY_ROW_PATH` or the current folder, like any row |
 
-`plugin.list` and each plugin's reading methods join the methods `cli.call` leaves out.
-A `token` param is never written to the activity log.
+`plugin.list`, `plugin.items`, and each plugin's reading methods join the methods `cli.call` leaves out.
+A `token` param, at any depth, is never written to the activity log.
+`term list` and `ports` leave `repo` out for a plugin row's terminals and ports, and give `plugin` instead.
 
 ### Activity events
 
@@ -432,7 +448,8 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
   HTTP goes through a transport interface, with a fake transport in tests, and secrets go through the in-memory store.
 - **End-to-end tests** start a stub ticket-manager, a small script in `scripts/` that serves fixture responses and checks the bearer token, then drive a dev build on a temporary home through `canopy ticket connect`, `list`, `new`, `show`, `select`, and `rm`, `canopy row new --ticket`, `canopy plugin list`, and `canopy row list`.
   They end with `canopy ticket disconnect`, which deletes the temporary home's Keychain entry.
-- **UI checks** use `scripts/ui-fixture.sh`, which gains ticket rows backed by the stub, and window shots of the section, the picker, and the panel in light and dark, with long messages, images, an expired attachment, a closed ticket, and an error banner.
+- **The plugin base** is checked end to end with the fixture plugin in `scripts/e2e.sh`, including one case that writes and deletes a Keychain entry for its temporary home.
+- **UI checks** use `scripts/ui-fixture.sh`, which gains the fixture plugin's section in the plugin base's PR and ticket rows backed by the stub in the Tickets PR, and window shots of the section, the picker, and the panel in light and dark, with long messages, images, an expired attachment, a closed ticket, and an error banner.
 - **ticket-manager** tests run with vitest and `convex-test`.
 - Nothing in development talks to a real ticket-manager deployment.
   The fixture responses are copied from the endpoint's tests, so the stub and the endpoint cannot drift apart without a test noticing.
@@ -463,3 +480,4 @@ Item 3 needs item 2, but not item 1, since it runs against the stub.
 - The base's UI is checked with a fixture plugin that only a dev build started with `CANOPY_FIXTURE_PLUGIN=1` turns on.
 - `ticket.md` holds the handover block only, and handover notes show in the panel but not in the file.
 - Tokens are made with `npx convex run`, and ticket-manager gets no screen for them.
+- Settled while building the plugin base: `canopy plugin enable`, `disable`, `items`, and `new`, so every picker action and the section's Turn Off have a command; `--no-link`; `row move` for plugin rows; `plugin_busy` and `row_busy` in place of asking from the CLI; a failed fill behaving like a failed setup; a dev build's `CANOPY_TRASH_FOLDER`; and the panel's title strip.
