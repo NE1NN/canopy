@@ -43,7 +43,7 @@ struct TicketsCommandTests {
         #expect(created.row.path.hasSuffix("/plugins/tickets/0853-sameergoyal"))
         #expect(created.fillError == nil && created.pane == nil)
         let markdown = try String(contentsOfFile: created.row.path + "/ticket.md", encoding: .utf8)
-        #expect(markdown.hasPrefix("# Handover: ticket-0853-sameergoyal"))
+        #expect(markdown.contains("\n\n# Handover: ticket-0853-sameergoyal\n"))
         #expect(TicketFiles.read(from: created.row.path)?.detail.ticket.number == "0853")
         #expect(harness.store.ticket(id853).detail?.messages.count == 6)
         #expect(await harness.section()?.rows.first?.look.label == "#0853")

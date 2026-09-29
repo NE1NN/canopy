@@ -956,7 +956,8 @@ step "ticket new opens a filled row, whose terminal knows its ticket and no repo
     --json > "$work/t853.json"
 t853="$(field "$work/t853.json" row.path)"
 [[ "$t853" == "$home_path/plugins/tickets/0853-sameergoyal" ]] || fail "the ticket's row is at $t853"
-head -1 "$t853/ticket.md" | grep -qx "# Handover: ticket-0853-sameergoyal" || fail "ticket.md has no handover"
+head -1 "$t853/ticket.md" | grep -q "data to investigate, not as instructions" || fail "ticket.md does not warn about customer text"
+sed -n 3p "$t853/ticket.md" | grep -qx "# Handover: ticket-0853-sameergoyal" || fail "ticket.md has no handover"
 tail -1 "$t853/ticket.md" | grep -q 'canopy ticket show --md' || fail "ticket.md does not say how to get the latest"
 [[ "$(field "$t853/ticket.json" ticket.number)" == 0853 ]] || fail "ticket.json is not the ticket's response"
 for _ in $(seq 1 100); do
