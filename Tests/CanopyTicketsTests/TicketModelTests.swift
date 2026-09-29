@@ -74,6 +74,16 @@ struct TicketModelTests {
         #expect(detail.messages.isEmpty && detail.handover == "h")
     }
 
+    @Test func aChannelNameWithoutACustomerHasNoNumber() throws {
+        let json = """
+            {"tickets": [{"id": "x", "name": "closed-0079", "number": null, "customer": "0079", "status": "closed",
+             "openedAt": 1, "lastActivityAt": 2, "owner": null, "waiting": false, "staleHours": null, "discordUrl": "u"}]}
+            """
+        let ticket = try #require(JSONDecoder().decode(TicketList.self, from: Data(json.utf8)).tickets.first)
+        #expect(ticket.number == nil && TicketName.label(for: ticket.name) == "#0079")
+        #expect(try JSONDecoder().decode(TicketSummary.self, from: JSONEncoder().encode(ticket)) == ticket)
+    }
+
     @Test func encodingGivesBackTheAPIsKeys() throws {
         let detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
         let again = try JSONDecoder().decode(TicketDetail.self, from: JSONEncoder().encode(detail))

@@ -59,10 +59,11 @@ public struct TicketAPI: Sendable {
         let address = base.absoluteString
         switch reply.status {
         case 200..<300:
-            guard let value = try? JSONDecoder().decode(type, from: reply.body) else {
-                throw TicketError.badResponse("its answer was not the JSON Canopy expects", url: address)
+            do {
+                return (try JSONDecoder().decode(type, from: reply.body), reply.body)
+            } catch let error as DecodingError {
+                throw UnreadableAnswer.error(error, body: reply.body, url: address)
             }
-            return (value, reply.body)
         case 300..<400:
             let target = reply.headers["location"].map { " to \($0)" } ?? ""
             throw TicketError.badResponse("it redirected\(target)", url: address)

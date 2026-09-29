@@ -58,7 +58,8 @@ public struct TicketSummary: Sendable, Equatable, Codable, Identifiable {
     public var id: String
     /// The Discord channel's name, such as `ticket-0853-sameergoyal`.
     public var name: String
-    public var number: String
+    /// Such as "0853". Null when the name has no number followed by a customer, such as `closed-0079`.
+    public var number: String?
     public var customer: String
     public var status: TicketStatus
     /// Milliseconds since the epoch, as ticket-manager keeps times.
@@ -71,7 +72,7 @@ public struct TicketSummary: Sendable, Equatable, Codable, Identifiable {
     public var discordUrl: String
 
     public init(
-        id: String, name: String, number: String, customer: String, status: TicketStatus, openedAt: Int64,
+        id: String, name: String, number: String?, customer: String, status: TicketStatus, openedAt: Int64,
         lastActivityAt: Int64, owner: TicketOwner? = nil, waiting: Bool = false, staleHours: Int? = nil,
         discordUrl: String
     ) {
