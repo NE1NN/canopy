@@ -121,7 +121,7 @@ extension TicketsPlugin {
     }
 
     /// Each row's ticket.json, so the panel and the looks show at once after a relaunch.
-    private func loadSavedTickets(_ context: PluginContext) async {
+    func loadSavedTickets(_ context: PluginContext) async {
         for row in await context.state.rows where cached[row.item] == nil {
             guard let copy = TicketFiles.read(from: row.path) else { continue }
             cached[row.item] = copy

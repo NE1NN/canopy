@@ -164,6 +164,23 @@ struct TicketsConnectTests {
         await #expect(performing: { try await harness.newRow("853") }, throws: keychainFailed)
     }
 
+    @Test func aPluginThatCouldNotStartStillShowsTheSavedTicketsAndSaysWhyForTheRest() async throws {
+        let dir = try TempDir()
+        let first = try await TicketsHarness(dir, serverToken: "t")
+        try await first.connect(token: "t")
+        let row = try await first.newRow("853")
+        first.close()
+        await first.host.stop()
+        await first.workspace.stop()
+
+        let harness = try await TicketsHarness(
+            dir, serverToken: "t", transport: first.transport, secretStore: RefusingSecretStore())
+        #expect(await harness.section()?.warning?.contains("User interaction is not allowed.") == true)
+        #expect(await eventually { harness.store.ticket(row.item).detail?.ticket.name == "ticket-0853-sameergoyal" })
+        #expect(!harness.store.isRunning)
+        #expect(harness.store.ticket("no-copy").placeholder(rowIsMissing: false, isRunning: false) == .notRunning)
+    }
+
     @Test func aStartWithoutAURLSaysHowToConnect() async throws {
         let dir = try TempDir()
         let harness = try await TicketsHarness(dir, config: #"{"plugins": {"tickets": {}}}"#, serverToken: "t")

@@ -20,14 +20,18 @@ public struct TicketViewState: Sendable, Equatable {
         case fetching
         /// ticket-manager no longer has it, so no copy is coming.
         case missing
+        /// Tickets is on but could not start, which the section's warning explains.
+        case notRunning
         /// The last fetch failed, which the banner explains.
         case failed
     }
 
-    /// `rowIsMissing` is the row's own look, which also covers an id ticket-manager calls malformed.
-    public func placeholder(rowIsMissing: Bool) -> Placeholder {
+    /// `rowIsMissing` is the row's own look, which also covers an id ticket-manager calls malformed. `isRunning` is
+    /// the store's.
+    public func placeholder(rowIsMissing: Bool, isRunning: Bool) -> Placeholder {
         if isFetching { return .fetching }
         if isMissing || rowIsMissing { return .missing }
+        if !isRunning { return .notRunning }
         return failure == nil ? .fetching : .failed
     }
 }
@@ -57,6 +61,9 @@ public final class TicketStore {
     private var summaries: [String: TicketSummary] = [:]
 
     public nonisolated init() {}
+
+    /// Whether the plugin runs and can fetch tickets.
+    public var isRunning: Bool { url != nil }
 
     public func ticket(_ id: String) -> TicketViewState {
         tickets[id] ?? TicketViewState()

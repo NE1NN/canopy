@@ -24,7 +24,7 @@ struct TicketPanel: View {
                     .equatable()
                     .id(row.path)
             } else {
-                let placeholder = state.placeholder(rowIsMissing: row.isMissing)
+                let placeholder = state.placeholder(rowIsMissing: row.isMissing, isRunning: store.isRunning)
                 VStack(spacing: 8) {
                     if placeholder == .fetching {
                         ProgressView().controlSize(.small)
@@ -46,6 +46,7 @@ struct TicketPanel: View {
         switch placeholder {
         case .fetching: "Fetching the ticket…"
         case .missing: "Canopy has no copy of this ticket."
+        case .notRunning: "Tickets is not running, so Canopy cannot fetch this ticket. The section's warning says why."
         case .failed: "No copy of this ticket yet."
         }
     }

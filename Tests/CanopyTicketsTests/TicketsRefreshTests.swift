@@ -204,20 +204,20 @@ struct TicketsRefreshTests {
         let dir = try TempDir()
         let (harness, _) = try await connectedWithRows(dir, ["853"])
         let gone = try await harness.addRowByHand(item: "00000000000000000000gone0tickets", title: "0700-gone")
-        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false) == .fetching)
+        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false, isRunning: true) == .fetching)
         harness.setViewing(visible: true, frontmost: false)
         await harness.select(gone.path)
         #expect(await eventually { harness.store.ticket(gone.item).isMissing })
         await harness.settle()
         #expect(harness.store.ticket(gone.item).detail == nil)
-        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false) == .missing)
+        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false, isRunning: true) == .missing)
 
         var state = TicketViewState()
-        #expect(state.placeholder(rowIsMissing: true) == .missing)
+        #expect(state.placeholder(rowIsMissing: true, isRunning: true) == .missing)
         state.failure = TicketFailure(code: "tickets_unreachable", message: "down", at: .now)
-        #expect(state.placeholder(rowIsMissing: false) == .failed)
+        #expect(state.placeholder(rowIsMissing: false, isRunning: true) == .failed)
         state.isFetching = true
-        #expect(state.placeholder(rowIsMissing: true) == .fetching)
+        #expect(state.placeholder(rowIsMissing: true, isRunning: true) == .fetching)
     }
 
     @Test func aTicketGoneFromTicketManagerShowsItsRowMissing() async throws {

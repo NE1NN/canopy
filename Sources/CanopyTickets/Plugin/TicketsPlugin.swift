@@ -100,6 +100,8 @@ public actor TicketsPlugin: CanopyPlugin {
             startRefreshing(context)
         } catch let error as TicketError {
             startError = error
+            // The rows still show, so their panels show the copies they saved.
+            await loadSavedTickets(context)
             let reason = if case .notStarted(let reason) = error { reason } else { error.message }
             throw ControlError(code: error.code, message: reason)
         }
