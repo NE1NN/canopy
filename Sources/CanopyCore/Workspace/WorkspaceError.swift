@@ -53,6 +53,12 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case groupNotFound(String, repo: String)
     case cannotMoveMain
     case invalidAnchor(String)
+    case invalidPluginAnchor(String)
+    case pluginRowsHaveNoGroups
+    case pluginNotFound(String)
+    case pluginOff(String, id: String)
+    /// The path of the row the item already has.
+    case itemHasRow(String)
     case git(GitError)
 
     public var code: String {
@@ -105,7 +111,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .groupExists: "group_exists"
         case .groupNotFound: "group_not_found"
         case .cannotMoveMain: "cannot_move_main"
-        case .invalidAnchor: "invalid_anchor"
+        case .invalidAnchor, .invalidPluginAnchor: "invalid_anchor"
+        case .pluginRowsHaveNoGroups: "bad_params"
+        case .pluginNotFound: "plugin_not_found"
+        case .pluginOff: "plugin_off"
+        case .itemHasRow: "item_has_row"
         case .git: "git_failed"
         }
     }
@@ -192,6 +202,13 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .cannotMoveMain: "The main checkout always comes first and cannot join a group."
         case .invalidAnchor(let name):
             "--before and --after take another Canopy or adopted row of the same repo, and \(name) is not one."
+        case .invalidPluginAnchor(let name):
+            "--before and --after take another row of the same plugin, and \(name) is not one."
+        case .pluginRowsHaveNoGroups: "Plugin rows have no groups. Move them with --before or --after."
+        case .pluginNotFound(let id): "No plugin is named \"\(id)\". Run `canopy plugin list`."
+        case .pluginOff(let name, let id): "\(name) is off. Run `canopy plugin enable \(id)` to turn it on."
+        case .itemHasRow(let path):
+            "That item already has a row at \(path). Run `canopy row select \(path)` to show it."
         case .git(let error): error.description
         }
     }

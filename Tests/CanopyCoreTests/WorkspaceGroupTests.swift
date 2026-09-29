@@ -490,4 +490,27 @@ struct GroupSnapshotTests {
         #expect(snapshot.steppingRow(from: nil, offset: -1)?.path == "/api/e")
         #expect(snapshot.steppingRow(from: "/elsewhere", offset: 1)?.path == "/web")
     }
+
+    @Test func pluginRowsComeAfterEveryRepoInSectionOrder() {
+        func section(_ id: String, on: Bool, _ items: [String]) -> PluginSection {
+            PluginSection(
+                info: PluginInfo(id: id, name: id, symbol: "star"), isOn: on,
+                rows: items.map { PluginRow(plugin: id, item: $0, title: $0, path: "/h/\(id)/\($0)") })
+        }
+        var snapshot = Self.snapshot
+        snapshot.plugins = [
+            section("p", on: true, ["one", "two"]), section("off", on: false, ["x"]), section("q", on: true, ["y"]),
+        ]
+
+        #expect(
+            snapshot.visibleRows.map(\.path) == [
+                "/web", "/web/a", "/web/d", "/api", "/api/e", "/h/p/one", "/h/p/two", "/h/q/y",
+            ])
+        #expect(snapshot.steppingRow(from: "/api/e", offset: 1)?.path == "/h/p/one")
+        #expect(snapshot.steppingRow(from: "/api/f", offset: 1)?.path == "/h/p/one")
+        #expect(snapshot.steppingRow(from: "/h/p/one", offset: -1)?.path == "/api/e")
+        #expect(snapshot.steppingRow(from: "/h/q/y", offset: 1)?.path == "/h/q/y")
+        #expect(snapshot.steppingRow(from: nil, offset: -1)?.path == "/h/q/y")
+        #expect(snapshot.steppingRow(from: "/h/off/x", offset: 1)?.path == "/web")
+    }
 }

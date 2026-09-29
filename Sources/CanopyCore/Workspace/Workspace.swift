@@ -30,6 +30,13 @@ public actor Workspace {
     /// straight into the group. Renaming the group renames it here too.
     var rowsJoiningGroups: [String: JoiningGroup] = [:]
 
+    /// The built-in plugins, in the order their sections show. Their rows are in `state.plugins`.
+    var pluginInfos: [PluginInfo] = []
+    var pluginsOn: Set<String> = []
+    var pluginWarnings: [String: String] = [:]
+    /// How each plugin row looks, keyed by path, as its plugin last set it while running.
+    var pluginLooks: [String: PluginRowLook] = [:]
+
     let github: GitHubCLI
     let prTiming: PRTiming
     var pullRequests: [String: RepoPullRequests] = [:]
@@ -111,7 +118,7 @@ public actor Workspace {
             pullRequests[entry.path]?.apply(to: &repo)
             return repo
         }
-        return WorkspaceSnapshot(repos: repos, selectedRowPath: state.selectedRowPath)
+        return WorkspaceSnapshot(repos: repos, plugins: pluginSections, selectedRowPath: state.selectedRowPath)
     }
 
     /// Yields the current snapshot immediately, then every change.

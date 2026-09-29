@@ -117,3 +117,27 @@ public struct PluginLink: Sendable, Equatable, Codable {
         self.item = item
     }
 }
+
+/// A plugin's section of the sidebar, as the snapshot carries it. Plugins that are off are listed too, so their rows'
+/// saved layouts wait for them.
+public struct PluginSection: Sendable, Equatable, Identifiable {
+    public var info: PluginInfo
+    public var isOn: Bool
+    /// Why the plugin is not working, with the fix, as markdown.
+    public var warning: String?
+    /// In sidebar order.
+    public var rows: [PluginRow]
+    public var panelWidth: Double?
+
+    public init(
+        info: PluginInfo, isOn: Bool, warning: String? = nil, rows: [PluginRow] = [], panelWidth: Double? = nil
+    ) {
+        self.info = info
+        self.isOn = isOn
+        self.warning = warning
+        self.rows = rows
+        self.panelWidth = panelWidth
+    }
+
+    public var id: String { info.id }
+}
