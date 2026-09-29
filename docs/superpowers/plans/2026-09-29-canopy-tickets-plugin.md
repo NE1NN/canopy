@@ -2428,7 +2428,7 @@ An independent reviewer (Opus) read `git diff origin/main...HEAD` with the spec,
 It found nothing critical. Each finding acted on, and what changed:
 
 1. **A reconnect could bring back "rejected the token"**: a request still out on the old token recorded its 401 after connecting again with the same URL. Connecting now starts a new generation and restarts the refresh loop, so old requests record nothing. `aRequestInFlightOnTheOldTokenCannotBringTheWarningBack`.
-2. **The image cache never evicted, kept failures, and had no size limit.** It is an `NSCache` capped at 128 MB, keyed by the address without Discord's signing query, failures are not kept, and downloads stop at 20 MB.
+2. **The image cache never evicted, kept failures, and had no size limit.** It is an `NSCache` capped at 128 MB, keyed by the address without Discord's signing query, failures are not kept, and a file over 20 MB is never decoded or kept.
 3. **Refresh answers could land after a stop or restart**, filling the store again and marking rows missing on a plugin turned off, and a bisect under way could ask a new deployment about the old one's ids. `fetchSummaries`, `fetchBatch`, `fetchList`, and `refreshRows` check the generation after each wait. `anAnswerThatArrivesAfterDisconnectingChangesNothing`.
 4. **A cancelled request counted as ticket-manager failing**, so typing in the picker could make `plugin list` say "cancelled". Cancellations pass through the client unchanged and are never recorded. `aCancelledRequestIsNotAFailure`.
 5. **A panel's state followed another ticket row**, so an open Remove popover could point at the wrong row. Each row's panel has its own identity.
