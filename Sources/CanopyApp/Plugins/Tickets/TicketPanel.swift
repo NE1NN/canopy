@@ -24,16 +24,14 @@ struct TicketPanel: View {
                     .equatable()
                     .id(row.path)
             } else {
+                let placeholder = state.placeholder(rowIsMissing: row.isMissing)
                 VStack(spacing: 8) {
-                    if state.isFetching || state.failure == nil {
+                    if placeholder == .fetching {
                         ProgressView().controlSize(.small)
                     }
-                    Text(
-                        state.isFetching || state.failure == nil
-                            ? "Fetching the ticket…" : "No copy of this ticket yet."
-                    )
-                    .font(Style.body)
-                    .foregroundStyle(.secondary)
+                    Text(Self.text(placeholder))
+                        .font(Style.body)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -41,6 +39,14 @@ struct TicketPanel: View {
             TicketFooter(state: state) {
                 Task { await tickets.refresh(row.item) }
             }
+        }
+    }
+
+    private static func text(_ placeholder: TicketViewState.Placeholder) -> LocalizedStringKey {
+        switch placeholder {
+        case .fetching: "Fetching the ticket…"
+        case .missing: "Canopy has no copy of this ticket."
+        case .failed: "No copy of this ticket yet."
         }
     }
 }

@@ -13,6 +13,23 @@ public struct TicketViewState: Sendable, Equatable {
     public var isMissing = false
 
     public init() {}
+
+    /// What the panel shows in place of the conversation while it has no copy of the ticket.
+    public enum Placeholder: Sendable, Equatable {
+        /// A spinner: the ticket is on its way, or not asked for yet.
+        case fetching
+        /// ticket-manager no longer has it, so no copy is coming.
+        case missing
+        /// The last fetch failed, which the banner explains.
+        case failed
+    }
+
+    /// `rowIsMissing` is the row's own look, which also covers an id ticket-manager calls malformed.
+    public func placeholder(rowIsMissing: Bool) -> Placeholder {
+        if isFetching { return .fetching }
+        if isMissing || rowIsMissing { return .missing }
+        return failure == nil ? .fetching : .failed
+    }
 }
 
 public struct TicketFailure: Sendable, Equatable {

@@ -200,6 +200,26 @@ struct TicketsRefreshTests {
         #expect(await requests(harness) == ["/api/v1/tickets?ids=\(rows[0].item),\(rows[1].item)"])
     }
 
+    @Test func aGoneTicketWithNoCopyShowsItIsMissingRatherThanASpinner() async throws {
+        let dir = try TempDir()
+        let (harness, _) = try await connectedWithRows(dir, ["853"])
+        let gone = try await harness.addRowByHand(item: "00000000000000000000gone0tickets", title: "0700-gone")
+        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false) == .fetching)
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.select(gone.path)
+        #expect(await eventually { harness.store.ticket(gone.item).isMissing })
+        await harness.settle()
+        #expect(harness.store.ticket(gone.item).detail == nil)
+        #expect(harness.store.ticket(gone.item).placeholder(rowIsMissing: false) == .missing)
+
+        var state = TicketViewState()
+        #expect(state.placeholder(rowIsMissing: true) == .missing)
+        state.failure = TicketFailure(code: "tickets_unreachable", message: "down", at: .now)
+        #expect(state.placeholder(rowIsMissing: false) == .failed)
+        state.isFetching = true
+        #expect(state.placeholder(rowIsMissing: true) == .fetching)
+    }
+
     @Test func aTicketGoneFromTicketManagerShowsItsRowMissing() async throws {
         let dir = try TempDir()
         let (harness, rows) = try await connectedWithRows(dir, ["853", "849"])
