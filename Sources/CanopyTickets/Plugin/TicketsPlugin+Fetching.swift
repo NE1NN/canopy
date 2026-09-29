@@ -80,9 +80,9 @@ extension TicketsPlugin {
 }
 
 extension TicketsPlugin {
-    /// The tickets with these ids, 50 at a time. A batch ticket-manager answers 400 for holds a malformed id, such as one
-    /// from another deployment: it is split until that id is alone, which then joins `malformed` and shows as missing,
-    /// so one bad row never stops the others refreshing.
+    /// The tickets with these ids, 50 at a time. A batch ticket-manager answers 400 for holds a malformed id, such as
+    /// one from another deployment: it is split until that id is alone, which then joins `malformed` and shows as
+    /// missing, so one bad row never stops the others refreshing.
     func fetchSummaries(ids: [String]) async throws -> [TicketSummary] {
         let generation = self.generation
         var found: [TicketSummary] = []

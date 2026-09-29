@@ -373,10 +373,15 @@ From top to bottom:
   User mentions show as `@` and the display name, channel mentions as `#` and the name, and custom emoji as `:name:`.
   Messages posted in a thread show the thread's name.
   Image attachments show inline, up to 240 points tall, and other attachments as a link with the file name and size.
-  An attachment whose link has expired shows its file name, and clicking it opens the message in Discord.
+  An image whose declared size is over 20 MB is never downloaded and shows as such a link, and so does one that turns out too big or cannot be loaded.
+  Images download off the main thread, four at a time, stop at 20 MB whatever Content-Length says, and are decoded downsampled to the size they are drawn at.
+  An image found too big is not asked for again while Canopy runs.
+  Only an attachment whose link is past its expiry time shows as expired, with its file name, and clicking it opens the message in Discord.
 - **Footer**: when the ticket was last fetched, and a refresh button.
 
 The panel opens at the end of the conversation, keeps its place when new messages arrive, and follows them only while that end is in view.
+A ticket row whose panel has no copy of its ticket says why: it is being fetched, ticket-manager no longer has it, the last fetch failed, or Tickets is on but could not start.
+While Tickets cannot start, panels show the copies their rows saved.
 The API names no channels, so a channel mention shows the ticket's own name or a named thread's, and `#channel` otherwise.
 A fetch that fails keeps what the panel shows, and a banner says what went wrong and when the panel was last updated.
 

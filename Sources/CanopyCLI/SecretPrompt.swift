@@ -11,8 +11,8 @@ enum SecretPrompt {
             } catch .timedOut {
                 throw CLIError(
                     "No token arrived on stdin within 10 seconds: end it with a newline, or close stdin after it. Run "
-                        + "this in a terminal to type it, or pipe it in: printf '%s\\n' \"$TOKEN\" | canopy ticket connect <url>"
-                )
+                        + "this in a terminal to type it, or pipe it in: "
+                        + "printf '%s\\n' \"$TOKEN\" | canopy ticket connect <url>")
             } catch .tooLong {
                 throw CLIError("The first line on stdin is longer than any token. Pipe in the token alone.")
             } catch .failed(let reason) {

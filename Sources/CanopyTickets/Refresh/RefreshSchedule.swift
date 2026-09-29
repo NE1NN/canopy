@@ -1,8 +1,8 @@
 import Foundation
 
 /// When the plugin asks ticket-manager for what. Canopy asks only while its window can be seen: the rows' tickets every
-/// minute, the selected ticket every half minute and when it is picked, and a row's ticket once when ticket-manager says
-/// it changed. Each job waits twice as long after each failure, up to five minutes.
+/// minute, the selected ticket every half minute and when it is picked, and a row's ticket once when ticket-manager
+/// says it changed. Each job waits twice as long after each failure, up to five minutes.
 public struct RefreshSchedule: Sendable, Equatable {
     public enum Job: Sendable, Hashable {
         /// Every row's ticket, through `tickets?ids=`.

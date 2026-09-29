@@ -1,8 +1,8 @@
 import CanopyCore
 import SwiftUI
 
-/// One sheet for every plugin: a search field, the plugin's filter chips, and its items. Picking one opens a row for it,
-/// or selects the row it has, as the command in the footer would.
+/// One sheet for every plugin: a search field, the plugin's filter chips, and its items. Picking one opens a row for
+/// it, or selects the row it has, as the command in the footer would.
 struct PluginPickerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

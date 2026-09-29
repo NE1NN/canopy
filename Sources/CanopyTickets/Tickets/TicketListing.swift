@@ -22,7 +22,8 @@ public struct TicketListQuery: Sendable, Equatable {
 
 /// Lists of tickets as the picker and `canopy ticket list` show them.
 public enum TicketListing {
-    /// Mine, Unowned, and Anyone, starting on Anyone, and a Closed toggle that lists closed and archived tickets instead.
+    /// Mine, Unowned, and Anyone, starting on Anyone, and a Closed toggle that lists closed and archived tickets
+    /// instead.
     public static let filters = PluginFilters(
         choices: [
             PluginFilter(id: TicketOwnerFilter.mine.rawValue, title: "Mine"),
