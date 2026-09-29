@@ -29,7 +29,7 @@ public actor TicketsPlugin: CanopyPlugin {
     /// A new number at each start and stop, so what an earlier start fetched never lands after it.
     var generation = 0
     /// Why the last start failed, while the plugin is on without running.
-    var startFailure: String?
+    var startError: TicketError?
     /// The connected engineer's email, which Mine compares owners with.
     var me: String?
     var lastSuccess: Date?
@@ -69,6 +69,11 @@ public actor TicketsPlugin: CanopyPlugin {
     /// Nothing in flight and the refresh loop asleep, for tests that move the clock.
     var isIdle: Bool { requestsInFlight == 0 && isLoopAsleep }
 
+    /// Idle, having taken in the state the host shows now, for tests that move the clock.
+    func hasSettled(on expected: RefreshSchedule.Watch) -> Bool {
+        isIdle && (connection == nil || watch == expected)
+    }
+
     // MARK: Turning on and off
 
     public func start(_ context: PluginContext) async throws {
@@ -80,20 +85,20 @@ public actor TicketsPlugin: CanopyPlugin {
             do {
                 token = try context.secrets.read(Self.tokenName)
             } catch {
-                throw TicketError.notStarted("The Keychain refused to read the token: \(Self.describe(error))")
+                throw TicketError.keychain(Self.describe(error))
             }
             guard let token, !token.isEmpty else {
                 throw TicketError.notStarted(
                     "No token is saved. Run `canopy ticket connect \(settings.url.absoluteString)`.")
             }
             connection = Connection(settings: settings, token: token)
-            startFailure = nil
+            startError = nil
             await store.connected(url: settings.url, web: settings.web)
             startRefreshing(context)
         } catch let error as TicketError {
+            startError = error
             let reason = if case .notStarted(let reason) = error { reason } else { error.message }
-            startFailure = reason
-            throw ControlError(code: "plugin_not_started", message: reason)
+            throw ControlError(code: error.code, message: reason)
         }
     }
 
@@ -199,7 +204,7 @@ public actor TicketsPlugin: CanopyPlugin {
     func requireConnection(_ context: PluginContext) async throws -> Connection {
         guard await context.state.isOn else { throw TicketError.off(url: Self.configuredURL(await context.config)) }
         guard let connection else {
-            throw TicketError.notStarted(startFailure ?? "Run `canopy ticket connect <url>`.")
+            throw startError ?? TicketError.notStarted("Run `canopy ticket connect <url>`.")
         }
         return connection
     }

@@ -72,7 +72,7 @@ extension TicketsPlugin {
             throw error
         }
         guard var current = connection else {
-            throw TicketError.notStarted(startFailure ?? "Run `canopy ticket connect \(address)` again.")
+            throw startError ?? TicketError.notStarted("Run `canopy ticket connect \(address)` again.")
         }
         // A plugin whose section did not change keeps running, so the new token takes over here.
         current.token = token

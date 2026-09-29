@@ -98,6 +98,17 @@ struct RefreshScheduleTests {
         #expect(schedule.nextDue(after: at(59), watch) == at(60))
     }
 
+    @Test func aTicketThatIsGoneWaitsFiveMinutesWhateverElseSucceeds() {
+        var schedule = RefreshSchedule()
+        run(&schedule, .ticket("a"), at: 0)
+        schedule.markGone("a", true)
+        run(&schedule, .rows, at: 0)
+        #expect(!schedule.due(at: at(299), seen).contains(.ticket("a")))
+        #expect(schedule.due(at: at(300), seen).contains(.ticket("a")))
+        schedule.markGone("a", false)
+        #expect(schedule.due(at: at(30), seen) == [.ticket("a")])
+    }
+
     @Test func aJobInFlightIsNeverDue() {
         var schedule = RefreshSchedule()
         schedule.started(.rows, at: at(0))

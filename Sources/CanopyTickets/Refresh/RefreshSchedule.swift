@@ -35,6 +35,8 @@ public struct RefreshSchedule: Sendable, Equatable {
     private var inFlight: Set<Job> = []
     /// Tickets to fetch once, as soon as 15 seconds have passed since their last try.
     private var pending: Set<String> = []
+    /// Tickets ticket-manager no longer has, asked for again only every five minutes.
+    private var gone: Set<String> = []
 
     public init() {}
 
@@ -76,12 +78,19 @@ public struct RefreshSchedule: Sendable, Equatable {
         }
     }
 
+    /// A ticket ticket-manager no longer has waits five minutes between tries, whatever else succeeds, until it is
+    /// found again.
+    public mutating func markGone(_ ticket: String, _ isGone: Bool) {
+        if isGone { gone.insert(ticket) } else { gone.remove(ticket) }
+    }
+
     /// Forgets a ticket that no longer has a row and is not selected.
     public mutating func forget(_ ticket: String) {
         let job = Job.ticket(ticket)
         lastTry[job] = nil
         failures[job] = nil
         pending.remove(ticket)
+        gone.remove(ticket)
     }
 
     /// Each job that can run, and when it falls due: nil for at once.
@@ -107,6 +116,7 @@ public struct RefreshSchedule: Sendable, Equatable {
     /// success up to five minutes, or nil for at once when it was never tried.
     private func periodic(_ job: Job, every interval: Duration) -> ContinuousClock.Instant? {
         guard let last = lastTry[job] else { return nil }
+        if case .ticket(let ticket) = job, gone.contains(ticket) { return last + Self.longestWait }
         let doubled = interval * (1 << min(failures[job] ?? 0, 8))
         return last + min(doubled, Self.longestWait)
     }

@@ -5,7 +5,7 @@ extension TicketsPlugin {
     /// Asks ticket-manager, and keeps what the answer says about it: when it last answered, and the section's warning
     /// while it rejects the token. Results from before a restart are not recorded.
     func perform<T: Sendable>(_ request: @Sendable (TicketAPI) async throws -> T) async throws -> T {
-        guard let connection else { throw TicketError.notStarted(startFailure ?? "") }
+        guard let connection else { throw startError ?? TicketError.notStarted("") }
         let generation = self.generation
         let api = TicketAPI(base: connection.settings.url, token: connection.token, transport: transport)
         requestsInFlight += 1
@@ -125,7 +125,7 @@ extension TicketsPlugin {
             guard generation == self.generation else { return copy }
             cached[id] = copy
             remember([detail.ticket])
-            missing.remove(id)
+            await setMissing(id, false)
             await store.setDetail(detail, fetchedAt: copy.fetchedAt)
             await store.setFetching(id, false)
             await writeFiles(copy)
@@ -136,8 +136,7 @@ extension TicketsPlugin {
                 await store.setFetching(id, false)
                 switch error {
                 case .notFound, .badRequest:
-                    missing.insert(id)
-                    await store.setMissing(id, true)
+                    await setMissing(id, true)
                     await showLooks()
                 default:
                     await store.setFailure(id, TicketFailure(code: error.code, message: error.message, at: clock.date))
@@ -146,6 +145,14 @@ extension TicketsPlugin {
             if case .badRequest = error { throw TicketError.notFound(id) }
             throw error
         }
+    }
+
+    /// Whether ticket-manager no longer has the ticket, for its row's look, its panel, and how often it is asked for.
+    func setMissing(_ id: String, _ isMissing: Bool) async {
+        schedule.markGone(id, isMissing)
+        guard isMissing != missing.contains(id) else { return }
+        if isMissing { missing.insert(id) } else { missing.remove(id) }
+        await store.setMissing(id, isMissing)
     }
 
     /// Writes the copy into each of its ticket's rows' folders.

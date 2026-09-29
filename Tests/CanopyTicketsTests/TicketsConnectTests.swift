@@ -142,6 +142,18 @@ struct TicketsConnectTests {
         }
     }
 
+    @Test func aKeychainThatRefusesFailsWithKeychainFailed() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(
+            dir, config: #"{"plugins": {"tickets": {"url": "https://tm.example.convex.site"}}}"#, serverToken: "t",
+            secretStore: RefusingSecretStore())
+        #expect(await harness.section()?.warning?.contains("User interaction is not allowed.") == true)
+        await #expect { try await harness.call(TicketMethod.list, TicketListParams()) } throws: {
+            let error = $0 as? ControlError
+            return error?.code == "keychain_failed" && error?.message.contains("User interaction") == true
+        }
+    }
+
     @Test func aStartWithoutAURLSaysHowToConnect() async throws {
         let dir = try TempDir()
         let harness = try await TicketsHarness(dir, config: #"{"plugins": {"tickets": {}}}"#, serverToken: "t")

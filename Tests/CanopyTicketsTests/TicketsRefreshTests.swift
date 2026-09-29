@@ -61,6 +61,54 @@ struct TicketsRefreshTests {
         #expect(await requests(harness).count == 2)
     }
 
+    @Test func hidingTheWindowStopsFetching() async throws {
+        let dir = try TempDir()
+        let (harness, rows) = try await connectedWithRows(dir, ["853"])
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.select(rows[0].path)
+        #expect(await eventually { await requests(harness).count == 2 })
+        harness.setViewing(visible: false, frontmost: false)
+        await harness.settle()
+        await harness.transport.clearRequests()
+        harness.clock.advance(by: .seconds(3600))
+        await harness.settle()
+        #expect(await requests(harness).isEmpty)
+    }
+
+    @Test func aSelectedTicketThatIsGoneIsAskedForEveryFiveMinutes() async throws {
+        let dir = try TempDir()
+        let (harness, rows) = try await connectedWithRows(dir, ["853", "849"])
+        let gone = "/api/v1/tickets/\(rows[1].item)"
+        await harness.transport.remove(rows[1].item)
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.select(rows[1].path)
+        #expect(await eventually { await count(harness, gone) == 1 })
+        for _ in 0..<9 {
+            await harness.settle()
+            harness.clock.advance(by: .seconds(30))
+        }
+        await harness.settle()
+        #expect(await count(harness, gone) == 1)
+        harness.clock.advance(by: .seconds(30))
+        #expect(await eventually { await count(harness, gone) == 2 })
+    }
+
+    @Test func aSelectedMalformedTicketIsNeverAskedFor() async throws {
+        let dir = try TempDir()
+        let (harness, _) = try await connectedWithRows(dir, ["853"])
+        let stray = try await harness.addRowByHand(item: "from-another-deployment", title: "0700-stray")
+        await harness.transport.markMalformed("from-another-deployment")
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.select(stray.path)
+        #expect(await eventually { await harness.section()?.rows.first { $0.path == stray.path }?.isMissing == true })
+        for _ in 0..<4 {
+            await harness.settle()
+            harness.clock.advance(by: .seconds(300))
+        }
+        await harness.settle()
+        #expect(await count(harness, "/api/v1/tickets/from-another-deployment") <= 1)
+    }
+
     @Test func selectingOrComingToTheFrontFetchesAtMostEveryFifteenSeconds() async throws {
         let dir = try TempDir()
         let (harness, rows) = try await connectedWithRows(dir, ["853", "849"])

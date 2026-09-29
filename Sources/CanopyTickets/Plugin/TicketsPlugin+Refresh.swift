@@ -35,7 +35,11 @@ extension TicketsPlugin {
         wasFrontmost = state.viewing.isFrontmost
         watch = RefreshSchedule.Watch(
             isVisible: state.viewing.isWindowVisible, hasRows: !state.rows.isEmpty, selected: selected)
-        sleeper?.cancel()
+        // The loop wakes to look at what changed, so it is not idle until it sleeps again.
+        if let sleeper, !sleeper.isCancelled {
+            isLoopAsleep = false
+            sleeper.cancel()
+        }
     }
 
     /// Shows each row's saved ticket at once, then runs what the schedule says is due, sleeping between.
@@ -71,7 +75,11 @@ extension TicketsPlugin {
         do {
             switch job {
             case .rows: try await refreshRows()
-            case .ticket(let id): try await fetchTicket(id)
+            case .ticket(let id):
+                // An id ticket-manager called malformed is never asked about again, and one it no longer has waits
+                // five minutes between tries.
+                guard !malformed.contains(id) else { break }
+                try await fetchTicket(id)
             }
         } catch let error as TicketError {
             succeeded = !error.backsOff
@@ -98,11 +106,7 @@ extension TicketsPlugin {
         guard generation == self.generation else { return }
         let foundIDs = Set(found.map(\.id))
         for id in ids {
-            let isMissing = !foundIDs.contains(id)
-            if isMissing != missing.contains(id) {
-                if isMissing { missing.insert(id) } else { missing.remove(id) }
-                await store.setMissing(id, isMissing)
-            }
+            await setMissing(id, !foundIDs.contains(id))
         }
         for summary in found where cached[summary.id].map({ Self.hasChanged($0.detail.ticket, summary) }) ?? true {
             schedule.queue(summary.id)

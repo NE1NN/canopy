@@ -15,6 +15,15 @@ final class RecordingUI: ControlUIBridge {
     }
 }
 
+/// A Keychain that refuses every read, as a locked one does.
+struct RefusingSecretStore: SecretStore {
+    func read(service: String, account: String) throws -> String? {
+        throw SecretStoreError(status: -25308, description: "User interaction is not allowed.")
+    }
+    func write(_ value: String, service: String, account: String) throws {}
+    func delete(service: String, account: String) throws {}
+}
+
 /// A terminal screen that keeps nothing, for panes whose output no test reads.
 @MainActor
 final class QuietEmulator: TerminalEmulator {
@@ -43,7 +52,7 @@ final class TicketsHarness {
     let home: CanopyHome
     let transport: FakeTransport
     let clock: ManualClock
-    let secretStore: MemorySecretStore
+    let secretStore: any SecretStore
     let plugin: TicketsPlugin
     let workspace: Workspace
     let terminals: TerminalStore
@@ -56,7 +65,7 @@ final class TicketsHarness {
 
     init(
         _ dir: TempDir, config: String? = nil, serverToken: String, transport: FakeTransport? = nil,
-        clock: ManualClock? = nil, secretStore: MemorySecretStore? = nil
+        clock: ManualClock? = nil, secretStore: (any SecretStore)? = nil
     ) async throws {
         self.dir = dir
         home = CanopyHome(path: dir.sub("home"))
@@ -143,19 +152,25 @@ final class TicketsHarness {
         host.viewing = PluginViewing(isWindowVisible: visible, isFrontmost: frontmost)
     }
 
+    /// Selects the row, and returns once the plugin host passes the selection on.
     func select(_ path: String) async {
         try? await workspace.setSelectedRow(path: path)
+        _ = await eventually { self.host.context("tickets")?.state.selectedRow?.path == path }
     }
 
     func setConfig(_ fields: [String: JSONValue]) async throws {
         _ = try await host.enable("tickets", with: fields)
     }
 
-    /// Waits until the plugin has nothing in flight and its refresh loop sleeps, so moving the clock afterwards is
-    /// the only thing that wakes it.
+    /// Waits until the plugin has taken in the host's latest state, has nothing in flight, and its refresh loop sleeps,
+    /// so moving the clock afterwards is the only thing that wakes it.
     func settle() async {
-        _ = await eventually { await self.plugin.isIdle }
-        try? await Task.sleep(for: .milliseconds(30))
-        _ = await eventually { await self.plugin.isIdle }
+        _ = await eventually {
+            guard let state = self.host.context("tickets")?.state else { return true }
+            let expected = RefreshSchedule.Watch(
+                isVisible: state.viewing.isWindowVisible, hasRows: !state.rows.isEmpty,
+                selected: state.selectedRow?.item)
+            return await self.plugin.hasSettled(on: expected)
+        }
     }
 }
