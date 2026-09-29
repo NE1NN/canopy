@@ -156,7 +156,7 @@ struct TicketsRefreshTests {
         await harness.transport.failEverything(URLError(.cannotConnectToHost))
         let again = try await harness.restart()
         #expect(await eventually { again.store.ticket(rows[0].item).detail?.ticket.number == "0853" })
-        #expect(await again.section()?.rows.first?.look.accessories.first?.kind == .dot)
+        #expect(await eventually { await again.section()?.rows.first?.look.accessories.first?.kind == .dot })
         #expect(await harness.transport.requests.isEmpty)
     }
 
