@@ -75,20 +75,28 @@ struct PortScannerTests {
     @Test func connectionsAndClosedListenersAreNotListed() throws {
         var listener: Listener? = try Listener()
         let port = try #require(listener?.port)
+        let listening = try #require(listener?.fd)
         let client = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(client) }
+        // Connecting and accepting wait in poll: a connect or accept that sleeps fails, or never returns, once a child
+        // starting meanwhile has drained the socket. See SocketStream.
+        _ = fcntl(client, F_SETFL, fcntl(client, F_GETFL) | O_NONBLOCK)
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
         address.sin_addr.s_addr = UInt32(0x7f00_0001).bigEndian
-        let connected = withUnsafePointer(to: &address) {
+        let (started, code) = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                (connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size)), errno)
             }
         }
-        #expect(connected == 0)
+        try #require(started == 0 || code == EINPROGRESS)
+        try #require(waitUntil(client, can: POLLOUT) && waitUntil(listening, can: POLLIN))
+        var error: Int32 = 0
+        var size = socklen_t(MemoryLayout<Int32>.size)
+        #expect(getsockopt(client, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0)
         // The accepted socket has the listener's port as its local port, but it is not listening.
-        let accepted = accept(try #require(listener?.fd), nil, nil)
+        let accepted = accept(listening, nil, nil)
         defer { close(accepted) }
         #expect(accepted >= 0)
         #expect(mine(port).count == 1)
@@ -96,6 +104,15 @@ struct PortScannerTests {
         listener = nil
 
         #expect(mine(port).isEmpty)
+    }
+
+    func waitUntil(_ fd: Int32, can event: Int32) -> Bool {
+        var request = pollfd(fd: fd, events: Int16(event), revents: 0)
+        var ready = poll(&request, 1, 20_000)
+        while ready < 0 && errno == EINTR {
+            ready = poll(&request, 1, 20_000)
+        }
+        return ready == 1
     }
 }
 

@@ -26,7 +26,8 @@ public enum ControlClientError: Error, Equatable, CustomStringConvertible {
 /// A blocking client for one request at a time. The CLI makes a single call per run.
 public struct ControlClient: Sendable {
     public var socketPath: String
-    /// How long to wait for the reply. Nil waits as long as the app takes.
+    /// How long to wait for the reply, counted from when the request starts to go out.
+    /// Nil waits as long as the app takes.
     public var timeout: TimeInterval?
 
     public init(socketPath: String, timeout: TimeInterval? = 120) {
@@ -43,24 +44,18 @@ public struct ControlClient: Sendable {
     public func send(_ request: ControlRequest) throws -> ControlResponse {
         let fd = try Self.connect(to: socketPath)
         defer { close(fd) }
+        return try send(request, over: fd)
+    }
 
-        if let timeout {
-            var receiveTimeout = timeval(tv_sec: Int(timeout), tv_usec: 0)
-            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
-        }
-
-        try Self.write(try ControlCodec.encodeLine(request), to: fd)
-
+    /// Sends `request` on a socket already connected to the app and waits for the reply.
+    func send(_ request: ControlRequest, over fd: Int32) throws -> ControlResponse {
+        let stream = SocketStream(fd: fd, deadline: timeout.map { .now + .seconds($0) })
+        try stream.write(try ControlCodec.encodeLine(request))
         var received = Data()
-        var chunk = [UInt8](repeating: 0, count: 65_536)
         while !received.contains(0x0A) {
-            let count = read(fd, &chunk, chunk.count)
-            if count == 0 { throw ControlClientError.connectionClosed }
-            if count < 0 && errno == EINTR { continue }
-            if count < 0 {
-                throw errno == EAGAIN ? ControlClientError.timedOut : ControlClientError.connectionClosed
-            }
-            received.append(contentsOf: chunk[0..<count])
+            let chunk = try stream.read()
+            if chunk.isEmpty { throw ControlClientError.connectionClosed }
+            received.append(chunk)
         }
         let line = received.prefix { $0 != 0x0A }
         return try ControlCodec.decode(ControlResponse.self, from: Data(line))
@@ -72,28 +67,9 @@ public struct ControlClient: Sendable {
     public func post(_ request: ControlRequest, timeout: TimeInterval = 1) throws {
         let fd = try Self.connect(to: socketPath)
         defer { close(fd) }
-        var limit = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - timeout.rounded(.down)) * 1_000_000))
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
-        try Self.write(try ControlCodec.encodeLine(request), to: fd)
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = read(fd, &chunk, chunk.count)
-            if count < 0 && errno == EINTR { continue }
-            if count <= 0 || chunk[0..<count].contains(0x0A) { return }
-        }
-    }
-
-    static func write(_ data: Data, to fd: Int32) throws {
-        try data.withUnsafeBytes { raw in
-            var offset = 0
-            while offset < raw.count {
-                let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
-                if written < 0 && errno == EINTR { continue }
-                if written < 0 { throw ControlClientError.writeFailed(errno: errno) }
-                offset += written
-            }
-        }
+        let stream = SocketStream(fd: fd, deadline: .now + .seconds(timeout))
+        try stream.write(try ControlCodec.encodeLine(request))
+        while let chunk = try? stream.read(), !chunk.isEmpty, !chunk.contains(0x0A) {}
     }
 
     static func connect(to path: String) throws -> Int32 {
