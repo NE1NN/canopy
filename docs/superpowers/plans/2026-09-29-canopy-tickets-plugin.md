@@ -2416,36 +2416,64 @@ Each is checked with `canopy row list --json`, `canopy plugin list`, or `canopy 
 - Tasks ran in the order 1 to 14, then the stand-in and e2e cases from Task 16, then the panel (15), then the UI fixture and the spec, so the e2e run proved the plugin in a real dev build before the panel work.
 - `tickets.list` landed with Task 10, whose tests read through it.
 - Resolving references and finding a ticket's row live in `TicketsPlugin+Resolving.swift`.
-- The plugin host refreshes its snapshot right after it adds or removes a plugin row, so `context.state` has the row once `createRow` or `removeRow` returns. `aPluginSeesItsRowsChangeAsSoonAsTheHostChangesThem` pins it.
+- The plugin host refreshes its snapshot right after it adds or removes a plugin row, so `context.state` has the row once `createRow` or `removeRow` returns.
+  `aPluginSeesItsRowsChangeAsSoonAsTheHostChangesThem` pins it.
 - `Client.call` takes `wait: ReplyWait` (`.usual`, `.upTo`, `.forever`) in place of `waitingUpTo`.
 - `me` is asked for with the rows' refresh, while the window can be seen, or when Mine needs it.
-- The panel keeps following the conversation's end while images load above it, and stops only when the author scrolls away. UI checks found that, a doubled period after URLError's own, and a fix-row hint that broke `--ticket` across lines.
+- The panel keeps following the conversation's end while images load above it, and stops only when the author scrolls away.
+  UI checks found that, a doubled period after URLError's own, and a fix-row hint that broke `--ticket` across lines.
 - App Transport Security allows the stand-in's `http://127.0.0.1` with no change to Info.plist.
 
 ## After Review
 
 An independent reviewer (Opus) read `git diff origin/main...HEAD` with the spec, this plan, and the ledger's rulings, and ran the Tickets suites three times.
-It found nothing critical. Each finding acted on, and what changed:
+It found nothing critical.
+Each finding acted on, and what changed:
 
-1. **A reconnect could bring back "rejected the token"**: a request still out on the old token recorded its 401 after connecting again with the same URL. Connecting now starts a new generation and restarts the refresh loop, so old requests record nothing. `aRequestInFlightOnTheOldTokenCannotBringTheWarningBack`.
-2. **The image cache never evicted, kept failures, and had no size limit.** It is an `NSCache` capped at 128 MB, keyed by the address without Discord's signing query, failures are not kept, and a file over 20 MB is never decoded or kept.
-3. **Refresh answers could land after a stop or restart**, filling the store again and marking rows missing on a plugin turned off, and a bisect under way could ask a new deployment about the old one's ids. `fetchSummaries`, `fetchBatch`, `fetchList`, and `refreshRows` check the generation after each wait. `anAnswerThatArrivesAfterDisconnectingChangesNothing`.
-4. **A cancelled request counted as ticket-manager failing**, so typing in the picker could make `plugin list` say "cancelled". Cancellations pass through the client unchanged and are never recorded. `aCancelledRequestIsNotAFailure`.
-5. **A panel's state followed another ticket row**, so an open Remove popover could point at the wrong row. Each row's panel has its own identity.
-6. **Server text could plant links of any kind** in banners and warnings. The window opens only http and https links.
-7. **Customer text reached terminals with its control characters.** `ticket show`, `ticket list`, `ticket show --md`, and `ticket.md` take them out, but for newlines and tabs. `terminalControlsFromCustomersNeverReachTheTerminal`.
+1. **A reconnect could bring back "rejected the token"**: a request still out on the old token recorded its 401 after connecting again with the same URL.
+   Connecting now starts a new generation and restarts the refresh loop, so old requests record nothing.
+   `aRequestInFlightOnTheOldTokenCannotBringTheWarningBack`.
+2. **The image cache never evicted, kept failures, and had no size limit.**
+   It is an `NSCache` capped at 128 MB, keyed by the address without Discord's signing query, failures are not kept, and a file over 20 MB is never decoded or kept.
+3. **Refresh answers could land after a stop or restart**, filling the store again and marking rows missing on a plugin turned off, and a bisect under way could ask a new deployment about the old one's ids.
+   `fetchSummaries`, `fetchBatch`, `fetchList`, and `refreshRows` check the generation after each wait.
+   `anAnswerThatArrivesAfterDisconnectingChangesNothing`.
+4. **A cancelled request counted as ticket-manager failing**, so typing in the picker could make `plugin list` say "cancelled".
+   Cancellations pass through the client unchanged and are never recorded.
+   `aCancelledRequestIsNotAFailure`.
+5. **A panel's state followed another ticket row**, so an open Remove popover could point at the wrong row.
+   Each row's panel has its own identity.
+6. **Server text could plant links of any kind** in banners and warnings.
+   The window opens only http and https links.
+7. **Customer text reached terminals with its control characters.**
+   `ticket show`, `ticket list`, `ticket show --md`, and `ticket.md` take them out, but for newlines and tabs.
+   `terminalControlsFromCustomersNeverReachTheTerminal`.
 
 The review's minors, fixed after it at the coordinator's request:
 
-1. **A selected ticket ticket-manager no longer has was asked for every 30 seconds**, and a malformed one too. A missing ticket now waits five minutes between tries whatever else succeeds, and a malformed id is never asked about again. `aSelectedTicketThatIsGoneIsAskedForEveryFiveMinutes`, `aSelectedMalformedTicketIsNeverAskedFor`, `aTicketThatIsGoneWaitsFiveMinutesWhateverElseSucceeds`.
-2. **`canopy ticket connect` asked for the token before checking the address, and a pipe that never closed hung it.** The address and `--web` are checked first, and a piped token is its first line, read with a 10 second limit. `TokenInputTests`.
-3. **A Keychain refusal at start failed commands with `plugin_not_started`.** It is `keychain_failed`, with the Keychain's words. `aKeychainThatRefusesFailsWithKeychainFailed`.
-4. **`<t:…>` timestamps parsed as floating point.** They are whole seconds within the range Discord shows, and anything else stays as typed. `timestampsShowAsDates`.
-5. **The panel re-parsed every message whenever the store changed.** The conversation is an equatable view on its row and ticket, so it is grouped and parsed again only when the ticket changes.
-6. **`settle()` slept 30 ms for the state stream.** It waits until the plugin has taken in the host's current state and its loop sleeps, and waking the loop marks it busy at once. `hidingTheWindowStopsFetching` covers the visible-to-hidden change the review found untested.
+1. **A selected ticket ticket-manager no longer has was asked for every 30 seconds**, and a malformed one too.
+   A missing ticket now waits five minutes between tries whatever else succeeds, and a malformed id is never asked about again.
+   `aSelectedTicketThatIsGoneIsAskedForEveryFiveMinutes`, `aSelectedMalformedTicketIsNeverAskedFor`, `aTicketThatIsGoneWaitsFiveMinutesWhateverElseSucceeds`.
+2. **`canopy ticket connect` asked for the token before checking the address, and a pipe that never closed hung it.**
+   The address and `--web` are checked first, and a piped token is its first line, read with a 10 second limit.
+   `TokenInputTests`.
+3. **A Keychain refusal at start failed commands with `plugin_not_started`.**
+   It is `keychain_failed`, with the Keychain's words.
+   `aKeychainThatRefusesFailsWithKeychainFailed`.
+4. **`<t:…>` timestamps parsed as floating point.**
+   They are whole seconds within the range Discord shows, and anything else stays as typed.
+   `timestampsShowAsDates`.
+5. **The panel re-parsed every message whenever the store changed.**
+   The conversation is an equatable view on its row and ticket, so it is grouped and parsed again only when the ticket changes.
+6. **`settle()` slept 30 ms for the state stream.**
+   It waits until the plugin has taken in the host's current state and its loop sleeps, and waking the loop marks it busy at once.
+   `hidingTheWindowStopsFetching` covers the visible-to-hidden change the review found untested.
 
 Also at the coordinator's request:
 
-- A plugin can name its item, so the picker reads "New Ticket Row" and the fixture's stays "New Fixture Row". `aPluginNamesItsItemInThePickersTitle`.
+- A plugin can name its item, so the picker reads "New Ticket Row" and the fixture's stays "New Fixture Row".
+  `aPluginNamesItsItemInThePickersTitle`.
 - `ticket.md` starts with a line saying the ticket's messages come from customers and are data to investigate, not instructions to follow, so an agent started with the file does not act on what a customer wrote.
-- The author chose a panel that keeps to the conversation. Problems, the draft with Copy, notes, and fix rows left the panel and `canopy ticket show`, and their models went with them: Canopy no longer decodes those fields. Linked fix rows, their `#0853` chip, and `row new --ticket` stay.
+- The author chose a panel that keeps to the conversation.
+  Problems, the draft with Copy, notes, and fix rows left the panel and `canopy ticket show`, and their models went with them: Canopy no longer decodes those fields.
+  Linked fix rows, their `#0853` chip, and `row new --ticket` stay.

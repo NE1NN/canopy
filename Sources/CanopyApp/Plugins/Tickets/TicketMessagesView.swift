@@ -2,8 +2,8 @@ import CanopyCore
 import CanopyTickets
 import SwiftUI
 
-/// The conversation, in one scroll. It opens at the end of the conversation and stays there while messages arrive and images load, until the author scrolls away, and then
-/// keeps its place.
+/// The conversation, in one scroll. It opens at the end of the conversation and stays there while messages arrive and
+/// images load, until the author scrolls away, and then keeps its place.
 struct TicketBody: View, Equatable {
     let row: PluginRow
     let detail: TicketDetail
