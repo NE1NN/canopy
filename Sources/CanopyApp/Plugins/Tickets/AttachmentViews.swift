@@ -78,9 +78,12 @@ struct RemoteImageView<Fallback: View>: View {
     @ViewBuilder var fallback: Fallback
     @State private var outcome: RemoteImageOutcome?
 
+    /// The most pixels it draws on a Retina screen: never taller than `maxHeight`, and never wider than a panel can be.
+    private var box: CGSize { CGSize(width: 1800, height: maxHeight * 2) }
+
     var body: some View {
         Group {
-            switch outcome ?? RemoteImageLoader.shared.known(url) {
+            switch outcome ?? RemoteImageLoader.shared.known(url, fitting: box) {
             case .loaded(let image):
                 Image(decorative: image.cgImage, scale: 1)
                     .resizable()
@@ -104,7 +107,7 @@ struct RemoteImageView<Fallback: View>: View {
             }
         }
         .task(id: url) {
-            outcome = await RemoteImageLoader.shared.load(url)
+            outcome = await RemoteImageLoader.shared.load(url, fitting: box)
         }
     }
 }
