@@ -68,7 +68,7 @@ struct PortGroupView: View {
                         Group {
                             switch row {
                             case .worktree(let row)?:
-                                RowMark(row: row, size: 12)
+                                RowMark(row: row)
                             case .plugin(let row)?:
                                 if let info = model.snapshot.section(row.plugin)?.info {
                                     Image(systemName: info.symbol)
