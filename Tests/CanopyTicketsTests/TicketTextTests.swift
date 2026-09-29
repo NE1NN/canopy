@@ -24,17 +24,13 @@ struct TicketTextTests {
         #expect(TicketText.listLines([], now: now, homeFolder: "/Users/me").isEmpty)
     }
 
-    @Test func showPrintsEverySection() throws {
+    @Test func showPrintsTheHeaderAndTheConversationOnly() throws {
         let detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
-        let fix = Row(
-            repoPath: "/r/solis-v1", path: "/Users/me/.canopy/worktrees/solis-v1/fix-shadowban-check",
-            branch: "fix/shadowban-check", head: nil, rowClass: .canopy)
         let row = PluginRow(
             plugin: "tickets", item: detail.ticket.id, title: "0853-sameergoyal",
             path: "/Users/me/.canopy/plugins/tickets/0853-sameergoyal")
-        let result = TicketShowResult(
-            ticket: detail, fetchedAt: 1_790_029_000_000, stale: nil, row: row, fixRows: [fix])
-        let text = TicketText.show(result, now: now, homeFolder: "/Users/me")
+        let text = TicketText.show(
+            TicketShowResult(ticket: detail, fetchedAt: 0, stale: nil, row: row), now: now, homeFolder: "/Users/me")
         #expect(text.hasPrefix("ticket-0853-sameergoyal · open · sameergoyal · owner HI · waiting 7h\n"))
         for part in [
             "\nDiscord: https://discord.com/channels/1100000000000000000/1300000000000000853\n",
@@ -43,13 +39,15 @@ struct TicketTextTests {
             "    screenshot.png (47 KB) https://cdn.discordapp.com/attachments/1300000000000000853/1500000000000000002/screenshot.png\n",
             "  Anish · in thread Shadowban check · ", "    Checked the shadowban flag, it is clear.\n",
             "  Sameer Goyal · in a thread · ",
-            "\nProblems\n  open · Automations stopped posting · bug\n    - No posts since yesterday\n",
-            "  resolved · Finding the automation export · how-to\n",
-            "\nDraft · ok · 6 h ago\n  Hi Sameer, the posting worker",
-            "\nNotes\n  hindie@example.com · 5 h ago\n    Root cause: the posting worker skips accounts flagged for review.\n",
-            "\nFix rows\n  fix/shadowban-check · solis-v1 · ~/.canopy/worktrees/solis-v1/fix-shadowban-check",
         ] {
             #expect(text.contains(part), "\(part)")
+        }
+        #expect(
+            text.hasSuffix(
+                "    Any update? The automation log is attached.\n    automation-log.csv (1 KB) https://cdn.discordapp.com/attachments/1300000000000000853/1500000000000000006/automation-log.csv"
+            ))
+        for gone in ["Problems", "Draft", "Notes", "Fix rows", "Root cause"] {
+            #expect(!text.contains(gone), "\(gone)")
         }
     }
 
@@ -59,28 +57,12 @@ struct TicketTextTests {
         detail.messages[1].author.displayName = "Sam\u{1b}[31m"
         detail.handover += "\u{1b}]0;title\u{07}"
         let text = TicketText.show(
-            TicketShowResult(ticket: detail, fetchedAt: 0, stale: nil, row: nil, fixRows: []), now: now,
+            TicketShowResult(ticket: detail, fetchedAt: 0, stale: nil, row: nil), now: now,
             homeFolder: "/Users/me")
         #expect(!text.unicodeScalars.contains { $0.properties.generalCategory == .control && $0 != "\n" })
         #expect(text.contains("hi]52;c;cHduZWQ= there[2J31m"))
         #expect(!TicketFiles.markdown(handover: detail.handover).unicodeScalars.contains { $0 == "\u{1b}" })
         #expect(TicketText.clean("a\tb\nc\u{1b}") == "a\tb\nc")
-    }
-
-    @Test func emptySectionsAreLeftOut() throws {
-        var detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
-        detail.problems = []
-        detail.draft = nil
-        detail.notes = []
-        detail.ticket.owner = nil
-        detail.ticket.waiting = false
-        let text = TicketText.show(
-            TicketShowResult(ticket: detail, fetchedAt: 0, stale: nil, row: nil, fixRows: []), now: now,
-            homeFolder: "/Users/me")
-        #expect(text.hasPrefix("ticket-0853-sameergoyal · open · sameergoyal\n"))
-        for part in ["Problems", "Draft", "Notes", "Fix rows", "Row:"] {
-            #expect(!text.contains(part), "\(part)")
-        }
     }
 }
 

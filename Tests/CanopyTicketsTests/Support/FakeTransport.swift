@@ -78,9 +78,7 @@ actor FakeTransport: TicketTransport {
                 return .json(detail)
             }
             return .json(
-                TicketDetail(
-                    ticket: summary, messages: [], problems: [], draft: nil, handover: "# Handover: \(summary.name)\n",
-                    notes: []))
+                TicketDetail(ticket: summary, messages: [], handover: "# Handover: \(summary.name)\n"))
         }
         return try .fixture(404, "error-not-found")
     }

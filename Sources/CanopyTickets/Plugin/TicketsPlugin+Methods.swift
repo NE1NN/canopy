@@ -161,8 +161,7 @@ extension TicketsPlugin {
         guard let copy else { throw TicketError.notFound(params.reference ?? id) }
         let row = await context.state.rows.first { $0.item == id }
         return TicketShowResult(
-            ticket: copy.detail, fetchedAt: Int64(copy.fetchedAt.timeIntervalSince1970 * 1000), stale: stale, row: row,
-            fixRows: await context.linkedRows(item: id))
+            ticket: copy.detail, fetchedAt: Int64(copy.fetchedAt.timeIntervalSince1970 * 1000), stale: stale, row: row)
     }
 
     /// How long a copy counts as current: the selected ticket's refresh interval.

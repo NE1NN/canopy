@@ -2,8 +2,8 @@ import CanopyCore
 import CanopyTickets
 import SwiftUI
 
-/// A ticket row's panel beside its terminals: the header, a banner when something is wrong, the conversation, the
-/// problems, the draft, the notes, and the fix rows, then when it was fetched.
+/// A ticket row's panel beside its terminals: the header, a banner when something is wrong, the conversation, then
+/// when it was fetched.
 struct TicketPanel: View {
     let row: PluginRow
     let tickets: TicketsPlugin

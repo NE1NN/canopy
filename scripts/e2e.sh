@@ -974,23 +974,18 @@ step "ticket show prints the ticket, its handover, and JSON, from its row too"
 "$cli" ticket show 853 > "$work/show.txt"
 head -1 "$work/show.txt" | grep -q '^ticket-0853-sameergoyal · open · sameergoyal · owner HI · waiting ' ||
     fail "ticket show began $(head -1 "$work/show.txt")"
-for line in 'Welcome @Sameer Goyal! Support will be with you shortly.' '^Problems$' '^Draft · ok' '^Notes$'; do
-    grep -q "$line" "$work/show.txt" || fail "ticket show has no $line"
-done
+grep -q 'Welcome @Sameer Goyal! Support will be with you shortly.' "$work/show.txt" || fail "ticket show has no messages"
+grep -Eq '^(Problems|Draft|Notes|Fix rows)' "$work/show.txt" && fail "ticket show printed more than the conversation"
 (cd "$t853" && "$cli" ticket show --md) | head -1 | grep -qx "# Handover: ticket-0853-sameergoyal" ||
     fail "ticket show --md in the row did not print its handover"
 "$cli" ticket show 853 --json > "$work/show.json"
 [[ "$(field "$work/show.json" ticket.messages.1.attachments.0.filename)" == screenshot.png ]] ||
     fail "ticket show --json does not carry the messages"
 
-step "row new --ticket links a fix row, which ticket show lists"
+step "row new --ticket links a fix row"
 "$cli" row new fix/shadowban --repo demo --ticket 853 --no-setup --json > "$work/fix.json"
 [[ "$(field "$work/fix.json" row.link.plugin) $(field "$work/fix.json" row.link.item)" == "tickets $id853" ]] ||
     fail "row new --ticket did not link the row"
-"$cli" ticket show 853 --json | /usr/bin/python3 -c '
-import json, sys
-assert [r["branch"] for r in json.load(sys.stdin)["fixRows"]] == ["fix/shadowban"]
-' || fail "ticket show does not list the fix row"
 
 step "config.json's run starts new ticket rows"
 /usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY'

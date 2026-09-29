@@ -39,10 +39,6 @@ struct TicketModelTests {
         #expect(detail.messages[3].thread == MessageThread(id: "1400000000000000002", name: nil))
         #expect(detail.messages[4].thread?.name == "Shadowban check")
         #expect(detail.messages[5].posted == Date(timeIntervalSince1970: 1_790_004_800))
-        #expect(detail.problems.map(\.isOpen) == [true, false])
-        #expect(detail.draft?.sourcesUsed == ["conversation", "solisDb"])
-        #expect(detail.draft?.error == nil)
-        #expect(detail.notes.first?.authorEmail == "hindie@example.com")
         #expect(detail.handover.hasPrefix("# Handover: ticket-0853-sameergoyal\n"))
     }
 
@@ -75,7 +71,7 @@ struct TicketModelTests {
 
         let bare = #"{"ticket": \#(json), "handover": "h"}"#
         let detail = try JSONDecoder().decode(TicketDetail.self, from: Data(bare.utf8))
-        #expect(detail.messages.isEmpty && detail.problems.isEmpty && detail.notes.isEmpty && detail.draft == nil)
+        #expect(detail.messages.isEmpty && detail.handover == "h")
     }
 
     @Test func encodingGivesBackTheAPIsKeys() throws {

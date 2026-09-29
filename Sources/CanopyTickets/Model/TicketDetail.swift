@@ -131,107 +131,24 @@ public struct TicketMessage: Sendable, Equatable, Codable, Identifiable {
     public var posted: Date { Date(milliseconds: postedAt) }
 }
 
-/// Something the customer needs, as ticket-manager's model found it in the conversation.
-public struct TicketProblem: Sendable, Equatable, Codable, Identifiable {
-    public var key: String
-    public var title: String
-    public var bullets: [String]
-    public var category: String?
-    /// "open" or "resolved".
-    public var status: String
-
-    public init(key: String, title: String, bullets: [String], category: String?, status: String) {
-        self.key = key
-        self.title = title
-        self.bullets = bullets
-        self.category = category
-        self.status = status
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        key = try container.decode(String.self, forKey: .key)
-        title = try container.decode(String.self, forKey: .title)
-        bullets = try container.decodeIfPresent([String].self, forKey: .bullets) ?? []
-        category = try container.decodeIfPresent(String.self, forKey: .category)
-        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "open"
-    }
-
-    public var id: String { key }
-    public var isOpen: Bool { status != "resolved" }
-}
-
-/// ticket-manager's latest suggested reply, whatever its status.
-public struct TicketDraft: Sendable, Equatable, Codable {
-    public var text: String
-    public var status: String
-    public var sourcesUsed: [String]
-    /// Milliseconds since the epoch.
-    public var generatedAt: Int64?
-    /// Why generating it failed, if it did.
-    public var error: String?
-
-    public init(text: String, status: String, sourcesUsed: [String], generatedAt: Int64?, error: String?) {
-        self.text = text
-        self.status = status
-        self.sourcesUsed = sourcesUsed
-        self.generatedAt = generatedAt
-        self.error = error
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
-        status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
-        sourcesUsed = try container.decodeIfPresent([String].self, forKey: .sourcesUsed) ?? []
-        generatedAt = try container.decodeIfPresent(Int64.self, forKey: .generatedAt)
-        error = try container.decodeIfPresent(String.self, forKey: .error)
-    }
-}
-
-/// A handover note an engineer left on the ticket.
-public struct TicketNote: Sendable, Equatable, Codable {
-    public var text: String
-    public var authorEmail: String?
-    /// Milliseconds since the epoch.
-    public var createdAt: Int64
-
-    public init(text: String, authorEmail: String?, createdAt: Int64) {
-        self.text = text
-        self.authorEmail = authorEmail
-        self.createdAt = createdAt
-    }
-}
-
-/// `tickets/<id>`: everything the panel shows about one ticket.
+/// `tickets/<id>`: the ticket, its conversation, and its handover block. Canopy shows the conversation alone, so the
+/// response's other fields are left undecoded.
 public struct TicketDetail: Sendable, Equatable, Codable {
     public var ticket: TicketSummary
     public var messages: [TicketMessage]
-    public var problems: [TicketProblem]
-    public var draft: TicketDraft?
     /// The markdown the web app's "Copy handover block" copies.
     public var handover: String
-    public var notes: [TicketNote]
 
-    public init(
-        ticket: TicketSummary, messages: [TicketMessage], problems: [TicketProblem], draft: TicketDraft?,
-        handover: String, notes: [TicketNote]
-    ) {
+    public init(ticket: TicketSummary, messages: [TicketMessage], handover: String) {
         self.ticket = ticket
         self.messages = messages
-        self.problems = problems
-        self.draft = draft
         self.handover = handover
-        self.notes = notes
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         ticket = try container.decode(TicketSummary.self, forKey: .ticket)
         messages = try container.decodeIfPresent([TicketMessage].self, forKey: .messages) ?? []
-        problems = try container.decodeIfPresent([TicketProblem].self, forKey: .problems) ?? []
-        draft = try container.decodeIfPresent(TicketDraft.self, forKey: .draft)
         handover = try container.decodeIfPresent(String.self, forKey: .handover) ?? ""
-        notes = try container.decodeIfPresent([TicketNote].self, forKey: .notes) ?? []
     }
 }

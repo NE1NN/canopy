@@ -27,15 +27,12 @@ public struct TicketShowResult: Sendable, Equatable, Codable {
     /// Why this copy may be old, and how old it is, when ticket-manager could not be reached.
     public var stale: String?
     public var row: PluginRow?
-    /// The worktree rows linked to the ticket.
-    public var fixRows: [Row]
 
-    public init(ticket: TicketDetail, fetchedAt: Int64, stale: String?, row: PluginRow?, fixRows: [Row]) {
+    public init(ticket: TicketDetail, fetchedAt: Int64, stale: String?, row: PluginRow?) {
         self.ticket = ticket
         self.fetchedAt = fetchedAt
         self.stale = stale
         self.row = row
-        self.fixRows = fixRows
     }
 }
 

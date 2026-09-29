@@ -2,8 +2,7 @@ import CanopyCore
 import CanopyTickets
 import SwiftUI
 
-/// The conversation, then the problems, the draft, the notes, and the fix rows, in one scroll. It opens at the end of
-/// the conversation and stays there while messages arrive and images load, until the author scrolls away, and then
+/// The conversation, in one scroll. It opens at the end of the conversation and stays there while messages arrive and images load, until the author scrolls away, and then
 /// keeps its place.
 struct TicketBody: View {
     let row: PluginRow
@@ -35,7 +34,6 @@ struct TicketBody: View {
                 Color.clear
                     .frame(height: 1)
                     .id(Self.end)
-                TicketSections(row: row, detail: detail)
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 14)

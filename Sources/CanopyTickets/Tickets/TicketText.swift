@@ -31,8 +31,7 @@ public enum TicketText {
         }
     }
 
-    /// `canopy ticket show`: the header, the messages as plain text, the problems, the draft, the notes, and the fix
-    /// rows, leaving out sections with nothing in them.
+    /// `canopy ticket show`: the header, then the conversation as plain text.
     public static func show(_ result: TicketShowResult, now: Date, homeFolder: String) -> String {
         let detail = result.ticket
         let ticket = detail.ticket
@@ -61,45 +60,6 @@ public enum TicketText {
             }
         }
 
-        if !detail.problems.isEmpty {
-            lines += ["", "Problems"]
-            for problem in detail.problems {
-                lines.append(
-                    "  "
-                        + ([problem.status, problem.title] + [problem.category].compactMap { $0 }).joined(
-                            separator: " · "))
-                lines += problem.bullets.map { "    - " + $0 }
-            }
-        }
-        if let draft = detail.draft {
-            var title = ["Draft", draft.status].filter { !$0.isEmpty }
-            if let generatedAt = draft.generatedAt {
-                title.append(TicketAge.ago(Date(milliseconds: generatedAt), now: now))
-            }
-            lines += ["", title.joined(separator: " · ")]
-            lines += draft.text.components(separatedBy: "\n").map { "  " + $0 }
-            if let error = draft.error { lines.append("  Failed: \(error)") }
-        }
-        if !detail.notes.isEmpty {
-            lines += ["", "Notes"]
-            for note in detail.notes {
-                lines.append(
-                    "  \(note.authorEmail ?? "Someone") · \(TicketAge.ago(Date(milliseconds: note.createdAt), now: now))"
-                )
-                lines += note.text.components(separatedBy: "\n").map { "    " + $0 }
-            }
-        }
-        if !result.fixRows.isEmpty {
-            lines += ["", "Fix rows"]
-            for row in result.fixRows {
-                var parts = [
-                    row.displayName, URL(fileURLWithPath: row.repoPath).lastPathComponent,
-                    tilde(row.path, homeFolder: homeFolder),
-                ]
-                if let pr = row.pullRequest { parts.append("PR #\(pr.number)") }
-                lines.append("  " + parts.joined(separator: " · "))
-            }
-        }
         return clean(lines.joined(separator: "\n"))
     }
 

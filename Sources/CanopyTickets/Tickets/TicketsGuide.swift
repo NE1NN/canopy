@@ -33,8 +33,8 @@ public enum TicketsGuide {
         each ticket's row.
 
         A fix belongs in a worktree row. `canopy row new` run in a ticket row's terminal links the new row to the
-        ticket, and so does --ticket anywhere. The ticket's panel lists linked rows as its fix rows, and
-        `ticket show --json` has them as "fixRows".
+        ticket, and so does --ticket anywhere. The linked row shows the ticket's label, such as #0853, and
+        `row list --json` carries the link as "link".
 
         Errors: plugin_off and token_rejected say to run `canopy ticket connect <url>`, which only the author can do.
         tickets_unreachable means ticket-manager did not answer: `ticket show` then prints its saved copy, with a note
