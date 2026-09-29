@@ -45,7 +45,7 @@ It reproduces every time without the author's screens: a virtual display (`CGVir
 
 - A window that reopens in full screen at launch: the bar must go below the title bar as soon as the reader has read the window, one run loop turn after it attaches.
 - Leaving full screen: the bar must return to the title bar row, with its 150 point inset when the sidebar is hidden.
-- The toolbar revealed by the pointer in full screen slides the content down; the bar must stay whole and clickable.
+- The toolbar revealed by the pointer at the top of the screen slides over the top of the window, as the menu bar does over any full screen app; once the pointer leaves, the bar must be whole and clickable again.
 - Clicks in the bar in full screen: tabs, Split Pane, New Tab.
 - Dragging and double-clicking the bar in a window still move and zoom it.
 
@@ -349,7 +349,9 @@ Each finding and what became of it:
 4. **Double-clicking the bar in full screen** zoomed, or tried to minimize a full screen window, which AppKit refuses.
    Fixed: it does nothing in full screen, like the system's title bar.
 5. **The toolbar revealed by the pointer might slide over the bar instead of pushing it down.**
-   Not changed: a window shot on the built-in display with the toolbar revealed shows the content pushed down, with the whole bar below the toolbar.
+   It does: on the built-in display, a shot of what is on screen with the pointer at the top shows the toolbar over the top 52 points, bar included, until the pointer leaves.
+   Not changed: this is how full screen reveals the menu bar and toolbar in any app, and the bar's clicks work below the menu bar, since the reveal needs the pointer at the very top of the screen.
+   Plain window shots (`screencapture -l`) of a full screen window draw the toolbar's own window above the content, which first looked like the content being pushed down; only the on-screen capture (`--all`) shows what the screen shows.
 6. **The reader's observers are not removed when it is freed.**
    Not changed: they go whenever the view leaves its window, and each holds the view weakly and is scoped to that window.
 7. **The spec still said the bar always takes the title bar row.**
