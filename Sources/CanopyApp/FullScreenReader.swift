@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Whether the view's window is in full screen. It flips as a transition starts, so the layout moves with the window,
-/// and it reads the window once attached, since a window can reopen in full screen.
+/// and reads the window again once it settles, since a transition can fail and a window can reopen in full screen.
 struct FullScreenReader: NSViewRepresentable {
     @Binding var isFullScreen: Bool
 
@@ -23,16 +23,31 @@ struct FullScreenReader: NSViewRepresentable {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
             guard let window else { return }
-            observers = [
+            let center = NotificationCenter.default
+            let starts: [(Notification.Name, Bool)] = [
                 (NSWindow.willEnterFullScreenNotification, true), (NSWindow.willExitFullScreenNotification, false),
-            ].map { name, value in
-                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+            ]
+            observers = starts.map { name, value in
+                center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.onChange(value) }
                 }
             }
-            let isFullScreen = window.styleMask.contains(.fullScreen)
+            let settles = [
+                NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                NSWindow.didResizeNotification,
+            ]
+            observers += settles.map { name in
+                center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.readWindow() }
+                }
+            }
             // Not during the view update that attached this view.
-            Task { @MainActor [weak self] in self?.onChange(isFullScreen) }
+            Task { @MainActor [weak self] in self?.readWindow() }
+        }
+
+        private func readWindow() {
+            guard let window else { return }
+            onChange(window.styleMask.contains(.fullScreen))
         }
     }
 }

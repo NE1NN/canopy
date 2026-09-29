@@ -15,16 +15,15 @@ struct TopBarPlacementTests {
     }
 
     @Test func theSidebarHoldsTheWindowControlsWhileItShows() {
-        #expect(TopBarPlacement(isSidebarHidden: false, isFullScreen: false).leadingInset == TopBarPlacement.edge)
+        #expect(!TopBarPlacement(isSidebarHidden: false, isFullScreen: false).windowControlsOverBar)
     }
 
     @Test func aHiddenSidebarLeavesTheWindowControlsOverTheBar() {
-        #expect(
-            TopBarPlacement(isSidebarHidden: true, isFullScreen: false).leadingInset == TopBarPlacement.windowControls)
+        #expect(TopBarPlacement(isSidebarHidden: true, isFullScreen: false).windowControlsOverBar)
     }
 
     @Test func fullScreenKeepsTheWindowControlsOffTheBar() {
-        #expect(TopBarPlacement(isSidebarHidden: true, isFullScreen: true).leadingInset == TopBarPlacement.edge)
-        #expect(TopBarPlacement(isSidebarHidden: false, isFullScreen: true).leadingInset == TopBarPlacement.edge)
+        #expect(!TopBarPlacement(isSidebarHidden: true, isFullScreen: true).windowControlsOverBar)
+        #expect(!TopBarPlacement(isSidebarHidden: false, isFullScreen: true).windowControlsOverBar)
     }
 }

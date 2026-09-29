@@ -9,7 +9,8 @@ struct TopBarView: View {
     let row: Row
     /// While the sidebar is hidden, the bar names the row.
     let isSidebarHidden: Bool
-    let leadingInset: Double
+    /// The traffic lights and the sidebar toggle sit over the bar's leading end.
+    let windowControlsOverBar: Bool
     @State private var stripWidth = 0.0
 
     var body: some View {
@@ -49,8 +50,8 @@ struct TopBarView: View {
             IconButton(
                 title: "New Tab", systemImage: "plus", shortcut: "⌘T", size: 26, imageSize: 13, action: model.newTab)
         }
-        .padding(.leading, leadingInset)
-        .padding(.trailing, TopBarPlacement.edge)
+        .padding(.leading, windowControlsOverBar ? Style.windowControlsWidth : Style.topBarInset)
+        .padding(.trailing, Style.topBarInset)
         .frame(height: Style.topBarHeight)
         .background {
             TitleBarArea()
@@ -72,6 +73,8 @@ struct TitleBarArea: View {
     }
 
     static func doubleClick(_ window: NSWindow?) {
+        // Like the system's title bar, which does nothing in full screen.
+        guard window?.styleMask.contains(.fullScreen) == false else { return }
         switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
         case "Minimize": window?.performMiniaturize(nil)
         case "None": break

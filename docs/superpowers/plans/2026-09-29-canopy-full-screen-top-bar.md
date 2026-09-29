@@ -43,7 +43,7 @@ It reproduces every time without the author's screens: a virtual display (`CGVir
 
 ## Review Focus
 
-- A window that reopens in full screen at launch: the bar must go below the title bar from the first frame.
+- A window that reopens in full screen at launch: the bar must go below the title bar as soon as the reader has read the window, one run loop turn after it attaches.
 - Leaving full screen: the bar must return to the title bar row, with its 150 point inset when the sidebar is hidden.
 - The toolbar revealed by the pointer in full screen slides the content down; the bar must stay whole and clickable.
 - Clicks in the bar in full screen: tabs, Split Pane, New Tab.
@@ -331,3 +331,31 @@ The window shots must show the crumb, the tabs, Split Pane, and New Tab, with th
 git add Sources/CanopyApp
 git commit -m "fix: full screen shows the whole top bar"
 ```
+
+## After Review
+
+An independent reviewer read `git diff main...HEAD` with this plan and the spec.
+Each finding and what became of it:
+
+1. **The first read could overwrite a later notification.**
+   The reader took the style mask when it attached and reported it one turn later, so a window that entered full screen in between got a stale `false`, and the bar went back under the title bar.
+   Fixed: the task reads the window when it runs.
+2. **A failed transition left the flag stuck.**
+   Only the window's delegate, which SwiftUI owns, hears that a transition failed.
+   Fixed: the reader also reads the style mask on `didEnterFullScreen`, `didExitFullScreen`, and `didResize`, so the flag settles on the window's real state.
+   The `will` notifications still flip it at once, so the layout moves with the transition.
+3. **Review Focus promised the right place from the first frame,** which the reader cannot do, since it reads one turn after it attaches.
+   Fixed: the line now says so.
+4. **Double-clicking the bar in full screen** zoomed, or tried to minimize a full screen window, which AppKit refuses.
+   Fixed: it does nothing in full screen, like the system's title bar.
+5. **The toolbar revealed by the pointer might slide over the bar instead of pushing it down.**
+   Not changed: a window shot on the built-in display with the toolbar revealed shows the content pushed down, with the whole bar below the toolbar.
+6. **The reader's observers are not removed when it is freed.**
+   Not changed: they go whenever the view leaves its window, and each holds the view weakly and is scoped to that window.
+7. **The spec still said the bar always takes the title bar row.**
+   Fixed: "Tabs" says what full screen does.
+8. **Point values moved into CanopyCore,** though `Style` holds every size.
+   Fixed: `TopBarPlacement` keeps only the decisions, `fillsTitleBar` and `windowControlsOverBar`, and `Style.topBarInset` and `Style.windowControlsWidth` hold the 10 and 150 points.
+9. **The environment key lived in `RootView.swift`,** though only `RowTerminalsView` reads it.
+   Fixed: it moved there.
+

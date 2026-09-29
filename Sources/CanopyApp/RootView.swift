@@ -27,10 +27,12 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             if let row = model.selectedRow, !row.isMissing {
-                TopBarView(row: row, isSidebarHidden: isSidebarHidden, leadingInset: placement.leadingInset)
-                    .frame(width: detailFrame.width)
-                    .offset(x: detailFrame.minX)
-                    .ignoresSafeArea(.container, edges: placement.fillsTitleBar ? .top : [])
+                TopBarView(
+                    row: row, isSidebarHidden: isSidebarHidden, windowControlsOverBar: placement.windowControlsOverBar
+                )
+                .frame(width: detailFrame.width)
+                .offset(x: detailFrame.minX)
+                .ignoresSafeArea(.container, edges: placement.fillsTitleBar ? .top : [])
             }
         }
         .frame(minWidth: 900, minHeight: 560)
@@ -89,18 +91,6 @@ struct RootView: View {
                     : "\(pending.busyTerminals) terminals in it are running programs. Removing the repo closes its terminals. Files stay."
             )
         }
-    }
-}
-
-private struct TopBarFillsTitleBarKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-extension EnvironmentValues {
-    /// Whether the top bar takes the title bar's row, so the detail leaves that row to it.
-    var topBarFillsTitleBar: Bool {
-        get { self[TopBarFillsTitleBarKey.self] }
-        set { self[TopBarFillsTitleBarKey.self] = newValue }
     }
 }
 

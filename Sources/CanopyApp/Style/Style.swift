@@ -20,6 +20,9 @@ enum Style {
     static let headerHeight = 28.0
     /// The window toolbar's height, so the tabs line up with the traffic lights.
     static let topBarHeight = 52.0
+    static let topBarInset = 10.0
+    /// Room in the top bar for the traffic lights and the sidebar toggle, once the sidebar is hidden.
+    static let windowControlsWidth = 150.0
     static let tabHeight = 26.0
     static let paneHeaderHeight = 26.0
 

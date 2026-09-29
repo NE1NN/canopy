@@ -40,3 +40,15 @@ struct RowTerminalsView: View {
         }
     }
 }
+
+private struct TopBarFillsTitleBarKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether the top bar takes the title bar's row, so the detail leaves that row to it.
+    var topBarFillsTitleBar: Bool {
+        get { self[TopBarFillsTitleBarKey.self] }
+        set { self[TopBarFillsTitleBarKey.self] = newValue }
+    }
+}
