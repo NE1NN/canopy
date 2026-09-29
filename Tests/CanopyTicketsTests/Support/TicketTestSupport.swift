@@ -49,3 +49,12 @@ enum APIFixture {
         try JSONDecoder().decode(type, from: data(name))
     }
 }
+
+/// The code the control API answers with for `error`.
+func errorCode(_ error: any Error) -> String? {
+    switch error {
+    case let error as ControlError: error.code
+    case let error as WorkspaceError: error.code
+    default: nil
+    }
+}
