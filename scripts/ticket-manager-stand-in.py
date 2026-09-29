@@ -4,8 +4,9 @@ ticket-manager deployment or Discord.
 
     ticket-manager-stand-in.py seed --fixtures <dir> --out <dir> [--ui]
         Writes a data folder from ticket-manager's response fixtures: me.json, tickets.json with every ticket, and
-        details/<id>.json. --ui adds tickets for UI checks, with long messages, markdown, images, an expired
-        attachment, threads, and a closed ticket, and cdn/ with their images, made from this Mac's own pictures.
+        details/<id>.json. --ui adds tickets for UI checks, with long messages, markdown, images, one too big to
+        show, an expired attachment, threads, and a closed ticket, and cdn/ with their images, made from this Mac's
+        own pictures.
 
     ticket-manager-stand-in.py serve --data <dir> --token <token> [--not-staff-token <token>] [--port <n>]
             [--port-file <file>] [--log <file>] [--lifetime <seconds>]
@@ -247,7 +248,9 @@ def ui_tickets(out):
         message(2, maya, 199, "Hi! Checkout has been failing for **every** customer since this morning. They get to "
                 "the payment step, press *Pay now*, and the page just __spins forever__ before showing an error. "
                 "We changed nothing on our side, and ~~it worked yesterday~~ it was fine until about 9am."),
-        message(3, maya, 198, "Here is what they see:", attachments=[attachment("checkout-error.png", 812345, "image/png")]),
+        message(3, maya, 198, "Here is what they see:", attachments=[
+            attachment("checkout-error.png", 812345, "image/png"),
+            attachment("screen-recording.gif", 62914560, "image/gif")]),
         message(4, maya, 196, "And the receipt from the last order that went through:",
                 attachments=[attachment("receipt.png", 104857, "image/png",
                                         "?ex=%s&is=%s&hm=4f1c0a" % (expired, expired))]),

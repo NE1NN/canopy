@@ -65,6 +65,22 @@ extension MessageAttachment {
         return ["png", "jpg", "jpeg", "gif", "webp", "heic"].contains(ext) ? .image : .file
     }
 
+    public enum Display: Sendable, Equatable {
+        /// Inline, loaded from the link.
+        case image(URL)
+        /// A chip with the file's name and size, which opens the link.
+        case file(URL)
+        /// A chip with the file's name, which opens the message in Discord.
+        case expired
+    }
+
+    /// How the panel shows it. An image whose declared size is over the download cap is a file, so it is never
+    /// downloaded.
+    public func display(now: Date) -> Display {
+        guard let link = URL(string: url), !isExpired(now: now) else { return .expired }
+        return kind == .image && size <= RemoteImageLoader.largestDownload ? .image(link) : .file(link)
+    }
+
     /// Discord's signed links stop working at their `ex` time, a hex count of seconds since the epoch.
     public func isExpired(now: Date) -> Bool {
         guard let expiry = URLComponents(string: url)?.queryItems?.first(where: { $0.name == "ex" })?.value,

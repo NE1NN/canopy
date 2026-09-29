@@ -3,33 +3,35 @@ import CanopyTickets
 import SwiftUI
 
 /// An image inline, a file as a link with its name and size, or an attachment whose link expired as its name, which
-/// opens the message in Discord.
+/// opens the message in Discord. An image too big to show inline, or that cannot be loaded, shows as a file.
 struct AttachmentView: View {
     let attachment: MessageAttachment
     let message: TicketMessage
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        let url = URL(string: attachment.url)
-        if attachment.isExpired(now: .now) || url == nil {
-            expired
-        } else if let url, attachment.kind == .image {
-            RemoteImageView(url: url, maxHeight: 240, rounding: 6, placeholderHeight: 120) { expired }
+        switch attachment.display(now: .now) {
+        case .image(let url):
+            RemoteImageView(url: url, maxHeight: 240, rounding: 6, placeholderHeight: 120) { file(url) }
                 .onTapGesture { openURL(url) }
                 .help("\(attachment.filename), \(attachment.sizeText). Opens in the browser.")
-        } else if let url {
-            AttachmentChip(systemImage: "paperclip", name: attachment.filename, detail: attachment.sizeText) {
-                openURL(url)
+        case .file(let url):
+            file(url)
+        case .expired:
+            AttachmentChip(
+                systemImage: "clock.badge.xmark", name: attachment.filename, detail: "expired", isDimmed: true
+            ) {
+                if let text = message.discordUrl, let url = URL(string: text) { openURL(url) }
             }
-            .help("Open \(attachment.filename)")
+            .help("Discord's link to \(attachment.filename) expired. Opens the message in Discord.")
         }
     }
 
-    private var expired: some View {
-        AttachmentChip(systemImage: "clock.badge.xmark", name: attachment.filename, detail: "expired", isDimmed: true) {
-            if let text = message.discordUrl, let url = URL(string: text) { openURL(url) }
+    private func file(_ url: URL) -> some View {
+        AttachmentChip(systemImage: "paperclip", name: attachment.filename, detail: attachment.sizeText) {
+            openURL(url)
         }
-        .help("Discord's link to \(attachment.filename) expired. Opens the message in Discord.")
+        .help("Open \(attachment.filename)")
     }
 }
 
@@ -66,21 +68,21 @@ private struct AttachmentChip: View {
     }
 }
 
-/// An image from the network, fit to the width and at most `maxHeight` tall, kept in a cache while Canopy runs. The
-/// fallback shows when it cannot be loaded.
+/// An image from the network, fit to the width and at most `maxHeight` tall. The fallback shows when it is too big or
+/// cannot be loaded.
 struct RemoteImageView<Fallback: View>: View {
     let url: URL
     let maxHeight: Double
     let rounding: Double
     let placeholderHeight: Double
     @ViewBuilder var fallback: Fallback
-    @State private var phase: RemoteImages.Phase?
+    @State private var outcome: RemoteImageOutcome?
 
     var body: some View {
         Group {
-            switch phase ?? RemoteImages.shared.cached(url) {
+            switch outcome ?? RemoteImageLoader.shared.known(url) {
             case .loaded(let image):
-                Image(nsImage: image)
+                Image(decorative: image.cgImage, scale: 1)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
@@ -89,7 +91,7 @@ struct RemoteImageView<Fallback: View>: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: rounding))
                     .frame(maxWidth: .infinity, alignment: .leading)
-            case .failed:
+            case .tooBig, .failed:
                 fallback
             case nil:
                 RoundedRectangle(cornerRadius: rounding)
@@ -102,65 +104,7 @@ struct RemoteImageView<Fallback: View>: View {
             }
         }
         .task(id: url) {
-            phase = await RemoteImages.shared.load(url)
+            outcome = await RemoteImageLoader.shared.load(url)
         }
-    }
-}
-
-/// Images the panels load. Loaded ones stay in a cache that gives way under memory pressure and past 128 MB, keyed by
-/// address without its query, since Discord signs the same file's link afresh from time to time. A failure is not
-/// kept, so the next view asks again. A file over 20 MB is never decoded or kept, and a download gives up after 30
-/// seconds.
-@MainActor
-final class RemoteImages {
-    enum Phase {
-        case loaded(NSImage)
-        case failed
-    }
-
-    static let shared = RemoteImages()
-    static let largestDownload = 20 * 1024 * 1024
-
-    private let images: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.totalCostLimit = 128 * 1024 * 1024
-        return cache
-    }()
-    private var loading: [String: Task<(NSImage, Int)?, Never>] = [:]
-    private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
-        return URLSession(configuration: configuration)
-    }()
-
-    func cached(_ url: URL) -> Phase? {
-        images.object(forKey: Self.key(url) as NSString).map(Phase.loaded)
-    }
-
-    func load(_ url: URL) async -> Phase {
-        let key = Self.key(url)
-        if let image = images.object(forKey: key as NSString) { return .loaded(image) }
-        let task =
-            loading[key]
-            ?? Task<(NSImage, Int)?, Never> { [session] in
-                guard let (data, response) = try? await session.data(from: url),
-                    (response as? HTTPURLResponse)?.statusCode == 200, data.count <= Self.largestDownload,
-                    let image = NSImage(data: data)
-                else { return nil }
-                return (image, data.count)
-            }
-        loading[key] = task
-        let loaded = await task.value
-        loading[key] = nil
-        guard let (image, size) = loaded else { return .failed }
-        images.setObject(image, forKey: key as NSString, cost: size)
-        return .loaded(image)
-    }
-
-    private static func key(_ url: URL) -> String {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.query = nil
-        return components?.string ?? url.absoluteString
     }
 }
