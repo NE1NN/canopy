@@ -7,8 +7,9 @@ import SwiftUI
 struct TopBarView: View {
     @Environment(AppModel.self) private var model
     let row: Row
-    /// While the sidebar is hidden, the bar names the row and leaves room for the traffic lights and sidebar toggle.
+    /// While the sidebar is hidden, the bar names the row.
     let isSidebarHidden: Bool
+    let leadingInset: Double
     @State private var stripWidth = 0.0
 
     var body: some View {
@@ -48,8 +49,8 @@ struct TopBarView: View {
             IconButton(
                 title: "New Tab", systemImage: "plus", shortcut: "⌘T", size: 26, imageSize: 13, action: model.newTab)
         }
-        .padding(.leading, isSidebarHidden ? Self.trafficLightsInset : 10)
-        .padding(.trailing, 10)
+        .padding(.leading, leadingInset)
+        .padding(.trailing, TopBarPlacement.edge)
         .frame(height: Style.topBarHeight)
         .background {
             TitleBarArea()
@@ -59,9 +60,6 @@ struct TopBarView: View {
             Rectangle().fill(.separator).frame(height: 1)
         }
     }
-
-    /// Room for the traffic lights and the sidebar toggle, which sit over the bar's leading end.
-    static let trafficLightsInset = 150.0
 }
 
 /// Empty title bar space: dragging it moves the window, and double-clicking it does what the system setting says.

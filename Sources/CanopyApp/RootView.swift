@@ -7,14 +7,18 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var detailFrame = CGRect.zero
+    @State private var isFullScreen = false
 
     var body: some View {
         @Bindable var model = model
+        let isSidebarHidden = columns == .detailOnly
+        let placement = TopBarPlacement(isSidebarHidden: isSidebarHidden, isFullScreen: isFullScreen)
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
         } detail: {
             RowDetailView()
+                .environment(\.topBarFillsTitleBar, placement.fillsTitleBar)
                 .onGeometryChange(for: CGRect.self) {
                     $0.frame(in: .global)
                 } action: {
@@ -23,13 +27,16 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             if let row = model.selectedRow, !row.isMissing {
-                TopBarView(row: row, isSidebarHidden: columns == .detailOnly)
+                TopBarView(row: row, isSidebarHidden: isSidebarHidden, leadingInset: placement.leadingInset)
                     .frame(width: detailFrame.width)
                     .offset(x: detailFrame.minX)
-                    .ignoresSafeArea(.container, edges: .top)
+                    .ignoresSafeArea(.container, edges: placement.fillsTitleBar ? .top : [])
             }
         }
         .frame(minWidth: 900, minHeight: 560)
+        // Full screen shows the bar at the top, as a window does, with the toolbar only while the pointer is there.
+        .windowToolbarFullScreenVisibility(.onHover)
+        .background(FullScreenReader(isFullScreen: $isFullScreen))
         .overlay(alignment: .bottom) {
             if let toast = model.toast {
                 ToastView(message: toast)
@@ -82,6 +89,18 @@ struct RootView: View {
                     : "\(pending.busyTerminals) terminals in it are running programs. Removing the repo closes its terminals. Files stay."
             )
         }
+    }
+}
+
+private struct TopBarFillsTitleBarKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether the top bar takes the title bar's row, so the detail leaves that row to it.
+    var topBarFillsTitleBar: Bool {
+        get { self[TopBarFillsTitleBarKey.self] }
+        set { self[TopBarFillsTitleBarKey.self] = newValue }
     }
 }
 
