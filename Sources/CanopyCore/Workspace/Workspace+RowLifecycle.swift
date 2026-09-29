@@ -39,14 +39,16 @@ extension Workspace {
     /// Creates a worktree for `branch` under CANOPY_HOME/worktrees/<repo>/. An existing local branch is checked out,
     /// after a fast-forward if it is only behind origin. A branch only on origin is tracked. Anything else is created
     /// from `base` (default: origin's default branch), unless `existing` asks to fail instead.
-    /// With `group`, the row goes straight to the end of that group, which must exist.
+    /// With `group`, the row goes straight to the end of that group, which must exist. With `link`, the row is tied to
+    /// a plugin's item, which the caller has already resolved.
     public func createRow(
-        repoPath: String, branch: String, base: String? = nil, existing: Bool = false, group: String? = nil
+        repoPath: String, branch: String, base: String? = nil, existing: Bool = false, group: String? = nil,
+        link: PluginLink? = nil
     ) async throws -> CreatedRow {
         let requestedAt = ContinuousClock.now
         return try await createRow(repoPath: repoPath, joining: group) {
             try await self.createRowNow(
-                repoPath: repoPath, branch: branch, base: base, existing: existing, group: group,
+                repoPath: repoPath, branch: branch, base: base, existing: existing, group: group, link: link,
                 requestedAt: requestedAt)
         }
     }
@@ -89,6 +91,7 @@ extension Workspace {
         base: String?,
         existing: Bool,
         group: String?,
+        link: PluginLink?,
         requestedAt: ContinuousClock.Instant
     ) async throws -> CreatedRow {
         _ = try entryIndex(repoPath: repoPath)
@@ -153,7 +156,7 @@ extension Workspace {
         }
 
         let added = try await addRow(
-            repoPath: repoPath, branch: branch, joining: joining, fastForward: fastForward
+            repoPath: repoPath, branch: branch, joining: joining, link: link, fastForward: fastForward
         ) { folder in
             switch source {
             case .local: [folder, branch]
@@ -187,12 +190,12 @@ extension Workspace {
     }
 
     /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then `fastForward` in it, and lists
-    /// the row last among the repo's rows, or last in the group it is `joining`. `arguments` gets the folder and
-    /// returns what follows `worktree add`. The report says how the fast-forward went, and warns when a checkout hook
-    /// failed after git had made the worktree.
+    /// the row last among the repo's rows, or last in the group it is `joining`, and tied to `link`'s item.
+    /// `arguments` gets the folder and returns what follows `worktree add`. The report says how the fast-forward went,
+    /// and warns when a checkout hook failed after git had made the worktree.
     func addRow(
-        repoPath: String, branch: String, joining: String? = nil, fastForward: FastForward? = nil,
-        arguments: (String) -> [String]
+        repoPath: String, branch: String, joining: String? = nil, link: PluginLink? = nil,
+        fastForward: FastForward? = nil, arguments: (String) -> [String]
     ) async throws -> (row: Row, report: BranchReport) {
         let dirName = state.repos[try entryIndex(repoPath: repoPath)].dirName
         // A worktree whose folder was deleted keeps its path until it is pruned, so git would refuse to reuse it.
@@ -210,6 +213,7 @@ extension Workspace {
         var created = false
         defer { if !created { rowsJoiningGroups[path] = nil } }
         changingRows[path] = .current
+        rowsBeingLinked[path] = link
         defer { finishChanging([path], repoPath: repoPath) }
         var report = BranchReport()
         do {
@@ -227,8 +231,11 @@ extension Workspace {
 
         if let current = try? entryIndex(repoPath: repoPath), !state.repos[current].holds(path) {
             state.repos[current].place(path, joining: rowsJoiningGroups[path]?.group)
-            try save()
         }
+        if let link {
+            state.plugins[link.plugin, default: PluginEntry()].links[path] = link.item
+        }
+        try save()
         await refresh(repoPath: repoPath)
         guard var row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
         created = true

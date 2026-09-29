@@ -107,6 +107,38 @@ extension Workspace {
         publish()
     }
 
+    /// The item each linked worktree row is for, by the row's path, whether its plugin is on or not.
+    var rowLinks: [String: PluginLink] {
+        var links: [String: PluginLink] = [:]
+        for (plugin, entry) in state.plugins {
+            for (path, item) in entry.links {
+                links[path] = PluginLink(plugin: plugin, item: item)
+            }
+        }
+        return links
+    }
+
+    /// Drops the links of the rows `gone` names. The caller saves. Returns whether any went.
+    @discardableResult
+    func dropLinks(where gone: (String) -> Bool) -> Bool {
+        var dropped = false
+        for (plugin, entry) in state.plugins {
+            let kept = entry.links.filter { !gone($0.key) }
+            if kept.count != entry.links.count {
+                state.plugins[plugin]?.links = kept
+                dropped = true
+            }
+        }
+        return dropped
+    }
+
+    /// Whether a path is where one of the repo's Canopy or adopted rows is or was: inside its Canopy folder, or
+    /// adopted.
+    func owns(_ entry: RepoEntry, _ path: String) -> Bool {
+        let folder = Paths.canonical(home.worktreesRoot.appending(path: entry.dirName).path)
+        return Paths.isInside(path, folder) || entry.adopted.contains(path)
+    }
+
     /// Each registered plugin's section, with its rows as they look now.
     var pluginSections: [PluginSection] {
         pluginInfos.map { info in

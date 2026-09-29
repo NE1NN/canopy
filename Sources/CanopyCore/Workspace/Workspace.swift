@@ -29,6 +29,8 @@ public actor Workspace {
     /// Rows being created into a group, by path, so a refresh that lists one before its creation finishes puts it
     /// straight into the group. Renaming the group renames it here too.
     var rowsJoiningGroups: [String: JoiningGroup] = [:]
+    /// Rows being created with a link to a plugin's item, by path, so their `row.created` says so.
+    var rowsBeingLinked: [String: PluginLink] = [:]
 
     /// The built-in plugins, in the order their sections show. Their rows are in `state.plugins`.
     var pluginInfos: [PluginInfo] = []
@@ -112,10 +114,16 @@ public actor Workspace {
 
     public var snapshot: WorkspaceSnapshot {
         let names = RepoNaming.displayNames(for: state.repos.map(\.path))
+        let links = rowLinks
         let repos = state.repos.map { entry in
             var repo = repoSnapshots[entry.path] ?? RepoSnapshot(path: entry.path, name: "")
             repo.name = names[entry.path] ?? entry.dirName
             pullRequests[entry.path]?.apply(to: &repo)
+            if !links.isEmpty {
+                for index in repo.rows.indices {
+                    repo.rows[index].link = links[repo.rows[index].path]
+                }
+            }
             return repo
         }
         return WorkspaceSnapshot(repos: repos, plugins: pluginSections, selectedRowPath: state.selectedRowPath)
@@ -161,7 +169,8 @@ public actor Workspace {
             throw WorkspaceError.repoNotFound(path)
         }
         let name = snapshot.repo(path: path)?.name
-        state.repos.remove(at: index)
+        let removed = state.repos.remove(at: index)
+        dropLinks { owns(removed, $0) }
         watchers[path] = nil
         pendingRefreshes.removeValue(forKey: path)?.cancel()
         refreshQueues[path] = nil
@@ -228,6 +237,7 @@ public actor Workspace {
         let row = snapshot.row(path: path)
         state.repos[index].adopted.removeAll { $0 == path }
         state.repos[index].forget(path)
+        dropLinks { $0 == path }
         if state.selectedRowPath == path {
             state.selectedRowPath = nil
         }
@@ -364,8 +374,13 @@ public actor Workspace {
         let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
         var reconciled = current
         let joining = rowsJoiningGroups.filter { $0.value.repoPath == current.path }.mapValues(\.group)
-        if reconciled.reconcile(present: managed.map(\.path), joining: joining) {
+        var changed = reconciled.reconcile(present: managed.map(\.path), joining: joining)
+        if changed {
             state.repos[index] = reconciled
+        }
+        let present = Set(managed.map(\.path))
+        changed = dropLinks { owns(reconciled, $0) && !present.contains($0) } || changed
+        if changed {
             try? save()
         }
         repoSnapshots[current.path] = RepoSnapshot(
@@ -410,6 +425,7 @@ public actor Workspace {
     /// Logs how rows Canopy changed ended up, as of the last refresh, and compares them from there on.
     func finishChanging(_ paths: [String], repoPath: String) {
         for path in paths {
+            let link = rowsBeingLinked.removeValue(forKey: path)
             guard let source = changingRows.removeValue(forKey: path), var baseline = rowBaselines[repoPath],
                 let repo = repoSnapshots[repoPath], !repo.isMissing
             else { continue }
@@ -417,7 +433,11 @@ public actor Workspace {
             let new = repo.allRows.first { $0.path == path && !Self.isBeingCreated($0) }
             switch (old, new) {
             case (nil, let row?):
-                record(ActivityType.rowCreated, row, source: source, data: ["class": .string(row.rowClass.rawValue)])
+                var data: [String: JSONValue] = ["class": .string(row.rowClass.rawValue)]
+                if let link {
+                    data["link"] = .object(["plugin": .string(link.plugin), "item": .string(link.item)])
+                }
+                record(ActivityType.rowCreated, row, source: source, data: data)
             case (let row?, nil):
                 record(ActivityType.rowRemoved, row, source: source, data: ["class": .string(row.rowClass.rawValue)])
             case (let old?, let row?):

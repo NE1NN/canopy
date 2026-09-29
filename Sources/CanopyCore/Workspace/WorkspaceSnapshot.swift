@@ -140,6 +140,12 @@ public struct WorkspaceSnapshot: Sendable, Equatable {
         activePlugins.first { $0.id == plugin }?.rows.first { $0.item == item }
     }
 
+    /// The worktree rows made for one of a plugin's items, in sidebar order.
+    public func linkedRows(plugin: String, item: String) -> [Row] {
+        let link = PluginLink(plugin: plugin, item: item)
+        return repos.flatMap(\.allRows).filter { $0.link == link }
+    }
+
     public func section(_ plugin: String) -> PluginSection? {
         plugins.first { $0.id == plugin }
     }

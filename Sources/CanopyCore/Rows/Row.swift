@@ -31,6 +31,8 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
     public var pullRequest: PullRequest?
     /// The name of the group holding the row, nil while it is ungrouped.
     public var group: String?
+    /// The plugin item the row was made for, such as a ticket.
+    public var link: PluginLink?
 
     public var id: String { path }
 
@@ -65,5 +67,6 @@ public struct Row: Sendable, Equatable, Identifiable, Codable {
         case isMissing = "missing"
         case pullRequest = "pr"
         case group
+        case link
     }
 }
