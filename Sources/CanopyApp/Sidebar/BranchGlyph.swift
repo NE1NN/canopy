@@ -3,8 +3,9 @@ import CanopyCore
 import SwiftUI
 
 /// A branch, pull request, or trunk mark, drawn on a 24-unit grid meant for a 12-point frame, so a unit is half a
-/// point. Each mark is 9 points wide and 10 tall, about the height of the row text's ascenders. The vertical lines sit
-/// on odd units, so with the 1-point stroke their edges land on whole pixels at 1x and 2x.
+/// point. Each mark is 10 points tall, about the height of the row text's ascenders, and the branch and pull request
+/// marks share a 9-point width. The vertical lines sit on odd units, so in a frame placed on whole points, the 1-point
+/// stroke's edges land on whole pixels at 1x and 2x.
 protocol MarkShape: Shape {
     func path(on grid: inout Path)
 }
@@ -47,10 +48,10 @@ struct PullRequestGlyph: MarkShape {
         grid.move(to: CGPoint(x: 17, y: 15))
         grid.addLine(to: CGPoint(x: 17, y: 8.5))
         grid.addQuadCurve(to: CGPoint(x: 14.5, y: 6), control: CGPoint(x: 17, y: 6))
-        grid.addLine(to: CGPoint(x: 12, y: 6))
-        grid.move(to: CGPoint(x: 14, y: 3))
-        grid.addLine(to: CGPoint(x: 12, y: 6))
-        grid.addLine(to: CGPoint(x: 14, y: 9))
+        grid.addLine(to: CGPoint(x: 13, y: 6))
+        grid.move(to: CGPoint(x: 15, y: 4))
+        grid.addLine(to: CGPoint(x: 13, y: 6))
+        grid.addLine(to: CGPoint(x: 15, y: 8))
     }
 }
 

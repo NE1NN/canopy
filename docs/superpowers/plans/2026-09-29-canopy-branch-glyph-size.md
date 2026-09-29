@@ -51,7 +51,8 @@ With the mark centered in its frame, two vertical lines on odd units must be 5 o
 The PR mark's short horizontal arrow line sits level with its top commit's center on an even unit, which only softens that 1.5-point segment at 1x, where the arrowhead is a few pixels anyway.
 The trunk sits on unit 11, half a point left of center, so its line is crisp too.
 
-The arrowhead is 2 units deep and 6 tall, with its tip at unit 12, so it clears the top commit's circle and the branch's corner at this size.
+The arrowhead is 2 units deep and 4 tall, with its tip at unit 13, so it leaves a pixel's gap to the top commit's circle at 2x and clears the branch's corner.
+At this size it fills in like GitHub's solid arrowhead rather than reading as an open chevron, and at 1x it is a small wedge.
 
 ## File Structure
 
@@ -78,8 +79,9 @@ Everything above `RowMark` becomes:
 
 ```swift
 /// A branch, pull request, or trunk mark, drawn on a 24-unit grid meant for a 12-point frame, so a unit is half a
-/// point. Each mark is 9 points wide and 10 tall, about the height of the row text's ascenders. The vertical lines sit
-/// on odd units, so with the 1-point stroke their edges land on whole pixels at 1x and 2x.
+/// point. Each mark is 10 points tall, about the height of the row text's ascenders, and the branch and pull request
+/// marks share a 9-point width. The vertical lines sit on odd units, so in a frame placed on whole points, the 1-point
+/// stroke's edges land on whole pixels at 1x and 2x.
 protocol MarkShape: Shape {
     func path(on grid: inout Path)
 }
@@ -122,10 +124,10 @@ struct PullRequestGlyph: MarkShape {
         grid.move(to: CGPoint(x: 17, y: 15))
         grid.addLine(to: CGPoint(x: 17, y: 8.5))
         grid.addQuadCurve(to: CGPoint(x: 14.5, y: 6), control: CGPoint(x: 17, y: 6))
-        grid.addLine(to: CGPoint(x: 12, y: 6))
-        grid.move(to: CGPoint(x: 14, y: 3))
-        grid.addLine(to: CGPoint(x: 12, y: 6))
-        grid.addLine(to: CGPoint(x: 14, y: 9))
+        grid.addLine(to: CGPoint(x: 13, y: 6))
+        grid.move(to: CGPoint(x: 15, y: 4))
+        grid.addLine(to: CGPoint(x: 13, y: 6))
+        grid.addLine(to: CGPoint(x: 15, y: 8))
     }
 }
 
@@ -223,3 +225,18 @@ Shoot the window with `scripts/window-shot.swift`, crop the sidebar rows, and zo
 - The ports panel's marks.
 - The New Row sheet's PR and branch lines.
 - A prototype render of the marks at scale 1 and 2 through `ImageRenderer`, zoomed to pixels, for 1x crispness, since this Mac's display is 2x.
+
+## After Review
+
+An independent Opus reviewer read `git diff origin/main...HEAD` with the spec and this plan, compiled `BranchGlyph.swift` alone under Swift 6 strict concurrency with warnings as errors, and rendered the marks at 1x, 2x, and 4x.
+It confirmed the 9 by 10 point box for the branch and pull request marks, that the frame lands on whole points in every place it is drawn (the sidebar's 16-point column and 26-point rows, the ports panel, and the New Row sheet's 14-point column in its 28 and 42-point lines), that the lines render 1 pixel wide at 1x and 2 at 2x, and that the mark's ink spans the text from its ascenders to its baseline.
+
+1. Fixed: the arrowhead's tip touched the top commit's circle, with zero gap between their inks, so at row size they read as one blob.
+   The tip moved from unit 12 to 13 and the head to 2 by 4 units, which leaves a pixel's gap at 2x and still clears the branch's corner.
+   Checked in a prototype render and in dark and light window shots zoomed to pixels.
+2. Fixed: the protocol's comment said every mark is 9 points wide, but the trunk is narrower, and the pixel claim holds only for a frame placed on whole points.
+3. Not changed: in the New Row sheet's two-line pull request items the mark centers on both lines rather than on the title.
+   That was already so before this change, the sheet's shot reads fine, and anchoring it to the title touches the sheet's shared line layout, which is outside this fix.
+4. Not changed: beside the ports panel's 12-point text the mark is half a point taller than the text, which matches the plugin symbols in that column and looks right in the shot.
+5. Not changed: the plan's banner line holds two sentences, but it is the template's text, the same in every plan.
+
