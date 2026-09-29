@@ -64,6 +64,44 @@ struct TicketTextTests {
         #expect(!TicketFiles.markdown(handover: detail.handover).unicodeScalars.contains { $0 == "\u{1b}" })
         #expect(TicketText.clean("a\tb\nc\u{1b}") == "a\tb\nc")
     }
+
+    /// Every field a message carries at its extremes: nothing a customer sends, or ticket-manager copies, may crash the
+    /// CLI or the panel.
+    @Test func extremeMessagesPrintWithoutCrashing() throws {
+        var detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
+        var message = detail.messages[1]
+        message.text = "<t:-9223372036854775808> <@> <@!> <#> <@&> <::> <a::1> [](http://) `` ``` ||||"
+        message.mentions = [MessageMention(id: "", username: "", displayName: "")]
+        message.author = MessageAuthor(username: "", displayName: "", avatarUrl: "", role: .other(""), isBot: false)
+        message.thread = MessageThread(id: "", name: "")
+        var attachments: [MessageAttachment] = []
+        for size in [Int64.min, -1, 0, 1023, 1024, 1_048_575, 1_048_576, Int64.max] {
+            for url in [
+                "", "not a url", "https://x/a.png?ex=ffffffffffffffffff", "https://x/a.png?ex=", "https://x/a?ex=zz",
+            ] {
+                attachments.append(MessageAttachment(filename: "", url: url, size: size, contentType: ""))
+            }
+        }
+        message.attachments = attachments
+        var messages: [TicketMessage] = []
+        for postedAt in [Int64.min, -1, 0, Int64.max] {
+            message.postedAt = postedAt
+            message.id = "m\(postedAt)"
+            messages.append(message)
+        }
+        detail.messages = messages
+        detail.ticket.lastActivityAt = .min
+        detail.ticket.openedAt = .max
+        detail.ticket.waiting = true
+        for now in [Date.distantPast, Date.distantFuture, now] {
+            _ = TicketText.show(
+                TicketShowResult(ticket: detail, fetchedAt: .min, stale: nil, row: nil), now: now, homeFolder: "")
+            for attachment in attachments {
+                _ = (attachment.sizeText, attachment.kind, attachment.isExpired(now: now))
+            }
+        }
+        #expect(MessageGroup.groups(messages).count == 3)
+    }
 }
 
 struct TicketsGuideTests {

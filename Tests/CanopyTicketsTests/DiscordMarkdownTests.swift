@@ -104,8 +104,35 @@ struct DiscordMarkdownTests {
         let shown = spans("at <t:1790000000:d>")
         #expect(shown.count == 1 && shown[0].text.hasPrefix("at ") && shown[0].text.contains("2026"))
         #expect(spans("<t:nope>") == [span("<t:nope>")])
-        for literal in ["<t:nan>", "<t:1e300>", "<t:1.5>", "<t:99999999999999999999>"] {
+        for literal in [
+            "<t:nan>", "<t:1e300>", "<t:1.5>", "<t:99999999999999999999>", "<t:-9223372036854775808>",
+            "<t:9223372036854775807>", "<t:8640000000001>", "<t:-8640000000001>", "<t:+1790000000>", "<t:->",
+            "<t:>", "<t:٣>",
+        ] {
             #expect(spans(literal) == [span(literal)], "\(literal)")
+        }
+        for seconds in ["8640000000000", "-8640000000000", "0"] {
+            for style in ["", ":t", ":T", ":d", ":D", ":f", ":F", ":R"] {
+                let edge = "<t:\(seconds)\(style)>"
+                #expect(spans(edge).count == 1 && spans(edge)[0].text != edge, "\(edge)")
+            }
+        }
+    }
+
+    /// Customers write whatever they like, so no text may crash the parser.
+    @Test func noTextCrashesTheParser() {
+        let pieces = [
+            "*", "**", "_", "__", "~~", "||", "`", "``", "```", "\\", "<", ">", "[", "]", "(", ")", "<@", "<@!", "<@&",
+            "<#", "<:", "<a:", ":", "<t:", "-", "<t:-9223372036854775808>", "9223372036854775808", "1", "https://",
+            "http://x.y", " ", "\n", "> ",
+            ">>> ", "é", "🇦🇺", "👩‍💻", "\u{0}", "\u{1B}[31m",
+        ]
+        var generator = SplitMix(seed: 853)
+        for _ in 0..<3000 {
+            let count = Int(generator.next() % 24)
+            let text = (0..<count).map { _ in pieces[Int(generator.next() % UInt64(pieces.count))] }.joined()
+            _ = DiscordMarkdown.parse(text, names: names)
+            _ = DiscordMarkdown.plain(text, names: names)
         }
     }
 
@@ -139,5 +166,22 @@ struct DiscordMarkdownTests {
         #expect(names.channels["1300000000000000853"] == "ticket-0853-sameergoyal")
         #expect(names.channels["1400000000000000001"] == "Shadowban check")
         #expect(names.channels["1400000000000000002"] == nil)
+    }
+}
+
+/// A small generator with a fixed seed, so a failing text comes back on every run.
+struct SplitMix: RandomNumberGenerator {
+    var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }
