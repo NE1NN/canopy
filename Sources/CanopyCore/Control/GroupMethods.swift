@@ -5,6 +5,8 @@ public enum GroupMethod {
     public static let new = "group.new"
     public static let rename = "group.rename"
     public static let remove = "group.remove"
+    public static let collapse = "group.collapse"
+    public static let expand = "group.expand"
 }
 
 public struct GroupListParams: Codable, Sendable {
@@ -21,7 +23,7 @@ public struct GroupListParams: Codable, Sendable {
     }
 }
 
-/// A group of the resolved repo, for `group.new` and `group.remove`.
+/// A group of the resolved repo, for `group.new`, `group.remove`, `group.collapse`, and `group.expand`.
 public struct GroupParams: Codable, Sendable {
     public var target: TargetHint
     public var name: String

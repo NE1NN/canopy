@@ -333,6 +333,7 @@ In a tab with several panes, this is how the author finds the one that asked.
 
 Once row groups land from `feat/row-groups`, a collapsed group's header shows the most urgent dot among its rows.
 Whichever of the two PRs merges second adds it.
+A folded repo's header and a folded plugin section's header show the most urgent dot among their rows the same way.
 
 ## CLI
 

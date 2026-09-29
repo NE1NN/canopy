@@ -111,12 +111,14 @@ The app keeps a table from plugin id to the panel view that plugin draws for a r
     "links": {
       "/Users/me/.canopy/worktrees/solis-v1/fix-shadowban-check": "k57a9x2m"
     },
-    "panelWidth": 340
+    "panelWidth": 340,
+    "collapsed": false
   }
 }
 ```
 
 The order of `rows` is the sidebar order.
+`collapsed` says whether the sidebar folds the section, and decodes as open when it is missing or cannot be read.
 A plugin's entry stays while the plugin is off, so turning it back on brings its rows back.
 An older `state.json` without `plugins` loads as having none.
 
@@ -175,6 +177,11 @@ Rows can be dragged to reorder them within their section, and never into another
 The section's `…` menu holds New Row…, which opens the picker, and Turn Off, which does what `canopy plugin disable` does and asks first while programs run in its rows.
 `⌘1` to `⌘9` and the arrow keys take plugin rows after every repo's rows, in section order.
 
+A section folds under its header the way a repo does, as the main spec's Folding repos describes.
+The chevron follows the plugin's name, clicking the header anywhere but its buttons folds or unfolds the section, and a folded section shows its header alone, with the most urgent agent dot among its rows and the selection fill for a selected row it hides.
+Its rows then get no `⌘1` to `⌘9` and the arrow keys step over them, and selecting one from outside the list, with `canopy row select`, or with `canopy plugin new --select` unfolds the section.
+The fold is kept while the plugin is off, like its rows.
+
 ### Detail
 
 A plugin row shows the plugin's panel at the left of the detail area, then the tab bar and terminal grid.
@@ -219,6 +226,7 @@ The Keychain sits behind a `SecretStore` interface, with an in-memory store for 
 | `canopy plugin enable <plugin>`, `canopy plugin disable <plugin> [--force]` | `plugin.enable`, `plugin.disable` | turn a plugin on or off; plugin commands such as `ticket connect` use them too |
 | `canopy plugin items <plugin> [--query <text>] [--filter <id>]...` | `plugin.items` | what the picker lists, with each item's row |
 | `canopy plugin new <plugin> <reference> [--run <cmd>] [--select]` | `plugin.new` | what picking an item without a row does; an item with a row fails with `item_has_row`, naming it |
+| `canopy plugin collapse <plugin>`, `canopy plugin expand <plugin>` | `plugin.collapse`, `plugin.expand` | fold or unfold the plugin's section, on or off; safe to repeat; `plugin list --json` gives `collapsed` |
 | `canopy row list` | `row.list` | also lists plugin rows, under each plugin's name, with `plugin`, `item`, `title`, and `path` in `--json` |
 | `canopy row select`, `canopy row rm`, `canopy row move --before\|--after` | `row.select`, `row.remove`, `row.move` | also take a plugin row's path; `row rm` refuses a running program without `--force` |
 | `canopy row new … --no-link` | `row.new` | leaves out the link the CLI sends from a plugin row |

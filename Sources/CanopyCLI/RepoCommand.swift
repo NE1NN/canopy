@@ -4,8 +4,8 @@ import CanopyCore
 struct RepoCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "repo",
-        abstract: "Register, clone, and list repositories.",
-        subcommands: [Add.self, Clone.self, List.self, Remove.self]
+        abstract: "Register, clone, list, and fold repositories.",
+        subcommands: [Add.self, Clone.self, List.self, Remove.self, Collapse.self, Expand.self]
     )
 
     struct Add: AsyncParsableCommand {
@@ -74,6 +74,36 @@ struct RepoCommand: AsyncParsableCommand {
         }
     }
 
+    struct Collapse: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Fold a repo away in the sidebar. Safe to repeat.",
+            discussion: """
+                Its rows keep running and stay in `canopy row list`, but get no ⌘1 to ⌘9 until the repo is \
+                expanded. Selecting one of its rows expands it.
+                """
+        )
+
+        @Argument(help: "Repo name or path. Defaults to the repo you are in.")
+        var repo: String?
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(ControlMethod.repoCollapse, repo: repo, json: output.json) { "Collapsed \($0)." }
+        }
+    }
+
+    struct Expand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Unfold a repo in the sidebar. Safe to repeat.")
+
+        @Argument(help: "Repo name or path. Defaults to the repo you are in.")
+        var repo: String?
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            try fold(ControlMethod.repoExpand, repo: repo, json: output.json) { "Expanded \($0)." }
+        }
+    }
+
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "rm",
@@ -93,4 +123,11 @@ struct RepoCommand: AsyncParsableCommand {
             try client.print(result) { "Removed \(try result.decode(RepoInfo.self).name) from Canopy." }
         }
     }
+}
+
+/// `repo collapse` and `repo expand`, which say what they did with the repo's name.
+private func fold(_ method: String, repo: String?, json: Bool, message: (String) -> String) throws {
+    let client = Client(json: json)
+    let result = client.call(method, RepoFoldParams(target: Client.hint(repo: repo)))
+    try client.print(result) { message(try result.decode(RepoInfo.self).name) }
 }

@@ -60,6 +60,21 @@ struct WorkspaceGroupTests {
         #expect(await relaunched.snapshot.repos.first?.groups == [GroupSnapshot(name: "Review", collapsed: true)])
     }
 
+    @Test func theSnapshotCarriesTheSavedRepoFold() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let home = CanopyHome(path: dir.sub("home"))
+        try home.ensureExists()
+        try StateStore(url: home.stateFile).save(
+            AppState(repos: [RepoEntry(path: repo, dirName: "demo", collapsed: true)]))
+        let workspace = Workspace(home: home, git: Fixture.git)
+
+        try await workspace.start()
+
+        #expect(await workspace.snapshot.repos.map(\.collapsed) == [true])
+        #expect(await workspace.snapshot.visibleRows.isEmpty)
+    }
+
     @Test func rowsGoneFromGitLeaveTheirGroupButGroupsStay() async throws {
         let dir = try TempDir()
         let (workspace, repo, paths) = try await setUp(dir, branches: ["feat/a"])

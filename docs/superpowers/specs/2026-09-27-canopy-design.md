@@ -186,6 +186,7 @@ That order is saved in `state.json`.
 External rows sit in a collapsed "Other worktrees (N)" group at the bottom of the repo.
 Clicking an external row adopts it and selects it.
 Canopy and adopted rows can also be gathered into named groups after the ungrouped rows, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
+A folded repo shows only its header, as Folding repos below describes.
 
 ### Creating a row
 
@@ -251,7 +252,7 @@ The sheet shows git's progress while it clones and git's or gh's reason if the c
 Cancel stops the clone and deletes what it wrote.
 A clone from the window selects the new repo's main row.
 
-Each repo group starts with a header: a tile with the repo's first letter, its name, and its row count.
+Each repo group starts with a header: a tile with the repo's first letter, its name, a chevron, and its row count.
 The tile takes one of eight hues, picked by a stable hash of the repo's path, so a repo keeps its color across launches.
 On hover, the count gives way to a `…` menu and a `+` that creates a row.
 
@@ -269,9 +270,45 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
 - The selected row has a rounded highlight, tinted with the accent color while the sidebar has the keyboard.
   `↑` and `↓` then move the selection, and the rows they pick leave the keyboard with the sidebar until it lets go.
 - `⌘1` to `⌘9` select the first nine visible rows across all repos, in sidebar order.
+  Rows hidden by a fold, and external rows, get no number.
 - A row selected any other way than by clicking it, such as with `⌘1` or `canopy row select`, scrolls into view.
 - A detached HEAD shows the short commit hash in place of a branch name.
 - External worktrees fold into a "3 other worktrees" row under their repo's rows.
+
+### Folding repos
+
+A repo folds away under its header, so one repo with thirty rows does not bury the others.
+
+- The chevron follows the repo's name.
+  It is the group header's chevron, the same glyph, size, and color, pointing right while the repo is folded and down while it is open.
+  It follows the name rather than sitting in the mark column, because the tile holds that column and lines up with the rows' marks below it.
+- Clicking the header anywhere but its buttons folds or unfolds the repo, as a group header does.
+- New Group… in a folded repo's menu unfolds it, so the new group shows.
+- A folded repo shows its header alone: no PR warning, main row, ungrouped rows, groups, or other worktrees.
+- While folded, the header shows the most urgent agent dot among the repo's rows before its count, as a folded group's header does.
+  The count stays the count of every row but external ones.
+- Folding the repo that holds the selected row keeps the row selected and its terminals on screen.
+  The header then draws the selection fill in the row's place, accent-tinted while the sidebar has the keyboard.
+  When the row is also in a folded group, the repo's header holds the selection, since it is the one the sidebar shows.
+- Selecting a row a fold hides unfolds whatever hides it: its repo, and its group too.
+  That happens when the row is picked from the ports panel, a plugin's panel, or the New Row sheet, and with `canopy row select`, `canopy row new --select`, and `canopy plugin new --select`.
+  A row created without `--select` leaves the fold as it is.
+- `⌘1` to `⌘9` and the menu bar's row items skip the rows of a folded repo.
+  `↑` and `↓` step over them too, and from a selected row hidden in a folded repo, `↓` goes to the first row shown after the repo and `↑` to the last row shown before it.
+- A folded repo's header is not a drop target, and a drag hovering over it does not unfold it.
+  Rows only move within their own repo, and a folded repo shows no row to drag, so no drop ever needs it.
+- VoiceOver reads the header as one button, such as "web-app, repo, 7 rows, agent waiting for you", with the value collapsed or expanded, and its action folds or unfolds the repo.
+  It is selected while it holds the selection, and New Row… or Locate… are its named actions.
+- The ports panel still lists the ports of rows in folded repos, and picking one unfolds the repo.
+- The fold is saved in the repo's entry in `state.json` as `collapsed`, which decodes as open when it is missing or cannot be read, and it is kept across relaunches.
+  Folding is how the sidebar looks, so it logs no event of its own, only the `cli.call` of a `canopy` command.
+- `canopy repo collapse [<repo>]` and `canopy repo expand [<repo>]` fold and unfold a repo, the one the command runs in when none is named, and are safe to repeat.
+  `canopy repo list --json` gives each repo's `collapsed`.
+- A missing repo keeps its chevron and fold, though it shows no rows either way.
+
+Row groups and each plugin's section fold the same way, with `canopy group collapse` and `canopy plugin collapse`, as [Row groups](2026-09-28-canopy-row-groups-design.md) and [Plugins](2026-09-29-canopy-plugins-design.md) describe.
+
+### Groups, agents, and plugins
 
 Rows can be gathered into named groups that fold away within their repo, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
 An agent in a terminal turns the running dot into an agent dot and plays a sound when it finishes, as [Agent state](2026-09-28-canopy-agent-state-design.md) describes.
@@ -423,7 +460,7 @@ If the pane's foreground process is not its shell, closing asks for confirmation
 
 `state.json` holds:
 
-- registered repos, each with its adopted paths and row order
+- registered repos, each with its adopted paths, row order, groups, and whether the sidebar folds it
 - per row: its tabs, each tab's layout tree, each pane's folder, and the selected tab
 - the selected row, the sidebar width, and whether the ports panel is collapsed
 - a `version` number for future migrations
@@ -485,6 +522,7 @@ A row can own any number of ports.
 The ports panel sits at the bottom of the sidebar and can collapse.
 Its "Ports" label shows how many ports are listening.
 It groups ports under their row's mark and branch name, ordered like the sidebar, with ports sorted by number.
+Rows hidden by a fold keep their place in the panel.
 
 ```
 feat/new-feature                x
@@ -544,13 +582,14 @@ Every command exits non-zero on failure.
 | `canopy repo clone <owner/repo \| url> [--into <dir>]` | clone a repo and register it |
 | `canopy repo list` | list repos |
 | `canopy repo rm <name>` | unregister a repo |
+| `canopy repo collapse [<repo>]`, `canopy repo expand [<repo>]` | fold or unfold a repo in the sidebar, as Folding repos describes |
 | `canopy row list [--all]` | list rows, including external ones with `--all` |
 | `canopy row new <branch> [--from <ref> \| --existing] [--group <name>] [--run <cmd>] [--no-setup] [--select]` | create a row, run setup, and optionally start a command in a new pane after setup succeeds |
 | `canopy row new --pr <n \| #n \| URL> [--branch <name>] [--group <name>] [--run <cmd>] [--no-setup] [--select]` | create a row on a PR's branch, including a fork's |
 | `canopy row rm <branch> [--force] [--delete-branch]` | remove or un-adopt a row |
 | `canopy row select <branch>` | select a row in the UI |
 | `canopy row adopt <path>` | adopt an external worktree |
-| `canopy row move`, `canopy group list\|new\|rename\|rm` | arrange rows in groups, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes |
+| `canopy row move`, `canopy group list\|new\|rename\|rm\|collapse\|expand` | arrange rows in groups, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes |
 | `canopy term list [--all]` | list panes with ID, row, tab, title, folder, and foreground process |
 | `canopy term new [--tab <name> \| --new-tab] [--run <cmd>] [--title <t>]` | add a pane using the add rule and optionally run a command |
 | `canopy term send <id> <text> [--enter]` | type text into a pane; `--enter` then presses Return as a keystroke of its own, once the program has read the text (or after 2 s if it is not reading) and 200 ms more have passed, and returns once Return is in, so programs that take a burst of input for a paste still submit |
@@ -561,7 +600,7 @@ Every command exits non-zero on failure.
 | `canopy pr show [<row>] [--refresh]` | show a row's PR; `canopy pr` alone does the same |
 | `canopy pr list [--query <text>] [--closed]` | list the repo's PRs and the row that has each |
 | `canopy branch list [--query <text>] [--no-fetch]` | list local and origin branches and the row that has each |
-| `canopy plugin list\|enable\|disable\|items\|new` | list plugins, turn them on and off, and open rows for their items, as [Plugins](2026-09-29-canopy-plugins-design.md) describes |
+| `canopy plugin list\|enable\|disable\|items\|new\|collapse\|expand` | list plugins, turn them on and off, open rows for their items, and fold their sections, as [Plugins](2026-09-29-canopy-plugins-design.md) describes |
 | `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events, from 24 hours ago by default |
 | `canopy agent-guide` | print a manual written for agents |
 

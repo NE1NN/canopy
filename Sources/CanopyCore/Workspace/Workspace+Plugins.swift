@@ -150,7 +150,7 @@ extension Workspace {
                         plugin: info.id, item: $0.item, title: $0.title, path: $0.path,
                         look: pluginLooks[$0.path] ?? .plain)
                 },
-                panelWidth: entry.panelWidth)
+                panelWidth: entry.panelWidth, collapsed: entry.collapsed)
         }
     }
 

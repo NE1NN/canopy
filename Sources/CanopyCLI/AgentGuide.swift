@@ -33,6 +33,7 @@ struct AgentGuide: ParsableCommand {
 
             canopy repo add <path> | canopy repo list | canopy repo rm <name>
             canopy repo clone <owner/repo | url> [--into <dir>]
+            canopy repo collapse [<repo>] | canopy repo expand [<repo>]
 
             canopy row list [--all]                       rows, and other tools' worktrees with --all
             canopy row new <branch> [--from <ref> | --existing] [--run <cmd>] [--no-setup] [--select]
@@ -43,6 +44,9 @@ struct AgentGuide: ParsableCommand {
 
         `repo clone` clones with your gh login into CANOPY_HOME/repos/<owner>/<name> and registers the repo. Run it
         again and it registers the folder it already made. `repo rm` only unregisters and never deletes files.
+        `repo collapse` folds a repo away in the sidebar, and is safe to repeat: its rows keep running and stay in
+        `row list`, but get no ⌘1 to ⌘9 until it is expanded, and `row select` of one of them expands it again.
+        `repo list --json` carries the fold as "collapsed".
 
         `row new` creates the branch and worktree, runs the repo's setup commands from .canopy/config.json in a
         Setup tab, waits for them, then types `--run` into a new terminal. If setup fails, the row stays, the
@@ -67,10 +71,12 @@ struct AgentGuide: ParsableCommand {
             canopy group rm <name>                        its rows become ungrouped; no worktree is touched
             canopy row move [<row>] (--group <name> | --no-group | --before <row> | --after <row>)
             canopy row new <branch> --group <name>        create the row straight into a group, also with --pr
+            canopy group collapse <name> | canopy group expand <name>
 
         A group belongs to one repo and only arranges the sidebar, where it can fold away. Names match ignoring
         case. A group that does not exist is an error (group_not_found), never created for you, so make it first
         with `group new`. `row move --group` is safe to repeat: a row already in the group stays where it is.
+        `group collapse` and `group expand` fold a group like `repo collapse` folds a repo, and are safe to repeat too.
         `row list` shows each row's group, and `row list --json` carries it as "group".
 
         ## Plugin rows
@@ -81,6 +87,8 @@ struct AgentGuide: ParsableCommand {
                                                           its items, and the row each already has
             canopy plugin new <plugin> <reference> [--run <cmd>] [--select]
                                                           open a row for one of its items
+            canopy plugin collapse <plugin> | canopy plugin expand <plugin>
+                                                          fold its section, like `repo collapse`
 
         A plugin adds rows that are not worktrees, such as one per support ticket, in a section below the repos. Each
         has a folder under CANOPY_HOME/plugins/<plugin>/, which the plugin fills with files about the item, and tabs

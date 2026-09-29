@@ -23,6 +23,8 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
     public var error: String?
     /// Why PR badges are hidden or stale, with the fix, such as running `gh auth login`.
     public var pullRequestWarning: String?
+    /// Whether the sidebar folds the repo under its header, hiding all its rows.
+    public var collapsed: Bool
 
     public var id: String { path }
 
@@ -33,7 +35,8 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
         groups: [GroupSnapshot] = [],
         external: [Row] = [],
         isMissing: Bool = false,
-        error: String? = nil
+        error: String? = nil,
+        collapsed: Bool = false
     ) {
         self.path = path
         self.name = name
@@ -42,6 +45,7 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
         self.external = external
         self.isMissing = isMissing
         self.error = error
+        self.collapsed = collapsed
     }
 
     public var allRows: [Row] { rows + external }
@@ -50,8 +54,10 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
         rows.filter { $0.group == name }
     }
 
-    /// The rows the sidebar shows: all but those in collapsed groups and other tools' worktrees.
+    /// The rows the sidebar shows: none while the repo is folded, and otherwise all but those in collapsed groups and
+    /// other tools' worktrees.
     public var visibleRows: [Row] {
+        guard !collapsed else { return [] }
         let collapsed = Set(groups.filter(\.collapsed).map(\.name))
         return rows.filter { $0.group.map { !collapsed.contains($0) } ?? true }
     }
@@ -92,15 +98,16 @@ public struct WorkspaceSnapshot: Sendable, Equatable {
     /// The sections the sidebar shows.
     public var activePlugins: [PluginSection] { plugins.filter(\.isOn) }
 
-    /// Rows that get ⌘1 to ⌘9, in sidebar order: every repo's rows but those in collapsed groups and external ones,
-    /// then the rows of each plugin that is on.
+    /// Rows that get ⌘1 to ⌘9, in sidebar order: the rows of every repo that is not folded, but those in collapsed
+    /// groups and external ones, then the rows of each plugin that is on and not folded.
     public var visibleRows: [SidebarRow] {
-        repos.flatMap(\.visibleRows).map(SidebarRow.worktree) + pluginRows
+        repos.flatMap(\.visibleRows).map(SidebarRow.worktree)
+            + activePlugins.filter { !$0.collapsed }.flatMap(\.rows).map(SidebarRow.plugin)
     }
 
-    /// The row `↑` or `↓` picks. From a row hidden in a collapsed group, the next visible row after the group or the
-    /// last before it, and nil if there is none. From no row, or one the sidebar does not step through, the first
-    /// or the last.
+    /// The row `↑` or `↓` picks. From a row hidden in a folded repo, group, or plugin section, the next visible row
+    /// after the fold or the last before it, and nil if there is none. From no row, or one the sidebar does not step
+    /// through, the first or the last.
     public func steppingRow(from path: String?, offset: Int) -> SidebarRow? {
         let visible = visibleRows
         guard !visible.isEmpty else { return nil }

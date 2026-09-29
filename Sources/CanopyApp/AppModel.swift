@@ -153,7 +153,7 @@ final class AppModel {
     }
 
     /// ↑ and ↓ in the sidebar. From no selection, down picks the first row and up the last. From a row hidden in a
-    /// collapsed group, they go on from the group's place.
+    /// folded repo, group, or plugin section, they go on from the fold's place.
     func selectRow(offset: Int) {
         guard let row = snapshot.steppingRow(from: selectedRowPath, offset: offset) else { return }
         isSteppingRows = true
@@ -175,25 +175,36 @@ final class AppModel {
         Task { await workspace.refreshAll() }
     }
 
-    /// Selects a row once the snapshot has it, so a row created a moment ago gets its terminal. The control API has
-    /// already unfolded a group hiding it.
+    /// Selects a row once the snapshot has it, so a row created a moment ago gets its terminal, and unfolds the repo,
+    /// group, or plugin section hiding it.
     func select(_ path: String) async {
+        do {
+            try await workspace.revealRow(path: path)
+        } catch {
+            show(error)
+        }
         apply(await workspace.snapshot)
         selectedRowPath = path
         scrollRequest = ScrollRequest(path: path)
     }
 
-    /// Selects a row from outside the list, as the ports panel does, unfolding a group that hides it.
+    /// Selects a row from outside the list at once, as the ports panel does, then unfolds what hides it.
     func reveal(_ path: String) {
         selectedRowPath = path
-        Task {
-            do {
-                try await workspace.revealRow(path: path)
-            } catch {
-                show(error)
-            }
-            await select(path)
-        }
+        Task { await select(path) }
+    }
+
+    /// The outermost folded header hiding the selected row, which draws the selection in the row's place.
+    var selectionFold: SidebarFold? {
+        selectedRowPath.flatMap { snapshot.folds(hiding: $0).first }
+    }
+
+    func setCollapsed(_ repo: RepoSnapshot, _ collapsed: Bool) {
+        perform { try await $0.setRepoCollapsed(repoPath: repo.path, collapsed: collapsed) }
+    }
+
+    func setCollapsed(_ section: PluginSection, _ collapsed: Bool) {
+        perform { try await $0.setPluginCollapsed(section.id, collapsed: collapsed) }
     }
 
     struct ScrollRequest: Equatable {
@@ -238,8 +249,6 @@ final class AppModel {
             return (error as? WorkspaceError)?.message ?? "\(error)"
         }
         let preparing = rows.prepare(created.row, repoName: repo.name, setup: true, run: nil)
-        // A row created into a collapsed group unfolds it, since the new row is selected.
-        try? await workspace.revealRow(path: created.row.path)
         await select(created.row.path)
         if let warning = created.warnings.first {
             show(warning)
@@ -281,9 +290,12 @@ final class AppModel {
 
     // MARK: Groups
 
-    /// Returns an error message for the name popover to show, or nil.
+    /// Returns an error message for the name popover to show, or nil. A folded repo unfolds, so the new group shows.
     func createGroup(in repo: RepoSnapshot, name: String) async -> String? {
-        await message { try await $0.createGroup(repoPath: repo.path, name: name) }
+        await message { workspace in
+            try await workspace.createGroup(repoPath: repo.path, name: name)
+            try await workspace.setRepoCollapsed(repoPath: repo.path, collapsed: false)
+        }
     }
 
     /// The row menu's New Group…: makes the group, then moves the row into it.

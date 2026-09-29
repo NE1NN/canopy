@@ -37,9 +37,12 @@ public struct PluginListing: Sendable, Equatable, Codable {
     public var warning: String?
     public var rows: Int
     public var filters: PluginFilters
+    /// Whether the sidebar folds its section.
+    public var collapsed: Bool
 
     public init(
-        id: String, name: String, on: Bool, status: String?, warning: String?, rows: Int, filters: PluginFilters
+        id: String, name: String, on: Bool, status: String?, warning: String?, rows: Int, filters: PluginFilters,
+        collapsed: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -48,6 +51,7 @@ public struct PluginListing: Sendable, Equatable, Codable {
         self.warning = warning
         self.rows = rows
         self.filters = filters
+        self.collapsed = collapsed
     }
 }
 
@@ -165,6 +169,14 @@ public final class PluginHost {
     public func disable(_ id: String, force: Bool) async throws -> PluginListing {
         let plugin = try requirePlugin(id)
         return try await serialized(id) { try await self.disableNow(plugin, force: force) }
+    }
+
+    /// Folds or unfolds the plugin's section, on or off.
+    @discardableResult
+    public func setCollapsed(_ id: String, _ collapsed: Bool) async throws -> PluginListing {
+        let plugin = try requirePlugin(id)
+        try await workspace.setPluginCollapsed(id, collapsed: collapsed)
+        return await listing(plugin, in: await workspace.snapshot)
     }
 
     private func enableNow(_ plugin: any CanopyPlugin, with fields: [String: JSONValue]) async throws -> PluginListing {
@@ -342,6 +354,7 @@ public final class PluginHost {
     }
 
     func select(_ path: String) async {
+        try? await workspace.revealRow(path: path)
         try? await workspace.setSelectedRow(path: path)
         await ui?.selectRow(path: path)
     }
@@ -491,7 +504,7 @@ public final class PluginHost {
         return PluginListing(
             id: id, name: plugin.info.name, on: isOn, status: isOn ? await plugin.status(context(of: plugin)) : nil,
             warning: snapshot.section(id)?.warning, rows: snapshot.section(id)?.rows.count ?? 0,
-            filters: plugin.filters)
+            filters: plugin.filters, collapsed: snapshot.section(id)?.collapsed ?? false)
     }
 
     private func requirePlugin(_ id: String) throws -> any CanopyPlugin {

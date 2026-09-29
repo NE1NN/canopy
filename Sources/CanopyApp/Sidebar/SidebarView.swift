@@ -151,7 +151,8 @@ struct PluginPickerRequest: Identifiable {
     var id: String { section.id }
 }
 
-/// A repo's header, its PR warning, its ungrouped rows, its groups, and its other worktrees.
+/// A repo's header, then, unless the repo is folded, its PR warning, its ungrouped rows, its groups, and its other
+/// worktrees.
 struct RepoSection: View {
     @Environment(AppModel.self) private var model
     let repo: RepoSnapshot
@@ -162,47 +163,54 @@ struct RepoSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            RepoHeaderView(repo: repo, onNewRow: { onNewRow(nil) })
-            if let warning = repo.pullRequestWarning {
-                RepoWarningView(text: warning)
+            RepoHeaderView(repo: repo, isFocused: isFocused, onNewRow: { onNewRow(nil) })
+            if !repo.collapsed {
+                content
             }
-            ForEach(repo.rows.filter { $0.group == nil }) { row in
-                line(for: row)
-            }
-            // A missing repo shows no rows, so it shows no groups either.
-            if !repo.isMissing {
-                ForEach(repo.groups) { group in
-                    let rows = repo.rows(inGroup: group.name)
-                    GroupHeaderView(
-                        repo: repo, group: group, count: rows.count, isFocused: isFocused,
-                        isDropTarget: model.draggedRow?.repoPath == repo.path
-                            && model.rowDropTarget?.indicator == .header(group.name),
-                        onNewRow: { onNewRow(group.name) }
-                    )
-                    .dropSlot(repo: repo.path, .header(group.name))
-                    if !group.collapsed {
-                        ForEach(rows) { row in
-                            line(for: row, indent: Style.groupIndent)
-                        }
-                    }
-                }
-            }
-            if !repo.external.isEmpty {
-                OtherWorktreesToggle(count: repo.external.count, isExpanded: $isExpanded)
-                if isExpanded {
-                    ForEach(repo.external) { row in
-                        RowLineView(
-                            row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
-                            shortcut: nil, removable: false
-                        )
-                        .id(row.path)
+        }
+        .padding(.top, 4)
+        // Folding a repo or a group arrives as a new snapshot, so the rows it shows or hides animate from here.
+        .animation(.easeOut(duration: 0.15), value: repo.collapsed)
+        .animation(.easeOut(duration: 0.15), value: repo.groups)
+    }
+
+    @ViewBuilder private var content: some View {
+        if let warning = repo.pullRequestWarning {
+            RepoWarningView(text: warning)
+        }
+        ForEach(repo.rows.filter { $0.group == nil }) { row in
+            line(for: row)
+        }
+        // A missing repo shows no rows, so it shows no groups either.
+        if !repo.isMissing {
+            ForEach(repo.groups) { group in
+                let rows = repo.rows(inGroup: group.name)
+                GroupHeaderView(
+                    repo: repo, group: group, count: rows.count, isFocused: isFocused,
+                    isDropTarget: model.draggedRow?.repoPath == repo.path
+                        && model.rowDropTarget?.indicator == .header(group.name),
+                    onNewRow: { onNewRow(group.name) }
+                )
+                .dropSlot(repo: repo.path, .header(group.name))
+                if !group.collapsed {
+                    ForEach(rows) { row in
+                        line(for: row, indent: Style.groupIndent)
                     }
                 }
             }
         }
-        .padding(.top, 4)
-        // Folding a group arrives as a new snapshot, so the rows it shows or hides animate from here.
-        .animation(.easeOut(duration: 0.15), value: repo.groups)
+        if !repo.external.isEmpty {
+            OtherWorktreesToggle(count: repo.external.count, isExpanded: $isExpanded)
+            if isExpanded {
+                ForEach(repo.external) { row in
+                    RowLineView(
+                        row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
+                        shortcut: nil, removable: false
+                    )
+                    .id(row.path)
+                }
+            }
+        }
     }
 
     private func line(for row: Row, indent: Double = 0) -> some View {
@@ -215,21 +223,34 @@ struct RepoSection: View {
     }
 }
 
+/// A repo's tile, name, and chevron, then its row count, which gives way to `…` and `+` on hover. Clicking it anywhere
+/// else folds or unfolds the repo.
 struct RepoHeaderView: View {
     @Environment(AppModel.self) private var model
     let repo: RepoSnapshot
+    let isFocused: Bool
     let onNewRow: () -> Void
     @State private var isHovering = false
     @State private var isNamingGroup = false
 
+    /// A folded repo shows the most urgent agent dot among the rows it hides.
+    private var agentDot: AgentDot? {
+        guard repo.collapsed else { return nil }
+        return model.terminals.agentDot(inRows: repo.rows.map(\.path))
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             RepoTile(mark: repo.mark, isDimmed: repo.isMissing)
-            Text(repo.name)
-                .font(Style.body.weight(.semibold))
-                .foregroundStyle(repo.isMissing ? .secondary : .primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            // The tile holds the mark column, so the chevron follows the name and the tile still lines up with rows.
+            HStack(spacing: 0) {
+                Text(repo.name)
+                    .font(Style.body.weight(.semibold))
+                    .foregroundStyle(repo.isMissing ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                DisclosureChevron(isExpanded: !repo.collapsed)
+            }
             if repo.isMissing {
                 TagView(text: "missing")
             }
@@ -240,6 +261,9 @@ struct RepoHeaderView: View {
                     .help(error)
             }
             Spacer(minLength: 4)
+            if let agentDot {
+                AgentDotView(dot: agentDot)
+            }
             if repo.isMissing {
                 Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
                     .controlSize(.small)
@@ -254,14 +278,14 @@ struct RepoHeaderView: View {
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
                     .padding(.trailing, 5)
-                    .accessibilityLabel(repo.rows.count == 1 ? "1 row" : "\(repo.rows.count) rows")
             }
         }
         .padding(.leading, 7)
         .padding(.trailing, 3)
         .frame(height: Style.headerHeight)
-        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
+        .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
         .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
         .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
         .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
@@ -270,6 +294,38 @@ struct RepoHeaderView: View {
                 await model.createGroup(in: repo, name: name)
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
+        .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { toggle() }
+        // The header reads as one button, so its own buttons are reached as named actions.
+        .accessibilityActions {
+            if repo.isMissing {
+                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
+            } else {
+                Button("New Row…", action: onNewRow)
+            }
+        }
+    }
+
+    /// A folded repo holding the selected row shows the selection, so the sidebar always says where the window is.
+    private var holdsSelection: Bool { model.selectionFold == .repo(repo.path) }
+
+    private var fill: Color {
+        if holdsSelection { return isFocused ? Style.focusedSelectionFill : Style.selectionFill }
+        return isHovering ? Style.hoverFill : .clear
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [repo.name, "repo", repo.rows.count == 1 ? "1 row" : "\(repo.rows.count) rows"]
+        if repo.isMissing { parts.append("missing") }
+        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        return parts.joined(separator: ", ")
+    }
+
+    private func toggle() {
+        model.setCollapsed(repo, !repo.collapsed)
     }
 }
 
@@ -446,11 +502,7 @@ struct OtherWorktreesToggle: View {
             withAnimation(.easeOut(duration: 0.15)) { isExpanded.toggle() }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16)
+                DisclosureChevron(isExpanded: isExpanded)
                 Text(count == 1 ? "1 other worktree" : "\(count) other worktrees")
                     .font(Style.body)
                     .foregroundStyle(.secondary)

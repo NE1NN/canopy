@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots:
-# three repos, rows with open, draft, merged, and closed PRs, two groups, other worktrees, running programs,
-# listening ports, a split tab, agents in every state, and the fixture plugin's section with its warning, rows with every
-# kind of accessory, a missing item, and a worktree row linked to one of them, and the Tickets section with rows backed by
-# a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of message, and a closed ticket, with
-# a fix row linked to one. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or
-# Discord. Links the window opens are written to $work/opened-urls instead of opening a browser.
+# Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots: three
+# repos, one of them folded, rows with open, draft, merged, and closed PRs, two groups, one folded, other worktrees,
+# running programs, listening ports, a split tab, agents in every state, and the fixture plugin's section with its
+# warning, rows with every kind of accessory, a missing item, and a worktree row linked to one of them, and the Tickets
+# section with rows backed by a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of
+# message, and a closed ticket, with a fix row linked to one. Nothing outside the throwaway folder is touched, and
+# nothing reaches ticket-manager or Discord. Links the window opens are written to $work/opened-urls instead of opening
+# a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -322,8 +323,11 @@ pane_in() {
 "$cli" term state "$(pane_in fix/login-redirect Terminal)" waiting >/dev/null
 "$cli" term state "$(pane_in feat/rate-limits Terminal)" working >/dev/null
 "$cli" term state "$(pane_in beta Terminal)" waiting >/dev/null
-# Folding the Later group, which no command does, shows its done dot on the group's header.
+# The folded Later group shows its done dot on the group's header, and the folded api-server repo its working dot,
+# while the ports panel still lists feat/rate-limits' port.
 "$cli" term state "$(pane_in chore/bump-deps Terminal)" done >/dev/null
+"$cli" group collapse Later --repo web-app >/dev/null
+"$cli" repo collapse api-server >/dev/null
 
 # shellcheck source=/dev/null
 source "$state"
