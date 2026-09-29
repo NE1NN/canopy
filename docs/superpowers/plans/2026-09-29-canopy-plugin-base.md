@@ -1343,6 +1343,32 @@ On a dev build from `scripts/ui-fixture.sh`, in dark and in light, with window s
 
 Each is checked with `canopy row list --json` and `canopy plugin list --json` where it changes state.
 
+## As Built
+
+- Tasks 11 and 12 landed as one commit, since the sidebar's picker needs the sheet and the built-in list needs the fixture's panel.
+- The panel's title strip is drawn in RootView's overlay beside the top bar, as `TitleBarRow`, since the detail column's title bar row hides whatever the column draws there.
+- `FolderMovingTrash` moved from the tests into CanopyCore, and a dev build launched with `CANOPY_TRASH_FOLDER` uses it, since this machine's shells cannot reach `~/.Trash` to clean up after e2e runs and UI checks.
+- `WorkspaceError.itemHasRow` carries only the row's path.
+- The picker only fetches once `load()` has run, so changes made while the sheet opens are part of the first query.
+
 ## After Review
 
-To be filled in after the independent review.
+An independent reviewer (Opus) read `git diff origin/main...HEAD` with the spec and this plan, built it, and ran the plugin suites.
+It found nothing critical. Each finding and what changed:
+
+1. **Turning a plugin on again never retried a failed start.** `enable` now starts a plugin that is on again when its section changed or its last start failed. `enablingAgainRetriesAFailedStart`.
+2. **Turning a plugin on at run time could restore its rows' shells before their folders existed**, so they started in the home folder. `turnOn` now makes missing folders before the workspace shows the plugin on, and fills them once it has started. `turningOnMakesMissingFoldersBeforeTheRowsShow`.
+3. **A plugin could not give new rows a default `run`.** `PluginRowSeed` gains `run`, used when the request names none, so the Tickets plugin's configured `run` applies in the window and from `canopy plugin new`. `aSeedsRunStartsNewRowsUnlessTheRequestGivesOne`.
+4. **Turning off closed terminals while the plugin still showed as on**, so a snapshot in between could restore them. It is now off first, then its terminals close, then it stops.
+5. **Enable, disable, and row creation could interleave.** Turning a plugin on and off runs one at a time per plugin, and a row made while its plugin turns off gets no terminal. `aRowMadeWhileItsPluginTurnsOffGetsNoTerminal`.
+6. **Launching waits on every plugin's `start`.** `CanopyPlugin.start` and `stop` now say they must return promptly and leave network calls to tasks of their own, and the app stops plugins when it quits.
+7. **The picker could lose a toggle's fresh fetch to typing that followed.** It keeps asking afresh until a fresh query is answered. `aToggleIsFetchedAfreshEvenWhenTypingFollowsAtOnce`.
+8. **A refresh racing a row's creation could drop its new link.** Links of rows being changed are left alone.
+9. **The test scripts sent a link when run from a plugin row.** Both unset `CANOPY_PLUGIN` and `CANOPY_ITEM`, and an unresolvable link taken from the environment says to pass `--no-link`.
+10. **Folder names could collide ignoring case or run past 255 bytes.** Taken names are compared ignoring case, and names stop at a whole character within 200 bytes. `folderNamesIgnoreCaseAndStayShort`.
+11. **Removing a row killed its programs even when the Trash then refused the folder.** The folder moves first, and the terminals close after. `aTrashThatFailsKeepsTheRowAndItsTerminals`.
+12. **A plugin whose start failed was treated as working.** Items, new rows, links, and refills now fail with `plugin_not_started` and the start's error.
+13. **The divider's resize cursor could stick.** It uses `.pointerStyle(.columnResize)`.
+
+Nits taken: the app stops plugins when it quits, the agent guide's plugin example is gone since release builds list no plugins yet, layouts of rows in `plugins/` wait even for a plugin this build does not list, and a plugin row whose path is outside its plugin's folder is never moved to the Trash or made again.
+Not taken: moving the app's set-aside and restore of layouts into CanopyCore, which the reviewer suggested for testability; the ordering fixes above make the app's part a plain save and restore, and the e2e run checks the rows come back.
