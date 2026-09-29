@@ -84,7 +84,7 @@ public final class PluginHost {
     private var updates: Task<Void, Never>?
     private var queues = KeyedQueue()
     /// Why each plugin that is on but not running failed to start.
-    private var startFailures: [String: String] = [:]
+    private var startFailures: [String: any Error] = [:]
 
     public init(
         workspace: Workspace, terminals: TerminalStore, plugins: [any CanopyPlugin], secrets: any SecretStore,
@@ -224,7 +224,7 @@ public final class PluginHost {
             startFailures[id] = nil
         } catch {
             running.remove(id)
-            startFailures[id] = Self.message(error)
+            startFailures[id] = error
             await workspace.setPluginWarning(id, Self.message(error))
         }
         // In the background, so launching never waits on a plugin's network.
@@ -506,10 +506,19 @@ public final class PluginHost {
             throw WorkspaceError.pluginOff(
                 plugin.info.name, command: plugin.turnOnCommand(config: sections[id] ?? .object([:])))
         }
-        guard running.contains(id) else {
-            throw WorkspaceError.pluginNotStarted(plugin.info.name, reason: startFailures[id] ?? "")
-        }
+        guard running.contains(id) else { throw Self.notStarted(plugin.info.name, startFailures[id]) }
         return plugin
+    }
+
+    /// Why a plugin that is on is not running. A start that failed with a code of its own, such as `keychain_failed`,
+    /// keeps it, so every command that needs the plugin fails the same way.
+    static func notStarted(_ name: String, _ failure: (any Error)?) -> any Error {
+        if let failure = failure as? ControlError,
+            failure.code != WorkspaceError.pluginNotStarted(name, reason: "").code
+        {
+            return failure
+        }
+        return WorkspaceError.pluginNotStarted(name, reason: failure.map(message) ?? "")
     }
 
     private func context(of plugin: any CanopyPlugin) -> PluginContext {

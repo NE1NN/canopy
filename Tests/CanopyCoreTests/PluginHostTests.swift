@@ -487,6 +487,23 @@ struct PluginHostTests {
         }
     }
 
+    @Test func aStartThatFailedWithItsOwnCodeFailsEveryCommandWithIt() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin(startError: "The Keychain refused: locked.", startCode: "keychain_failed")
+        let setup = try await start(dir, [test], config: #"{"plugins": {"t": {"url": "u"}}}"#)
+        #expect(await plugin(setup)?.warning == "The Keychain refused: locked.")
+        let keychainFailed: @Sendable (any Error) -> Bool = {
+            ($0 as? ControlError) == ControlError(code: "keychain_failed", message: "The Keychain refused: locked.")
+        }
+        await #expect(
+            performing: { try await setup.host.createRow("t", reference: "i1", run: nil, select: false) },
+            throws: keychainFailed)
+        await #expect(performing: { try await setup.host.items("t", matching: PluginQuery()) }, throws: keychainFailed)
+        await #expect(
+            performing: { try await setup.host.resolveLink(plugin: "t", reference: "i1") },
+            throws: keychainFailed)
+    }
+
     @Test func enablingAgainRetriesAFailedStart() async throws {
         let dir = try TempDir()
         let test = TestPlugin(startError: "No token.")

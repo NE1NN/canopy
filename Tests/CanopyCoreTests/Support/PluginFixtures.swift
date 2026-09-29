@@ -12,6 +12,7 @@ actor TestPlugin: CanopyPlugin {
     /// Folder names by item, for items whose folder is not named after their title.
     private let folders: [String: String]
     private var startError: String?
+    private let startCode: String
     private let defaultRun: String?
     private let turnOn: String?
     private var fillError: String?
@@ -25,7 +26,8 @@ actor TestPlugin: CanopyPlugin {
 
     init(
         id: String = "t", name: String = "Test", items: [String] = ["i1", "i2", "i3"], folders: [String: String] = [:],
-        startError: String? = nil, fillError: String? = nil, defaultRun: String? = nil, turnOn: String? = nil
+        startError: String? = nil, startCode: String = "plugin_not_started", fillError: String? = nil,
+        defaultRun: String? = nil, turnOn: String? = nil
     ) {
         info = PluginInfo(id: id, name: name, symbol: "star")
         filters = PluginFilters(
@@ -36,6 +38,7 @@ actor TestPlugin: CanopyPlugin {
         self.items = items.map { PluginItem(id: $0, title: "title-\($0)") }
         self.folders = folders
         self.startError = startError
+        self.startCode = startCode
         self.fillError = fillError
         self.defaultRun = defaultRun
         self.turnOn = turnOn
@@ -48,7 +51,7 @@ actor TestPlugin: CanopyPlugin {
     func start(_ context: PluginContext) async throws {
         calls.append("start")
         configs.append(await context.config)
-        if let startError { throw ControlError(code: "test_failed", message: startError) }
+        if let startError { throw ControlError(code: startCode, message: startError) }
     }
 
     func stop(_ context: PluginContext) async {

@@ -148,10 +148,20 @@ struct TicketsConnectTests {
             dir, config: #"{"plugins": {"tickets": {"url": "https://tm.example.convex.site"}}}"#, serverToken: "t",
             secretStore: RefusingSecretStore())
         #expect(await harness.section()?.warning?.contains("User interaction is not allowed.") == true)
-        await #expect { try await harness.call(TicketMethod.list, TicketListParams()) } throws: {
+        let keychainFailed: @Sendable (any Error) -> Bool = {
             let error = $0 as? ControlError
             return error?.code == "keychain_failed" && error?.message.contains("User interaction") == true
         }
+        await #expect(
+            performing: { try await harness.call(TicketMethod.list, TicketListParams()) }, throws: keychainFailed)
+        // `row new --ticket`, `plugin items tickets`, and `plugin new tickets` reach the plugin through the host.
+        await #expect(
+            performing: { try await harness.host.resolveLink(plugin: "tickets", reference: "853") },
+            throws: keychainFailed)
+        await #expect(
+            performing: { try await harness.host.items("tickets", matching: PluginQuery()) },
+            throws: keychainFailed)
+        await #expect(performing: { try await harness.newRow("853") }, throws: keychainFailed)
     }
 
     @Test func aStartWithoutAURLSaysHowToConnect() async throws {
