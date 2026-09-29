@@ -107,7 +107,9 @@ struct RemoteImageView<Fallback: View>: View {
     }
 }
 
-/// Images the panels load, cached by address while Canopy runs.
+/// Images the panels load. Loaded ones stay in a cache that gives way under memory pressure and past 128 MB, keyed by
+/// address without its query, since Discord signs the same file's link afresh from time to time. A failure is not
+/// kept, so the next view asks again. Downloads stop at 20 MB.
 @MainActor
 final class RemoteImages {
     enum Phase {
@@ -116,9 +118,14 @@ final class RemoteImages {
     }
 
     static let shared = RemoteImages()
+    static let largestDownload = 20 * 1024 * 1024
 
-    private var images: [URL: Phase] = [:]
-    private var loading: [URL: Task<Phase, Never>] = [:]
+    private let images: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.totalCostLimit = 128 * 1024 * 1024
+        return cache
+    }()
+    private var loading: [String: Task<(NSImage, Int)?, Never>] = [:]
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
@@ -127,23 +134,41 @@ final class RemoteImages {
     }()
 
     func cached(_ url: URL) -> Phase? {
-        images[url]
+        images.object(forKey: Self.key(url) as NSString).map(Phase.loaded)
     }
 
     func load(_ url: URL) async -> Phase {
-        if let phase = images[url] { return phase }
-        if let task = loading[url] { return await task.value }
-        let session = session
-        let task = Task<Phase, Never> {
-            guard let (data, response) = try? await session.data(from: url),
-                (response as? HTTPURLResponse)?.statusCode == 200, let image = NSImage(data: data)
-            else { return .failed }
-            return .loaded(image)
-        }
-        loading[url] = task
-        let phase = await task.value
-        loading[url] = nil
-        images[url] = phase
-        return phase
+        let key = Self.key(url)
+        if let image = images.object(forKey: key as NSString) { return .loaded(image) }
+        let task =
+            loading[key]
+            ?? Task<(NSImage, Int)?, Never> { [session] in
+                guard let (bytes, response) = try? await session.bytes(from: url),
+                    (response as? HTTPURLResponse)?.statusCode == 200,
+                    response.expectedContentLength <= Self.largestDownload
+                else { return nil }
+                var data = Data()
+                do {
+                    for try await byte in bytes {
+                        data.append(byte)
+                        if data.count > Self.largestDownload { return nil }
+                    }
+                } catch {
+                    return nil
+                }
+                return NSImage(data: data).map { ($0, data.count) }
+            }
+        loading[key] = task
+        let loaded = await task.value
+        loading[key] = nil
+        guard let (image, size) = loaded else { return .failed }
+        images.setObject(image, forKey: key as NSString, cost: size)
+        return .loaded(image)
+    }
+
+    private static func key(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.query = nil
+        return components?.string ?? url.absoluteString
     }
 }

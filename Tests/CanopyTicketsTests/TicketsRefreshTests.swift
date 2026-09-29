@@ -160,6 +160,23 @@ struct TicketsRefreshTests {
         #expect(await harness.transport.requests.isEmpty)
     }
 
+    @Test func anAnswerThatArrivesAfterDisconnectingChangesNothing() async throws {
+        let dir = try TempDir()
+        let (harness, rows) = try await connectedWithRows(dir, ["853"])
+        await harness.transport.remove(rows[0].item)
+        let key = "/api/v1/tickets?ids=\(rows[0].item)"
+        await harness.transport.stall(key)
+        harness.setViewing(visible: true, frontmost: false)
+        #expect(await eventually { await harness.transport.stalledCount == 1 })
+
+        _ = try await harness.call(TicketMethod.disconnect, TicketDisconnectParams(force: true))
+        await harness.transport.release(key)
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(await harness.section()?.rows.first?.isMissing == false)
+        #expect(harness.store.summary(rows[0].item) == nil)
+    }
+
     @Test func stoppingEndsTheLoop() async throws {
         let dir = try TempDir()
         let (harness, _) = try await connectedWithRows(dir, ["853"])

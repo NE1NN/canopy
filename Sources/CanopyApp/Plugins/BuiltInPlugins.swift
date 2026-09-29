@@ -50,7 +50,8 @@ enum BuiltInPlugins {
     private static func tickets() -> BuiltInPlugin {
         let tickets = TicketsPlugin()
         return BuiltInPlugin(
-            plugin: tickets, panel: { AnyView(TicketPanel(row: $0, tickets: tickets)) },
+            // A panel of its own per row, so nothing it holds, such as an open popover, follows another row.
+            plugin: tickets, panel: { AnyView(TicketPanel(row: $0, tickets: tickets).id($0.path)) },
             setup: PluginSetup(title: "Connect Tickets…") { AnyView(ConnectTicketsSheet(info: tickets.info)) },
             menuActions: [
                 PluginMenuAction(

@@ -121,7 +121,9 @@ struct TicketCommand: AsyncParsableCommand {
                 FileHandle.standardError.write(Data("note: \(stale)\n".utf8))
             }
             try client.print(result) {
-                md ? shown.ticket.handover : TicketText.show(shown, now: Date(), homeFolder: NSHomeDirectory())
+                md
+                    ? TicketText.clean(shown.ticket.handover)
+                    : TicketText.show(shown, now: Date(), homeFolder: NSHomeDirectory())
             }
         }
     }

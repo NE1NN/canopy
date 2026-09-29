@@ -80,9 +80,13 @@ extension TicketsPlugin {
         me = email
         await store.setMe(email)
         await succeeded()
-        // Everything is asked for again at once, rather than after the waits earlier failures left.
-        schedule = RefreshSchedule()
+        // Requests still out on the old token record nothing, and everything is asked for again at once rather than
+        // after the waits earlier failures left.
+        generation += 1
+        for task in tasks { task.cancel() }
+        tasks = []
         sleeper?.cancel()
+        startRefreshing(context)
         return TicketConnectResult(url: address, email: email, web: current.settings.web)
     }
 

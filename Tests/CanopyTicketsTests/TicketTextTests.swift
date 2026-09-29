@@ -53,6 +53,20 @@ struct TicketTextTests {
         }
     }
 
+    @Test func terminalControlsFromCustomersNeverReachTheTerminal() throws {
+        var detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
+        detail.messages[1].text = "hi\u{1b}]52;c;cHduZWQ=\u{07} there\u{1b}[2J\u{9b}31m"
+        detail.messages[1].author.displayName = "Sam\u{1b}[31m"
+        detail.handover += "\u{1b}]0;title\u{07}"
+        let text = TicketText.show(
+            TicketShowResult(ticket: detail, fetchedAt: 0, stale: nil, row: nil, fixRows: []), now: now,
+            homeFolder: "/Users/me")
+        #expect(!text.unicodeScalars.contains { $0.properties.generalCategory == .control && $0 != "\n" })
+        #expect(text.contains("hi]52;c;cHduZWQ= there[2J31m"))
+        #expect(!TicketFiles.markdown(handover: detail.handover).unicodeScalars.contains { $0 == "\u{1b}" })
+        #expect(TicketText.clean("a\tb\nc\u{1b}") == "a\tb\nc")
+    }
+
     @Test func emptySectionsAreLeftOut() throws {
         var detail = try APIFixture.decode(TicketDetail.self, "ticket-detail")
         detail.problems = []

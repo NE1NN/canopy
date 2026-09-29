@@ -477,7 +477,9 @@ final class AppModel {
         #endif
     }()
 
+    /// Only web links open: text a server sends, such as an error, could hold links of any kind.
     func open(_ url: URL) -> OpenURLAction.Result {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return .discarded }
         guard let openedURLsFile else { return .systemAction }
         let line = Data((url.absoluteString + "\n").utf8)
         if let handle = FileHandle(forWritingAtPath: openedURLsFile) {

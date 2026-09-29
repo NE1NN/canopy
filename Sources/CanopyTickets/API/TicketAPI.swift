@@ -48,6 +48,11 @@ public struct TicketAPI: Sendable {
         let reply: HTTPReply
         do {
             reply = try await transport.get(url, token: token)
+        } catch let error as URLError where error.code == .cancelled {
+            // Left as it is, so callers can tell a request given up on from ticket-manager not answering.
+            throw error
+        } catch let error as CancellationError {
+            throw error
         } catch {
             throw TicketError.from(error, url: base.absoluteString)
         }

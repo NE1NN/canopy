@@ -21,7 +21,7 @@ public enum TicketFiles {
 
     /// The handover block, then a line saying Canopy rewrites the file and how to get the latest.
     public static func markdown(handover: String) -> String {
-        var text = handover
+        var text = TicketText.clean(handover)
         while text.hasSuffix("\n") { text.removeLast() }
         return text
             + "\n\n_Canopy rewrites this file when it fetches a newer copy of the ticket. Run `canopy ticket show --md` "

@@ -2410,3 +2410,29 @@ On a dev build from `scripts/ui-fixture.sh`, in dark and in light, with window s
 - Disconnect from the section's `…` menu.
 
 Each is checked with `canopy row list --json`, `canopy plugin list`, or `canopy ticket list` where it changes state.
+
+## As Built
+
+- Tasks ran in the order 1 to 14, then the stand-in and e2e cases from Task 16, then the panel (15), then the UI fixture and the spec, so the e2e run proved the plugin in a real dev build before the panel work.
+- `tickets.list` landed with Task 10, whose tests read through it.
+- Resolving references and finding a ticket's row live in `TicketsPlugin+Resolving.swift`.
+- The plugin host refreshes its snapshot right after it adds or removes a plugin row, so `context.state` has the row once `createRow` or `removeRow` returns. `aPluginSeesItsRowsChangeAsSoonAsTheHostChangesThem` pins it.
+- `Client.call` takes `wait: ReplyWait` (`.usual`, `.upTo`, `.forever`) in place of `waitingUpTo`.
+- `me` is asked for with the rows' refresh, while the window can be seen, or when Mine needs it.
+- The panel keeps following the conversation's end while images load above it, and stops only when the author scrolls away. UI checks found that, a doubled period after URLError's own, and a fix-row hint that broke `--ticket` across lines.
+- App Transport Security allows the stand-in's `http://127.0.0.1` with no change to Info.plist.
+
+## After Review
+
+An independent reviewer (Opus) read `git diff origin/main...HEAD` with the spec, this plan, and the ledger's rulings, and ran the Tickets suites three times.
+It found nothing critical. Each finding acted on, and what changed:
+
+1. **A reconnect could bring back "rejected the token"**: a request still out on the old token recorded its 401 after connecting again with the same URL. Connecting now starts a new generation and restarts the refresh loop, so old requests record nothing. `aRequestInFlightOnTheOldTokenCannotBringTheWarningBack`.
+2. **The image cache never evicted, kept failures, and had no size limit.** It is an `NSCache` capped at 128 MB, keyed by the address without Discord's signing query, failures are not kept, and downloads stop at 20 MB.
+3. **Refresh answers could land after a stop or restart**, filling the store again and marking rows missing on a plugin turned off, and a bisect under way could ask a new deployment about the old one's ids. `fetchSummaries`, `fetchBatch`, `fetchList`, and `refreshRows` check the generation after each wait. `anAnswerThatArrivesAfterDisconnectingChangesNothing`.
+4. **A cancelled request counted as ticket-manager failing**, so typing in the picker could make `plugin list` say "cancelled". Cancellations pass through the client unchanged and are never recorded. `aCancelledRequestIsNotAFailure`.
+5. **A panel's state followed another ticket row**, so an open Remove popover could point at the wrong row. Each row's panel has its own identity.
+6. **Server text could plant links of any kind** in banners and warnings. The window opens only http and https links.
+7. **Customer text reached terminals with its control characters.** `ticket show`, `ticket list`, `ticket show --md`, and `ticket.md` take them out, but for newlines and tabs. `terminalControlsFromCustomersNeverReachTheTerminal`.
+
+Deferred, as minors: a selected missing or malformed ticket is still fetched every 30 seconds; `canopy ticket connect` asks for the token before checking the URL, and waits on a pipe that never closes; a Keychain refusal at start fails commands with `plugin_not_started`, naming the Keychain's error, rather than `keychain_failed`; `<t:…>` timestamps parse as floating point; the panel re-parses every message when any ticket's fetch flag changes; and the test harness's `settle()` sleeps 30 ms for the state stream rather than counting states. Also raised: customer text flows into `ticket.md`, which the default `run` hands to `claude`, a design-level prompt-injection risk for the author to weigh.

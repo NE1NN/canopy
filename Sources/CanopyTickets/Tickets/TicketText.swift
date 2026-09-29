@@ -27,7 +27,7 @@ public enum TicketText {
                     ? cell : cell.padding(toLength: widths[column] + 2, withPad: " ", startingAt: 0)
             }
             while line.hasSuffix(" ") { line.removeLast() }
-            return line
+            return clean(line)
         }
     }
 
@@ -100,7 +100,15 @@ public enum TicketText {
                 lines.append("  " + parts.joined(separator: " · "))
             }
         }
-        return lines.joined(separator: "\n")
+        return clean(lines.joined(separator: "\n"))
+    }
+
+    /// Text with control characters taken out, but for newlines and tabs, so customer text can never send a terminal
+    /// escape sequence.
+    public static func clean(_ text: String) -> String {
+        String(
+            String.UnicodeScalarView(
+                text.unicodeScalars.filter { $0 == "\n" || $0 == "\t" || $0.properties.generalCategory != .control }))
     }
 
     static func tilde(_ path: String, homeFolder: String) -> String {

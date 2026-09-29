@@ -15,9 +15,12 @@ extension TicketsPlugin {
             if generation == self.generation { await succeeded() }
             return value
         } catch {
-            let error = TicketError.from(error, url: connection.settings.url.absoluteString)
-            if generation == self.generation { await failed(error) }
-            throw error
+            let ticketError = TicketError.from(error, url: connection.settings.url.absoluteString)
+            // A request the caller gave up on, such as the picker's while the author types, says nothing about
+            // ticket-manager.
+            let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+            if generation == self.generation, !cancelled { await failed(ticketError) }
+            throw ticketError
         }
     }
 
@@ -54,16 +57,17 @@ extension TicketsPlugin {
 
     /// Open tickets, or closed and archived ones together, always fetched afresh.
     func fetchList(closed: Bool) async throws -> [TicketSummary] {
+        let generation = self.generation
         let list: [TicketSummary]
         if closed {
             async let closedList = perform { try await $0.tickets(status: .closed) }
             async let archived = perform { try await $0.tickets(status: .archived) }
             list = try await closedList + archived
-            closedTickets = list
         } else {
             list = try await perform { try await $0.tickets(status: .open) }
-            openTickets = list
         }
+        guard generation == self.generation else { return list }
+        if closed { closedTickets = list } else { openTickets = list }
         remember(list)
         return list
     }
@@ -80,28 +84,32 @@ extension TicketsPlugin {
     /// from another deployment: it is split until that id is alone, which then joins `malformed` and shows as missing,
     /// so one bad row never stops the others refreshing.
     func fetchSummaries(ids: [String]) async throws -> [TicketSummary] {
+        let generation = self.generation
         var found: [TicketSummary] = []
         var start = 0
         while start < ids.count {
             let batch = Array(ids[start..<min(start + TicketAPI.maximumIDs, ids.count)])
-            found += try await fetchBatch(batch)
+            found += try await fetchBatch(batch, generation: generation)
             start += TicketAPI.maximumIDs
         }
-        remember(found)
+        if generation == self.generation { remember(found) }
         return found
     }
 
-    private func fetchBatch(_ ids: [String]) async throws -> [TicketSummary] {
-        guard !ids.isEmpty else { return [] }
+    /// A batch split after a restart stops there, so it never asks the new connection about the old one's ids.
+    private func fetchBatch(_ ids: [String], generation: Int) async throws -> [TicketSummary] {
+        guard !ids.isEmpty, generation == self.generation else { return [] }
         do {
             return try await perform { try await $0.tickets(ids: ids) }
         } catch TicketError.badRequest {
+            guard generation == self.generation else { return [] }
             guard ids.count > 1 else {
                 malformed.insert(ids[0])
                 return []
             }
             let half = ids.count / 2
-            return try await fetchBatch(Array(ids[..<half])) + fetchBatch(Array(ids[half...]))
+            return try await fetchBatch(Array(ids[..<half]), generation: generation)
+                + fetchBatch(Array(ids[half...]), generation: generation)
         }
     }
 

@@ -59,9 +59,10 @@ extension TicketsPlugin {
         let clock = self.clock
         let sleeping = Task { await clock.sleep(until: deadline) }
         sleeper = sleeping
+        let generation = self.generation
         isLoopAsleep = true
         await sleeping.value
-        isLoopAsleep = false
+        if generation == self.generation { isLoopAsleep = false }
     }
 
     private func run(_ job: RefreshSchedule.Job, generation: Int) async {
@@ -85,6 +86,7 @@ extension TicketsPlugin {
     /// changed since its copy was fetched is fetched again, so its row's files stay current.
     private func refreshRows() async throws {
         guard let context else { return }
+        let generation = self.generation
         if me == nil {
             _ = try? await refreshMe()
         }
@@ -93,6 +95,7 @@ extension TicketsPlugin {
             ids.append(row.item)
         }
         let found = try await fetchSummaries(ids: ids)
+        guard generation == self.generation else { return }
         let foundIDs = Set(found.map(\.id))
         for id in ids {
             let isMissing = !foundIDs.contains(id)

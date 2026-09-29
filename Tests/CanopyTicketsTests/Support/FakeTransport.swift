@@ -26,6 +26,8 @@ actor FakeTransport: TicketTransport {
     private var failure: URLError?
     private(set) var requests: [URL] = []
     private(set) var tokens: [String] = []
+    private var stalling: Set<String> = []
+    private var stalled: [(key: String, continuation: CheckedContinuation<Void, Never>)] = []
 
     init(token: String) {
         self.token = token
@@ -41,6 +43,9 @@ actor FakeTransport: TicketTransport {
         tokens.append(token)
         if let failure { throw failure }
         let key = url.path + (url.query.map { "?" + $0 } ?? "")
+        if stalling.contains(key) {
+            await withCheckedContinuation { stalled.append((key, $0)) }
+        }
         if let override = overrides[key] { return try override.get() }
         guard token == self.token else { return try .fixture(401, "error-unauthorized") }
         return try answer(url)
@@ -96,6 +101,19 @@ actor FakeTransport: TicketTransport {
     func setToken(_ token: String) {
         self.token = token
     }
+
+    /// Holds requests for `key` until `release(key)`, as a slow ticket-manager would.
+    func stall(_ key: String) {
+        stalling.insert(key)
+    }
+
+    func release(_ key: String) {
+        stalling.remove(key)
+        for waiting in stalled where waiting.key == key { waiting.continuation.resume() }
+        stalled.removeAll { $0.key == key }
+    }
+
+    var stalledCount: Int { stalled.count }
 
     func clearRequests() {
         requests = []

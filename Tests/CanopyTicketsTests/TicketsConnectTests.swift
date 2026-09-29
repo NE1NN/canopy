@@ -86,6 +86,35 @@ struct TicketsConnectTests {
         #expect(try harness.secrets.read("token") == "two")
     }
 
+    @Test func aRequestInFlightOnTheOldTokenCannotBringTheWarningBack() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "one")
+        try await harness.connect(token: "one")
+        let row = try await harness.newRow("853")
+        await harness.settle()
+        let key = "/api/v1/tickets?ids=\(row.item)"
+        await harness.transport.stall(key)
+        await harness.transport.setToken("two")
+        harness.setViewing(visible: true, frontmost: false)
+        #expect(await eventually { await harness.transport.stalledCount == 1 })
+
+        try await harness.connect(token: "two")
+        await harness.transport.release(key)
+        await harness.settle()
+
+        #expect(await harness.section()?.warning == nil)
+        #expect(await harness.host.list().first { $0.id == "tickets" }?.status?.hasPrefix("connected as") == true)
+    }
+
+    @Test func aCancelledRequestIsNotAFailure() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "t")
+        try await harness.connect(token: "t")
+        await harness.transport.fail("/api/v1/tickets?status=open", URLError(.cancelled))
+        _ = try? await harness.call(TicketMethod.list, TicketListParams())
+        #expect(await harness.host.list().first { $0.id == "tickets" }?.status?.hasPrefix("connected as") == true)
+    }
+
     @Test func offCommandsSayHowToConnect() async throws {
         let dir = try TempDir()
         let harness = try await TicketsHarness(dir, serverToken: "t")
