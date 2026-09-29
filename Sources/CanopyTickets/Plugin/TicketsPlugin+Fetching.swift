@@ -164,3 +164,12 @@ extension TicketsPlugin {
         }
     }
 }
+
+extension TicketsPlugin {
+    /// Fetches the ticket now, as the panel's refresh button does. A failure shows in the store, where the panel's
+    /// banner reads it.
+    public func refresh(_ ticket: String) async {
+        guard connection != nil else { return }
+        _ = try? await fetchTicket(ticket)
+    }
+}
