@@ -47,16 +47,11 @@ struct PluginHeaderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            PluginTile(info: section.info)
-            HStack(spacing: 0) {
-                Text(section.info.name)
-                    .font(Style.body.weight(.semibold))
-                    .lineLimit(1)
-                DisclosureChevron(isExpanded: !section.collapsed)
-            }
+            summary
             Spacer(minLength: 4)
             if let agentDot {
                 AgentDotView(dot: agentDot)
+                    .accessibilityHidden(true)
             }
             if isHovering {
                 IconMenu(title: "More for \(section.info.name)", systemImage: "ellipsis") {
@@ -64,11 +59,7 @@ struct PluginHeaderView: View {
                 }
                 IconButton(title: "\(section.info.newRowTitle)…", systemImage: "plus", action: onNewRow)
             } else {
-                Text(verbatim: "\(section.rows.count)")
-                    .font(Style.meta)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 5)
+                HeaderCount(count: section.rows.count)
             }
         }
         .padding(.leading, Style.leadingInset(.header))
@@ -79,11 +70,26 @@ struct PluginHeaderView: View {
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
         .contextMenu { PluginMenuItems(section: section, onNewRow: onNewRow) }
+    }
+
+    /// What VoiceOver reads as the header's one button. Its buttons stay separate, so it never becomes a menu button.
+    private var summary: some View {
+        HStack(spacing: 8) {
+            PluginTile(info: section.info)
+            HStack(spacing: 0) {
+                Text(section.info.name)
+                    .font(Style.body.weight(.semibold))
+                    .lineLimit(1)
+                DisclosureChevron(isExpanded: !section.collapsed)
+            }
+        }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(section.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        // `+` shows only on hover.
         .accessibilityActions {
             Button("\(section.info.newRowTitle)…", action: onNewRow)
         }

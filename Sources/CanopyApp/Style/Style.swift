@@ -162,12 +162,13 @@ struct IconMenu<Items: View>: View {
         } label: {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .medium))
+                .frame(width: 22, height: 22)
+                .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .frame(width: 22, height: 22)
-        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
         .foregroundStyle(isHovering ? .primary : .secondary)
         .onHover { isHovering = $0 }
         .help(title)
@@ -199,6 +200,21 @@ struct DisclosureChevron: View {
             .animation(.easeOut(duration: 0.15), value: isExpanded)
             .foregroundStyle(.tertiary)
             .frame(width: 16)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A foldable header's row count. It keeps its width beside a long name, and VoiceOver hears it in the header's label.
+struct HeaderCount: View {
+    let count: Int
+
+    var body: some View {
+        Text(verbatim: "\(count)")
+            .font(Style.meta)
+            .monospacedDigit()
+            .foregroundStyle(.tertiary)
+            .fixedSize()
+            .padding(.trailing, 5)
             .accessibilityHidden(true)
     }
 }

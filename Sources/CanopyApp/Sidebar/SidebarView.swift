@@ -241,6 +241,44 @@ struct RepoHeaderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            summary
+            Spacer(minLength: 4)
+            if let agentDot {
+                AgentDotView(dot: agentDot)
+                    .accessibilityHidden(true)
+            }
+            if repo.isMissing {
+                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
+                    .controlSize(.small)
+                    .help("Find where \(repo.name) moved")
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
+            } else if showsButtons {
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
+                IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
+            } else {
+                HeaderCount(count: repo.rows.count)
+            }
+        }
+        .padding(.leading, Style.leadingInset(.header))
+        .padding(.trailing, 3)
+        .frame(height: Style.headerHeight)
+        .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
+        .onHover { isHovering = $0 }
+        .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
+        .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
+            GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
+                name in
+                await model.createGroup(in: repo, name: name)
+            }
+        }
+    }
+
+    /// What VoiceOver reads as the header's one button. Its buttons stay separate, so it never becomes a menu button, and
+    /// it keeps its width before them, so a narrow sidebar shortens "Locate…" before the name.
+    private var summary: some View {
+        HStack(spacing: 8) {
             RepoTile(mark: repo.mark, isDimmed: repo.isMissing)
             // The tile holds the header's mark column, so the chevron follows the name.
             HStack(spacing: 0) {
@@ -260,46 +298,14 @@ struct RepoHeaderView: View {
                     .foregroundStyle(.orange)
                     .help(error)
             }
-            Spacer(minLength: 4)
-            if let agentDot {
-                AgentDotView(dot: agentDot)
-            }
-            if repo.isMissing {
-                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
-                    .controlSize(.small)
-                    .help("Find where \(repo.name) moved")
-                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
-            } else if isHovering || isNamingGroup {
-                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
-                IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
-            } else {
-                Text(verbatim: "\(repo.rows.count)")
-                    .font(Style.meta)
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 5)
-            }
         }
-        .padding(.leading, Style.leadingInset(.header))
-        .padding(.trailing, 3)
-        .frame(height: Style.headerHeight)
-        .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: toggle)
-        .onHover { isHovering = $0 }
-        .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
-        .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
-            GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
-                name in
-                await model.createGroup(in: repo, name: name)
-            }
-        }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
-        // The header reads as one button, so its own buttons are reached as named actions.
+        // `+` shows only on hover, and a missing repo's `Locate…` is here too, so the header offers what its buttons do.
         .accessibilityActions {
             if repo.isMissing {
                 Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
@@ -308,6 +314,8 @@ struct RepoHeaderView: View {
             }
         }
     }
+
+    private var showsButtons: Bool { isHovering || isNamingGroup }
 
     /// A folded repo holding the selected row shows the selection, so the sidebar always says where the window is.
     private var holdsSelection: Bool { model.selectionFold == .repo(repo.path) }

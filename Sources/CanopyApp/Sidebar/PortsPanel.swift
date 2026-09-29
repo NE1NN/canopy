@@ -137,18 +137,24 @@ struct PortBadge: View {
     @State private var isHovering = false
 
     private var isStopping: Bool { model.isStopping(port, inRow: rowPath) }
+    private var showsStop: Bool { isHovering && !isStopping }
 
     var body: some View {
         HStack(spacing: 2) {
             Button {
                 if let url = URL(string: "http://localhost:\(port.port)") { openURL(url) }
             } label: {
+                // The badge's padding is part of the label, so a click anywhere on the badge but `x` opens the port.
                 Text(verbatim: "\(port.port)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .padding(.leading, 7)
+                    .padding(.trailing, showsStop ? 0 : 7)
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(openHelp)
-            if isHovering, !isStopping {
+            if showsStop {
                 Button {
                     model.stop([port], inRow: rowPath)
                 } label: {
@@ -162,9 +168,7 @@ struct PortBadge: View {
                 .help(stopHelp)
             }
         }
-        .padding(.leading, 7)
-        .padding(.trailing, isHovering && !isStopping ? 3 : 7)
-        .frame(height: 20)
+        .padding(.trailing, showsStop ? 3 : 0)
         .background(
             isHovering ? Style.selectionFill : Style.badgeFill, in: RoundedRectangle(cornerRadius: Style.badgeRadius)
         )
