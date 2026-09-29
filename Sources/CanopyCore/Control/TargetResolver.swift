@@ -35,6 +35,31 @@ public enum TargetResolver {
         throw WorkspaceError.missingTarget(flag: "a row argument")
     }
 
+    /// A worktree row, as `row(for:in:)` finds it, or a row of a plugin that is on. A plugin row is found by its path,
+    /// by CANOPY_ROW_PATH, or by the folder the CLI runs in, and never by a name.
+    public static func sidebarRow(for hint: TargetHint, in snapshot: WorkspaceSnapshot) throws -> SidebarRow {
+        if let name = hint.row {
+            guard isPath(name) else { return .worktree(try row(for: hint, in: snapshot)) }
+            guard let row = snapshot.sidebarRow(path: Paths.canonical(name)) else {
+                throw WorkspaceError.rowNotFound(name)
+            }
+            return row
+        }
+        if let path = hint.envRowPath, let row = snapshot.sidebarRow(path: Paths.canonical(path)) {
+            return row
+        }
+        if let cwd = hint.cwd {
+            let path = Paths.canonical(cwd)
+            let rows =
+                snapshot.repos.flatMap(\.allRows).map(SidebarRow.worktree)
+                + snapshot.activePlugins.flatMap(\.rows).map(SidebarRow.plugin)
+            if let row = rows.filter({ Paths.isInside(path, $0.path) }).max(by: { $0.path.count < $1.path.count }) {
+                return row
+            }
+        }
+        throw WorkspaceError.missingTarget(flag: "a row argument")
+    }
+
     static func repoIfKnown(for hint: TargetHint, in snapshot: WorkspaceSnapshot) throws -> RepoSnapshot? {
         if let name = hint.repo {
             guard let repo = match(repo: name, in: snapshot) else { throw WorkspaceError.repoNotFound(name) }

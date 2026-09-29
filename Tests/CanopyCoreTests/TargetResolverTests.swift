@@ -66,4 +66,54 @@ struct TargetResolverTests {
             try TargetResolver.row(for: TargetHint(envRowPath: "/c/api/fix-a"), in: snapshot).repoPath == "/src/api")
         #expect(try TargetResolver.row(for: TargetHint(cwd: "/c/web/fix-a/lib"), in: snapshot).path == "/c/web/fix-a")
     }
+
+    static let pluginRow = PluginRow(plugin: "p", item: "i1", title: "fix/a", path: "/h/plugins/p/one")
+
+    /// The same repos, with a plugin's row whose title is also a branch name.
+    func withPlugin(on: Bool = true) -> WorkspaceSnapshot {
+        var snapshot = snapshot
+        snapshot.plugins = [
+            PluginSection(info: PluginInfo(id: "p", name: "P", symbol: "star"), isOn: on, rows: [Self.pluginRow])
+        ]
+        return snapshot
+    }
+
+    @Test func aPluginRowResolvesByPathEnvironmentAndFolder() throws {
+        let snapshot = withPlugin()
+        let plugin = SidebarRow.plugin(Self.pluginRow)
+
+        #expect(try TargetResolver.sidebarRow(for: TargetHint(row: "/h/plugins/p/one"), in: snapshot) == plugin)
+        #expect(try TargetResolver.sidebarRow(for: TargetHint(envRowPath: "/h/plugins/p/one"), in: snapshot) == plugin)
+        #expect(try TargetResolver.sidebarRow(for: TargetHint(cwd: "/h/plugins/p/one/notes"), in: snapshot) == plugin)
+        #expect(
+            try TargetResolver.sidebarRow(for: TargetHint(row: "/c/web/fix-a"), in: snapshot).worktree?.branch
+                == "fix/a")
+        #expect(throws: WorkspaceError.missingTarget(flag: "a row argument")) {
+            try TargetResolver.sidebarRow(for: TargetHint(cwd: "/unrelated"), in: snapshot)
+        }
+    }
+
+    @Test func aBranchNameNeverMatchesAPluginRow() throws {
+        let row = try TargetResolver.sidebarRow(for: TargetHint(row: "fix/a", envRepo: "web"), in: withPlugin())
+        #expect(row.worktree?.path == "/c/web/fix-a")
+    }
+
+    @Test func aPluginThatIsOffResolvesNothing() {
+        #expect(throws: WorkspaceError.rowNotFound("/h/plugins/p/one")) {
+            try TargetResolver.sidebarRow(for: TargetHint(row: "/h/plugins/p/one"), in: withPlugin(on: false))
+        }
+        #expect(throws: WorkspaceError.missingTarget(flag: "a row argument")) {
+            try TargetResolver.sidebarRow(for: TargetHint(cwd: "/h/plugins/p/one"), in: withPlugin(on: false))
+        }
+    }
+
+    @Test func aPluginRowIsNotARepoOrAWorktreeRow() {
+        #expect(throws: WorkspaceError.missingTarget(flag: "--repo")) {
+            try TargetResolver.repo(
+                for: TargetHint(envRowPath: "/h/plugins/p/one", cwd: "/h/plugins/p/one"), in: withPlugin())
+        }
+        #expect(throws: WorkspaceError.missingTarget(flag: "a row argument")) {
+            try TargetResolver.row(for: TargetHint(cwd: "/h/plugins/p/one"), in: withPlugin())
+        }
+    }
 }

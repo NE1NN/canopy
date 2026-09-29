@@ -10,6 +10,7 @@ final class AppModel {
     let workspace: Workspace
     let terminals: TerminalStore
     let rows: RowLifecycle
+    let plugins: PluginHost
     let activity: ActivityLog
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
@@ -43,6 +44,9 @@ final class AppModel {
         self.workspace = workspace
         self.terminals = terminals
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
+        self.plugins = PluginHost(
+            workspace: workspace, terminals: terminals, plugins: [], secrets: KeychainSecretStore(),
+            bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")
     }
 
     /// The bundle's folder holding `canopy`, which terminals get on their PATH.
@@ -102,7 +106,7 @@ final class AppModel {
 
     private func startControlServer() async {
         let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
-        let handler = WorkspaceControlHandler(rows: rows, ui: bridge)
+        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: bridge)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         do {
             try await server.start()

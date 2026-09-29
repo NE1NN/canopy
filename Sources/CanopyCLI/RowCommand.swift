@@ -188,7 +188,7 @@ struct RowCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let result = client.call(
                 ControlMethod.rowSelect, RowRefParams(target: Client.hint(repo: repo, row: row)))
-            try client.print(result) { "Selected \(try result.decode(Row.self).displayName)." }
+            try client.print(result) { "Selected \(try result.decode(SidebarRow.self).displayName)." }
         }
     }
 
@@ -239,7 +239,7 @@ struct RowCommand: AsyncParsableCommand {
             let name = moved.row.displayName
             if let before, moved.moved { return "Moved \(name) before \(before)." }
             if let after, moved.moved { return "Moved \(name) after \(after)." }
-            switch (moved.moved, moved.row.group, moved.from) {
+            switch (moved.moved, moved.row.worktree?.group, moved.from) {
             case (true, let to?, _): return "Moved \(name) to \(to)."
             case (true, nil, let from?): return "Moved \(name) out of \(from)."
             case (false, let group?, _) where self.group != nil: return "\(name) is already in \(group)."
