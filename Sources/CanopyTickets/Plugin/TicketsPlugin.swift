@@ -7,7 +7,8 @@ import Foundation
 /// Its section of config.json holds `url`, ticket-manager's address, `run`, the command new ticket rows start with,
 /// and `web`, ticket-manager's page for a ticket. The token lives only in the Keychain.
 public actor TicketsPlugin: CanopyPlugin {
-    public nonisolated let info = PluginInfo(id: TicketMethod.plugin, name: "Tickets", symbol: "ticket")
+    public nonisolated let info = PluginInfo(
+        id: TicketMethod.plugin, name: "Tickets", symbol: "ticket", itemName: "Ticket")
     public nonisolated let filters = TicketListing.filters
     public nonisolated let methods = TicketMethod.all
     public nonisolated let readOnlyMethods = TicketMethod.readOnly

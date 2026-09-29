@@ -45,7 +45,7 @@ struct PluginHeaderView: View {
                 IconMenu(title: "More for \(section.info.name)", systemImage: "ellipsis") {
                     PluginMenuItems(section: section, onNewRow: onNewRow)
                 }
-                IconButton(title: "New \(section.info.name) Row…", systemImage: "plus", action: onNewRow)
+                IconButton(title: "\(section.info.newRowTitle)…", systemImage: "plus", action: onNewRow)
             } else {
                 Text(verbatim: "\(section.rows.count)")
                     .font(Style.meta)

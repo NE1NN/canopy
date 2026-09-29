@@ -17,7 +17,7 @@ struct PluginPickerSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 PluginTile(info: section.info, size: 20)
-                Text("New \(section.info.name) Row")
+                Text(section.info.newRowTitle)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
             }

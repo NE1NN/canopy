@@ -49,6 +49,7 @@ struct TicketListingTests {
         #expect(TicketListing.filters.choices.map(\.title) == ["Mine", "Unowned", "Anyone"])
         #expect(TicketListing.filters.defaultChoice == "anyone")
         #expect(TicketListing.filters.toggles.map(\.id) == ["closed"])
+        #expect(TicketsPlugin().info.newRowTitle == "New Ticket Row")
     }
 
     @Test func pickerItems() {

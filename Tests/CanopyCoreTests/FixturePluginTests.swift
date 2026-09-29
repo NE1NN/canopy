@@ -42,6 +42,12 @@ struct FixturePluginTests {
         #expect(listed.first?.status == "7 made-up items, 0 rows")
     }
 
+    @Test func aPluginNamesItsItemInThePickersTitle() {
+        #expect(
+            PluginInfo(id: "t", name: "Tickets", symbol: "ticket", itemName: "Ticket").newRowTitle == "New Ticket Row")
+        #expect(FixturePlugin().info.newRowTitle == "New Fixture Row")
+    }
+
     @Test func resolvesIdsNumbersAndSlugs() async throws {
         let dir = try TempDir()
         let host = try await start(dir)

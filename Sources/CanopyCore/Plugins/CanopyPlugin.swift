@@ -6,12 +6,18 @@ public struct PluginInfo: Sendable, Equatable, Codable {
     public var name: String
     /// An SF Symbol for its section's tile and its rows.
     public var symbol: String
+    /// What one of its items is called, such as "Ticket", when the plugin's name does not read as one.
+    public var itemName: String?
 
-    public init(id: String, name: String, symbol: String) {
+    public init(id: String, name: String, symbol: String, itemName: String? = nil) {
         self.id = id
         self.name = name
         self.symbol = symbol
+        self.itemName = itemName
     }
+
+    /// The picker's title, such as "New Ticket Row".
+    public var newRowTitle: String { "New \(itemName ?? name) Row" }
 }
 
 /// One of the picker's chips.
