@@ -1,3 +1,4 @@
+import CanopyTickets
 import Darwin
 import Foundation
 
@@ -5,8 +6,13 @@ import Foundation
 enum SecretPrompt {
     static func read(prompt: String) throws -> String {
         guard isatty(STDIN_FILENO) != 0 else {
-            let data = FileHandle.standardInput.readDataToEndOfFile()
-            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                return try TokenInput.read(from: STDIN_FILENO, timeout: .seconds(10))
+            } catch {
+                throw CLIError(
+                    "No token arrived on stdin within 10 seconds. Run this in a terminal to type it, or pipe it in: "
+                        + "printf '%s' \"$TOKEN\" | canopy ticket connect <url>")
+            }
         }
         var buffer = [CChar](repeating: 0, count: 4096)
         defer { buffer.withUnsafeMutableBufferPointer { $0.update(repeating: 0) } }

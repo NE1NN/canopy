@@ -190,6 +190,13 @@ struct TicketCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
+            // A mistyped address fails before the author types a secret.
+            do {
+                _ = try TicketSettings.url(url)
+                if let web { _ = try TicketSettings.web(web) }
+            } catch let error as TicketError {
+                client.fail(error.controlError)
+            }
             let token: String
             do {
                 token = try SecretPrompt.read(prompt: "ticket-manager token for \(url): ")
