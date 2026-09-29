@@ -247,7 +247,7 @@ public struct WorkspaceControlHandler: Sendable {
             let row = try TargetResolver.row(for: params.target, in: snapshot)
             guard !row.isMissing else { throw WorkspaceError.pathNotFound(row.path) }
             let repoName = snapshot.repo(path: row.repoPath)?.name ?? ""
-            return try .from(await rows.newTerminal(row, repoName: repoName, params))
+            return try .from(await rows.newTerminal(PaneContext(row: row, repoName: repoName), params))
 
         case TermMethod.send:
             let params = try request.decodeParams(TermSendParams.self)

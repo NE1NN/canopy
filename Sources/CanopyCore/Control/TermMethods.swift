@@ -13,7 +13,9 @@ public enum TermMethod {
 /// One terminal as `canopy term list` shows it.
 public struct TermInfo: Codable, Sendable, Equatable {
     public var pane: String
-    public var repo: String
+    /// Left out for a plugin's row, which names its plugin instead.
+    public var repo: String?
+    public var plugin: String?
     public var row: String
     public var rowPath: String
     public var tab: String

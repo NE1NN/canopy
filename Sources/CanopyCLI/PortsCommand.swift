@@ -30,7 +30,8 @@ struct PortsCommand: AsyncParsableCommand {
                 guard !ports.isEmpty else { return "No ports." }
                 return Table.render(
                     ["PORT", "PROCESS", "PID", "REPO", "ROW"],
-                    ports.map { ["\($0.port)", $0.process, "\($0.pid)", $0.repo, $0.row] }
+                    // A plugin row's owner is its plugin.
+                    ports.map { ["\($0.port)", $0.process, "\($0.pid)", $0.repo ?? $0.plugin ?? "-", $0.row] }
                 )
             }
         }

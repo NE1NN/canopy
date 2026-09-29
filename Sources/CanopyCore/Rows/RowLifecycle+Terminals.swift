@@ -11,8 +11,11 @@ extension RowLifecycle {
                     pane.refreshTitle()
                     var exited: Int32?
                     if case .exited(let code) = pane.status { exited = code }
+                    var plugin: String?
+                    if case .plugin(let id, _) = pane.context.owner { plugin = id }
                     return TermInfo(
-                        pane: pane.id.description, repo: repoNames[pane.context.repoPath] ?? pane.context.repoName,
+                        pane: pane.id.description,
+                        repo: pane.context.repoPath.flatMap { repoNames[$0] } ?? pane.context.repoName, plugin: plugin,
                         row: pane.context.rowName, rowPath: path, tab: tab.name, title: pane.title,
                         folder: pane.currentDirectory ?? pane.startDirectory ?? path,
                         foreground: pane.foreground?.name, exited: exited,
@@ -22,8 +25,7 @@ extension RowLifecycle {
         }
     }
 
-    public func newTerminal(_ row: Row, repoName: String, _ params: TermNewParams) async -> TermNewResult {
-        let context = PaneContext(row: row, repoName: repoName)
+    public func newTerminal(_ context: PaneContext, _ params: TermNewParams) async -> TermNewResult {
         let name = params.tab.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         let (tab, pane) = terminals.openTerminal(for: context, tabNamed: name, newTab: params.newTab)
         if let title = params.title { pane.fixedTitle = title }

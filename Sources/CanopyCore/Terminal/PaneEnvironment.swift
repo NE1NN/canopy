@@ -21,10 +21,16 @@ public enum PaneEnvironment {
         environment["TERM_PROGRAM"] = "Canopy"
         environment["TERM_PROGRAM_VERSION"] = CanopyVersion.current
         environment["CANOPY_HOME"] = settings.home.root.path
-        environment["CANOPY_REPO"] = context.repoName
+        switch context.owner {
+        case .repo(let name, let path):
+            environment["CANOPY_REPO"] = name
+            environment["CANOPY_ROOT_PATH"] = path
+        case .plugin(let id, let item):
+            environment["CANOPY_PLUGIN"] = id
+            environment["CANOPY_ITEM"] = item
+        }
         environment["CANOPY_ROW"] = context.rowName
         environment["CANOPY_ROW_PATH"] = context.rowPath
-        environment["CANOPY_ROOT_PATH"] = context.repoPath
         environment["CANOPY_PANE"] = pane.description
         // Claude Code's hooks run this CLI, so each Canopy's terminals report to that Canopy.
         if let cli = settings.cliDirectory {
