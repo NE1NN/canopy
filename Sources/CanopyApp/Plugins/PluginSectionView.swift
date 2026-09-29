@@ -47,16 +47,11 @@ struct PluginHeaderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            PluginTile(info: section.info)
-            HStack(spacing: 0) {
-                Text(section.info.name)
-                    .font(Style.body.weight(.semibold))
-                    .lineLimit(1)
-                DisclosureChevron(isExpanded: !section.collapsed)
-            }
+            summary
             Spacer(minLength: 4)
             if let agentDot {
                 AgentDotView(dot: agentDot)
+                    .accessibilityHidden(true)
             }
             if isHovering {
                 IconMenu(title: "More for \(section.info.name)", systemImage: "ellipsis") {
@@ -69,6 +64,7 @@ struct PluginHeaderView: View {
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
                     .padding(.trailing, 5)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.leading, Style.leadingInset(.header))
@@ -79,6 +75,22 @@ struct PluginHeaderView: View {
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
         .contextMenu { PluginMenuItems(section: section, onNewRow: onNewRow) }
+    }
+
+    /// The tile and name, which VoiceOver reads as one button that folds the section, its label saying the row count and
+    /// agent dot too. The header's buttons stay controls of their own: combined into it, they would make it a menu
+    /// button.
+    private var summary: some View {
+        HStack(spacing: 8) {
+            PluginTile(info: section.info)
+            HStack(spacing: 0) {
+                Text(section.info.name)
+                    .font(Style.body.weight(.semibold))
+                    .lineLimit(1)
+                DisclosureChevron(isExpanded: !section.collapsed)
+            }
+        }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(section.collapsed ? "Collapsed" : "Expanded")

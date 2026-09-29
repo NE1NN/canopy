@@ -162,12 +162,13 @@ struct IconMenu<Items: View>: View {
         } label: {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .medium))
+                .frame(width: 22, height: 22)
+                .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .frame(width: 22, height: 22)
-        .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 5))
         .foregroundStyle(isHovering ? .primary : .secondary)
         .onHover { isHovering = $0 }
         .help(title)

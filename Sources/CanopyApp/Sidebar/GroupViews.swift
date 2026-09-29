@@ -27,17 +27,13 @@ struct GroupHeaderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            DisclosureChevron(isExpanded: !group.collapsed)
-            Text(group.name)
-                .font(Style.body.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            summary
             Spacer(minLength: 4)
             if let agentDot {
                 AgentDotView(dot: agentDot)
+                    .accessibilityHidden(true)
             }
-            if isHovering || isRenaming || isConfirmingDelete {
+            if showsButtons {
                 IconMenu(title: "More for \(group.name)", systemImage: "ellipsis") {
                     GroupMenuItems(rename: { isRenaming = true }, delete: requestDelete)
                 }
@@ -48,6 +44,7 @@ struct GroupHeaderView: View {
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
                     .padding(.trailing, 5)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.leading, Style.leadingInset(.section))
@@ -71,6 +68,21 @@ struct GroupHeaderView: View {
                 model.removeGroup(group, in: repo)
             }
         }
+    }
+
+    /// The chevron and name, which VoiceOver reads as one button that folds the group, its label saying the row count and
+    /// agent dot too. The header's buttons stay controls of their own: combined into it, they would make it a menu
+    /// button.
+    private var summary: some View {
+        HStack(spacing: 8) {
+            DisclosureChevron(isExpanded: !group.collapsed)
+            Text(group.name)
+                .font(Style.body.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(group.name), group, \(count == 1 ? "1 row" : "\(count) rows")"
@@ -79,7 +91,13 @@ struct GroupHeaderView: View {
         .accessibilityValue(group.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { toggle() }
+        // `+` shows only on hover, so what it does is also here as a named action.
+        .accessibilityActions {
+            Button("New Row…", action: onNewRow)
+        }
     }
+
+    private var showsButtons: Bool { isHovering || isRenaming || isConfirmingDelete }
 
     private var fill: Color {
         if isDropTarget { return Style.focusedSelectionFill }
