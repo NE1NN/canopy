@@ -32,7 +32,7 @@ The feature request is the author's, from 2026-09-29: one repo has around 30 row
 2. A `state.json` whose repo has `"collapsed": "yes"` or no `collapsed` at all: the repo loads expanded, with its rows and groups.
    Pinned in Task 1 (`reposAndPluginsDecodeTheirFold`).
 3. A plugin that is off keeps its fold, and a plugin id that does not exist fails `plugin collapse` with `plugin_not_found`.
-   Pinned in Task 2 (`pluginFoldIsSavedAndUnknownPluginsFail`) and Task 3.
+   Pinned in Task 2 (`aPluginFoldIsKeptWhileItIsOffAndUnknownPluginsFail`) and Task 3.
 4. `↓` from a row hidden in a folded repo goes to the first row shown after the repo, which may be a plugin row, and `↑` to the last row shown before it.
    Pinned in Task 1 (`steppingFromAHiddenRowContinuesFromItsRepo`).
 5. A row created with `row new --select` or `plugin new --select` into a folded repo or section unfolds it, and one created without `--select` leaves the fold alone.
@@ -96,6 +96,11 @@ In `StateStoreTests`:
 In a new `SidebarFoldTests.swift`, built on `GroupSnapshotTests.snapshot` (web: main, a, Review (b, c) folded, Later (d); api: main, e, Hidden (f) folded):
 
 ```swift
+import Testing
+
+@testable import CanopyCore
+
+/// Folded repos and plugin sections in the sidebar order, on snapshots built by hand.
 struct SidebarFoldTests {
     static func section(_ id: String, collapsed: Bool = false, _ items: [String]) -> PluginSection {
         PluginSection(
@@ -104,12 +109,14 @@ struct SidebarFoldTests {
             collapsed: collapsed)
     }
 
-    /// The group snapshot with web folded, and a plugin section after the repos.
+    /// The group tests' snapshot with web folded and holding another tool's worktree, then plugin p's section.
+    /// web: main, a, Review (b, c) folded, Later (d), and ext. api: main, e, Hidden (f) folded.
     static var snapshot: WorkspaceSnapshot {
         var snapshot = GroupSnapshotTests.snapshot
+        var external = GroupSnapshotTests.row("web", "ext")
+        external.rowClass = .external
+        snapshot.repos[0].external = [external]
         snapshot.repos[0].collapsed = true
-        snapshot.repos[0].external = [GroupSnapshotTests.row("web", "ext")]
-        snapshot.repos[0].external[0].rowClass = .external
         snapshot.plugins = [section("p", ["one"])]
         return snapshot
     }
@@ -122,24 +129,31 @@ struct SidebarFoldTests {
     @Test func aFoldedSectionGivesNoRowANumber() {
         var snapshot = Self.snapshot
         snapshot.plugins = [Self.section("p", collapsed: true, ["one"]), Self.section("q", ["two"])]
+
         #expect(snapshot.visibleRows.map(\.path) == ["/api", "/api/e", "/h/q/two"])
         #expect(snapshot.steppingRow(from: "/h/p/one", offset: 1)?.path == "/h/q/two")
         #expect(snapshot.steppingRow(from: "/h/p/one", offset: -1)?.path == "/api/e")
+        #expect(snapshot.steppingRow(from: "/h/q/two", offset: -1)?.path == "/api/e")
     }
 
     @Test func steppingFromAHiddenRowContinuesFromItsRepo() {
         var snapshot = Self.snapshot
+        // api, then web folded, then the plugin's rows.
         snapshot.repos.swapAt(0, 1)
-        // api, then web folded, then the plugin.
+
         #expect(snapshot.steppingRow(from: "/web/a", offset: 1)?.path == "/h/p/one")
+        #expect(snapshot.steppingRow(from: "/web/b", offset: 1)?.path == "/h/p/one")
         #expect(snapshot.steppingRow(from: "/web/a", offset: -1)?.path == "/api/e")
         #expect(snapshot.steppingRow(from: "/web", offset: -1)?.path == "/api/e")
         #expect(snapshot.steppingRow(from: "/api/e", offset: 1)?.path == "/h/p/one")
         #expect(snapshot.steppingRow(from: "/h/p/one", offset: -1)?.path == "/api/e")
+        snapshot.plugins = []
+        #expect(snapshot.steppingRow(from: "/web/d", offset: 1) == nil)
     }
 
     @Test func foldsListTheRepoThenTheGroup() {
         let snapshot = Self.snapshot
+
         #expect(snapshot.folds(hiding: "/web/b") == [.repo("/web"), .group(repoPath: "/web", name: "Review")])
         #expect(snapshot.folds(hiding: "/web/d") == [.repo("/web")])
         #expect(snapshot.folds(hiding: "/web") == [.repo("/web")])
@@ -158,22 +172,25 @@ struct SidebarFoldTests {
 And in `WorkspaceGroupTests` (git test, real repo), that the snapshot carries the saved fold:
 
 ```swift
-@Test func theSnapshotCarriesTheRepoFold() async throws {
+@Test func theSnapshotCarriesTheSavedRepoFold() async throws {
     let dir = try TempDir()
     let repo = try await Fixture.repo(in: dir)
-    var state = AppState(repos: [RepoEntry(path: repo, dirName: "demo", collapsed: true)])
-    state.plugins = [:]
-    try StateStore(url: CanopyHome(root: dir.url.appending(path: "home")).stateFile).save(state)
-    let workspace = try await makeWorkspace(dir)
-    #expect(await workspace.snapshot.repos.first?.collapsed == true)
+    let home = CanopyHome(path: dir.sub("home"))
+    try home.ensureExists()
+    try StateStore(url: home.stateFile).save(
+        AppState(repos: [RepoEntry(path: repo, dirName: "demo", collapsed: true)]))
+    let workspace = Workspace(home: home, git: Fixture.git)
+
+    try await workspace.start()
+
+    #expect(await workspace.snapshot.repos.map(\.collapsed) == [true])
+    #expect(await workspace.snapshot.visibleRows.isEmpty)
 }
 ```
 
-(`makeWorkspace` and `Fixture.repo` are the file's existing helpers. Adjust the home path to match `makeWorkspace`'s.)
-
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `make test FILTER=SidebarFoldTests` (or `swift test $(scripts/test-flags.sh) --filter SidebarFoldTests`).
+Run: `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(scripts/test-flags.sh) --filter 'SidebarFoldTests|StateStoreTests|WorkspaceGroupTests'`.
 Expected: compile errors, since `collapsed` and `folds(hiding:)` do not exist.
 
 - [ ] **Step 3: Implement**
@@ -266,45 +283,117 @@ git commit -am "feat: carry a repo's and a plugin section's fold in state and sn
 - [ ] **Step 1: Write the failing tests**
 
 ```swift
+import Foundation
+import Testing
+
+@testable import CanopyCore
+
 struct WorkspaceFoldTests {
+    static let plugin = PluginInfo(id: "p", name: "P", symbol: "star")
+
+    func workspace(_ dir: TempDir) async throws -> Workspace {
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
+        try await workspace.start()
+        await workspace.registerPlugins([Self.plugin])
+        return workspace
+    }
+
     @Test func aRepoFoldIsSavedAndLogsNothing() async throws {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)
-        let workspace = try await makeWorkspace(dir)
+        let workspace = try await workspace(dir)
         try await workspace.addRepo(path: repo)
 
         try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
         try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
 
         #expect(await workspace.snapshot.repo(path: repo)?.collapsed == true)
+        #expect(await logged(workspace, "repo", "row", "group").map(\.type) == [ActivityType.repoAdded])
         await workspace.stop()
-        let relaunched = try await makeWorkspace(dir)
+        let relaunched = try await self.workspace(dir)
         #expect(await relaunched.snapshot.repo(path: repo)?.collapsed == true)
-        #expect(try events(in: dir).filter { $0.type != ActivityType.repoAdded }.isEmpty)
+        try await relaunched.setRepoCollapsed(repoPath: repo, collapsed: false)
+        #expect(await relaunched.snapshot.repo(path: repo)?.collapsed == false)
+    }
+
+    @Test func anUnknownRepoCannotFold() async throws {
+        let dir = try TempDir()
+        let workspace = try await workspace(dir)
+
+        await #expect(throws: WorkspaceError.repoNotFound("/nowhere")) {
+            try await workspace.setRepoCollapsed(repoPath: "/nowhere", collapsed: true)
+        }
     }
 
     @Test func revealingARowUnfoldsItsRepoAndGroup() async throws {
-        // A row in group Review of a folded repo, with Review folded too.
-        ...
-        try await workspace.revealRow(path: row.path)
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let workspace = try await workspace(dir)
+        try await workspace.addRepo(path: repo)
+        try await workspace.createGroup(repoPath: repo, name: "Review")
+        let grouped = try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review").row
+        let plain = try await workspace.createRow(repoPath: repo, branch: "feat/b").row
+        try await workspace.setGroupCollapsed(repoPath: repo, name: "Review", collapsed: true)
+        try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
+        #expect(
+            await workspace.snapshot.folds(hiding: grouped.path) == [
+                .repo(repo), .group(repoPath: repo, name: "Review"),
+            ])
+
+        try await workspace.revealRow(path: plain.path)
+        #expect(await workspace.snapshot.repo(path: repo)?.collapsed == false)
+        #expect(await workspace.snapshot.repo(path: repo)?.groups.first?.collapsed == true)
+
+        try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
+        try await workspace.revealRow(path: grouped.path)
         let snapshot = await workspace.snapshot
+        #expect(snapshot.folds(hiding: grouped.path).isEmpty)
         #expect(snapshot.repo(path: repo)?.collapsed == false)
         #expect(snapshot.repo(path: repo)?.groups.first?.collapsed == false)
-        #expect(snapshot.folds(hiding: row.path).isEmpty)
+        await workspace.stop()
+        #expect(try await self.workspace(dir).snapshot.folds(hiding: grouped.path).isEmpty)
     }
 
-    @Test func revealingAShownRowChangesNothing() async throws { ... }
+    @Test func revealingARowTheSidebarShowsChangesNothing() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let workspace = try await workspace(dir)
+        try await workspace.addRepo(path: repo)
+        let saved = try Data(contentsOf: CanopyHome(path: dir.sub("home")).stateFile)
 
-    @Test func pluginFoldIsSavedAndUnknownPluginsFail() async throws {
-        // registerPlugins([fixture info]), fold it, check the section and state.json, unfold,
-        // then setPluginCollapsed("nope") throws WorkspaceError.pluginNotFound.
+        try await workspace.revealRow(path: repo)
+        try await workspace.revealRow(path: "/nowhere")
+
+        #expect(try Data(contentsOf: CanopyHome(path: dir.sub("home")).stateFile) == saved)
     }
 
-    @Test func aMissingRepoCanFoldAndAnUnknownOneFails() async throws { ... }
+    @Test func aPluginFoldIsKeptWhileItIsOffAndUnknownPluginsFail() async throws {
+        let dir = try TempDir()
+        let workspace = try await workspace(dir)
+        let row = try await workspace.addPluginRow(
+            PluginRowEntry(item: "1", title: "one", path: "/h/plugins/p/one"), plugin: "p")
+
+        try await workspace.setPluginCollapsed("p", collapsed: true)
+        #expect(await workspace.snapshot.section("p")?.collapsed == true)
+        // The plugin is off, so its rows are not in the sidebar and nothing hides them.
+        #expect(await workspace.snapshot.folds(hiding: row.path).isEmpty)
+        await workspace.setPlugin("p", on: true)
+        #expect(await workspace.snapshot.folds(hiding: row.path) == [.plugin("p")])
+        #expect(await workspace.snapshot.visibleRows.isEmpty)
+
+        await workspace.stop()
+        let relaunched = try await self.workspace(dir)
+        await relaunched.setPlugin("p", on: true)
+        #expect(await relaunched.snapshot.section("p")?.collapsed == true)
+        try await relaunched.revealRow(path: row.path)
+        #expect(await relaunched.snapshot.section("p")?.collapsed == false)
+        #expect(await relaunched.snapshot.visibleRows.map(\.path) == [row.path])
+        await #expect(throws: WorkspaceError.pluginNotFound("nope")) {
+            try await relaunched.setPluginCollapsed("nope", collapsed: true)
+        }
+    }
 }
 ```
-
-The file's full tests are written against the helpers `makeWorkspace` and `Fixture.repo` already used by `WorkspaceGroupTests`, and an `events(in:)` helper that reads the activity folder with `ActivityReader`.
 
 - [ ] **Step 2: Run them to see them fail**
 
@@ -372,29 +461,143 @@ git commit -am "feat: fold repos and plugin sections, and unfold what hides a ro
 
 - [ ] **Step 1: Write the failing tests**
 
-`FoldControlTests`, through the in-process server like `GroupControlTests`:
+`FoldControlTests`, through the in-process server like `GroupControlTests` and `PluginControlTests`:
 
 ```swift
-@Test func reposFoldOverTheSocket() async throws {
-    // repo.collapse with TargetHint(repo: "demo") twice: each returns RepoInfo with collapsed true,
-    // repo.list shows collapsed true, repo.expand returns collapsed false,
-    // an unknown repo fails with repo_not_found, and no target at all with missing_target.
-    // The workspace's activity has cli.call for each and no other event.
-}
+import Foundation
+import Testing
 
-@Test func groupsFoldOverTheSocket() async throws {
-    // group.collapse "review" returns GroupInfo(name: "Review", collapsed: true), repeat is fine,
-    // group.expand returns collapsed false, a missing group fails with group_not_found.
-}
+@testable import CanopyCore
 
-@Test func pluginsFoldOverTheSocket() async throws {
-    // With the fixture plugin registered: plugin.collapse returns a listing with collapsed true,
-    // plugin.list shows it, plugin.expand clears it, and plugin.collapse "nope" fails with plugin_not_found.
-}
+/// Folding repos, groups, and plugin sections through the control socket, as the CLI sends it.
+struct FoldControlTests {
+    let base = ControlServerTests()
+    let plugins = PluginControlTests()
 
-@Test func selectingOverTheSocketUnfolds() async throws {
-    // A folded repo: row.new with select false leaves it folded, row.new with select true unfolds it,
-    // and row.select of a row in a folded repo unfolds it and reaches the UI bridge.
+    func send(_ client: ControlClient, _ method: String, _ params: some Encodable) async throws -> ControlResponse {
+        let request = ControlRequest(method: method, params: try .from(params))
+        return try await offPool { try client.send(request) }
+    }
+
+    @Test func reposFoldOverTheSocketAndOnlyTheCallsAreLogged() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (workspace, server, client, _) = try await base.startServer(dir)
+        defer { server.stop() }
+        _ = try await base.call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        let demo = RepoFoldParams(target: TargetHint(repo: "demo"))
+
+        #expect(
+            try await base.call(client, ControlMethod.repoList, JSONValue.null, as: [RepoInfo].self).first?.collapsed
+                == false)
+        for _ in 1...2 {
+            let folded = try await base.call(client, ControlMethod.repoCollapse, demo, as: RepoInfo.self)
+            #expect(folded.name == "demo" && folded.collapsed)
+        }
+        #expect(
+            try await base.call(client, ControlMethod.repoList, JSONValue.null, as: [RepoInfo].self).first?.collapsed
+                == true)
+        // The repo a command runs in, when no repo is named.
+        let inside = RepoFoldParams(target: TargetHint(cwd: repo))
+        #expect(try await base.call(client, ControlMethod.repoExpand, inside, as: RepoInfo.self).collapsed == false)
+        #expect(await workspace.snapshot.repo(path: repo)?.collapsed == false)
+
+        let unknown = try await send(
+            client, ControlMethod.repoCollapse, RepoFoldParams(target: TargetHint(repo: "nope")))
+        #expect(unknown.error?.code == "repo_not_found")
+        let untargeted = try await send(client, ControlMethod.repoCollapse, JSONValue.object([:]))
+        #expect(untargeted.error?.code == "missing_target")
+
+        let events = await logged(workspace, "repo", "row", "group", "cli")
+        #expect(events.filter { $0.type != ActivityType.cliCall }.map(\.type) == [ActivityType.repoAdded])
+        let methods = events.compactMap { event -> String? in
+            guard case .string(let method) = event.data["method"] else { return nil }
+            return method
+        }
+        #expect(
+            methods == [
+                ControlMethod.repoAdd, ControlMethod.repoCollapse, ControlMethod.repoCollapse,
+                ControlMethod.repoExpand, ControlMethod.repoCollapse, ControlMethod.repoCollapse,
+            ])
+    }
+
+    @Test func groupsFoldOverTheSocket() async throws {
+        let dir = try TempDir()
+        let repo = try await Fixture.repo(in: dir)
+        let (workspace, server, client, _) = try await base.startServer(dir)
+        defer { server.stop() }
+        _ = try await base.call(client, ControlMethod.repoAdd, RepoAddParams(path: repo), as: RepoInfo.self)
+        try await workspace.createGroup(repoPath: repo, name: "Review")
+        let demo = TargetHint(repo: "demo")
+
+        for _ in 1...2 {
+            let folded = try await base.call(
+                client, GroupMethod.collapse, GroupParams(target: demo, name: " review "), as: GroupInfo.self)
+            #expect(folded == GroupInfo(repo: "demo", repoPath: repo, name: "Review", collapsed: true, rows: []))
+        }
+        let listed = try await base.call(client, GroupMethod.list, GroupListParams(repo: "demo"), as: [GroupInfo].self)
+        #expect(listed.map(\.collapsed) == [true])
+        let open = try await base.call(
+            client, GroupMethod.expand, GroupParams(target: demo, name: "REVIEW"), as: GroupInfo.self)
+        #expect(open.collapsed == false)
+
+        let missing = try await send(client, GroupMethod.collapse, GroupParams(target: demo, name: "Nope"))
+        #expect(missing.error?.code == "group_not_found")
+        #expect(await logged(workspace, "group").map(\.type) == [ActivityType.groupCreated])
+    }
+
+    @Test func pluginsFoldOverTheSocket() async throws {
+        let dir = try TempDir()
+        let setup = try await plugins.start(dir)
+        defer { plugins.stop(setup) }
+
+        for _ in 1...2 {
+            let folded = try await plugins.call(
+                setup, PluginMethod.collapse, PluginFoldParams(plugin: "t"), as: PluginListing.self)
+            #expect(folded.id == "t" && folded.collapsed)
+        }
+        let listed = try await plugins.call(setup, PluginMethod.list, JSONValue.null, as: [PluginListing].self)
+        #expect(listed.map(\.collapsed) == [true])
+        let open = try await plugins.call(
+            setup, PluginMethod.expand, PluginFoldParams(plugin: "t"), as: PluginListing.self)
+        #expect(open.collapsed == false)
+        #expect(
+            try await plugins.errorCode(setup, PluginMethod.collapse, PluginFoldParams(plugin: "nope"))
+                == "plugin_not_found")
+    }
+
+    @Test func selectingOverTheSocketUnfolds() async throws {
+        let dir = try TempDir()
+        let setup = try await plugins.start(dir)
+        defer { plugins.stop(setup) }
+        let (workspace, repo) = (setup.workspace, setup.repo)
+        let demo = TargetHint(repo: "demo")
+        try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
+
+        let quiet = try await plugins.call(
+            setup, ControlMethod.rowNew, RowNewParams(target: demo, branch: "feat/quiet"), as: RowNewResult.self)
+        #expect(await workspace.snapshot.repo(path: repo)?.collapsed == true)
+        _ = try await plugins.call(
+            setup, ControlMethod.rowNew, RowNewParams(target: demo, branch: "feat/shown", select: true),
+            as: RowNewResult.self)
+        #expect(await workspace.snapshot.repo(path: repo)?.collapsed == false)
+
+        try await workspace.setRepoCollapsed(repoPath: repo, collapsed: true)
+        _ = try await plugins.call(
+            setup, ControlMethod.rowSelect, RowRefParams(target: TargetHint(row: quiet.row.path)), as: Row.self)
+        #expect(await workspace.snapshot.repo(path: repo)?.collapsed == false)
+        #expect(setup.ui.selected.withLock { $0 }.last == quiet.row.path)
+
+        try await workspace.setPluginCollapsed("t", collapsed: true)
+        _ = try await plugins.newRow(setup, "i1")
+        #expect(await workspace.snapshot.section("t")?.collapsed == true)
+        let selected = try await plugins.call(
+            setup, PluginMethod.new, PluginNewParams(plugin: "t", reference: "i2", select: true),
+            as: PluginRowCreated.self
+        ).row
+        #expect(await workspace.snapshot.section("t")?.collapsed == false)
+        #expect(setup.ui.selected.withLock { $0 }.last == selected.path)
+    }
 }
 ```
 
@@ -567,6 +770,107 @@ Clicking the header anywhere but its buttons folds or unfolds the repo.
 While folded and holding the selection (`model.selectionFold == .repo(repo.path)`), it draws the selection fill, accent-tinted while the sidebar has the keyboard.
 VoiceOver reads one button: "web-app, repo, 7 rows", then the dot's label, with the value Collapsed or Expanded and an action that toggles.
 
+```swift
+/// A repo's tile, name, and chevron, then its row count, which gives way to `…` and `+` on hover. Clicking it anywhere
+/// else folds or unfolds the repo.
+struct RepoHeaderView: View {
+    @Environment(AppModel.self) private var model
+    let repo: RepoSnapshot
+    let isFocused: Bool
+    let onNewRow: () -> Void
+    @State private var isHovering = false
+    @State private var isNamingGroup = false
+
+    /// A folded repo shows the most urgent agent dot among the rows it hides.
+    private var agentDot: AgentDot? {
+        guard repo.collapsed else { return nil }
+        return model.terminals.agentDot(inRows: repo.allRows.map(\.path))
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            RepoTile(mark: repo.mark, isDimmed: repo.isMissing)
+            // The tile holds the mark column, so the chevron follows the name and the tile still lines up with rows.
+            HStack(spacing: 0) {
+                Text(repo.name)
+                    .font(Style.body.weight(.semibold))
+                    .foregroundStyle(repo.isMissing ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                DisclosureChevron(isExpanded: !repo.collapsed)
+            }
+            if repo.isMissing {
+                TagView(text: "missing")
+            }
+            if let error = repo.error {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(Style.meta)
+                    .foregroundStyle(.orange)
+                    .help(error)
+            }
+            Spacer(minLength: 4)
+            if let agentDot {
+                AgentDotView(dot: agentDot)
+            }
+            if repo.isMissing {
+                Button("Locate…") { model.chooseFolder(for: .locate(repo)) }
+                    .controlSize(.small)
+                    .help("Find where \(repo.name) moved")
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
+            } else if isHovering || isNamingGroup {
+                RepoMenu(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true })
+                IconButton(title: "New Row in \(repo.name)…", systemImage: "plus", action: onNewRow)
+            } else {
+                Text(verbatim: "\(repo.rows.count)")
+                    .font(Style.meta)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 5)
+            }
+        }
+        .padding(.leading, 7)
+        .padding(.trailing, 3)
+        .frame(height: Style.headerHeight)
+        .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
+        .onHover { isHovering = $0 }
+        .help(repo.path)
+        .contextMenu { RepoMenuItems(repo: repo, onNewRow: onNewRow, onNewGroup: { isNamingGroup = true }) }
+        .popover(isPresented: $isNamingGroup, arrowEdge: .trailing) {
+            GroupNamePopover(title: "New Group in \(repo.name)", actionTitle: "Create", isPresented: $isNamingGroup) {
+                name in
+                await model.createGroup(in: repo, name: name)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(repo.collapsed ? "Collapsed" : "Expanded")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggle() }
+    }
+
+    /// A folded repo holding the selected row shows the selection, so the sidebar always says where the window is.
+    private var fill: Color {
+        if model.selectionFold == .repo(repo.path) {
+            return isFocused ? Style.focusedSelectionFill : Style.selectionFill
+        }
+        return isHovering ? Style.hoverFill : .clear
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [repo.name, "repo", repo.rows.count == 1 ? "1 row" : "\(repo.rows.count) rows"]
+        if repo.isMissing { parts.append("missing") }
+        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        return parts.joined(separator: ", ")
+    }
+
+    private func toggle() {
+        model.setCollapsed(repo, !repo.collapsed)
+    }
+}
+```
+
 `RepoSection` shows only the header while the repo is folded: no PR warning, rows, groups, or other worktrees.
 It animates on `repo.collapsed` as it does on `repo.groups`.
 `GroupHeaderView.holdsSelection` becomes `model.selectionFold == .group(repoPath: repo.path, name: group.name)`.
@@ -591,26 +895,44 @@ git commit -am "feat: fold a repo or a plugin's section from its header"
 
 - [ ] **Step 1: e2e**
 
-A new step after the groups step, "canopy repo collapse folds a repo":
+A new step after the groups step:
 
 ```bash
-step "canopy repo collapse, group collapse, and their expand fold the sidebar"
-collapsed_of() { "$cli" repo list --json | /usr/bin/python3 -c 'import json, sys; print({r["name"]: r["collapsed"] for r in json.load(sys.stdin)}[sys.argv[1]])' "$1"; }
+step "repo and group collapse fold the sidebar, and selecting a hidden row unfolds them"
+collapsed_of() {
+    "$cli" repo list --json |
+        /usr/bin/python3 -c 'import json, sys; print({r["name"]: r["collapsed"] for r in json.load(sys.stdin)}[sys.argv[1]])' "$1"
+}
+kept_collapsed() {
+    "$cli" group list --repo demo --json |
+        /usr/bin/python3 -c 'import json, sys; print({g["name"]: g["collapsed"] for g in json.load(sys.stdin)}["Kept"])'
+}
 [[ "$(collapsed_of demo)" == False ]] || fail "a new repo is collapsed"
 "$cli" repo collapse demo | grep -qx "Collapsed demo." || fail "repo collapse said something else"
 "$cli" repo collapse demo | grep -qx "Collapsed demo." || fail "repeating repo collapse failed"
 [[ "$(collapsed_of demo)" == True ]] || fail "repo list --json does not show the fold"
+"$cli" repo list | grep -Eq '^demo +' || fail "repo list lost the folded repo"
 "$cli" row list --repo demo | grep -q '^feat/grouped ' || fail "row list left out a folded repo's rows"
+"$cli" group collapse KEPT --repo demo | grep -qx "Collapsed group Kept in demo." || fail "group collapse said something else"
+"$cli" group collapse kept --repo demo >/dev/null || fail "repeating group collapse failed"
+[[ "$(kept_collapsed)" == True ]] || fail "group list --json does not show the fold"
 "$cli" row select feat/grouped --repo demo >/dev/null
-[[ "$(collapsed_of demo)" == False ]] || fail "row select did not unfold the repo"
-"$cli" group collapse kept --repo demo | grep -qx "Collapsed group Kept in demo." || fail "group collapse said something else"
-... group expand, a missing group, repo collapse of an unknown repo (repo_not_found),
-... and after "groups come back after a relaunch", repo collapsed again survives a relaunch.
+[[ "$(collapsed_of demo)" == False && "$(kept_collapsed)" == False ]] || fail "row select did not unfold the repo and group"
+(cd "$work/demo" && "$cli" repo collapse) | grep -qx "Collapsed demo." || fail "repo collapse did not default to the repo it ran in"
+"$cli" repo expand demo | grep -qx "Expanded demo." || fail "repo expand said something else"
+"$cli" group expand kept --repo demo | grep -qx "Expanded group Kept in demo." || fail "group expand said something else"
+if "$cli" repo collapse nope --json > "$work/nofold.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"repo_not_found"' "$work/nofold.json" || fail "repo collapse of an unknown repo did not fail with repo_not_found"
+if "$cli" group collapse Nope --repo demo --json > "$work/nofold.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"group_not_found"' "$work/nofold.json" || fail "group collapse of a missing group did not fail with group_not_found"
+"$cli" log --type cli | grep -q "repo.collapse" || fail "canopy log is missing the repo.collapse call"
+if "$cli" log --since 1m | grep -v "cli.call" | grep -qi "collapse\|expand"; then fail "folding logged an event of its own"; fi
+"$cli" agent-guide | grep -q "canopy repo collapse" || fail "agent-guide is missing repo collapse"
 ```
 
-The plugins step gains `plugin collapse fixture`, its `collapsed` in `plugin list --json`, `plugin new fixture 2 --select` unfolding it, and `plugin collapse nope` failing with `plugin_not_found`.
-The agent-guide check gains `canopy repo collapse`.
-`canopy log --type cli` shows the fold calls, and `canopy log` has no other event from them.
+The ports step folds `demo` and checks `canopy ports --all` still lists the row's port.
+The relaunch step folds `demo` and its Kept group first, and checks both folds come back.
+The plugin relaunch step folds the fixture's section, checks the fold comes back and `plugin collapse nope` fails with `plugin_not_found`, and that `row select` of one of its rows unfolds it.
 
 - [ ] **Step 2: The fixture**
 
