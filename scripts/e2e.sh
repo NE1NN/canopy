@@ -127,6 +127,37 @@ if "$cli" row move feat/grouped --repo demo --json > /dev/null 2>&1; then fail "
 "$cli" group new Kept --repo demo >/dev/null
 "$cli" row move feat/grouped --repo demo --group Kept >/dev/null
 
+step "repo and group collapse fold the sidebar, and selecting a hidden row unfolds them"
+collapsed_of() {
+    "$cli" repo list --json |
+        /usr/bin/python3 -c 'import json, sys; print({r["name"]: r["collapsed"] for r in json.load(sys.stdin)}[sys.argv[1]])' "$1"
+}
+kept_collapsed() {
+    "$cli" group list --repo demo --json |
+        /usr/bin/python3 -c 'import json, sys; print({g["name"]: g["collapsed"] for g in json.load(sys.stdin)}["Kept"])'
+}
+[[ "$(collapsed_of demo)" == False ]] || fail "a new repo is collapsed"
+"$cli" repo collapse demo | grep -qx "Collapsed demo." || fail "repo collapse said something else"
+"$cli" repo collapse demo | grep -qx "Collapsed demo." || fail "repeating repo collapse failed"
+[[ "$(collapsed_of demo)" == True ]] || fail "repo list --json does not show the fold"
+"$cli" repo list | grep -Eq '^demo +' || fail "repo list lost the folded repo"
+"$cli" row list --repo demo | grep -q '^feat/grouped ' || fail "row list left out a folded repo's rows"
+"$cli" group collapse KEPT --repo demo | grep -qx "Collapsed group Kept in demo." || fail "group collapse said something else"
+"$cli" group collapse kept --repo demo >/dev/null || fail "repeating group collapse failed"
+[[ "$(kept_collapsed)" == True ]] || fail "group list --json does not show the fold"
+"$cli" row select feat/grouped --repo demo >/dev/null
+[[ "$(collapsed_of demo)" == False && "$(kept_collapsed)" == False ]] || fail "row select did not unfold the repo and group"
+(cd "$work/demo" && "$cli" repo collapse) | grep -qx "Collapsed demo." || fail "repo collapse did not default to the repo it ran in"
+"$cli" repo expand demo | grep -qx "Expanded demo." || fail "repo expand said something else"
+"$cli" group expand kept --repo demo | grep -qx "Expanded group Kept in demo." || fail "group expand said something else"
+if "$cli" repo collapse nope --json > "$work/nofold.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"repo_not_found"' "$work/nofold.json" || fail "repo collapse of an unknown repo did not fail with repo_not_found"
+if "$cli" group collapse Nope --repo demo --json > "$work/nofold.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"group_not_found"' "$work/nofold.json" || fail "group collapse of a missing group did not fail with group_not_found"
+"$cli" log --type cli | grep -q "repo.collapse" || fail "canopy log is missing the repo.collapse call"
+if "$cli" log --since 1m | grep -v "cli.call" | grep -qi "collapse\|expand"; then fail "folding logged an event of its own"; fi
+"$cli" agent-guide | grep -q "canopy repo collapse" || fail "agent-guide is missing repo collapse"
+
 step "canopy row rm removes the worktree and branch"
 "$cli" row rm feat/e2e --repo demo --delete-branch
 [[ ! -d "$CANOPY_HOME/worktrees/demo/feat-e2e" ]] || fail "worktree folder still exists"
@@ -270,6 +301,9 @@ for _ in $(seq 1 100); do
 done
 [[ -n "$port" ]] || fail "canopy ports did not list the server"
 "$cli" ports --all | grep -q "^$port " || fail "ports --all is missing $port"
+"$cli" repo collapse demo >/dev/null
+"$cli" ports --all | grep -q "^$port " || fail "ports --all left out a folded repo's port"
+"$cli" repo expand demo >/dev/null
 "$cli" ports stop "$port" | grep -q "Stopped perl" || fail "ports stop did not stop the server"
 if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $port is still listed"; fi
 "$cli" term close "$server" >/dev/null
@@ -421,13 +455,17 @@ stop_app() {
     [[ -z "$(app_pid)" ]] || fail "the app did not quit"
 }
 
-step "groups come back after a relaunch"
+step "groups and folds come back after a relaunch"
+"$cli" group collapse Kept --repo demo >/dev/null
+"$cli" repo collapse demo >/dev/null
 stop_app
 "$cli" group list --repo demo --json | /usr/bin/python3 -c '
 import json, sys
 groups = json.load(sys.stdin)
-assert [(g["name"], [r["branch"] for r in g["rows"]]) for g in groups] == [("Kept", ["feat/grouped"])], groups
+assert [(g["name"], [r["branch"] for r in g["rows"]], g["collapsed"]) for g in groups] == [("Kept", ["feat/grouped"], True)], groups
 ' || fail "groups did not survive a relaunch"
+[[ "$(collapsed_of demo)" == True ]] || fail "the repo's fold did not survive a relaunch"
+"$cli" repo expand demo >/dev/null
 
 step "canopy log works while Canopy is not running"
 stop_app
@@ -852,10 +890,23 @@ grep -q '"enabled" : false\|"enabled": false' "$CANOPY_HOME/config.json" || fail
 "$cli" plugin enable fixture >/dev/null
 [[ "$(plugin_rows)" == 2 ]] || fail "the rows did not come back"
 
-step "plugin rows come back after a relaunch"
+step "plugin rows and their section's fold come back after a relaunch"
+fixture_collapsed() {
+    "$cli" plugin list --json |
+        /usr/bin/python3 -c 'import json, sys; print({p["id"]: p["collapsed"] for p in json.load(sys.stdin)}["fixture"])'
+}
+"$cli" plugin collapse fixture | grep -qx "Collapsed Fixture." || fail "plugin collapse said something else"
+"$cli" plugin collapse fixture >/dev/null || fail "repeating plugin collapse failed"
+if "$cli" plugin collapse nope --json > "$work/nofold.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"plugin_not_found"' "$work/nofold.json" || fail "plugin collapse of an unknown plugin did not fail with plugin_not_found"
 stop_app
 launch_fixture_app
 [[ "$(plugin_rows)" == 2 ]] || fail "the rows did not come back after a relaunch"
+[[ "$(fixture_collapsed)" == True ]] || fail "the section's fold did not survive a relaunch"
+"$cli" row select "$beta" >/dev/null
+[[ "$(fixture_collapsed)" == False ]] || fail "row select did not unfold the plugin's section"
+"$cli" plugin collapse fixture >/dev/null
+"$cli" plugin expand fixture | grep -qx "Expanded Fixture." || fail "plugin expand said something else"
 
 step "row rm moves a plugin row's folder aside, and its item's links stay"
 "$cli" row rm "$beta" --json > "$work/removed.json"
