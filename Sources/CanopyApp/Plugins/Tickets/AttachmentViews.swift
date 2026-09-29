@@ -109,7 +109,8 @@ struct RemoteImageView<Fallback: View>: View {
 
 /// Images the panels load. Loaded ones stay in a cache that gives way under memory pressure and past 128 MB, keyed by
 /// address without its query, since Discord signs the same file's link afresh from time to time. A failure is not
-/// kept, so the next view asks again. Downloads stop at 20 MB.
+/// kept, so the next view asks again. A file over 20 MB is never decoded or kept, and a download gives up after 30
+/// seconds.
 @MainActor
 final class RemoteImages {
     enum Phase {
@@ -143,20 +144,11 @@ final class RemoteImages {
         let task =
             loading[key]
             ?? Task<(NSImage, Int)?, Never> { [session] in
-                guard let (bytes, response) = try? await session.bytes(from: url),
-                    (response as? HTTPURLResponse)?.statusCode == 200,
-                    response.expectedContentLength <= Self.largestDownload
+                guard let (data, response) = try? await session.data(from: url),
+                    (response as? HTTPURLResponse)?.statusCode == 200, data.count <= Self.largestDownload,
+                    let image = NSImage(data: data)
                 else { return nil }
-                var data = Data()
-                do {
-                    for try await byte in bytes {
-                        data.append(byte)
-                        if data.count > Self.largestDownload { return nil }
-                    }
-                } catch {
-                    return nil
-                }
-                return NSImage(data: data).map { ($0, data.count) }
+                return (image, data.count)
             }
         loading[key] = task
         let loaded = await task.value
