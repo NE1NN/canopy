@@ -73,11 +73,6 @@ extension TicketsPlugin {
             known[ticket.id] = ticket
         }
     }
-
-    /// Starts what runs while the plugin is on.
-    func startRefreshing(_ context: PluginContext) {
-        tasks.append(Task { _ = try? await self.refreshMe() })
-    }
 }
 
 extension TicketsPlugin {

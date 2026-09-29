@@ -51,6 +51,13 @@ public actor TicketsPlugin: CanopyPlugin {
     var cached: [String: CachedTicket] = [:]
     var tasks: [Task<Void, Never>] = []
     var isLoopAsleep = true
+    var schedule = RefreshSchedule()
+    var watch = RefreshSchedule.Watch(isVisible: false, hasRows: false, selected: nil)
+    var wasFrontmost = false
+    /// The rows' tickets as last seen, so the schedule forgets those whose rows went.
+    var watchedRows: Set<String> = []
+    /// The loop's sleep, which a change in what the plugin watches cancels.
+    var sleeper: Task<Void, Never>?
 
     public init(
         transport: any TicketTransport = URLSessionTicketTransport(), clock: any TicketClock = SystemTicketClock()
@@ -94,6 +101,9 @@ public actor TicketsPlugin: CanopyPlugin {
         generation += 1
         for task in tasks { task.cancel() }
         tasks = []
+        sleeper?.cancel()
+        sleeper = nil
+        watchedRows = []
         connection = nil
         me = nil
         lastSuccess = nil

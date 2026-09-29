@@ -80,6 +80,9 @@ extension TicketsPlugin {
         me = email
         await store.setMe(email)
         await succeeded()
+        // Everything is asked for again at once, rather than after the waits earlier failures left.
+        schedule = RefreshSchedule()
+        sleeper?.cancel()
         return TicketConnectResult(url: address, email: email, web: current.settings.web)
     }
 
