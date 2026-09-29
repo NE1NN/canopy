@@ -22,17 +22,12 @@ struct GroupHeaderView: View {
 
     /// A collapsed group shows the selection for the row it hides, so the sidebar always says where the window is.
     private var holdsSelection: Bool {
-        group.collapsed && model.selectedRow.map { $0.repoPath == repo.path && $0.group == group.name } == true
+        model.selectionFold == .group(repoPath: repo.path, name: group.name)
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .rotationEffect(.degrees(group.collapsed ? 0 : 90))
-                .animation(.easeOut(duration: 0.15), value: group.collapsed)
-                .foregroundStyle(.tertiary)
-                .frame(width: 16)
+            DisclosureChevron(isExpanded: !group.collapsed)
             Text(group.name)
                 .font(Style.body.weight(.medium))
                 .foregroundStyle(.secondary)

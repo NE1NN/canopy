@@ -182,6 +182,21 @@ struct RunningDot: View {
     }
 }
 
+/// The chevron of everything that folds in the sidebar: right while folded, down while open.
+struct DisclosureChevron: View {
+    let isExpanded: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .bold))
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(.easeOut(duration: 0.15), value: isExpanded)
+            .foregroundStyle(.tertiary)
+            .frame(width: 16)
+            .accessibilityHidden(true)
+    }
+}
+
 /// A small outlined label, such as "missing" or the tool that made a worktree.
 struct TagView: View {
     let text: String
