@@ -59,6 +59,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case pluginOff(String, id: String)
     /// The path of the row the item already has.
     case itemHasRow(String)
+    case rowBusy(String, programs: [String])
+    case pluginBusy(String, id: String, programs: [String])
+    case trashFailed(String, reason: String)
+    case folderFailed(String, reason: String)
     case git(GitError)
 
     public var code: String {
@@ -116,6 +120,10 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .pluginNotFound: "plugin_not_found"
         case .pluginOff: "plugin_off"
         case .itemHasRow: "item_has_row"
+        case .rowBusy: "row_busy"
+        case .pluginBusy: "plugin_busy"
+        case .trashFailed: "trash_failed"
+        case .folderFailed: "folder_failed"
         case .git: "git_failed"
         }
     }
@@ -209,7 +217,25 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .pluginOff(let name, let id): "\(name) is off. Run `canopy plugin enable \(id)` to turn it on."
         case .itemHasRow(let path):
             "That item already has a row at \(path). Run `canopy row select \(path)` to show it."
+        case .rowBusy(let row, let programs):
+            "\(Self.list(programs)) \(programs.count == 1 ? "is" : "are") still running in \(row). "
+                + "Pass --force to remove the row anyway."
+        case .pluginBusy(let name, _, let programs):
+            "\(Self.list(programs)) \(programs.count == 1 ? "is" : "are") still running in \(name)'s rows. "
+                + "Pass --force to turn it off anyway, which closes them."
+        case .trashFailed(let path, let reason): "Could not move \(path) to the Trash: \(reason)"
+        case .folderFailed(let path, let reason): "Could not make \(path): \(reason)"
         case .git(let error): error.description
+        }
+    }
+
+    /// "claude", "claude and bun", or "claude, bun, and sleep".
+    static func list(_ names: [String]) -> String {
+        switch names.count {
+        case 0: "A program"
+        case 1: names[0]
+        case 2: "\(names[0]) and \(names[1])"
+        default: names.dropLast().joined(separator: ", ") + ", and " + names.last!
         }
     }
 }

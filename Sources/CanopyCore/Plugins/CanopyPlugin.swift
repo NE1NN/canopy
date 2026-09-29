@@ -118,3 +118,48 @@ public struct PluginCall: Sendable {
         try ControlRequest(method: method, params: params).decodeParams(type)
     }
 }
+
+/// A plugin built into Canopy. It does nothing until config.json turns it on, and reaches Canopy only through the
+/// `PluginContext` the host hands it.
+public protocol CanopyPlugin: Sendable {
+    var info: PluginInfo { get }
+    var filters: PluginFilters { get }
+    /// Control methods it answers, each its id and a dot first, such as `tickets.list`. They reach it while it is off
+    /// too, so a method such as `tickets.connect` can turn it on.
+    var methods: Set<String> { get }
+    /// Those of `methods` that only read, which the activity log leaves out.
+    var readOnlyMethods: Set<String> { get }
+
+    /// Called when it turns on, at launch or later. A failure shows as its section's warning.
+    func start(_ context: PluginContext) async throws
+    /// Called when it turns off. It must stop its timers and network calls.
+    func stop(_ context: PluginContext) async
+    /// One line for `canopy plugin list`, such as "connected as me@example.com, updated 20 s ago".
+    func status(_ context: PluginContext) async -> String?
+    func items(matching query: PluginQuery, context: PluginContext) async throws -> [PluginItem]
+    /// The item a reference an agent typed names, such as `853` for a ticket.
+    func resolve(_ reference: String, context: PluginContext) async throws -> String
+    /// A new row's title and folder name, or an error such as `ticket_not_found`, before anything is made.
+    func seed(for item: String, context: PluginContext) async throws -> PluginRowSeed
+    /// Writes the row's files into its folder, which exists when this is called.
+    func fill(_ row: PluginRow, context: PluginContext) async throws
+    /// The picker footer's command for an item without a row, or nil for `canopy plugin new <id> <item> --select`.
+    func pickerCommand(for item: PluginItem) -> String?
+    func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue
+}
+
+extension CanopyPlugin {
+    public var filters: PluginFilters { .none }
+    public var methods: Set<String> { [] }
+    public var readOnlyMethods: Set<String> { [] }
+
+    public func stop(_ context: PluginContext) async {}
+
+    public func status(_ context: PluginContext) async -> String? { nil }
+
+    public func pickerCommand(for item: PluginItem) -> String? { nil }
+
+    public func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue {
+        throw ControlError(code: "unknown_method", message: "Unknown method \(call.method)")
+    }
+}

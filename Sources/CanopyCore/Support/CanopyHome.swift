@@ -38,6 +38,8 @@ public struct CanopyHome: Sendable, Equatable {
     public var worktreesRoot: URL { root.appending(path: "worktrees") }
     /// Repos cloned by Canopy, at repos/<owner>/<name>.
     public var reposRoot: URL { root.appending(path: "repos") }
+    /// Plugin rows' folders, at plugins/<plugin>/<folder>.
+    public var pluginsRoot: URL { root.appending(path: "plugins") }
     /// One JSON Lines file of activity events per local day.
     public var activityFolder: URL { root.appending(path: "activity") }
     /// ZDOTDIR for zsh terminals while command logging is on.

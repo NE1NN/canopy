@@ -30,6 +30,10 @@ public enum ActivityType {
     public static let termExited = "term.exited"
     public static let termCommand = "term.command"
     public static let cliCall = "cli.call"
+    public static let pluginEnabled = "plugin.enabled"
+    public static let pluginDisabled = "plugin.disabled"
+    public static let pluginRowCreated = "plugin.row.created"
+    public static let pluginRowRemoved = "plugin.row.removed"
 
     /// `agent.working`, `agent.waiting`, and `agent.done`, or `agent.cleared` when the state goes to none.
     public static func agent(_ state: AgentState) -> String {
