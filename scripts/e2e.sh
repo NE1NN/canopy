@@ -744,8 +744,8 @@ launch_fixture_app
 "$cli" plugin list --json | /usr/bin/python3 -c '
 import json, sys
 plugins = json.load(sys.stdin)
-assert [(p["id"], p["on"]) for p in plugins] == [("fixture", False)], plugins
-' || fail "plugin list does not show the fixture off"
+assert [(p["id"], p["on"]) for p in plugins] == [("tickets", False), ("fixture", False)], plugins
+' || fail "plugin list does not show Tickets and the fixture off"
 "$cli" plugin enable fixture | grep -qx "Turned on Fixture." || fail "plugin enable said something else"
 /usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY' || fail "plugin enable did not keep config.json's other keys"
 import json, sys
@@ -877,6 +877,196 @@ assert types == {"plugin.enabled", "plugin.disabled", "plugin.row.created", "plu
 assert all("repo" not in e for e in events), events
 ' || fail "canopy log is missing plugin events"
 "$cli" agent-guide | grep -q "canopy plugin new" || fail "agent-guide is missing plugin rows"
+
+step "tickets: a stand-in ticket-manager, and Tickets off until it is connected"
+# The stand-in serves ticket-manager's own response fixtures on this Mac. Nothing here reaches a real deployment.
+tm="$work/tm"
+/usr/bin/python3 scripts/ticket-manager-stand-in.py seed --fixtures Tests/CanopyTicketsTests/Fixtures/canopy-api --out "$tm"
+tm_port=0
+start_tm() { # token
+    rm -f "$tm/port"
+    (exec /usr/bin/python3 scripts/ticket-manager-stand-in.py serve --data "$tm" --token "$1" --not-staff-token gone \
+        --port "$tm_port" --port-file "$tm/port" --log "$tm/requests.log" --lifetime 1200 </dev/null >/dev/null 2>&1) &
+    tm_pid=$!
+    for _ in $(seq 1 100); do
+        [[ -f "$tm/port" ]] && break
+        sleep 0.1
+    done
+    [[ -f "$tm/port" ]] || fail "the stand-in ticket-manager did not start"
+    tm_port=$(cat "$tm/port")
+}
+stop_tm() {
+    kill "$tm_pid" 2>/dev/null || true
+    wait "$tm_pid" 2>/dev/null || true
+}
+tm_token="e2e-token-$RANDOM$RANDOM"
+start_tm "$tm_token"
+tm_url="http://127.0.0.1:$tm_port"
+tickets_service=com.ne1nn.Canopy.dev.plugins.tickets
+has_ticket_token() { security find-generic-password -s "$tickets_service" -a "token@$CANOPY_HOME" >/dev/null 2>&1; }
+# Disconnecting through the app deletes this home's Keychain entry, however the run ends.
+forget_tickets() {
+    [[ -n "$(app_pid)" ]] && "$cli" ticket disconnect --force >/dev/null 2>&1 || true
+    stop_tm
+}
+trap 'forget_tickets; cleanup' EXIT
+id853=0000000000000000000010001tickets
+if "$cli" ticket list --json > "$work/off.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"plugin_off"' "$work/off.json" && grep -q 'canopy ticket connect <url>' "$work/off.json" ||
+    fail "ticket list while off did not fail with plugin_off and the connect command"
+
+step "a token ticket-manager rejects saves nothing"
+if printf 'wrong-token' | "$cli" ticket connect "$tm_url" --json > "$work/rejected.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"token_rejected"' "$work/rejected.json" || fail "a wrong token did not fail with token_rejected"
+has_ticket_token && fail "a rejected token reached the Keychain"
+/usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY' || fail "a rejected token wrote config.json"
+import json, sys
+assert "tickets" not in json.load(open(sys.argv[1])).get("plugins", {})
+PY
+
+step "connecting checks the token, keeps it in the Keychain for this home, and turns Tickets on"
+printf '%s\n' "$tm_token" | "$cli" ticket connect "$tm_url" | grep -qx "Connected to $tm_url as hindie@example.com." ||
+    fail "ticket connect said something else"
+has_ticket_token || fail "the token is not in the Keychain for this home"
+/usr/bin/python3 - "$CANOPY_HOME/config.json" "$tm_url" <<'PY' || fail "config.json does not turn Tickets on"
+import json, sys
+assert json.load(open(sys.argv[1]))["plugins"]["tickets"] == {"url": sys.argv[2]}
+PY
+"$cli" log --type cli.call --json > "$work/calls.json"
+grep -q "$tm_token" "$work/calls.json" && fail "the token reached the activity log"
+grep -q '"tickets.connect"' "$work/calls.json" || fail "tickets.connect is not in the log"
+"$cli" plugin list | grep -Eq "^tickets +yes +0 +connected as hindie@example.com to $tm_url" ||
+    fail "plugin list printed $("$cli" plugin list)"
+
+step "ticket list sorts waiting customers first, and filters"
+numbers() { "$cli" ticket list "$@" --json | /usr/bin/python3 -c 'import json, sys; print(" ".join(e["ticket"]["number"] for e in json.load(sys.stdin)))'; }
+[[ "$(numbers)" == "0853 0850 0849" ]] || fail "ticket list gave $(numbers)"
+[[ "$(numbers --mine)" == 0853 ]] || fail "--mine gave $(numbers --mine)"
+[[ "$(numbers --unowned)" == 0850 ]] || fail "--unowned gave $(numbers --unowned)"
+[[ "$(numbers --waiting)" == 0853 ]] || fail "--waiting gave $(numbers --waiting)"
+[[ "$(numbers --query baba)" == 0849 ]] || fail "--query baba gave $(numbers --query baba)"
+[[ "$(numbers --closed)" == "0848 0801" ]] || fail "--closed gave $(numbers --closed)"
+"$cli" ticket list | head -1 | grep -Eq '^0853-sameergoyal +waiting [0-9a-z]+ +HI$' ||
+    fail "ticket list printed $("$cli" ticket list | head -1)"
+
+step "ticket new opens a filled row, whose terminal knows its ticket and no repo"
+"$cli" ticket new 853 --run 'printf "%s %s %s\n" "$CANOPY_PLUGIN" "$CANOPY_ITEM" "${CANOPY_REPO-none}" > vars.txt' \
+    --json > "$work/t853.json"
+t853="$(field "$work/t853.json" row.path)"
+[[ "$t853" == "$home_path/plugins/tickets/0853-sameergoyal" ]] || fail "the ticket's row is at $t853"
+head -1 "$t853/ticket.md" | grep -qx "# Handover: ticket-0853-sameergoyal" || fail "ticket.md has no handover"
+tail -1 "$t853/ticket.md" | grep -q 'canopy ticket show --md' || fail "ticket.md does not say how to get the latest"
+[[ "$(field "$t853/ticket.json" ticket.number)" == 0853 ]] || fail "ticket.json is not the ticket's response"
+for _ in $(seq 1 100); do
+    [[ "$(cat "$t853/vars.txt" 2>/dev/null)" == "tickets $id853 none" ]] && break
+    sleep 0.1
+done
+[[ "$(cat "$t853/vars.txt" 2>/dev/null)" == "tickets $id853 none" ]] || fail "the row's terminal had $(cat "$t853/vars.txt")"
+if "$cli" ticket new 0853 --json > "$work/again853.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"ticket_has_row"' "$work/again853.json" && grep -q "$t853" "$work/again853.json" ||
+    fail "a second ticket new did not fail with ticket_has_row naming the row"
+if "$cli" ticket new 999 --json > "$work/t999.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"ticket_not_found"' "$work/t999.json" || fail "an unknown ticket did not fail with ticket_not_found"
+
+step "ticket show prints the ticket, its handover, and JSON, from its row too"
+"$cli" ticket show 853 > "$work/show.txt"
+head -1 "$work/show.txt" | grep -q '^ticket-0853-sameergoyal · open · sameergoyal · owner HI · waiting ' ||
+    fail "ticket show began $(head -1 "$work/show.txt")"
+for line in 'Welcome @Sameer Goyal! Support will be with you shortly.' '^Problems$' '^Draft · ok' '^Notes$'; do
+    grep -q "$line" "$work/show.txt" || fail "ticket show has no $line"
+done
+(cd "$t853" && "$cli" ticket show --md) | head -1 | grep -qx "# Handover: ticket-0853-sameergoyal" ||
+    fail "ticket show --md in the row did not print its handover"
+"$cli" ticket show 853 --json > "$work/show.json"
+[[ "$(field "$work/show.json" ticket.messages.1.attachments.0.filename)" == screenshot.png ]] ||
+    fail "ticket show --json does not carry the messages"
+
+step "row new --ticket links a fix row, which ticket show lists"
+"$cli" row new fix/shadowban --repo demo --ticket 853 --no-setup --json > "$work/fix.json"
+[[ "$(field "$work/fix.json" row.link.plugin) $(field "$work/fix.json" row.link.item)" == "tickets $id853" ]] ||
+    fail "row new --ticket did not link the row"
+"$cli" ticket show 853 --json | /usr/bin/python3 -c '
+import json, sys
+assert [r["branch"] for r in json.load(sys.stdin)["fixRows"]] == ["fix/shadowban"]
+' || fail "ticket show does not list the fix row"
+
+step "config.json's run starts new ticket rows"
+/usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1]))
+config["plugins"]["tickets"]["run"] = "printf ran > run.txt"
+json.dump(config, open(sys.argv[1], "w"), indent=2)
+PY
+"$cli" plugin enable tickets >/dev/null
+"$cli" ticket new 849 --json > "$work/t849.json"
+t849="$(field "$work/t849.json" row.path)"
+for _ in $(seq 1 100); do
+    [[ "$(cat "$t849/run.txt" 2>/dev/null)" == ran ]] && break
+    sleep 0.1
+done
+[[ "$(cat "$t849/run.txt" 2>/dev/null)" == ran ]] || fail "config.json's run did not start in the new row"
+
+step "without ticket-manager, list fails and show prints the saved copy with its age"
+stop_tm
+if "$cli" ticket list --json > "$work/unreachable.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"tickets_unreachable"' "$work/unreachable.json" || fail "ticket list did not fail with tickets_unreachable"
+"$cli" ticket show 853 --refresh > "$work/stale.txt" 2> "$work/stale.err" || fail "ticket show failed without ticket-manager"
+grep -q "^note: Could not reach ticket-manager at $tm_url" "$work/stale.err" && grep -q 'This copy is from' "$work/stale.err" ||
+    fail "ticket show said $(cat "$work/stale.err")"
+head -1 "$work/stale.txt" | grep -q '^ticket-0853-sameergoyal' || fail "ticket show printed no saved copy"
+"$cli" plugin list | grep -q "Could not reach ticket-manager" || fail "plugin list does not say it cannot reach it"
+start_tm "$tm_token"
+[[ "http://127.0.0.1:$tm_port" == "$tm_url" ]] || fail "the stand-in came back on another port"
+"$cli" ticket list >/dev/null || fail "ticket list failed once ticket-manager was back"
+
+step "a rejected token becomes the section's warning, and a success clears it"
+stop_tm
+start_tm another-token
+if "$cli" ticket list --json > "$work/rejected2.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"token_rejected"' "$work/rejected2.json" || fail "a revoked token did not fail with token_rejected"
+"$cli" plugin list | grep -q "rejected the token" || fail "plugin list shows no warning"
+stop_tm
+start_tm "$tm_token"
+"$cli" ticket list >/dev/null
+"$cli" plugin list | grep -q "rejected the token" && fail "the warning stayed after a success"
+
+step "a ticket ticket-manager no longer has shows its row missing"
+/usr/bin/python3 - "$tm/tickets.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+data["tickets"] = [t for t in data["tickets"] if t["number"] != "0849"]
+json.dump(data, open(sys.argv[1], "w"))
+PY
+if "$cli" ticket show 849 --refresh --json > "$work/gone.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"ticket_not_found"' "$work/gone.json" || fail "a ticket gone from ticket-manager was not ticket_not_found"
+"$cli" row list | grep -q '^0849-babamachine (missing) ' || fail "row list does not show 0849 missing"
+
+step "ticket select and ticket rm act on the ticket's row, and fix rows keep their link"
+"$cli" ticket select 853 | grep -qx "Selected 0853-sameergoyal." || fail "ticket select said something else"
+"$cli" ticket rm 849 --force >/dev/null
+"$cli" ticket rm 853 --json > "$work/rm853.json"
+trashed="$(field "$work/rm853.json" trashedTo)"
+[[ "$trashed" == "$work/trash/"* && -f "$trashed/ticket.md" ]] || fail "the ticket's folder went to $trashed"
+"$cli" row list --repo demo --json | /usr/bin/python3 -c '
+import json, sys
+rows = {r["branch"]: r for r in json.load(sys.stdin)}
+assert rows["fix/shadowban"]["link"] == {"plugin": "tickets", "item": sys.argv[1]}, rows["fix/shadowban"]
+' "$id853" || fail "the fix row lost its link"
+
+step "the agent guide has Tickets while it is on"
+"$cli" agent-guide | grep -q "canopy ticket list --mine --waiting" || fail "agent-guide has no Tickets section"
+
+step "disconnect turns Tickets off and deletes the token"
+"$cli" ticket disconnect | grep -qx "Disconnected Tickets. Its rows stay for when you connect again." ||
+    fail "ticket disconnect said something else"
+has_ticket_token && fail "the token is still in the Keychain"
+"$cli" agent-guide | grep -q "canopy ticket list" && fail "agent-guide still has the Tickets section"
+if "$cli" ticket list --json > "$work/off2.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"plugin_off"' "$work/off2.json" || fail "ticket list after disconnect did not fail with plugin_off"
+stop_tm
+trap cleanup EXIT
 
 echo
 echo "e2e passed"
