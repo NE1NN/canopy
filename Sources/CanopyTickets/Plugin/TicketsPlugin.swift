@@ -55,6 +55,8 @@ public actor TicketsPlugin: CanopyPlugin {
     var schedule = RefreshSchedule()
     var watch = RefreshSchedule.Watch(isVisible: false, hasRows: false, selected: nil)
     var wasFrontmost = false
+    /// The host's state the plugin last took in, so tests know when it has caught up.
+    var handledState: PluginState?
     /// The rows' tickets as last seen, so the schedule forgets those whose rows went.
     var watchedRows: Set<String> = []
     /// The loop's sleep, which a change in what the plugin watches cancels.
@@ -71,8 +73,8 @@ public actor TicketsPlugin: CanopyPlugin {
     var isIdle: Bool { requestsInFlight == 0 && isLoopAsleep }
 
     /// Idle, having taken in the state the host shows now, for tests that move the clock.
-    func hasSettled(on expected: RefreshSchedule.Watch) -> Bool {
-        isIdle && (connection == nil || watch == expected)
+    func hasSettled(on expected: PluginState) -> Bool {
+        isIdle && (connection == nil || handledState == expected)
     }
 
     // MARK: Turning on and off
@@ -110,6 +112,7 @@ public actor TicketsPlugin: CanopyPlugin {
         sleeper?.cancel()
         sleeper = nil
         watchedRows = []
+        handledState = nil
         connection = nil
         me = nil
         lastSuccess = nil

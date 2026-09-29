@@ -9,6 +9,7 @@ extension TicketsPlugin {
         for id in malformed { schedule.exclude(id) }
         watch = RefreshSchedule.Watch(isVisible: false, hasRows: false, selected: nil)
         wasFrontmost = false
+        handledState = nil
         isLoopAsleep = false
         tasks.append(
             Task {
@@ -24,6 +25,7 @@ extension TicketsPlugin {
     /// and wakes the loop.
     func stateChanged(_ state: PluginState, generation: Int) {
         guard generation == self.generation else { return }
+        handledState = state
         let selected = state.selectedRow?.item
         if let selected, selected != watch.selected || (state.viewing.isFrontmost && !wasFrontmost) {
             schedule.nudge(selected)

@@ -167,10 +167,7 @@ final class TicketsHarness {
     func settle() async {
         _ = await eventually {
             guard let state = self.host.context("tickets")?.state else { return true }
-            let expected = RefreshSchedule.Watch(
-                isVisible: state.viewing.isWindowVisible, hasRows: !state.rows.isEmpty,
-                selected: state.selectedRow?.item)
-            return await self.plugin.hasSettled(on: expected)
+            return await self.plugin.hasSettled(on: state)
         }
     }
 }
