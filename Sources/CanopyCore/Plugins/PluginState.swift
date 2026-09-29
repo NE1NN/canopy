@@ -18,11 +18,16 @@ public struct PluginEntry: Codable, Sendable, Equatable {
     /// The item each linked worktree row is for, keyed by the worktree row's path.
     public var links: [String: String]
     public var panelWidth: Double?
+    /// Whether the sidebar folds the plugin's section under its header.
+    public var collapsed: Bool
 
-    public init(rows: [PluginRowEntry] = [], links: [String: String] = [:], panelWidth: Double? = nil) {
+    public init(
+        rows: [PluginRowEntry] = [], links: [String: String] = [:], panelWidth: Double? = nil, collapsed: Bool = false
+    ) {
         self.rows = rows
         self.links = links
         self.panelWidth = panelWidth
+        self.collapsed = collapsed
     }
 
     /// A row or a field that cannot be read is dropped on its own, so the rest still loads.
@@ -32,5 +37,6 @@ public struct PluginEntry: Codable, Sendable, Equatable {
         self.rows = rows?.compactMap(\.value) ?? []
         links = (try? container.decodeIfPresent([String: String].self, forKey: .links)) ?? [:]
         panelWidth = try? container.decodeIfPresent(Double.self, forKey: .panelWidth)
+        collapsed = (try? container.decodeIfPresent(Bool.self, forKey: .collapsed)) ?? false
     }
 }

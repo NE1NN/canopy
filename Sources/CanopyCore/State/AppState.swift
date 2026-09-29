@@ -20,10 +20,12 @@ public struct RepoEntry: Codable, Sendable, Equatable {
     /// PRs keyed by local branch, for branches whose name cannot find their PR: a fork's, or one checked out under
     /// another name.
     public var prBindings: [String: PRBinding]
+    /// Whether the sidebar folds the repo under its header.
+    public var collapsed: Bool
 
     public init(
         path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = [],
-        prBindings: [String: PRBinding] = [:]
+        prBindings: [String: PRBinding] = [:], collapsed: Bool = false
     ) {
         self.path = path
         self.dirName = dirName
@@ -31,6 +33,7 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         self.rowOrder = rowOrder
         self.groups = groups
         self.prBindings = prBindings
+        self.collapsed = collapsed
     }
 
     public init(from decoder: any Decoder) throws {
@@ -41,6 +44,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         rowOrder = try container.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
         // Bindings that cannot be read only cost fork rows their badges, so the repo still loads.
         prBindings = (try? container.decodeIfPresent([String: PRBinding].self, forKey: .prBindings)) ?? [:]
+        // A fold that cannot be read leaves the repo expanded rather than failing to load it.
+        collapsed = (try? container.decodeIfPresent(Bool.self, forKey: .collapsed)) ?? false
         // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
         let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
         groups = decoded?.compactMap(\.value) ?? []

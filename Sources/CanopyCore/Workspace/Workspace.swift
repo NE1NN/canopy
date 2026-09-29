@@ -118,6 +118,7 @@ public actor Workspace {
         let repos = state.repos.map { entry in
             var repo = repoSnapshots[entry.path] ?? RepoSnapshot(path: entry.path, name: "")
             repo.name = names[entry.path] ?? entry.dirName
+            repo.collapsed = entry.collapsed
             pullRequests[entry.path]?.apply(to: &repo)
             if !links.isEmpty {
                 for index in repo.rows.indices {

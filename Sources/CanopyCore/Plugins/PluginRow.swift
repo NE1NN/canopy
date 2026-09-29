@@ -128,15 +128,19 @@ public struct PluginSection: Sendable, Equatable, Identifiable {
     /// In sidebar order.
     public var rows: [PluginRow]
     public var panelWidth: Double?
+    /// Whether the sidebar folds the section under its header.
+    public var collapsed: Bool
 
     public init(
-        info: PluginInfo, isOn: Bool, warning: String? = nil, rows: [PluginRow] = [], panelWidth: Double? = nil
+        info: PluginInfo, isOn: Bool, warning: String? = nil, rows: [PluginRow] = [], panelWidth: Double? = nil,
+        collapsed: Bool = false
     ) {
         self.info = info
         self.isOn = isOn
         self.warning = warning
         self.rows = rows
         self.panelWidth = panelWidth
+        self.collapsed = collapsed
     }
 
     public var id: String { info.id }

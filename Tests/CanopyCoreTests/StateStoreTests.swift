@@ -38,6 +38,25 @@ struct StateStoreTests {
         #expect(StateStore(url: url).load() == .loaded(AppState(repos: [RepoEntry(path: "/r", dirName: "r")])))
     }
 
+    @Test func reposAndPluginsDecodeTheirFold() throws {
+        let json = """
+            {"version": 1, "repos": [
+                {"path": "/a", "dirName": "a", "collapsed": true},
+                {"path": "/b", "dirName": "b"},
+                {"path": "/c", "dirName": "c", "collapsed": "yes", "rowOrder": ["/c/x"]}
+            ], "plugins": {"fixture": {"rows": [], "collapsed": true}, "tickets": {"collapsed": 3}}}
+            """
+
+        let state = try JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+
+        // A fold that cannot be read leaves its repo or plugin expanded, with everything else it holds.
+        #expect(state.repos.map(\.collapsed) == [true, false, false])
+        #expect(state.repos[2].rowOrder == ["/c/x"])
+        #expect(state.plugins["fixture"]?.collapsed == true)
+        #expect(state.plugins["tickets"]?.collapsed == false)
+        #expect(try JSONDecoder().decode(AppState.self, from: try JSONEncoder().encode(state)) == state)
+    }
+
     @Test func groupsRoundTrip() throws {
         let dir = try TempDir()
         let store = StateStore(url: URL(fileURLWithPath: dir.sub("state.json")))
