@@ -1,0 +1,53 @@
+{
+  "tickets": [
+    {
+      "customer": "quietcustomer",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000850",
+      "id": "0000000000000000000010003tickets",
+      "lastActivityAt": 1790026400000,
+      "name": "ticket-0850-quietcustomer",
+      "number": "0850",
+      "openedAt": 1790026400000,
+      "owner": null,
+      "staleHours": null,
+      "status": "open",
+      "waiting": false
+    },
+    {
+      "customer": "babamachine",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000849",
+      "id": "0000000000000000000010002tickets",
+      "lastActivityAt": 1790022800000,
+      "name": "ticket-0849-babamachine",
+      "number": "0849",
+      "openedAt": 1789986800000,
+      "owner": {
+        "at": 1790022800000,
+        "email": "anish@example.com",
+        "initials": "AN",
+        "via": "reply"
+      },
+      "staleHours": null,
+      "status": "open",
+      "waiting": false
+    },
+    {
+      "customer": "sameergoyal",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853",
+      "id": "0000000000000000000010001tickets",
+      "lastActivityAt": 1790004800000,
+      "name": "ticket-0853-sameergoyal",
+      "number": "0853",
+      "openedAt": 1789922000000,
+      "owner": {
+        "at": 1790001200000,
+        "email": "hindie@example.com",
+        "initials": "HI",
+        "via": "action"
+      },
+      "staleHours": 7,
+      "status": "open",
+      "waiting": true
+    }
+  ]
+}

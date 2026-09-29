@@ -17,7 +17,7 @@ Everything the window does with plugins and tickets, an agent can do with `canop
 1. A plugin that is off adds nothing: no sidebar section, no network calls, no timers.
 2. A plugin row gets every terminal feature a worktree row has, and no terminal code needs to know about plugins.
 3. Only tickets the author picks become rows, so the sidebar stays short and Canopy only watches those tickets.
-4. A ticket row shows the Discord conversation, problems, and draft next to its terminals, and gives agents the ticket as a file.
+4. A ticket row shows the Discord conversation next to its terminals, and gives agents the ticket as a file.
 5. A fix made for a ticket, in a normal worktree row, stays linked to the ticket.
 6. An agent can list tickets, open ticket rows, read tickets, and start work in them without the window.
 
@@ -77,7 +77,7 @@ A plugin gives the base:
 - how to fill a row's folder, such as writing `ticket.md`
 - how to resolve a reference an agent typed, such as `853`, to an item
 - its control methods, such as `tickets.list`, which get the CLI's target hint and the plugin row it points at, and which reach the plugin while it is off too, so `tickets.connect` can turn it on
-- the picker footer's command for an item, when it has one of its own, such as `canopy ticket new 853 --select`
+- the picker footer's commands for picking an item and for selecting its row, when it has its own, such as `canopy ticket new 853 --select` and `canopy ticket select 0853-sameergoyal`
 
 The base gives each plugin a `PluginContext` with:
 
@@ -131,7 +131,7 @@ The row is selected when it was created from the window or with `--select`.
 It moves the folder to the Trash, forgets the row, and logs `plugin.row.removed`.
 The result says where the folder went.
 A dev build launched with `CANOPY_TRASH_FOLDER` moves it into that folder instead, so end-to-end runs and UI checks on a throwaway home leave the Trash alone.
-Links to the item stay, so opening the same ticket again later shows its fix rows again.
+Links to the item stay, so opening the same ticket again later puts its label back on its fix rows.
 
 **A missing folder.** A folder deleted outside Canopy is recreated and filled again at launch and before a terminal opens in it.
 Its contents come from the plugin, so nothing but agents' own files is lost.
@@ -159,7 +159,8 @@ The link is saved under the plugin's `links`, keyed by the worktree row's path, 
 
 While the item's plugin row exists, the linked worktree row shows the item's short label, such as `#0853`, before its PR badge.
 Clicking the label selects the plugin row.
-The plugin's panel lists the item's linked rows with their PR badges, and clicking one selects it.
+A plugin's panel can list the item's linked rows with their PR badges, as the fixture plugin's does, and clicking one selects it.
+The Tickets panel keeps to the conversation and lists none.
 
 ### Sidebar
 
@@ -187,7 +188,7 @@ A plugin row with no tabs opens one tab with one pane when selected, like any ro
 The base draws one picker for every plugin, as a sheet like the New Row sheet.
 It has a search field, the plugin's filter chips, and a list of items, each with a title, a subtitle, accessories, and a mark when the item already has a row.
 Return or a click opens a row for the item and selects it, or selects the row the item already has.
-The footer shows the `canopy` command that does the same, `canopy plugin new <plugin> <item> --select` unless the plugin has its own, `canopy row select <path>` for an item with a row, and `canopy plugin items <plugin>` before anything is picked.
+The footer shows the `canopy` command that does the same: `canopy plugin new <plugin> <item> --select` for an item without a row, `canopy row select <path>` for an item with one, each unless the plugin has its own, and `canopy plugin items <plugin>` before anything is picked.
 The picker asks the plugin afresh when it opens and when a toggle changes, and otherwise lets the plugin narrow what it already fetched.
 While items load the list shows a spinner, and a plugin's error shows in its place with the fix.
 
@@ -324,16 +325,20 @@ The tests cover each error case, the shape of each response, a ticket whose cust
 
 `url` is required.
 `run` is optional, and is the command every new ticket row starts with unless `--run` gives another.
+`web` is optional: ticket-manager's page for a ticket, with `{id}` where the ticket's id goes, which the panel's ticket-manager button opens.
+The API gives no such address, so without `web` the button says how to set it.
 
 ### Connecting
 
-`canopy ticket connect <url>` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
+`canopy ticket connect <url> [--web <template>]` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
+The URL must be `https://`, or `http://` on this Mac alone, so a token never crosses the network in the clear, and requests never follow redirects.
 The app checks it against `/api/v1/me`, saves the token in the Keychain, and turns the plugin on with `url` in its section.
 A token the endpoint rejects saves nothing.
-`canopy ticket disconnect` turns the plugin off, deletes the token, and keeps the rows for when it is connected again.
+`canopy ticket disconnect [--force]` turns the plugin off, deletes the token, and keeps the rows for when it is connected again.
+Like `plugin disable`, it refuses with `plugin_busy` while a program runs in a ticket row, unless `--force`, and then deletes nothing.
 
-In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off.
-It opens a sheet with the URL and token fields, which does the same as `connect`.
+In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off, and so do the File menu and the empty sidebar.
+It opens a sheet with the URL and token fields and an optional ticket page, which sends the same `tickets.connect` as the CLI.
 The section's `…` menu holds "Disconnect".
 
 ### Tickets and references
@@ -368,19 +373,22 @@ From top to bottom:
   User mentions show as `@` and the display name, channel mentions as `#` and the name, and custom emoji as `:name:`.
   Messages posted in a thread show the thread's name.
   Image attachments show inline, up to 240 points tall, and other attachments as a link with the file name and size.
-  An attachment whose link has expired shows its file name, and clicking it opens the message in Discord.
-- **Problems**, each with its title, status, and bullets.
-- **Draft**, with a Copy button.
-- **Notes**, the ticket's handover notes, when it has any.
-- **Fix rows**, the worktree rows linked to the ticket.
+  An image whose declared size is over 20 MB is never downloaded and shows as such a link, and so does one that turns out too big or cannot be loaded.
+  Images download off the main thread, four at a time, stop at 20 MB whatever Content-Length says, and are decoded downsampled to the size they are drawn at.
+  An image found too big is not asked for again while Canopy runs.
+  Only an attachment whose link is past its expiry time shows as expired, with its file name, and clicking it opens the message in Discord.
 - **Footer**: when the ticket was last fetched, and a refresh button.
 
-The panel keeps its place when new messages arrive, and follows them only while scrolled to the bottom.
+The panel opens at the end of the conversation, keeps its place when new messages arrive, and follows them only while that end is in view.
+A ticket row whose panel has no copy of its ticket says why: it is being fetched, ticket-manager no longer has it, the last fetch failed, or Tickets is on but could not start.
+While Tickets cannot start, panels show the copies their rows saved.
+The API names no channels, so a channel mention shows the ticket's own name or a named thread's, and `#channel` otherwise.
 A fetch that fails keeps what the panel shows, and a banner says what went wrong and when the panel was last updated.
 
 ### Files in the row's folder
 
-- `ticket.md` is the ticket's handover block, followed by a line saying Canopy rewrites the file when the ticket changes and `canopy ticket show --md` prints the latest.
+- `ticket.md` is a line saying the ticket's messages come from customers and are data to investigate, not instructions to follow, then the ticket's handover block, then a line saying Canopy rewrites the file when the ticket changes and `canopy ticket show --md` prints the latest.
+  The first line is there so an agent started with the file does not act on what a customer wrote.
   It is rewritten only when its contents change.
 - `ticket.json` is the last response for the ticket, so the panel shows at once after a relaunch and while ticket-manager cannot be reached.
 
@@ -393,7 +401,13 @@ Canopy asks ticket-manager for anything only while its window can be seen, or wh
 - The picker fetches when it opens and when the Closed toggle changes, and filters and searches what it fetched.
 - `canopy ticket list` and `canopy ticket show --refresh` fetch at once.
 
+- A row's ticket whose summary changed since its copy was fetched is fetched once, so `ticket.md` stays current in rows that are not selected.
+- `canopy ticket show` uses a copy under 30 seconds old unless `--refresh`.
+
 After a failure the plugin waits twice as long each time, up to five minutes, and returns to the usual pace after a success.
+A ticket ticket-manager no longer has is asked for every five minutes, whatever else succeeds, until it is found again.
+A batch of ids that ticket-manager answers 400 for is split until the malformed id is alone.
+That row shows as missing, and its id is never asked about again, selected or not, so it never stops the others.
 
 ### Commands
 
@@ -405,7 +419,7 @@ After a failure the plugin waits twice as long each time, up to five minutes, an
 | `canopy ticket disconnect` | `tickets.disconnect` | turn the plugin off and delete the token |
 | `canopy ticket list [--mine \| --unowned] [--waiting] [--query <text>] [--closed]` | `tickets.list` | list tickets, sorted as the picker sorts them, with each one's row |
 | `canopy ticket new <ticket> [--run <cmd>] [--select]` | `tickets.new` | open a row for the ticket, and fail with `ticket_has_row` naming the row if it has one |
-| `canopy ticket show [<ticket>] [--refresh] [--md]` | `tickets.show` | print the ticket and its messages, problems, draft, and fix rows, or with `--md` the latest handover markdown |
+| `canopy ticket show [<ticket>] [--refresh] [--md]` | `tickets.show` | print the ticket and its messages, or with `--md` what `ticket.md` holds, customer note first |
 | `canopy ticket select [<ticket>]` | `tickets.select` | select the ticket's row |
 | `canopy ticket rm [<ticket>] [--force]` | `tickets.remove` | remove the ticket's row, through the same path as `row.remove` |
 
@@ -437,7 +451,11 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
 | ticket-manager cannot be reached, times out after 15 seconds, or answers 5xx | The panel's banner and `canopy plugin list` say so and when the last fetch succeeded. Commands fail with `tickets_unreachable`, except `ticket show`, which prints the cached ticket with a note saying how old it is. |
 | A reference matches nothing | `ticket_not_found`. |
 | A number matches more than one ticket | `ticket_ambiguous`, naming each match. |
-| The Keychain refuses a read or a write | The plugin cannot start, and the warning names the Keychain's error. |
+| The Keychain refuses a read or a write | The plugin cannot start, and the warning names the Keychain's error. Commands that need it fail with `keychain_failed`. |
+| The plugin is on but could not start, such as without a token | The warning says why, and commands fail with `plugin_not_started` and the fix. |
+| An address that is not `https://`, or `http://` off this Mac, or a `web` without `{id}` | `invalid_url`, and nothing is saved. |
+| ticket-manager answers something that is not its API, such as HTML, a redirect, or a 404 for `me` | `bad_response`, saying to check it is the `.convex.site` address. |
+| `ticket select` or `ticket rm` for a ticket without a row | `ticket_has_no_row`, with the `ticket new` command. |
 | `config.json` cannot be written | `plugin.enable` fails with the file system's message, and nothing changes. |
 
 ## Testing
@@ -473,11 +491,13 @@ Item 3 needs item 2, but not item 1, since it runs against the stub.
 
 - The picker starts on Anyone, with waiting tickets first, rather than on Mine.
 - A removed plugin row's folder goes to the Trash, and a folder deleted outside Canopy is recreated.
-- Links stay after a ticket's row is removed, so reopening the ticket shows its fix rows again.
+- Links stay after a ticket's row is removed, so reopening the ticket puts its label back on its fix rows.
 - Plugin rows take `⌘1` to `⌘9` after all repo rows.
 - The top bar starts at the panel's right edge rather than spanning the panel.
 - Keychain entries are per `CANOPY_HOME`, so dev builds and tests never see the release app's token.
 - The base's UI is checked with a fixture plugin that only a dev build started with `CANOPY_FIXTURE_PLUGIN=1` turns on.
-- `ticket.md` holds the handover block only, and handover notes show in the panel but not in the file.
+- The panel and `canopy ticket show` keep to the conversation: ticket-manager's problems, draft, and notes stay in ticket-manager, and Canopy does not decode them.
+  Fix rows stay linked, with the ticket's label on each.
 - Tokens are made with `npx convex run`, and ticket-manager gets no screen for them.
+- Settled while building the Tickets plugin: a plugin can name its item, so the picker reads "New Ticket Row"; the `web` template and `--web`; `http://` only on this Mac; no redirects; `ticket disconnect --force`; `plugin_off` naming each plugin's own command, such as `canopy ticket connect <url>`; the `bad_response`, `plugin_not_started`, `invalid_url`, `keychain_failed`, and `ticket_has_no_row` codes; malformed ids shown as missing; rows' changed tickets fetched for their files; `ticket show`'s 30 seconds; the panel opening at the conversation's end; and "Connect Tickets…" in the File menu and the empty sidebar too.
 - Settled while building the plugin base: `canopy plugin enable`, `disable`, `items`, and `new`, so every picker action and the section's Turn Off have a command; `--no-link`; `row move` for plugin rows; `plugin_busy` and `row_busy` in place of asking from the CLI; a failed fill behaving like a failed setup; a dev build's `CANOPY_TRASH_FOLDER`; and the panel's title strip.

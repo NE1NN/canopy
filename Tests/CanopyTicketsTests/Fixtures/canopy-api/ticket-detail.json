@@ -1,0 +1,189 @@
+{
+  "draft": {
+    "error": null,
+    "generatedAt": 1790008400000,
+    "sourcesUsed": [
+      "conversation",
+      "solisDb"
+    ],
+    "status": "ok",
+    "text": "Hi Sameer, the posting worker skipped your accounts after a review flag. I cleared it, so posts resume within the hour."
+  },
+  "handover": "# Handover: ticket-0853-sameergoyal\n\nYou are a coding agent working on a solis checkout, investigating the support ticket below. Find the root cause in the codebase, cite the code paths involved, and propose both a fix and a customer-facing answer. The engineer will paste your findings back into the ticket manager, so write them as a self-contained markdown report.\n\nInvestigate the open problems below, newest first, and treat resolved problems as context only.\n\n## Ticket\n\n- status: open\n- customer: sameergoyal\n- opened: 2026-09-20T16:33:20.000Z\n- discord: https://discord.com/channels/1100000000000000000/1300000000000000853\n\n## Problems\n\n### Automations stopped posting (open, lead — bug)\n\n- No posts since yesterday\n- Started after the account review\n\nResolved:\n- Finding the automation export\n\n## Transcript\n\n[bot] Ticket Tool: Welcome @Sameer Goyal! Support will be with you shortly.\n[customer] Sameer Goyal (sameergoyal): My automations stopped posting since yesterday.\n[staff] Hindie (hindiee21): Thanks @Sameer Goyal, looking into it now.\n[customer] Sameer Goyal (sameergoyal): Adding more context in this thread.\n[staff] Anish (shwarmadev): Checked the **shadowban** flag, it is clear.\n[customer] Sameer Goyal (sameergoyal): Any update? The automation log is attached.",
+  "messages": [
+    {
+      "attachments": [],
+      "author": {
+        "avatarUrl": null,
+        "displayName": null,
+        "isBot": true,
+        "role": "customer",
+        "username": "Ticket Tool"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853/1500000000000000001",
+      "id": "1500000000000000001",
+      "mentions": [
+        {
+          "displayName": "Sameer Goyal",
+          "id": "111",
+          "username": "sameergoyal"
+        }
+      ],
+      "postedAt": 1789922000000,
+      "text": "Welcome <@111>! Support will be with you shortly.",
+      "thread": null
+    },
+    {
+      "attachments": [
+        {
+          "contentType": "image/png",
+          "filename": "screenshot.png",
+          "size": 48213,
+          "url": "https://cdn.discordapp.com/attachments/1300000000000000853/1500000000000000002/screenshot.png"
+        }
+      ],
+      "author": {
+        "avatarUrl": "https://cdn.discordapp.com/avatars/111/abc123.png?size=64",
+        "displayName": "Sameer Goyal",
+        "isBot": false,
+        "role": "customer",
+        "username": "sameergoyal"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853/1500000000000000002",
+      "id": "1500000000000000002",
+      "mentions": [],
+      "postedAt": 1789922060000,
+      "text": "My automations stopped posting since yesterday.",
+      "thread": null
+    },
+    {
+      "attachments": [],
+      "author": {
+        "avatarUrl": null,
+        "displayName": "Hindie",
+        "isBot": false,
+        "role": "staff",
+        "username": "hindiee21"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853/1500000000000000003",
+      "id": "1500000000000000003",
+      "mentions": [
+        {
+          "displayName": "Sameer Goyal",
+          "id": "111",
+          "username": "sameergoyal"
+        }
+      ],
+      "postedAt": 1789925600000,
+      "text": "Thanks <@111>, looking into it now.",
+      "thread": null
+    },
+    {
+      "attachments": [],
+      "author": {
+        "avatarUrl": "https://cdn.discordapp.com/avatars/111/abc123.png?size=64",
+        "displayName": "Sameer Goyal",
+        "isBot": false,
+        "role": "customer",
+        "username": "sameergoyal"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1400000000000000002/1500000000000000004",
+      "id": "1500000000000000004",
+      "mentions": [],
+      "postedAt": 1789940000000,
+      "text": "Adding more context in this thread.",
+      "thread": {
+        "id": "1400000000000000002",
+        "name": null
+      }
+    },
+    {
+      "attachments": [],
+      "author": {
+        "avatarUrl": null,
+        "displayName": "Anish",
+        "isBot": false,
+        "role": "staff",
+        "username": "shwarmadev"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1400000000000000001/1500000000000000005",
+      "id": "1500000000000000005",
+      "mentions": [],
+      "postedAt": 1789958000000,
+      "text": "Checked the **shadowban** flag, it is clear.",
+      "thread": {
+        "id": "1400000000000000001",
+        "name": "Shadowban check"
+      }
+    },
+    {
+      "attachments": [
+        {
+          "contentType": "text/csv",
+          "filename": "automation-log.csv",
+          "size": 1024,
+          "url": "https://cdn.discordapp.com/attachments/1300000000000000853/1500000000000000006/automation-log.csv"
+        }
+      ],
+      "author": {
+        "avatarUrl": "https://cdn.discordapp.com/avatars/111/abc123.png?size=64",
+        "displayName": "Sameer Goyal",
+        "isBot": false,
+        "role": "customer",
+        "username": "sameergoyal"
+      },
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853/1500000000000000006",
+      "id": "1500000000000000006",
+      "mentions": [],
+      "postedAt": 1790004800000,
+      "text": "Any update? The automation log is attached.",
+      "thread": null
+    }
+  ],
+  "notes": [
+    {
+      "authorEmail": "hindie@example.com",
+      "createdAt": 1790012000000,
+      "text": "Root cause: the posting worker skips accounts flagged for review."
+    }
+  ],
+  "problems": [
+    {
+      "bullets": [
+        "No posts since yesterday",
+        "Started after the account review"
+      ],
+      "category": "bug",
+      "key": "p1",
+      "status": "open",
+      "title": "Automations stopped posting"
+    },
+    {
+      "bullets": [
+        "Asked where the export lives"
+      ],
+      "category": "how-to",
+      "key": "p2",
+      "status": "resolved",
+      "title": "Finding the automation export"
+    }
+  ],
+  "ticket": {
+    "customer": "sameergoyal",
+    "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000853",
+    "id": "0000000000000000000010001tickets",
+    "lastActivityAt": 1790004800000,
+    "name": "ticket-0853-sameergoyal",
+    "number": "0853",
+    "openedAt": 1789922000000,
+    "owner": {
+      "at": 1790001200000,
+      "email": "hindie@example.com",
+      "initials": "HI",
+      "via": "action"
+    },
+    "staleHours": 7,
+    "status": "open",
+    "waiting": true
+  }
+}

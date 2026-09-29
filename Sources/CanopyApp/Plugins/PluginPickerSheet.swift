@@ -1,8 +1,8 @@
 import CanopyCore
 import SwiftUI
 
-/// One sheet for every plugin: a search field, the plugin's filter chips, and its items. Picking one opens a row for it,
-/// or selects the row it has, as the command in the footer would.
+/// One sheet for every plugin: a search field, the plugin's filter chips, and its items. Picking one opens a row for
+/// it, or selects the row it has, as the command in the footer would.
 struct PluginPickerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -17,7 +17,7 @@ struct PluginPickerSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 PluginTile(info: section.info, size: 20)
-                Text("New \(section.info.name) Row")
+                Text(section.info.newRowTitle)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
             }

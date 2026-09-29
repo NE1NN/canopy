@@ -51,9 +51,21 @@ struct PluginHostTests {
         #expect(await plugin(setup)?.isOn == false)
         #expect(await setup.workspace.snapshot.activePlugins.isEmpty)
         #expect(await setup.host.list().map(\.on) == [false])
-        await #expect(throws: WorkspaceError.pluginOff("Test", id: "t")) {
+        await #expect(throws: WorkspaceError.pluginOff("Test", command: "canopy plugin enable t")) {
             try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
         }
+    }
+
+    @Test func aPluginOffSaysHowToTurnItOnItsOwnWay() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin(turnOn: "canopy test connect")
+        let setup = try await start(dir, [test], config: #"{"minPaneColumns": 90}"#)
+
+        await #expect(throws: WorkspaceError.pluginOff("Test", command: "canopy test connect")) {
+            try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
+        }
+        #expect(
+            WorkspaceError.pluginOff("Test", command: "canopy test connect").message.contains("`canopy test connect`"))
     }
 
     @Test func aPluginInConfigStartsWithItsSection() async throws {
@@ -405,6 +417,17 @@ struct PluginHostTests {
         #expect(context.state.rows == [row])
     }
 
+    @Test func aPluginSeesItsRowsChangeAsSoonAsTheHostChangesThem() async throws {
+        let dir = try TempDir()
+        let setup = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#)
+        let context = try #require(setup.host.context("t"))
+
+        let row = try await setup.host.createRow("t", reference: "i1", run: nil, select: false).row
+        #expect(context.state.rows == [row])
+        _ = try await setup.host.removeRow(row, force: false)
+        #expect(context.state.rows.isEmpty)
+    }
+
     @Test func looksAndWarningsReachTheSnapshot() async throws {
         let dir = try TempDir()
         let setup = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#)
@@ -462,6 +485,23 @@ struct PluginHostTests {
         await #expect { try await setup.host.call("t.fail", params: .null, target: TargetHint(), row: nil) } throws: {
             ($0 as? ControlError)?.code == "test_failed"
         }
+    }
+
+    @Test func aStartThatFailedWithItsOwnCodeFailsEveryCommandWithIt() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin(startError: "The Keychain refused: locked.", startCode: "keychain_failed")
+        let setup = try await start(dir, [test], config: #"{"plugins": {"t": {"url": "u"}}}"#)
+        #expect(await plugin(setup)?.warning == "The Keychain refused: locked.")
+        let keychainFailed: @Sendable (any Error) -> Bool = {
+            ($0 as? ControlError) == ControlError(code: "keychain_failed", message: "The Keychain refused: locked.")
+        }
+        await #expect(
+            performing: { try await setup.host.createRow("t", reference: "i1", run: nil, select: false) },
+            throws: keychainFailed)
+        await #expect(performing: { try await setup.host.items("t", matching: PluginQuery()) }, throws: keychainFailed)
+        await #expect(
+            performing: { try await setup.host.resolveLink(plugin: "t", reference: "i1") },
+            throws: keychainFailed)
     }
 
     @Test func enablingAgainRetriesAFailedStart() async throws {

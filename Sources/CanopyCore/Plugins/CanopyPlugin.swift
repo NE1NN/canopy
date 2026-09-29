@@ -6,12 +6,18 @@ public struct PluginInfo: Sendable, Equatable, Codable {
     public var name: String
     /// An SF Symbol for its section's tile and its rows.
     public var symbol: String
+    /// What one of its items is called, such as "Ticket", when the plugin's name does not read as one.
+    public var itemName: String?
 
-    public init(id: String, name: String, symbol: String) {
+    public init(id: String, name: String, symbol: String, itemName: String? = nil) {
         self.id = id
         self.name = name
         self.symbol = symbol
+        self.itemName = itemName
     }
+
+    /// The picker's title, such as "New Ticket Row".
+    public var newRowTitle: String { "New \(itemName ?? name) Row" }
 }
 
 /// One of the picker's chips.
@@ -147,8 +153,12 @@ public protocol CanopyPlugin: Sendable {
     func seed(for item: String, context: PluginContext) async throws -> PluginRowSeed
     /// Writes the row's files into its folder, which exists when this is called.
     func fill(_ row: PluginRow, context: PluginContext) async throws
-    /// The picker footer's command for an item without a row, or nil for `canopy plugin new <id> <item> --select`.
-    func pickerCommand(for item: PluginItem) -> String?
+    /// The picker footer's command for what picking does, or nil for the generic one: `canopy plugin new <id> <item>
+    /// --select` for an item without a row, and `canopy row select <path>` for one with a row.
+    func pickerCommand(for action: PluginPickerAction) -> String?
+    /// The command that turns it on, which errors while it is off name, such as `canopy ticket connect <url>`. `config`
+    /// is its section of config.json.
+    func turnOnCommand(config: JSONValue) -> String
     func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue
 }
 
@@ -161,7 +171,9 @@ extension CanopyPlugin {
 
     public func status(_ context: PluginContext) async -> String? { nil }
 
-    public func pickerCommand(for item: PluginItem) -> String? { nil }
+    public func pickerCommand(for action: PluginPickerAction) -> String? { nil }
+
+    public func turnOnCommand(config: JSONValue) -> String { "canopy plugin enable \(info.id)" }
 
     public func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue {
         throw ControlError(code: "unknown_method", message: "Unknown method \(call.method)")

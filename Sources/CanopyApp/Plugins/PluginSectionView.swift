@@ -45,7 +45,7 @@ struct PluginHeaderView: View {
                 IconMenu(title: "More for \(section.info.name)", systemImage: "ellipsis") {
                     PluginMenuItems(section: section, onNewRow: onNewRow)
                 }
-                IconButton(title: "New \(section.info.name) Row…", systemImage: "plus", action: onNewRow)
+                IconButton(title: "\(section.info.newRowTitle)…", systemImage: "plus", action: onNewRow)
             } else {
                 Text(verbatim: "\(section.rows.count)")
                     .font(Style.meta)
@@ -74,5 +74,8 @@ struct PluginMenuItems: View {
         Button("New Row…", action: onNewRow)
         Divider()
         Button("Turn Off \(section.info.name)") { model.turnOff(section) }
+        ForEach(model.builtIn(section.id)?.menuActions ?? []) { action in
+            Button(action.title) { model.ask(action, in: section) }
+        }
     }
 }

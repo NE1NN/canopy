@@ -1,11 +1,19 @@
 import ArgumentParser
+import CanopyCore
+import CanopyTickets
 
 struct AgentGuide: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "agent-guide", abstract: "Print a manual for agents driving Canopy.")
 
+    /// The Tickets section comes after Plugin rows, only while config.json turns the plugin on.
     func run() {
-        print(Self.text)
+        let home = CanopyHome.resolve(bundleHome: AppLocator.bundleHome())
+        guard TicketsGuide.isOn(configFile: home.configFile) else {
+            print(Self.text)
+            return
+        }
+        print(Self.text.replacingOccurrences(of: "\n## Terminals\n", with: "\n\(TicketsGuide.text)\n\n## Terminals\n"))
     }
 
     static let text = """

@@ -81,11 +81,6 @@ public final class PluginContext {
         await host?.workspace.setPluginWarning(info.id, warning)
     }
 
-    /// The worktree rows made for one of its items, in sidebar order.
-    public func linkedRows(item: String) -> [Row] {
-        host?.snapshot.linkedRows(plugin: info.id, item: item) ?? []
-    }
-
     /// Does what `plugin.enable` does, for a command such as `tickets.connect`.
     public func turnOn(with fields: [String: JSONValue]) async throws {
         _ = try await requireHost().enable(info.id, with: fields)

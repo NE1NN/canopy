@@ -72,6 +72,9 @@ struct TerminalCommands: Commands {
             Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Clone Repo…", action: model.showCloneSheet)
+            ForEach(model.pluginSetups, id: \.id) { plugin in
+                Button(plugin.setup.title) { model.showSetup(of: plugin.id) }
+            }
             Divider()
             Button("New Tab", action: model.newTab)
                 .keyboardShortcut("t")

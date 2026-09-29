@@ -2,8 +2,10 @@
 # Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots:
 # three repos, rows with open, draft, merged, and closed PRs, two groups, other worktrees, running programs,
 # listening ports, a split tab, agents in every state, and the fixture plugin's section with its warning, rows with every
-# kind of accessory, a missing item, and a worktree row linked to one of them. Nothing outside the throwaway folder is
-# touched.
+# kind of accessory, a missing item, and a worktree row linked to one of them, and the Tickets section with rows backed by
+# a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of message, and a closed ticket, with
+# a fix row linked to one. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or
+# Discord. Links the window opens are written to $work/opened-urls instead of opening a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -29,7 +31,12 @@ if [[ "${1:-}" == stop ]]; then
     source "$state"
     # Only the dev build this script started: a pid can be reused once that app has quit.
     if [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *"Canopy Dev.app/Contents/MacOS/Canopy" ]]; then
+        # Disconnecting deletes this home's token from the Keychain.
+        CANOPY_HOME="$work/home" "$cli" ticket disconnect --force >/dev/null 2>&1 || true
         kill "$pid" 2>/dev/null || true
+    fi
+    if [[ -n "${tm_pid:-}" && "$(ps -p "$tm_pid" -o command= 2>/dev/null)" == *ticket-manager-stand-in.py* ]]; then
+        kill "$tm_pid" 2>/dev/null || true
     fi
     # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
     if [[ "$(basename "$work")" != cnp.* || ! -x "$work/bin/gh" || ! -d "$work/zdot" ]]; then
@@ -164,6 +171,18 @@ for repo in billing design-system; do
     git clone -q --bare "$work/web-app" "$work/remotes/acme/$repo.git"
 done
 
+# A stand-in ticket-manager with ticket-manager's own fixtures and tickets for UI checks, on this Mac alone. It stops
+# after four hours if `stop` never runs.
+python3 scripts/ticket-manager-stand-in.py seed --fixtures Tests/CanopyTicketsTests/Fixtures/canopy-api --out "$work/tm" --ui
+(exec python3 scripts/ticket-manager-stand-in.py serve --data "$work/tm" --token ui-fixture-token \
+    --port-file "$work/tm/port" --log "$work/tm/requests.log" --lifetime 14400 </dev/null >/dev/null 2>&1) &
+tm_pid=$!
+for _ in $(seq 1 100); do
+    [[ -f "$work/tm/port" ]] && break
+    sleep 0.1
+done
+tm_url="http://127.0.0.1:$(cat "$work/tm/port")"
+
 # The fixture plugin is on, with a warning under its header and one item it pretends is gone.
 mkdir -p "$CANOPY_HOME"
 cat > "$CANOPY_HOME/config.json" <<'CONFIG'
@@ -182,11 +201,11 @@ if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES);
 # git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
 # The URL rewrite sends the app's git for https://github.com/ to the bare repos in $work/remotes.
 (ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 CANOPY_FIXTURE_PLUGIN=1 \
-    CANOPY_TRASH_FOLDER="$work/trash" \
+    CANOPY_TRASH_FOLDER="$work/trash" CANOPY_OPENED_URLS="$work/opened-urls" \
     GIT_CONFIG_KEY_0="url.$work/remotes/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
     exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
 # Written at once, so `stop` can clean up even if a later step fails. The subshell execs, so $! is the app.
-printf 'pid=%s\nwork=%s\n' "$!" "$work" > "$state"
+printf 'pid=%s\nwork=%s\ntm_pid=%s\n' "$!" "$work" "$tm_pid" > "$state"
 for _ in $(seq 1 100); do
     [[ -S "$CANOPY_HOME/canopy.sock" ]] && break
     sleep 0.1
@@ -282,6 +301,13 @@ fixture_row() {
 "$cli" term new --row "$(fixture_row fx-1)" --run "$plain; cat item.md" >/dev/null
 "$cli" term new --row "$(fixture_row fx-1)" --run "$plain; sleep 600" >/dev/null
 "$cli" term new --row "$(fixture_row fx-2)" --run "$plain; sleep 600" >/dev/null
+
+# Tickets, connected to the stand-in, with rows for a waiting ticket, a long conversation, and a closed ticket, their
+# terminals, and a fix row linked to the first.
+printf 'ui-fixture-token' | "$cli" ticket connect "$tm_url" --web 'https://tickets.example.com/tickets/{id}' >/dev/null
+for ticket in 853 855 851; do "$cli" ticket new "$ticket" --run "$plain" >/dev/null; done
+"$cli" row new fix/shadowban-check --repo web-app --ticket 853 >/dev/null
+"$cli" term new --row "$(fixture_row 0000000000000000000010011tickets)" --run "$plain; cat ticket.md | head -5" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 # Agents in every state, reported the way agents without Claude Code's hooks report them.

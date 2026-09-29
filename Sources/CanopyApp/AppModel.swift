@@ -2,6 +2,7 @@ import AppKit
 import CanopyCore
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -409,6 +410,86 @@ final class AppModel {
                 show(error)
             }
         }
+    }
+
+    /// Built-in plugins that are off and turn on through a sheet, such as Tickets' Connect Tickets….
+    var pluginSetups: [(id: String, setup: PluginSetup)] {
+        builtInPlugins.compactMap { plugin in
+            guard let setup = plugin.setup, snapshot.section(plugin.plugin.info.id)?.isOn != true else { return nil }
+            return (plugin.plugin.info.id, setup)
+        }
+    }
+
+    /// The setup sheet showing, such as Connect Tickets.
+    var setupSheet: PluginSetupRequest?
+
+    struct PluginSetupRequest: Identifiable {
+        let id: String
+        let setup: PluginSetup
+    }
+
+    func showSetup(of plugin: String) {
+        guard let setup = builtIn(plugin)?.setup else { return }
+        setupSheet = PluginSetupRequest(id: plugin, setup: setup)
+    }
+
+    /// A plugin's own menu action waiting for the author to confirm it.
+    struct PendingPluginAction {
+        let action: PluginMenuAction
+        let section: PluginSection
+        let busyTerminals: Int
+
+        /// The action's own words, then what happens to programs running in the plugin's rows.
+        var message: String {
+            switch busyTerminals {
+            case 0: action.confirmMessage
+            case 1: action.confirmMessage + " A terminal in its rows is running a program, which stops."
+            default: action.confirmMessage + " \(busyTerminals) terminals in its rows are running programs, which stop."
+            }
+        }
+    }
+
+    var pendingPluginAction: PendingPluginAction?
+
+    func ask(_ action: PluginMenuAction, in section: PluginSection) {
+        let busy = section.rows.reduce(0) { $0 + terminals.busyPanes(inRow: $1.path).count }
+        pendingPluginAction = PendingPluginAction(action: action, section: section, busyTerminals: busy)
+    }
+
+    func confirm(_ pending: PendingPluginAction) {
+        pendingPluginAction = nil
+        Task {
+            do {
+                try await pending.action.run(self)
+            } catch {
+                show(error)
+            }
+        }
+    }
+
+    /// A dev build launched with CANOPY_OPENED_URLS writes each link the window opens to that file instead of opening
+    /// it, so UI checks can check links without a browser.
+    @ObservationIgnored private let openedURLsFile: String? = {
+        #if DEBUG
+            ProcessInfo.processInfo.environment["CANOPY_OPENED_URLS"].flatMap { $0.isEmpty ? nil : $0 }
+        #else
+            nil
+        #endif
+    }()
+
+    /// Only web links open: text a server sends, such as an error, could hold links of any kind.
+    func open(_ url: URL) -> OpenURLAction.Result {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return .discarded }
+        guard let openedURLsFile else { return .systemAction }
+        let line = Data((url.absoluteString + "\n").utf8)
+        if let handle = FileHandle(forWritingAtPath: openedURLsFile) {
+            handle.seekToEndOfFile()
+            handle.write(line)
+            try? handle.close()
+        } else {
+            FileManager.default.createFile(atPath: openedURLsFile, contents: line)
+        }
+        return .handled
     }
 
     /// Panel widths as dragged in this session, which the saved ones catch up with.
@@ -942,7 +1023,7 @@ final class AppModel {
     }
 
     func show(_ error: any Error) {
-        show((error as? WorkspaceError)?.message ?? "\(error)")
+        show(PluginHost.message(error))
     }
 
     func show(_ message: String) {

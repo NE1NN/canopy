@@ -201,7 +201,7 @@ struct TermCommand: AsyncParsableCommand {
             let seconds = TimeSpan.seconds(timeout) ?? TermWaitParams.defaultTimeout
             let result = client.call(
                 TermMethod.wait, TermWaitParams(panes: ids, target: target, timeout: seconds), launchIfNeeded: false,
-                waitingUpTo: seconds + 10)
+                wait: .upTo(seconds + 10))
             try client.print(result) {
                 let reached = try result.decode(TermWaitResult.self)
                 return "\(reached.pane) \(reached.state.rawValue)"

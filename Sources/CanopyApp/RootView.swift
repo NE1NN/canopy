@@ -36,6 +36,7 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 560)
+        .environment(\.openURL, OpenURLAction { model.open($0) })
         // Full screen shows the bar at the top, as a window does, with the toolbar only while the pointer is there.
         .windowToolbarFullScreenVisibility(.onHover)
         .background(FullScreenReader(isFullScreen: $isFullScreen))
@@ -50,6 +51,9 @@ struct RootView: View {
         .fileImporter(isPresented: $model.isChoosingFolder, allowedContentTypes: [.folder]) { model.folderChosen($0) }
         .sheet(isPresented: $model.isShowingCloneSheet) {
             CloneRepoSheet()
+        }
+        .sheet(item: $model.setupSheet) { request in
+            request.setup.sheet()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
@@ -89,6 +93,17 @@ struct RootView: View {
                     ? "A terminal in its rows is running a program. Turning it off closes its terminals. Its rows come back when it is on again."
                     : "\(pending.busyTerminals) terminals in its rows are running programs. Turning it off closes its terminals. Its rows come back when it is on again."
             )
+        }
+        .alert(
+            model.pendingPluginAction?.action.confirmTitle ?? "",
+            isPresented: Binding(
+                get: { model.pendingPluginAction != nil }, set: { if !$0 { model.pendingPluginAction = nil } }),
+            presenting: model.pendingPluginAction
+        ) { pending in
+            Button(pending.action.confirmButton, role: .destructive) { model.confirm(pending) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.message)
         }
         .alert(
             "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",

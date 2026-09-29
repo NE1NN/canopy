@@ -49,7 +49,7 @@ struct PluginPickerTests {
 
     /// A picker over `items`, narrowed by the typed text, that records every query.
     func picker(
-        items: [PluginItem] = items, command: @escaping @Sendable (PluginItem) -> String? = { _ in nil },
+        items: [PluginItem] = items, command: @escaping @Sendable (PluginPickerAction) -> String? = { _ in nil },
         answer: (@Sendable (PluginQuery) async throws -> [PluginItem])? = nil
     ) -> (PluginPicker, QueryLog) {
         let queries = QueryLog()
@@ -183,11 +183,17 @@ struct PluginPickerTests {
 
     @Test func commandsSayWhatAPickDoes() {
         let (plain, _) = picker()
-        let (own, _) = picker(command: { "canopy ticket new \($0.id) --select" })
+        let (own, _) = picker(command: { action in
+            switch action {
+            case .create(let item): "canopy ticket new \(item.id) --select"
+            case .select(let row): "canopy ticket select \(row.item)"
+            }
+        })
 
         #expect(plain.command(for: .create(Self.items[0])) == "canopy plugin new fixture fx-1 --select")
         #expect(own.command(for: .create(Self.items[0])) == "canopy ticket new fx-1 --select")
         #expect(plain.command(for: .select(Self.row)) == "canopy row select '/h/plugins/fixture/my beta'")
+        #expect(own.command(for: .select(Self.row)) == "canopy ticket select \(Self.row.item)")
     }
 }
 

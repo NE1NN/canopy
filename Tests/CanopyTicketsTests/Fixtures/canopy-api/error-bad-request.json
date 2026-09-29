@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "bad_request",
+    "message": "status must be open, closed, or archived"
+  }
+}

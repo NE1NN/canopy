@@ -1,0 +1,17 @@
+{
+  "tickets": [
+    {
+      "customer": "oldco",
+      "discordUrl": "https://discord.com/channels/1100000000000000000/1300000000000000801",
+      "id": "0000000000000000000010005tickets",
+      "lastActivityAt": 1786790000000,
+      "name": "ticket-0801-oldco",
+      "number": "0801",
+      "openedAt": 1786790000000,
+      "owner": null,
+      "staleHours": null,
+      "status": "archived",
+      "waiting": false
+    }
+  ]
+}

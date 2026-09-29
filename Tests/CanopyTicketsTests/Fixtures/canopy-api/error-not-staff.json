@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "not_staff",
+    "message": "gone@example.com is not on the staff list"
+  }
+}

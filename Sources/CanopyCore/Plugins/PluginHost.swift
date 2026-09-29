@@ -84,7 +84,7 @@ public final class PluginHost {
     private var updates: Task<Void, Never>?
     private var queues = KeyedQueue()
     /// Why each plugin that is on but not running failed to start.
-    private var startFailures: [String: String] = [:]
+    private var startFailures: [String: any Error] = [:]
 
     public init(
         workspace: Workspace, terminals: TerminalStore, plugins: [any CanopyPlugin], secrets: any SecretStore,
@@ -224,7 +224,7 @@ public final class PluginHost {
             startFailures[id] = nil
         } catch {
             running.remove(id)
-            startFailures[id] = Self.message(error)
+            startFailures[id] = error
             await workspace.setPluginWarning(id, Self.message(error))
         }
         // In the background, so launching never waits on a plugin's network.
@@ -280,6 +280,8 @@ public final class PluginHost {
             try? FileManager.default.removeItem(atPath: folder)
             throw error
         }
+        // Its plugin sees the row at once, not only when the workspace's update arrives.
+        snapshotChanged(await workspace.snapshot)
         var fillError: String?
         do {
             try await plugin.fill(row, context: context)
@@ -321,6 +323,7 @@ public final class PluginHost {
         }
         terminals.closeRow(path: row.path)
         let removed = try await workspace.removePluginRow(path: row.path)
+        snapshotChanged(await workspace.snapshot)
         record(ActivityType.pluginRowRemoved, removed)
         return PluginRowRemoved(row: removed, trashedTo: trashedTo?.path)
     }
@@ -499,11 +502,23 @@ public final class PluginHost {
     /// The plugin, if it is on and its start succeeded.
     private func requireRunning(_ id: String) throws -> any CanopyPlugin {
         let plugin = try requirePlugin(id)
-        guard on.contains(id) else { throw WorkspaceError.pluginOff(plugin.info.name, id: id) }
-        guard running.contains(id) else {
-            throw WorkspaceError.pluginNotStarted(plugin.info.name, reason: startFailures[id] ?? "")
+        guard on.contains(id) else {
+            throw WorkspaceError.pluginOff(
+                plugin.info.name, command: plugin.turnOnCommand(config: sections[id] ?? .object([:])))
         }
+        guard running.contains(id) else { throw Self.notStarted(plugin.info.name, startFailures[id]) }
         return plugin
+    }
+
+    /// Why a plugin that is on is not running. A start that failed with a code of its own, such as `keychain_failed`,
+    /// keeps it, so every command that needs the plugin fails the same way.
+    static func notStarted(_ name: String, _ failure: (any Error)?) -> any Error {
+        if let failure = failure as? ControlError,
+            failure.code != WorkspaceError.pluginNotStarted(name, reason: "").code
+        {
+            return failure
+        }
+        return WorkspaceError.pluginNotStarted(name, reason: failure.map(message) ?? "")
     }
 
     private func context(of plugin: any CanopyPlugin) -> PluginContext {
