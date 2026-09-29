@@ -21,6 +21,7 @@ struct TicketPanel: View {
             }
             if let detail = state.detail {
                 TicketBody(row: row, detail: detail)
+                    .equatable()
                     .id(row.path)
             } else {
                 VStack(spacing: 8) {

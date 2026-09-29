@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The conversation, in one scroll. It opens at the end of the conversation and stays there while messages arrive and images load, until the author scrolls away, and then
 /// keeps its place.
-struct TicketBody: View {
+struct TicketBody: View, Equatable {
     let row: PluginRow
     let detail: TicketDetail
     @State private var position = ScrollPosition(idType: String.self)
@@ -13,6 +13,12 @@ struct TicketBody: View {
     @State private var followsEnd = true
 
     private static let end = "messages-end"
+
+    /// The panel redraws whenever the store changes, such as another ticket's fetch starting. The conversation is
+    /// grouped and parsed again only when this ticket's copy changes.
+    nonisolated static func == (lhs: TicketBody, rhs: TicketBody) -> Bool {
+        lhs.row.path == rhs.row.path && lhs.detail == rhs.detail
+    }
 
     var body: some View {
         let groups = MessageGroup.groups(detail.messages)
