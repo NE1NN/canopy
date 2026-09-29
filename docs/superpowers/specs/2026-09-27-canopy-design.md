@@ -261,6 +261,8 @@ A group's rows, and the rows the other worktrees fold shows, sit a second step i
 A step is a mark's width and its gap, so each line's mark sits under the name of the header it belongs to, and the sidebar reads repo, then group, then row.
 A plugin's section works the same way: its warning and rows sit one step in under its header.
 Fills for hover and selection still span the list's width at every depth.
+The sidebar is at least 244 points wide, so a group's row keeps part of its name beside its PR number and hover hints.
+When a line runs short of room, its name truncates in the middle, and PR numbers, tags, chips, and hints stay whole.
 
 A row line reads, left to right: icon, branch name, then a right-aligned running dot and PR number.
 

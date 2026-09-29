@@ -45,6 +45,7 @@ struct PluginRowLineView: View {
                         .font(Style.meta)
                         .monospacedDigit()
                         .foregroundStyle(.tertiary)
+                        .fixedSize()
                 }
                 Button {
                     isConfirmingRemove = true
@@ -171,6 +172,7 @@ struct LinkChip: View {
                 .font(Style.meta.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(isHovering ? .primary : .secondary)
+                .fixedSize()
                 .padding(.horizontal, 5)
                 .frame(height: 16)
                 .background(Style.badgeFill, in: RoundedRectangle(cornerRadius: Style.tagRadius))

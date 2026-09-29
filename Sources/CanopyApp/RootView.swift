@@ -14,8 +14,9 @@ struct RootView: View {
         let isSidebarHidden = columns == .detailOnly
         let placement = TopBarPlacement(isSidebarHidden: isSidebarHidden, isFullScreen: isFullScreen)
         NavigationSplitView(columnVisibility: $columns) {
+            // The narrowest keeps a name beside the PR number and hover hints on a group's rows, two steps in.
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
+                .navigationSplitViewColumnWidth(min: 244, ideal: 270, max: 420)
         } detail: {
             RowDetailView()
                 .environment(\.topBarFillsTitleBar, placement.fillsTitleBar)

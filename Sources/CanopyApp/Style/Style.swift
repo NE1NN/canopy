@@ -211,6 +211,7 @@ struct TagView: View {
         Text(text)
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
+            .fixedSize()
             .padding(.horizontal, 5)
             .frame(height: 15)
             .background(Style.badgeFill, in: RoundedRectangle(cornerRadius: Style.tagRadius))

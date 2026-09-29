@@ -409,6 +409,7 @@ struct RowLineView: View {
                         .font(Style.meta)
                         .monospacedDigit()
                         .foregroundStyle(.tertiary)
+                        .fixedSize()
                 }
                 if removable {
                     Button {
@@ -478,10 +479,12 @@ struct PullRequestNumber: View {
         Button {
             if let url = URL(string: pr.url) { openURL(url) }
         } label: {
+            // In a narrow sidebar the branch name gives way, never the number.
             Text(verbatim: "#\(pr.number)")
                 .font(Style.meta.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(pr.state.color)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .help("\(pr.state.label): \(pr.title)")
