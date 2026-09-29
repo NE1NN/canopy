@@ -21,8 +21,16 @@ struct ControlServerTests {
         let workspace = Workspace(home: home, git: git, github: github, activity: activity)
         try await workspace.start()
         let ui = RecordingUI()
-        let rows = await MainActor.run { RowLifecycle(workspace: workspace, terminals: Fixture.terminals(dir)) }
-        let handler = WorkspaceControlHandler(rows: rows, ui: ui)
+        let (rows, plugins) = await MainActor.run {
+            let terminals = Fixture.terminals(dir)
+            return (
+                RowLifecycle(workspace: workspace, terminals: terminals),
+                PluginHost(
+                    workspace: workspace, terminals: terminals, plugins: [], secrets: MemorySecretStore(),
+                    bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
+            )
+        }
+        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: ui)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         try await server.start()
         // Creating rows runs git and setup, which a loaded CI runner can take well over 10 seconds to finish.

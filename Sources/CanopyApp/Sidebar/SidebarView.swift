@@ -9,6 +9,8 @@ struct SidebarView: View {
     @State private var expanded: Set<String> = []
     /// Where each line a dragged row can land sits in the list.
     @State private var dropSlots: [DropSlot] = []
+    @State private var pluginSlots: [PluginDropSlot] = []
+    @State private var pluginPicker: PluginPickerRequest?
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -26,6 +28,9 @@ struct SidebarView: View {
         }
         .sheet(item: $newRow) { request in
             NewRowSheet(repo: request.repo, group: request.group, picker: request.picker)
+        }
+        .sheet(item: $pluginPicker) { request in
+            PluginPickerSheet(section: request.section, picker: request.picker)
         }
     }
 
@@ -48,7 +53,7 @@ struct SidebarView: View {
     private var repoScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if !model.snapshot.repos.isEmpty {
+                if !model.snapshot.repos.isEmpty || !model.snapshot.activePlugins.isEmpty {
                     SectionLabel(title: "Repos") {
                         IconMenu(title: "Add Repo", systemImage: "plus") {
                             Button("Add Local Repo…") { model.chooseFolder(for: .addRepo) }
@@ -69,15 +74,27 @@ struct SidebarView: View {
                         }
                     )
                 }
+                // Each plugin that is on, below the repos, in built-in order.
+                ForEach(model.snapshot.activePlugins) { section in
+                    PluginSectionView(section: section, isFocused: isFocused) {
+                        if let picker = model.picker(for: section) {
+                            pluginPicker = PluginPickerRequest(section: section, picker: picker)
+                        }
+                    }
+                }
             }
             .coordinateSpace(.rowList)
             .onPreferenceChange(DropSlotsKey.self) { dropSlots = $0 }
+            .onPreferenceChange(PluginDropSlotsKey.self) { pluginSlots = $0 }
             .overlay(alignment: .topLeading) {
                 if let target = model.rowDropTarget {
-                    RowDropIndicator(target: target, slots: dropSlots)
+                    RowDropIndicator(target: target, slots: dropSlots, pluginSlots: pluginSlots)
                 }
             }
-            .onDrop(of: [.canopyRow], delegate: RowDropDelegate(model: model, slots: dropSlots))
+            .onDrop(
+                of: [.canopyRow],
+                delegate: RowDropDelegate(model: model, slots: dropSlots, pluginSlots: pluginSlots)
+            )
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
             // Fills the column even with no repos, so the empty state gets the whole width.
@@ -99,7 +116,7 @@ struct SidebarView: View {
             return .handled
         }
         .overlay {
-            if model.snapshot.repos.isEmpty {
+            if model.snapshot.repos.isEmpty && model.snapshot.activePlugins.isEmpty {
                 ContentUnavailableView {
                     Label("No Repos", systemImage: "folder.badge.plus")
                 } description: {
@@ -120,6 +137,14 @@ struct NewRowRequest: Identifiable {
     let picker: NewRowPicker
 
     var id: String { repo.path }
+}
+
+/// What a plugin's picker opens on, made once per sheet.
+struct PluginPickerRequest: Identifiable {
+    let section: PluginSection
+    let picker: PluginPicker
+
+    var id: String { section.id }
 }
 
 /// A repo's header, its PR warning, its ungrouped rows, its groups, and its other worktrees.
@@ -179,7 +204,7 @@ struct RepoSection: View {
     private func line(for row: Row, indent: Double = 0) -> some View {
         RowLineView(
             row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
-            shortcut: model.shortcut(for: row), removable: row.rowClass != .main, indent: indent
+            shortcut: model.shortcut(for: row.path), removable: row.rowClass != .main, indent: indent
         )
         .dropSlot(repo: repo.path, row.rowClass == .main ? .main(row.path) : .row(row.path, group: row.group))
         .id(row.path)
@@ -311,6 +336,11 @@ struct RowLineView: View {
             Spacer(minLength: 4)
             if let agentDot {
                 AgentDotView(dot: agentDot)
+            }
+            if let link = row.link, let item = model.snapshot.pluginRow(plugin: link.plugin, item: link.item),
+                let label = item.look.label
+            {
+                LinkChip(row: item, label: label)
             }
             if let pr = row.pullRequest {
                 PullRequestNumber(pr: pr)

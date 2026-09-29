@@ -32,7 +32,7 @@ struct GroupControlTests {
         let moved = try await base.call(
             client, ControlMethod.rowMove, RowMoveParams(target: TargetHint(row: a.path), group: "REVIEW"),
             as: RowMoveResult.self)
-        #expect(moved.moved && moved.row.group == "Review" && moved.from == nil)
+        #expect(moved.moved && moved.row.worktree?.group == "Review" && moved.from == nil)
         let renamed = try await base.call(
             client, GroupMethod.rename, GroupRenameParams(target: demo, name: "review", newName: "Code review"),
             as: GroupInfo.self)

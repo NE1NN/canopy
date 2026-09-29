@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Opens the dev build on a throwaway home that has something in every part of the window, for UI checks and shots:
 # three repos, rows with open, draft, merged, and closed PRs, two groups, other worktrees, running programs,
-# listening ports, a split tab, and agents in every state. Nothing outside the throwaway folder is touched.
+# listening ports, a split tab, agents in every state, and the fixture plugin's section with its warning, rows with every
+# kind of accessory, a missing item, and a worktree row linked to one of them. Nothing outside the throwaway folder is
+# touched.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -45,7 +47,7 @@ work=$(mktemp -d -t cnp)
 export CANOPY_HOME="$work/home"
 # The app offers to install Claude Code's hooks, and must only ever find the fixture's settings.
 export CLAUDE_CONFIG_DIR="$work/claude"
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
 if [[ "${UI_FIXTURE_HOOKS_OFFER:-}" == 1 ]]; then mkdir -p "$CLAUDE_CONFIG_DIR"; fi
 
 mkdir -p "$work/bin" "$work/zdot"
@@ -162,11 +164,25 @@ for repo in billing design-system; do
     git clone -q --bare "$work/web-app" "$work/remotes/acme/$repo.git"
 done
 
+# The fixture plugin is on, with a warning under its header and one item it pretends is gone.
+mkdir -p "$CANOPY_HOME"
+cat > "$CANOPY_HOME/config.json" <<'CONFIG'
+{
+  "plugins": {
+    "fixture": {
+      "warning": "These items are made up. Run `canopy plugin disable fixture` to hide them.",
+      "missing": ["fx-3"]
+    }
+  }
+}
+CONFIG
+
 # Either appearance, whatever the Mac is set to.
 if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES); else args=(-AppleInterfaceStyle Dark); fi
 # git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
 # The URL rewrite sends the app's git for https://github.com/ to the bare repos in $work/remotes.
-(ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 \
+(ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 CANOPY_FIXTURE_PLUGIN=1 \
+    CANOPY_TRASH_FOLDER="$work/trash" \
     GIT_CONFIG_KEY_0="url.$work/remotes/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
     exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
 # Written at once, so `stop` can clean up even if a later step fails. The subshell execs, so $! is the app.
@@ -187,6 +203,9 @@ for repo in web-app api-server docs; do "$cli" repo add "$work/$repo" >/dev/null
 "$cli" row move feat/checkout-redesign --repo web-app --group Review >/dev/null
 "$cli" row move feat/onboarding-flow --repo web-app --group Review >/dev/null
 "$cli" row move chore/bump-deps --repo web-app --group Later >/dev/null
+# Fixture rows, and a worktree row made from one's terminal, which links it to that item.
+for item in 1 2 6 3; do "$cli" plugin new fixture "$item" >/dev/null; done
+CANOPY_PLUGIN=fixture CANOPY_ITEM=fx-1 "$cli" row new fix/sign-in-loop --repo web-app >/dev/null
 git -C "$work/web-app" worktree add -q -b hotfix/cart-total "$work/elsewhere/cart-total"
 git -C "$work/web-app" worktree add -q -b spike/new-parser "$work/elsewhere/new-parser"
 # Remotes come after the rows, so creating the rows does not fetch. Origins start as copies of the repos, rows and
@@ -256,6 +275,15 @@ first=$("$cli" term list --all --json | /usr/bin/python3 -c \
 "$cli" term new --repo web-app --row chore/bump-deps --run "$plain" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
+fixture_row() {
+    "$cli" row list --json | /usr/bin/python3 -c \
+        'import json, sys; print([r["path"] for r in json.load(sys.stdin) if r.get("item") == sys.argv[1]][0])' "$1"
+}
+"$cli" term new --row "$(fixture_row fx-1)" --run "$plain; cat item.md" >/dev/null
+"$cli" term new --row "$(fixture_row fx-1)" --run "$plain; sleep 600" >/dev/null
+"$cli" term new --row "$(fixture_row fx-2)" --run "$plain; sleep 600" >/dev/null
+"$cli" row select feat/checkout-redesign --repo web-app >/dev/null
+
 # Agents in every state, reported the way agents without Claude Code's hooks report them.
 pane_in() {
     "$cli" term list --all --json | /usr/bin/python3 -c \
@@ -267,6 +295,7 @@ pane_in() {
 "$cli" term state "$(pane_in feat/onboarding-flow Terminal)" working >/dev/null
 "$cli" term state "$(pane_in fix/login-redirect Terminal)" waiting >/dev/null
 "$cli" term state "$(pane_in feat/rate-limits Terminal)" working >/dev/null
+"$cli" term state "$(pane_in beta Terminal)" waiting >/dev/null
 # Folding the Later group, which no command does, shows its done dot on the group's header.
 "$cli" term state "$(pane_in chore/bump-deps Terminal)" done >/dev/null
 

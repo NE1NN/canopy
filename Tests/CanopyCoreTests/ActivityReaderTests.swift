@@ -166,4 +166,18 @@ struct ActivityReaderTests {
         #expect(summary("row.moved", ["from": .null, "to": "Review"]) == "none -> Review")
         #expect(summary("row.moved", ["from": "Review", "to": .null]) == "Review -> none")
     }
+
+    @Test func pluginEventsReadWell() {
+        let summary = { (type: String, data: [String: JSONValue]) in
+            ActivityEvent(date: Self.date(28, 14, 2), type: type, source: .cli, data: data).summary
+        }
+
+        #expect(summary("plugin.enabled", ["plugin": "fixture"]) == "fixture")
+        #expect(summary("plugin.disabled", ["plugin": "fixture"]) == "fixture")
+        #expect(summary("plugin.row.created", ["plugin": "fixture", "item": "fx-2"]) == "fixture fx-2")
+        #expect(summary("plugin.row.removed", ["plugin": "fixture", "item": "fx-2"]) == "fixture fx-2")
+        #expect(
+            summary("row.created", ["class": "canopy", "link": .object(["plugin": "fixture", "item": "fx-2"])])
+                == "canopy, for fixture fx-2")
+    }
 }

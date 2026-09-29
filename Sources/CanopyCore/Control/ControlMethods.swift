@@ -19,7 +19,7 @@ public enum ControlMethod {
     /// Methods that only read, which the activity log leaves out: agents poll some of them every few seconds.
     public static let readOnly: Set<String> = [
         status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
-        PortMethod.list, GroupMethod.list,
+        PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
@@ -32,9 +32,11 @@ public enum ControlMethod {
     /// takes as long as the repo is big. A PR lookup can queue behind one already asking GitHub, and each may take
     /// 30 seconds. Listing branches fetches in the repo's git queue. `term.wait` has its own timeout, which the CLI
     /// waits out. Other reads answer from memory.
+    /// A plugin's new row waits for its plugin to fill the folder, which may take the network, then for `run`. Listing a
+    /// plugin's items and starting one may reach the network too.
     public static func replyTimeout(for method: String) -> TimeInterval? {
-        if [rowNew, rowRemove, repoClone].contains(method) { return nil }
-        if [prShow, prList].contains(method) { return 90 }
+        if [rowNew, rowRemove, repoClone, PluginMethod.new].contains(method) { return nil }
+        if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
     }
@@ -157,10 +159,13 @@ public struct RowNewParams: Codable, Sendable {
     public var run: String?
     /// A group of the repo to put the row in, which must exist.
     public var group: String?
+    /// A plugin's item to tie the row to, such as the ticket it fixes.
+    public var link: RowLinkParams?
 
     public init(
         target: TargetHint = TargetHint(), branch: String? = nil, pr: String? = nil, base: String? = nil,
-        existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil, group: String? = nil
+        existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil, group: String? = nil,
+        link: RowLinkParams? = nil
     ) {
         self.target = target
         self.branch = branch
@@ -171,6 +176,7 @@ public struct RowNewParams: Codable, Sendable {
         self.setup = setup
         self.run = run
         self.group = group
+        self.link = link
     }
 
     public init(from decoder: any Decoder) throws {
@@ -188,6 +194,7 @@ public struct RowNewParams: Codable, Sendable {
         setup = try container.decodeIfPresent(Bool.self, forKey: .setup) ?? true
         run = try container.decodeIfPresent(String.self, forKey: .run)
         group = try container.decodeIfPresent(String.self, forKey: .group)
+        link = try container.decodeIfPresent(RowLinkParams.self, forKey: .link)
     }
 }
 
@@ -241,9 +248,17 @@ public struct RowRemoveParams: Codable, Sendable {
 }
 
 public struct RowRemoveResult: Codable, Sendable {
-    public var row: Row
+    public var row: SidebarRow
     /// Things that went wrong after the row was already gone, such as a branch that could not be deleted.
     public var warnings: [String]
+    /// Where a plugin row's folder went in the Trash.
+    public var trashedTo: String?
+
+    public init(row: SidebarRow, warnings: [String] = [], trashedTo: String? = nil) {
+        self.row = row
+        self.warnings = warnings
+        self.trashedTo = trashedTo
+    }
 }
 
 public struct RowAdoptParams: Codable, Sendable {

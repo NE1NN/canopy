@@ -10,7 +10,7 @@ shots="$PWD/build/e2e"
 work=$(mktemp -d -t canopy-e2e)
 export CANOPY_HOME="$work/home"
 # Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
 export CLAUDE_CONFIG_DIR="$work/claude"
 mkdir -p "$shots"
 
@@ -706,6 +706,177 @@ EOF
 "$cli" branch list --repo shop --query "just push" | grep -Eq '^feat/just-pushed +origin ' ||
     fail "branch list --query printed $("$cli" branch list --repo shop --query "just push")"
 "$cli" agent-guide | grep -q "canopy branch list" || fail "agent-guide is missing branch list"
+
+step "plugins: the fixture plugin does nothing until config.json turns it on"
+# A dev build lists the fixture plugin only when launched with CANOPY_FIXTURE_PLUGIN=1, and removed rows' folders go to
+# this run's own folder rather than the Trash.
+launch_fixture_app() {
+    (CANOPY_FIXTURE_PLUGIN=1 CANOPY_TRASH_FOLDER="$work/trash" exec "$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1) &
+    disown
+    for _ in $(seq 1 100); do
+        [[ -n "$(app_pid)" ]] && break
+        sleep 0.1
+    done
+    [[ -n "$(app_pid)" ]] || fail "the app did not start"
+}
+# Calls a method the CLI has no command for, as a plugin's own commands would.
+socket_call() { # method, params as JSON
+    /usr/bin/python3 - "$CANOPY_HOME/canopy.sock" "$1" "$2" <<'PY'
+import json, socket, sys
+connection = socket.socket(socket.AF_UNIX)
+connection.connect(sys.argv[1])
+request = {"v": 1, "id": "e2e", "method": sys.argv[2], "params": json.loads(sys.argv[3])}
+connection.sendall((json.dumps(request) + "\n").encode())
+data = b""
+while not data.endswith(b"\n"):
+    data += connection.recv(65536)
+reply = json.loads(data)
+if reply.get("error"):
+    sys.exit(json.dumps(reply["error"]))
+print(json.dumps(reply["result"]))
+PY
+}
+keychain_service=com.ne1nn.Canopy.dev.plugins.fixture
+forget_token() { [[ -n "$(app_pid)" ]] && socket_call fixture.forget '{}' >/dev/null 2>&1 || true; }
+stop_app
+printf '{\n  "minPaneColumns": 90\n}\n' > "$CANOPY_HOME/config.json"
+launch_fixture_app
+"$cli" plugin list --json | /usr/bin/python3 -c '
+import json, sys
+plugins = json.load(sys.stdin)
+assert [(p["id"], p["on"]) for p in plugins] == [("fixture", False)], plugins
+' || fail "plugin list does not show the fixture off"
+"$cli" plugin enable fixture | grep -qx "Turned on Fixture." || fail "plugin enable said something else"
+/usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY' || fail "plugin enable did not keep config.json's other keys"
+import json, sys
+config = json.load(open(sys.argv[1]))
+assert config == {"minPaneColumns": 90, "plugins": {"fixture": {}}}, config
+PY
+"$cli" plugin list | grep -Eq '^fixture +yes +0 ' || fail "plugin list printed $("$cli" plugin list)"
+
+step "plugin items lists, searches, and filters the fixture's items"
+items() { "$cli" plugin items fixture "$@" --json | /usr/bin/python3 -c 'import json, sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+[[ "$(items --query beta)" == fx-2 ]] || fail "plugin items --query beta gave $(items --query beta)"
+[[ "$(items --filter waiting)" == "fx-1 fx-4" ]] || fail "plugin items --filter waiting gave $(items --filter waiting)"
+[[ "$(items --filter closed)" == "fx-6 fx-7" ]] || fail "plugin items --filter closed gave $(items --filter closed)"
+if "$cli" plugin items fixture --filter nope --json > "$work/nofilter.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"bad_params"' "$work/nofilter.json" || fail "an unknown filter did not fail with bad_params"
+
+step "plugin new opens a filled row, whose terminals know its plugin and item and no repo"
+home_path="$(cd "$CANOPY_HOME" && pwd -P)"
+"$cli" plugin new fixture 2 --run 'printf "%s %s %s\n" "$CANOPY_PLUGIN" "$CANOPY_ITEM" "${CANOPY_REPO-none}" > vars.txt' \
+    --json > "$work/beta.json"
+beta="$(field "$work/beta.json" row.path)"
+[[ "$beta" == "$home_path/plugins/fixture/beta" ]] || fail "the row is at $beta"
+grep -q "Beta: export stops" "$beta/item.md" || fail "the fixture did not fill the row's folder"
+for _ in $(seq 1 100); do
+    [[ "$(cat "$beta/vars.txt" 2>/dev/null)" == "fixture fx-2 none" ]] && break
+    sleep 0.1
+done
+[[ "$(cat "$beta/vars.txt" 2>/dev/null)" == "fixture fx-2 none" ]] || fail "the row's terminal had $(cat "$beta/vars.txt")"
+if "$cli" plugin new fixture fx-2 --json > "$work/again.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"item_has_row"' "$work/again.json" || fail "a second row for the item did not fail with item_has_row"
+
+step "row list shows plugin rows under their plugin, and term finds them from their folder"
+"$cli" row list --json | /usr/bin/python3 -c '
+import json, sys
+last = json.load(sys.stdin)[-1]
+assert (last["plugin"], last["item"], last["title"], last["path"]) == ("fixture", "fx-2", "beta", sys.argv[1]), last
+' "$beta" || fail "row list --json does not end with the plugin row"
+"$cli" row list | grep -q '^FIXTURE ' || fail "row list does not show the plugin's rows under its name"
+if "$cli" row list --repo demo --json | grep -q '"item"'; then fail "row list --repo listed plugin rows"; fi
+(cd "$beta" && "$cli" term list --json) | /usr/bin/python3 -c '
+import json, sys
+panes = json.load(sys.stdin)
+assert panes and all(p["row"] == "beta" and p["plugin"] == "fixture" and "repo" not in p for p in panes), panes
+' || fail "term list in the row's folder did not list its terminals"
+
+step "a worktree row made in a plugin row is linked to its item"
+(cd "$beta" && CANOPY_PLUGIN=fixture CANOPY_ITEM=fx-2 "$cli" row new feat/linked --repo demo --no-setup --json) \
+    > "$work/linked.json"
+[[ "$(field "$work/linked.json" row.link.item)" == fx-2 ]] || fail "the new row is not linked to fx-2"
+linked="$(field "$work/linked.json" row.path)"
+"$cli" log --type row.created --json | /usr/bin/python3 -c '
+import json, sys
+events = [e for e in json.load(sys.stdin) if e["path"] == sys.argv[1]]
+assert [e["data"].get("link") for e in events] == [{"plugin": "fixture", "item": "fx-2"}], events
+' "$linked" || fail "row.created does not carry the link"
+if CANOPY_PLUGIN=fixture CANOPY_ITEM=nope "$cli" row new feat/nolink --repo demo --no-setup --json > "$work/nolink.json" \
+    2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"item_not_found"' "$work/nolink.json" || fail "an unknown item did not fail with item_not_found"
+[[ ! -d "$CANOPY_HOME/worktrees/demo/feat-nolink" ]] || fail "an unknown item still made a worktree"
+CANOPY_PLUGIN=fixture CANOPY_ITEM=nope "$cli" row new feat/unlinked --repo demo --no-setup --no-link --json \
+    > "$work/unlinked.json" || fail "row new --no-link failed"
+grep -q '"link"' "$work/unlinked.json" && fail "row new --no-link linked the row"
+
+step "plugin rows move within their section"
+alpha="$("$cli" plugin new fixture alpha --json | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["row"]["path"])')"
+"$cli" row move "$alpha" --before "$beta" | grep -qx "Moved alpha before $beta." || fail "row move said something else"
+[[ "$("$cli" row list --json | /usr/bin/python3 -c 'import json, sys; print(" ".join(r["title"] for r in json.load(sys.stdin) if "plugin" in r))')" == "alpha beta" ]] ||
+    fail "the plugin rows are not in the order they were moved to"
+
+step "a plugin row's folder deleted by hand comes back before a terminal opens in it"
+rm -rf "$alpha"
+"$cli" term new --row "$alpha" >/dev/null
+grep -q "Alpha: sign-in loops" "$alpha/item.md" || fail "the folder did not come back filled"
+
+step "a plugin's secret goes to the Keychain for this home alone, and tokens never reach the log"
+trap 'forget_token; cleanup' EXIT
+token="e2e-secret-$RANDOM$RANDOM"
+socket_call fixture.remember "{\"token\": \"$token\"}" >/dev/null || fail "fixture.remember failed"
+security find-generic-password -s "$keychain_service" -a "token@$CANOPY_HOME" >/dev/null 2>&1 ||
+    fail "the token is not in the Keychain for this home"
+"$cli" log --type cli.call --json > "$work/calls.json"
+grep -q "$token" "$work/calls.json" && fail "the token reached the activity log"
+grep -q '"fixture.remember"' "$work/calls.json" || fail "fixture.remember is not in the log"
+socket_call fixture.forget '{}' >/dev/null || fail "fixture.forget failed"
+if security find-generic-password -s "$keychain_service" -a "token@$CANOPY_HOME" >/dev/null 2>&1; then
+    fail "the token is still in the Keychain"
+fi
+trap cleanup EXIT
+
+step "turning the plugin off refuses while a program runs, and its rows come back"
+plugin_rows() { "$cli" row list --json | /usr/bin/python3 -c 'import json, sys; print(sum("item" in r for r in json.load(sys.stdin)))'; }
+sleeper=$("$cli" term new --row "$beta" --run 'sleep 300' --json | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+for _ in $(seq 1 100); do
+    "$cli" term list --all | grep "^$sleeper " | grep -q ' sleep ' && break
+    sleep 0.1
+done
+if "$cli" plugin disable fixture --json > "$work/busy.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"plugin_busy"' "$work/busy.json" || fail "turning off with a program running did not fail with plugin_busy"
+"$cli" plugin disable fixture --force | grep -qx "Turned off Fixture." || fail "plugin disable --force said something else"
+grep -q '"enabled" : false\|"enabled": false' "$CANOPY_HOME/config.json" || fail "config.json does not say the fixture is off"
+[[ "$(plugin_rows)" == 0 ]] || fail "row list still lists the rows of a plugin that is off"
+"$cli" plugin enable fixture >/dev/null
+[[ "$(plugin_rows)" == 2 ]] || fail "the rows did not come back"
+
+step "plugin rows come back after a relaunch"
+stop_app
+launch_fixture_app
+[[ "$(plugin_rows)" == 2 ]] || fail "the rows did not come back after a relaunch"
+
+step "row rm moves a plugin row's folder aside, and its item's links stay"
+"$cli" row rm "$beta" --json > "$work/removed.json"
+trashed="$(field "$work/removed.json" trashedTo)"
+[[ "$trashed" == "$work/trash/"* && -f "$trashed/item.md" ]] || fail "the folder went to $trashed"
+[[ ! -e "$beta" ]] || fail "the row's folder is still there"
+"$cli" row list --repo demo --json | /usr/bin/python3 -c '
+import json, sys
+rows = {r["branch"]: r for r in json.load(sys.stdin)}
+assert rows["feat/linked"]["link"] == {"plugin": "fixture", "item": "fx-2"}, rows["feat/linked"]
+' || fail "the linked row lost its link"
+
+step "canopy log has every plugin event, with no repo"
+"$cli" log --type plugin --json | /usr/bin/python3 -c '
+import json, sys
+events = json.load(sys.stdin)
+types = {e["type"] for e in events}
+assert types == {"plugin.enabled", "plugin.disabled", "plugin.row.created", "plugin.row.removed"}, types
+assert all("repo" not in e for e in events), events
+' || fail "canopy log is missing plugin events"
+"$cli" agent-guide | grep -q "canopy plugin new" || fail "agent-guide is missing plugin rows"
 
 echo
 echo "e2e passed"

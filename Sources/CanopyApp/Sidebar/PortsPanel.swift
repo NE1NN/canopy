@@ -53,7 +53,7 @@ struct PortGroupView: View {
     let group: PortGroup
     @State private var isHovering = false
 
-    private var row: Row? { model.snapshot.row(path: group.rowPath) }
+    private var row: SidebarRow? { model.snapshot.sidebarRow(path: group.rowPath) }
     private var name: String { row?.displayName ?? group.rowPath }
 
     private var isStopping: Bool { group.ports.allSatisfy { model.isStopping($0, inRow: group.rowPath) } }
@@ -66,7 +66,18 @@ struct PortGroupView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Group {
-                            if let row { RowMark(row: row, size: 12) }
+                            switch row {
+                            case .worktree(let row)?:
+                                RowMark(row: row, size: 12)
+                            case .plugin(let row)?:
+                                if let info = model.snapshot.section(row.plugin)?.info {
+                                    Image(systemName: info.symbol)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                            case nil:
+                                EmptyView()
+                            }
                         }
                         .frame(width: 16)
                         Text(name)

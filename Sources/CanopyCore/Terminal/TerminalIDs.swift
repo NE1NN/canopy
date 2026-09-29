@@ -27,15 +27,41 @@ public struct TabID: Hashable, Sendable, CustomStringConvertible {
 
 /// The row a terminal belongs to.
 public struct PaneContext: Sendable, Equatable {
-    public var repoName: String
-    public var repoPath: String
+    /// What the row belongs to: a repo, or a plugin's item.
+    public enum Owner: Sendable, Equatable {
+        case repo(name: String, path: String)
+        case plugin(id: String, item: String)
+    }
+
+    public var owner: Owner
     public var rowName: String
     public var rowPath: String
 
     public init(row: Row, repoName: String) {
-        self.repoName = repoName
-        self.repoPath = row.repoPath
-        self.rowName = row.displayName
-        self.rowPath = row.path
+        owner = .repo(name: repoName, path: row.repoPath)
+        rowName = row.displayName
+        rowPath = row.path
+    }
+
+    /// A plugin row's terminals are named by its saved title, which never changes.
+    public init(pluginRow row: PluginRow) {
+        owner = .plugin(id: row.plugin, item: row.item)
+        rowName = row.title
+        rowPath = row.path
+    }
+
+    public init(_ row: SidebarRow, repoName: String) {
+        switch row {
+        case .worktree(let row): self.init(row: row, repoName: repoName)
+        case .plugin(let row): self.init(pluginRow: row)
+        }
+    }
+
+    public var repoName: String? {
+        if case .repo(let name, _) = owner { name } else { nil }
+    }
+
+    public var repoPath: String? {
+        if case .repo(_, let path) = owner { path } else { nil }
     }
 }

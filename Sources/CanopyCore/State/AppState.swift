@@ -49,7 +49,7 @@ public struct RepoEntry: Codable, Sendable, Equatable {
 }
 
 /// A value that decodes to nil rather than failing the list it is in.
-private struct Lenient<Value: Decodable>: Decodable {
+struct Lenient<Value: Decodable>: Decodable {
     let value: Value?
 
     init(from decoder: any Decoder) throws {
@@ -71,6 +71,8 @@ public struct AppState: Codable, Sendable, Equatable {
     public var portsCollapsed = false
     /// Whether Canopy has offered to install its Claude Code hooks, which it does once.
     public var agentHooksOffered = false
+    /// Each plugin's rows and links, keyed by the plugin's id, including plugins this build does not have.
+    public var plugins: [String: PluginEntry] = [:]
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -92,5 +94,8 @@ public struct AppState: Codable, Sendable, Equatable {
         portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
         agentHooksOffered = try container.decodeIfPresent(Bool.self, forKey: .agentHooksOffered) ?? false
         terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
+        // A plugin's entry that cannot be read is dropped on its own, so repos and other plugins still load.
+        let plugins = try? container.decodeIfPresent([String: Lenient<PluginEntry>].self, forKey: .plugins)
+        self.plugins = plugins?.compactMapValues(\.value) ?? [:]
     }
 }

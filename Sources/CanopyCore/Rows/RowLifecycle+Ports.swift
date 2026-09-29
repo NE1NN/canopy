@@ -2,10 +2,11 @@ import Foundation
 
 /// Ports for the panel and `canopy ports`, on the main actor where the terminals' shells are known.
 extension RowLifecycle {
-    /// Every row's ports, in sidebar order: each repo's rows, then its other worktrees. Ports in the system's random
-    /// range are left out.
+    /// Every row's ports, in sidebar order: each repo's rows, then its other worktrees, then the rows of each plugin
+    /// that is on. Ports in the system's random range are left out.
     public func portGroups() async -> [PortGroup] {
-        let rows = await workspace.snapshot.repos.flatMap(\.allRows).map(\.path)
+        let snapshot = await workspace.snapshot
+        let rows = snapshot.repos.flatMap(\.allRows).map(\.path) + snapshot.activePlugins.flatMap(\.rows).map(\.path)
         let shells = terminals.tabsByRow.mapValues { tabs in tabs.flatMap(\.paneList).compactMap(\.pid) }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
@@ -24,12 +25,12 @@ extension RowLifecycle {
         let groups = await portGroups()
         let snapshot = await workspace.snapshot
         return groups.filter { rowPath == nil || $0.rowPath == rowPath }.flatMap { group in
-            let row = snapshot.row(path: group.rowPath)
-            let repo = row.flatMap { snapshot.repo(path: $0.repoPath)?.name } ?? ""
+            let row = snapshot.sidebarRow(path: group.rowPath)
+            let repo = row?.worktree.flatMap { snapshot.repo(path: $0.repoPath)?.name }
             return group.ports.flatMap(\.processes).map { port in
                 PortInfo(
-                    repo: repo, row: row?.displayName ?? group.rowPath, rowPath: group.rowPath, port: Int(port.port),
-                    pid: port.pid, process: port.process)
+                    repo: repo, plugin: row?.pluginRow?.plugin, row: row?.displayName ?? group.rowPath,
+                    rowPath: group.rowPath, port: Int(port.port), pid: port.pid, process: port.process)
             }
         }
     }

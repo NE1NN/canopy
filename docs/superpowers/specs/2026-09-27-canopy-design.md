@@ -96,7 +96,10 @@ Everything lives in `CANOPY_HOME`, which defaults to `~/.canopy`.
   repos/<owner>/<name>/      repos cloned by Canopy
   activity/2026-09-27.jsonl  activity log, one file per local day
   shell/zsh/                 zsh startup shim for command logging
+  plugins/<plugin>/<folder>/ plugins' rows
 ```
+
+Plugins' rows, and everything else about plugins, are in [Plugins](2026-09-29-canopy-plugins-design.md).
 
 The folder is created with mode 0700, and the socket and log files with mode 0600.
 
@@ -272,6 +275,7 @@ A row line reads, left to right: icon, branch name, then a right-aligned running
 
 Rows can be gathered into named groups that fold away within their repo, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes.
 An agent in a terminal turns the running dot into an agent dot and plays a sound when it finishes, as [Agent state](2026-09-28-canopy-agent-state-design.md) describes.
+Each plugin that is on adds a section of its own rows below the repos, and a worktree row linked to a plugin's item shows the item's short label, as [Plugins](2026-09-29-canopy-plugins-design.md) describes.
 
 ## Terminals
 
@@ -557,6 +561,7 @@ Every command exits non-zero on failure.
 | `canopy pr show [<row>] [--refresh]` | show a row's PR; `canopy pr` alone does the same |
 | `canopy pr list [--query <text>] [--closed]` | list the repo's PRs and the row that has each |
 | `canopy branch list [--query <text>] [--no-fetch]` | list local and origin branches and the row that has each |
+| `canopy plugin list\|enable\|disable\|items\|new` | list plugins, turn them on and off, and open rows for their items, as [Plugins](2026-09-29-canopy-plugins-design.md) describes |
 | `canopy log [--since <when>] [--until <when>] [--type <t>]` | print activity events, from 24 hours ago by default |
 | `canopy agent-guide` | print a manual written for agents |
 
@@ -601,6 +606,7 @@ Readers skip a trailing partial line and any line they cannot read.
 | `term.command` | a command finishes in a zsh pane | `pane`, `cmd`, `cwd`, `exit`, `durationMs` |
 | `cli.call` | a `canopy` request changes something | `method`, `params`, `error` when it failed |
 | `group.created`, `group.renamed`, `group.removed`, `row.moved` | groups change, as [Row groups](2026-09-28-canopy-row-groups-design.md) describes | |
+| `plugin.enabled`, `plugin.disabled`, `plugin.row.created`, `plugin.row.removed` | plugins turn on and off, and their rows come and go, as [Plugins](2026-09-29-canopy-plugins-design.md) describes | |
 
 Row and PR changes are found by comparing each worktree list and each PR lookup with the one before.
 The first one after launching or adding a repo only sets the baseline, so what already existed is not logged.

@@ -255,10 +255,15 @@ public final class Pane: Identifiable {
         refreshTitle()
     }
 
+    /// Events about a plugin row leave the repo out and name the plugin and item instead.
     private func record(_ type: String, _ data: [String: JSONValue] = [:], source: ActivitySource = .current) {
+        var data = data.merging(["pane": .string(id.description)]) { value, _ in value }
+        if case .plugin(let plugin, let item) = context.owner {
+            data["plugin"] = .string(plugin)
+            data["item"] = .string(item)
+        }
         activity.record(
-            type, repo: context.repoName, row: context.rowName, path: context.rowPath, source: source,
-            data: data.merging(["pane": .string(id.description)]) { value, _ in value })
+            type, repo: context.repoName, row: context.rowName, path: context.rowPath, source: source, data: data)
     }
 
     private func typed(_ data: Data) {

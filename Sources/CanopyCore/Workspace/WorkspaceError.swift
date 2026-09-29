@@ -34,6 +34,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case agentStopped(String)
     case settingsInvalid(String, reason: String)
     case settingsWriteFailed(String, reason: String)
+    case configInvalid(String, reason: String)
+    case configWriteFailed(String, reason: String)
     case noPullRequestLookup(String)
     case notOnGitHub(String)
     case ghUnavailable(String)
@@ -51,6 +53,17 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case groupNotFound(String, repo: String)
     case cannotMoveMain
     case invalidAnchor(String)
+    case invalidPluginAnchor(String)
+    case pluginRowsHaveNoGroups
+    case pluginNotFound(String)
+    case pluginOff(String, id: String)
+    /// The path of the row the item already has.
+    case itemHasRow(String)
+    case rowBusy(String, programs: [String])
+    case pluginBusy(String, id: String, programs: [String])
+    case trashFailed(String, reason: String)
+    case folderFailed(String, reason: String)
+    case pluginNotStarted(String, reason: String)
     case git(GitError)
 
     public var code: String {
@@ -86,6 +99,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .agentStopped: "agent_stopped"
         case .settingsInvalid: "settings_invalid"
         case .settingsWriteFailed: "settings_write_failed"
+        case .configInvalid: "config_invalid"
+        case .configWriteFailed: "config_write_failed"
         case .noPullRequestLookup: "no_pr_lookup"
         case .notOnGitHub: "not_github"
         case .ghUnavailable: "gh_unavailable"
@@ -101,7 +116,16 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .groupExists: "group_exists"
         case .groupNotFound: "group_not_found"
         case .cannotMoveMain: "cannot_move_main"
-        case .invalidAnchor: "invalid_anchor"
+        case .invalidAnchor, .invalidPluginAnchor: "invalid_anchor"
+        case .pluginRowsHaveNoGroups: "bad_params"
+        case .pluginNotFound: "plugin_not_found"
+        case .pluginOff: "plugin_off"
+        case .itemHasRow: "item_has_row"
+        case .rowBusy: "row_busy"
+        case .pluginBusy: "plugin_busy"
+        case .trashFailed: "trash_failed"
+        case .folderFailed: "folder_failed"
+        case .pluginNotStarted: "plugin_not_started"
         case .git: "git_failed"
         }
     }
@@ -162,6 +186,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .settingsInvalid(let path, let reason):
             "\(path) is not settings Claude Code can read (\(reason)). Nothing was changed."
         case .settingsWriteFailed(let path, let reason): "Could not write \(path): \(reason). Nothing was changed."
+        case .configInvalid(let path, let reason):
+            "\(path) is not settings Canopy can read (\(reason)). Nothing was changed."
+        case .configWriteFailed(let path, let reason): "Could not write \(path): \(reason). Nothing was changed."
         case .noPullRequestLookup(let name):
             "Canopy only looks up PRs for its own and adopted rows on a branch, and \(name) is not one."
         case .notOnGitHub(let repo): "\(repo)'s origin is not on GitHub, so its rows have no PRs."
@@ -185,7 +212,33 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .cannotMoveMain: "The main checkout always comes first and cannot join a group."
         case .invalidAnchor(let name):
             "--before and --after take another Canopy or adopted row of the same repo, and \(name) is not one."
+        case .invalidPluginAnchor(let name):
+            "--before and --after take another row of the same plugin, and \(name) is not one."
+        case .pluginRowsHaveNoGroups: "Plugin rows have no groups. Move them with --before or --after."
+        case .pluginNotFound(let id): "No plugin is named \"\(id)\". Run `canopy plugin list`."
+        case .pluginOff(let name, let id): "\(name) is off. Run `canopy plugin enable \(id)` to turn it on."
+        case .itemHasRow(let path):
+            "That item already has a row at \(path). Run `canopy row select \(path)` to show it."
+        case .rowBusy(let row, let programs):
+            "\(Self.list(programs)) \(programs.count == 1 ? "is" : "are") still running in \(row). "
+                + "Pass --force to remove the row anyway."
+        case .pluginBusy(let name, _, let programs):
+            "\(Self.list(programs)) \(programs.count == 1 ? "is" : "are") still running in \(name)'s rows. "
+                + "Pass --force to turn it off anyway, which closes them."
+        case .trashFailed(let path, let reason): "Could not move \(path) to the Trash: \(reason)"
+        case .folderFailed(let path, let reason): "Could not make \(path): \(reason)"
+        case .pluginNotStarted(let name, let reason): "\(name) did not start. \(reason)"
         case .git(let error): error.description
+        }
+    }
+
+    /// "claude", "claude and bun", or "claude, bun, and sleep".
+    static func list(_ names: [String]) -> String {
+        switch names.count {
+        case 0: "A program"
+        case 1: names[0]
+        case 2: "\(names[0]) and \(names[1])"
+        default: names.dropLast().joined(separator: ", ") + ", and " + names.last!
         }
     }
 }

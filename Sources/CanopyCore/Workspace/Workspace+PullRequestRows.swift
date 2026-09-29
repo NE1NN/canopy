@@ -3,9 +3,10 @@ import Foundation
 extension Workspace {
     /// Creates a row on a pull request's branch, from the repo itself or from a fork, with `gh pr checkout`'s rules for
     /// naming the local branch and setting what it tracks. `branch` names the local branch instead. With `group`, the
-    /// row goes straight to the end of that group, which must exist.
+    /// row goes straight to the end of that group, which must exist. With `link`, the row is tied to a plugin's item.
     public func createRow(
-        repoPath: String, pullRequest reference: PRReference, branch: String? = nil, group: String? = nil
+        repoPath: String, pullRequest reference: PRReference, branch: String? = nil, group: String? = nil,
+        link: PluginLink? = nil
     ) async throws -> CreatedRow {
         _ = try entryIndex(repoPath: repoPath)
         // Checked before asking GitHub, and again once it is this row's turn.
@@ -35,12 +36,13 @@ extension Workspace {
         }
         return try await createRow(repoPath: repoPath, joining: group) {
             try await self.createPullRequestRowNow(
-                repoPath: repoPath, head: head, origin: origin, branch: branch, group: group)
+                repoPath: repoPath, head: head, origin: origin, branch: branch, group: group, link: link)
         }
     }
 
     private func createPullRequestRowNow(
-        repoPath: String, head: PullRequestHead, origin: GitHubRemote, branch requested: String?, group: String?
+        repoPath: String, head: PullRequestHead, origin: GitHubRemote, branch requested: String?, group: String?,
+        link: PluginLink?
     ) async throws -> CreatedRow {
         let number = head.pullRequest.number
         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
@@ -60,7 +62,7 @@ extension Workspace {
         do {
             let created = try await checkOut(
                 head, from: target, fromPullRef: fromPullRef, origin: origin, branch: requested, joining: joining,
-                repoPath: repoPath)
+                link: link, repoPath: repoPath)
             if fromPullRef { _ = try? await git.run(["update-ref", "-d", target], in: repoPath) }
             return created
         } catch {
@@ -72,7 +74,7 @@ extension Workspace {
     /// Checks out the PR's head, fetched to `target`, in a new row.
     private func checkOut(
         _ head: PullRequestHead, from target: String, fromPullRef: Bool, origin: GitHubRemote,
-        branch requested: String?, joining: String?, repoPath: String
+        branch requested: String?, joining: String?, link: PluginLink?, repoPath: String
     ) async throws -> CreatedRow {
         let number = head.pullRequest.number
         var notes: [String] = []
@@ -99,7 +101,7 @@ extension Workspace {
             notes += report.notes
             warnings += report.warnings
             added = try await addRow(
-                repoPath: repoPath, branch: name, joining: joining, fastForward: report.fastForward
+                repoPath: repoPath, branch: name, joining: joining, link: link, fastForward: report.fastForward
             ) { [$0, name] }
             source = .local
         } else {
@@ -113,7 +115,7 @@ extension Workspace {
             do {
                 warnings += try await track(
                     name, head: head, origin: origin, fromPullRef: fromPullRef, repoPath: repoPath)
-                added = try await addRow(repoPath: repoPath, branch: name, joining: joining) { [$0, name] }
+                added = try await addRow(repoPath: repoPath, branch: name, joining: joining, link: link) { [$0, name] }
             } catch {
                 // Deleting the branch also drops the tracking set for it.
                 _ = try? await git.run(["branch", "-D", name], in: repoPath)

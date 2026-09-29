@@ -29,6 +29,7 @@ public final class TerminalTab: Identifiable {
         panes[focusedPaneID] ?? paneList[0]
     }
 
+    /// Nil for a plugin row's tab.
     var repoPath: String? {
         paneList.first?.context.repoPath
     }
@@ -311,10 +312,12 @@ public final class TerminalStore {
     /// is logged and listed by its name now. Shells already running keep the CANOPY_ROW they started with.
     public func followRowNames(in snapshot: WorkspaceSnapshot) {
         for pane in panes {
-            guard let row = snapshot.row(path: pane.context.rowPath), let repo = snapshot.repo(path: row.repoPath)
+            guard case .repo(let name, let path) = pane.context.owner,
+                let row = snapshot.row(path: pane.context.rowPath),
+                let repo = snapshot.repo(path: row.repoPath)
             else { continue }
             if pane.context.rowName != row.displayName { pane.context.rowName = row.displayName }
-            if pane.context.repoName != repo.name { pane.context.repoName = repo.name }
+            if name != repo.name { pane.context.owner = .repo(name: repo.name, path: path) }
         }
     }
 
@@ -330,7 +333,9 @@ public final class TerminalStore {
         for (path, tabs) in tabsByRow where tabs.first?.repoPath == oldRepoPath {
             let newPath = Paths.isInside(path, oldRepoPath) ? newRepoPath + path.dropFirst(oldRepoPath.count) : path
             for pane in tabs.flatMap(\.paneList) {
-                pane.context.repoPath = newRepoPath
+                if case .repo(let name, _) = pane.context.owner {
+                    pane.context.owner = .repo(name: name, path: newRepoPath)
+                }
                 pane.context.rowPath = newPath
             }
             tabsByRow[path] = nil

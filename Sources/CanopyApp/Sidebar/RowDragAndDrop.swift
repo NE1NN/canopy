@@ -39,6 +39,7 @@ extension View {
     func rowDragSource(_ row: Row, model: AppModel) -> some View {
         if row.rowClass == .canopy || row.rowClass == .adopted {
             onDrag {
+                model.draggedPluginRow = nil
                 model.draggedRow = row
                 let provider = NSItemProvider()
                 provider.registerDataRepresentation(
@@ -79,9 +80,10 @@ struct RowDragPreview: View {
 struct RowDropDelegate: DropDelegate {
     let model: AppModel
     let slots: [DropSlot]
+    let pluginSlots: [PluginDropSlot]
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.canopyRow]) && model.draggedRow != nil
+        info.hasItemsConforming(to: [.canopyRow]) && (model.draggedRow != nil || model.draggedPluginRow != nil)
     }
 
     func dropEntered(info: DropInfo) {
@@ -104,9 +106,14 @@ struct RowDropDelegate: DropDelegate {
             model.isDraggingRowOverList = false
             model.rowDropTarget = nil
             model.draggedRow = nil
+            model.draggedPluginRow = nil
         }
-        guard let row = model.draggedRow, let target = target(info) else { return false }
-        model.move(row, to: target.placement)
+        guard let target = target(info) else { return false }
+        if let row = model.draggedRow {
+            model.move(row, to: target.placement)
+        } else if let row = model.draggedPluginRow {
+            model.movePluginRow(row, to: target.placement)
+        }
         return true
     }
 
@@ -118,8 +125,14 @@ struct RowDropDelegate: DropDelegate {
     }
 
     private func target(_ info: DropInfo) -> RowDropTarget? {
-        guard let row = model.draggedRow else { return nil }
-        return RowDrop.target(dragging: row, at: info.location.y, in: slots.sorted { $0.minY < $1.minY })
+        if let row = model.draggedRow {
+            return RowDrop.target(dragging: row, at: info.location.y, in: slots.sorted { $0.minY < $1.minY })
+        }
+        if let row = model.draggedPluginRow {
+            return PluginRowDrop.target(
+                dragging: row, at: info.location.y, in: pluginSlots.sorted { $0.minY < $1.minY })
+        }
+        return nil
     }
 }
 
@@ -128,6 +141,7 @@ struct RowDropDelegate: DropDelegate {
 struct RowDropIndicator: View {
     let target: RowDropTarget
     let slots: [DropSlot]
+    let pluginSlots: [PluginDropSlot]
 
     var body: some View {
         if let (y, indent) = placement {
@@ -156,6 +170,9 @@ struct RowDropIndicator: View {
         case .header: return nil
         case .above(let above): (path, below) = (above, false)
         case .below(let under): (path, below) = (under, true)
+        }
+        if let slot = pluginSlots.first(where: { $0.path == path }) {
+            return (below ? slot.maxY : slot.minY, 0)
         }
         guard let slot = slots.first(where: { $0.kind.rowPath == path }) else { return nil }
         let indent = if case .row(_, group: _?) = slot.kind { Style.groupIndent } else { 0.0 }

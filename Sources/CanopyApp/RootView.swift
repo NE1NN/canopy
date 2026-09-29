@@ -26,9 +26,9 @@ struct RootView: View {
                 }
         }
         .overlay(alignment: .topLeading) {
-            if let row = model.selectedRow, !row.isMissing {
-                TopBarView(
-                    row: row, isSidebarHidden: isSidebarHidden, windowControlsOverBar: placement.windowControlsOverBar
+            if let row = model.selection, !(row.worktree?.isMissing ?? false) {
+                TitleBarRow(
+                    row: row, placement: placement, detailWidth: detailFrame.width, isSidebarHidden: isSidebarHidden
                 )
                 .frame(width: detailFrame.width)
                 .offset(x: detailFrame.minX)
@@ -77,6 +77,20 @@ struct RootView: View {
             )
         }
         .alert(
+            "Turn off \(model.pendingTurnOff?.section.info.name ?? "")?",
+            isPresented: Binding(get: { model.pendingTurnOff != nil }, set: { if !$0 { model.pendingTurnOff = nil } }),
+            presenting: model.pendingTurnOff
+        ) { pending in
+            Button("Turn Off", role: .destructive) { model.confirmTurnOff(pending.section) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(
+                pending.busyTerminals == 1
+                    ? "A terminal in its rows is running a program. Turning it off closes its terminals. Its rows come back when it is on again."
+                    : "\(pending.busyTerminals) terminals in its rows are running programs. Turning it off closes its terminals. Its rows come back when it is on again."
+            )
+        }
+        .alert(
             "Remove \(model.pendingRepoRemoval?.repo.name ?? "") from Canopy?",
             isPresented: Binding(
                 get: { model.pendingRepoRemoval != nil }, set: { if !$0 { model.pendingRepoRemoval = nil } }),
@@ -94,14 +108,42 @@ struct RootView: View {
     }
 }
 
+/// What sits in the title bar's row over the detail area: the top bar, after a plugin row's panel strip. A plugin row's
+/// panel comes first, with the window controls over its strip rather than over the bar.
+struct TitleBarRow: View {
+    @Environment(AppModel.self) private var model
+    let row: SidebarRow
+    let placement: TopBarPlacement
+    let detailWidth: Double
+    let isSidebarHidden: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if let pluginRow = row.pluginRow {
+                PanelTitleStrip(row: pluginRow, windowControlsOverStrip: placement.windowControlsOverBar)
+                    .frame(width: model.panelWidth(for: pluginRow.plugin, detailWidth: detailWidth))
+                Rectangle().fill(.separator).frame(width: PluginDetailView.dividerWidth, height: Style.topBarHeight)
+            }
+            TopBarView(
+                row: row, isSidebarHidden: isSidebarHidden,
+                windowControlsOverBar: placement.windowControlsOverBar && row.pluginRow == nil)
+        }
+    }
+}
+
 struct RowDetailView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let row = model.selectedRow {
+        if let row = model.selection {
             // The title bar is hidden, but the title still names the window in the Window menu and Mission Control.
-            RowTerminalsView(row: row)
-                .navigationTitle(row.displayName)
+            Group {
+                switch row {
+                case .worktree(let row): RowTerminalsView(row: row)
+                case .plugin(let row): PluginDetailView(row: row)
+                }
+            }
+            .navigationTitle(row.displayName)
         } else {
             ContentUnavailableView {
                 Label("No Row Selected", systemImage: "sidebar.left")

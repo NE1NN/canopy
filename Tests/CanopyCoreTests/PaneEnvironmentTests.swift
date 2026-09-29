@@ -50,6 +50,28 @@ struct PaneEnvironmentTests {
         #expect(environment["HOME"] == NSHomeDirectory())
     }
 
+    @Test func aPluginRowsPanesKnowItsPluginAndItemAndNoRepo() {
+        let row = PluginRow(plugin: "tickets", item: "k5", title: "0853-sam", path: "/h/plugins/tickets/0853-sam")
+        let base = ["CANOPY_REPO": "leaked", "CANOPY_ROOT_PATH": "/leaked", "CANOPY_PLUGIN": "leaked"]
+
+        let environment = PaneEnvironment.build(
+            settings: settings(base), context: PaneContext(pluginRow: row), pane: PaneID(3))
+
+        #expect(environment["CANOPY_ROW"] == "0853-sam")
+        #expect(environment["CANOPY_ROW_PATH"] == "/h/plugins/tickets/0853-sam")
+        #expect(environment["CANOPY_PLUGIN"] == "tickets")
+        #expect(environment["CANOPY_ITEM"] == "k5")
+        #expect(environment["CANOPY_REPO"] == nil)
+        #expect(environment["CANOPY_ROOT_PATH"] == nil)
+        #expect(environment["CANOPY_PANE"] == "p3")
+    }
+
+    @Test func aWorktreeRowsPanesHaveNoPlugin() {
+        let environment = PaneEnvironment.build(settings: settings([:]), context: context, pane: PaneID(12))
+        #expect(environment["CANOPY_PLUGIN"] == nil)
+        #expect(environment["CANOPY_ITEM"] == nil)
+    }
+
     @Test func aBuildWithoutItsCLILeavesItOut() {
         var settings = settings([:])
         settings.cliDirectory = nil

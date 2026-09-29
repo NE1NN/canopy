@@ -79,23 +79,32 @@ public struct RepoSnapshot: Sendable, Equatable, Identifiable {
 
 public struct WorkspaceSnapshot: Sendable, Equatable {
     public var repos: [RepoSnapshot]
+    /// Every built-in plugin's section in built-in order, on or off.
+    public var plugins: [PluginSection]
     public var selectedRowPath: String?
 
-    public init(repos: [RepoSnapshot] = [], selectedRowPath: String? = nil) {
+    public init(repos: [RepoSnapshot] = [], plugins: [PluginSection] = [], selectedRowPath: String? = nil) {
         self.repos = repos
+        self.plugins = plugins
         self.selectedRowPath = selectedRowPath
     }
 
-    /// Rows that get ⌘1 to ⌘9, in sidebar order. Rows in collapsed groups and external rows are excluded.
-    public var visibleRows: [Row] { repos.flatMap(\.visibleRows) }
+    /// The sections the sidebar shows.
+    public var activePlugins: [PluginSection] { plugins.filter(\.isOn) }
+
+    /// Rows that get ⌘1 to ⌘9, in sidebar order: every repo's rows but those in collapsed groups and external ones,
+    /// then the rows of each plugin that is on.
+    public var visibleRows: [SidebarRow] {
+        repos.flatMap(\.visibleRows).map(SidebarRow.worktree) + pluginRows
+    }
 
     /// The row `↑` or `↓` picks. From a row hidden in a collapsed group, the next visible row after the group or the
     /// last before it, and nil if there is none. From no row, or one the sidebar does not step through, the first
     /// or the last.
-    public func steppingRow(from path: String?, offset: Int) -> Row? {
+    public func steppingRow(from path: String?, offset: Int) -> SidebarRow? {
         let visible = visibleRows
         guard !visible.isEmpty else { return nil }
-        let all = repos.flatMap(\.rows)
+        let all = repos.flatMap(\.rows).map(SidebarRow.worktree) + pluginRows
         guard let path, let position = all.firstIndex(where: { $0.path == path }) else {
             return offset > 0 ? visible.first : visible.last
         }
@@ -111,11 +120,41 @@ public struct WorkspaceSnapshot: Sendable, Equatable {
         return before.isEmpty ? nil : before[max(before.count + offset, 0)]
     }
 
+    /// A worktree row, other tools' included.
     public func row(path: String) -> Row? {
         repos.lazy.flatMap(\.allRows).first { $0.path == path }
     }
 
+    /// A worktree row, or a row of a plugin that is on.
+    public func sidebarRow(path: String) -> SidebarRow? {
+        row(path: path).map(SidebarRow.worktree) ?? pluginRow(path: path).map(SidebarRow.plugin)
+    }
+
+    /// A row of a plugin that is on.
+    public func pluginRow(path: String) -> PluginRow? {
+        activePlugins.lazy.flatMap(\.rows).first { $0.path == path }
+    }
+
+    /// The row a plugin that is on has for one of its items.
+    public func pluginRow(plugin: String, item: String) -> PluginRow? {
+        activePlugins.first { $0.id == plugin }?.rows.first { $0.item == item }
+    }
+
+    /// The worktree rows made for one of a plugin's items, in sidebar order.
+    public func linkedRows(plugin: String, item: String) -> [Row] {
+        let link = PluginLink(plugin: plugin, item: item)
+        return repos.flatMap(\.allRows).filter { $0.link == link }
+    }
+
+    public func section(_ plugin: String) -> PluginSection? {
+        plugins.first { $0.id == plugin }
+    }
+
     public func repo(path: String) -> RepoSnapshot? {
         repos.first { $0.path == path }
+    }
+
+    private var pluginRows: [SidebarRow] {
+        activePlugins.flatMap(\.rows).map(SidebarRow.plugin)
     }
 }

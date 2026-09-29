@@ -5,12 +5,13 @@ import Foundation
 struct RowCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "row",
-        abstract: "Create, remove, and list rows (worktrees).",
+        abstract: "Create, remove, and list rows: worktrees, and plugins' rows.",
         subcommands: [List.self, New.self, Remove.self, Select.self, Adopt.self, Move.self]
     )
 
     struct List: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "List rows in every repo, or in one.")
+        static let configuration = CommandConfiguration(
+            abstract: "List rows in every repo, or in one, then each plugin's rows.")
 
         @Option(help: "Only this repo (name or path).")
         var repo: String?
@@ -25,14 +26,31 @@ struct RowCommand: AsyncParsableCommand {
                 RowListParams(repo: repo.map(Client.absolutePathIfRelative), all: all)
             )
             try client.print(result) {
-                let rows = try result.decode([Row].self)
-                return Table.render(
-                    ["BRANCH", "GROUP", "CLASS", "PATH"],
-                    rows.map { row in
-                        let rowClass = row.externalTag.map { "\(row.rowClass.rawValue):\($0.rawValue)" }
-                        return [row.displayName, row.group ?? "-", rowClass ?? row.rowClass.rawValue, row.path]
-                    }
-                )
+                let rows = try result.decode([SidebarRow].self)
+                let worktrees = rows.compactMap(\.worktree)
+                let pluginRows = rows.compactMap(\.pluginRow)
+                var tables: [String] = []
+                if !worktrees.isEmpty || pluginRows.isEmpty {
+                    tables.append(
+                        Table.render(
+                            ["BRANCH", "GROUP", "CLASS", "PATH"],
+                            worktrees.map { row in
+                                let rowClass = row.externalTag.map { "\(row.rowClass.rawValue):\($0.rawValue)" }
+                                return [row.displayName, row.group ?? "-", rowClass ?? row.rowClass.rawValue, row.path]
+                            }))
+                }
+                // Each plugin's rows under its name, in the order the sidebar shows them.
+                var plugins: [String] = []
+                for row in pluginRows where !plugins.contains(row.plugin) { plugins.append(row.plugin) }
+                for plugin in plugins {
+                    tables.append(
+                        Table.render(
+                            [plugin.uppercased(), "ITEM", "PATH"],
+                            pluginRows.filter { $0.plugin == plugin }.map { row in
+                                [row.displayName + (row.isMissing ? " (missing)" : ""), row.item, row.path]
+                            }))
+                }
+                return tables.joined(separator: "\n\n")
             }
         }
     }
@@ -48,6 +66,9 @@ struct RowCommand: AsyncParsableCommand {
 
                 --pr checks out a pull request's branch, including one from a fork, named and tracked the way \
                 gh pr checkout does it.
+
+                Run in a plugin's row, such as a ticket's, the new row is linked to that row's item, unless \
+                --no-link.
 
                 The repo's setup commands from .canopy/config.json then run in the row's Setup tab, and this \
                 waits for them. If setup fails, the row stays, --run is skipped, and this exits 1.
@@ -74,6 +95,8 @@ struct RowCommand: AsyncParsableCommand {
         var select = false
         @Option(help: "Put the row at the end of this group of the repo, which must exist.")
         var group: String?
+        @Flag(name: .customLong("no-link"), help: "Do not link the row to the item of the plugin row you are in.")
+        var noLink = false
         @OptionGroup var output: OutputOptions
 
         func validate() throws {
@@ -101,7 +124,8 @@ struct RowCommand: AsyncParsableCommand {
                 ControlMethod.rowNew,
                 RowNewParams(
                     target: Client.hint(repo: repo), branch: branch ?? localBranch, pr: pr, base: base,
-                    existing: existing, select: select, setup: !noSetup, run: command, group: group)
+                    existing: existing, select: select, setup: !noSetup, run: command, group: group,
+                    link: noLink ? nil : RowLinkParams(environment: ProcessInfo.processInfo.environment))
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
@@ -129,6 +153,9 @@ struct RowCommand: AsyncParsableCommand {
                 }
             }
             lines += created.notes
+            if let link = created.row.link {
+                lines.append("Linked to \(link.plugin) \(link.item).")
+            }
             switch created.setup.status {
             case .succeeded: lines.append("Setup finished.")
             case .skipped: lines.append("Skipped setup.")
@@ -144,10 +171,11 @@ struct RowCommand: AsyncParsableCommand {
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "rm",
-            abstract: "Remove a row's worktree, or hide an adopted row.",
+            abstract: "Remove a row's worktree, hide an adopted row, or remove a plugin's row.",
             discussion: """
                 The repo's teardown commands from .canopy/config.json run first in the row's Teardown tab, \
-                then the row's terminals close and the worktree is removed.
+                then the row's terminals close and the worktree is removed. A plugin's row closes its terminals, \
+                unless a program runs in one and --force is not given, and its folder goes to the Trash.
                 """
         )
 
@@ -155,7 +183,7 @@ struct RowCommand: AsyncParsableCommand {
         var row: String?
         @Option(help: "Repo name or path, when the branch exists in several repos.")
         var repo: String?
-        @Flag(help: "Remove even with uncommitted changes or a failing teardown.")
+        @Flag(help: "Remove even with uncommitted changes, a failing teardown, or programs running in it.")
         var force = false
         @Flag(help: "Also delete the branch.")
         var deleteBranch = false
@@ -171,7 +199,10 @@ struct RowCommand: AsyncParsableCommand {
             for warning in removed.warnings {
                 FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
             }
-            try client.print(result) { "Removed \(removed.row.displayName)." }
+            try client.print(result) {
+                guard let trashedTo = removed.trashedTo else { return "Removed \(removed.row.displayName)." }
+                return "Removed \(removed.row.displayName). Its folder is in the Trash at \(trashedTo)."
+            }
         }
     }
 
@@ -188,7 +219,7 @@ struct RowCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let result = client.call(
                 ControlMethod.rowSelect, RowRefParams(target: Client.hint(repo: repo, row: row)))
-            try client.print(result) { "Selected \(try result.decode(Row.self).displayName)." }
+            try client.print(result) { "Selected \(try result.decode(SidebarRow.self).displayName)." }
         }
     }
 
@@ -239,7 +270,7 @@ struct RowCommand: AsyncParsableCommand {
             let name = moved.row.displayName
             if let before, moved.moved { return "Moved \(name) before \(before)." }
             if let after, moved.moved { return "Moved \(name) after \(after)." }
-            switch (moved.moved, moved.row.group, moved.from) {
+            switch (moved.moved, moved.row.worktree?.group, moved.from) {
             case (true, let to?, _): return "Moved \(name) to \(to)."
             case (true, nil, let from?): return "Moved \(name) out of \(from)."
             case (false, let group?, _) where self.group != nil: return "\(name) is already in \(group)."

@@ -96,7 +96,7 @@ public struct RowMoveParams: Codable, Sendable {
 }
 
 public struct RowMoveResult: Codable, Sendable {
-    public var row: Row
+    public var row: SidebarRow
     /// False when the row was already where it was asked to go.
     public var moved: Bool
     /// The group the row was in before, nil if it was ungrouped.
