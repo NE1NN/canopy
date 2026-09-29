@@ -255,7 +255,15 @@ struct TicketsCommandTests {
         #expect(await harness.transport.requests.count == before)
         #expect(try await titles("", "anyone", ["closed"], fresh: true) == ["0848-shathrem", "0801-oldco"])
         #expect(
-            harness.plugin.pickerCommand(for: PluginItem(id: "x", title: "0853-sameergoyal"))
+            harness.plugin.pickerCommand(for: .create(PluginItem(id: "x", title: "0853-sameergoyal")))
                 == "canopy ticket new 0853-sameergoyal --select")
+        let row = PluginRow(
+            plugin: "tickets", item: "k57", title: "0855-mayaperez", path: "/h/plugins/tickets/0855-mayaperez")
+        #expect(harness.plugin.pickerCommand(for: .select(row)) == "canopy ticket select 0855-mayaperez")
+        let odd = PluginRow(plugin: "tickets", item: "k58", title: "general help", path: "/h/plugins/tickets/general")
+        #expect(harness.plugin.pickerCommand(for: .select(odd)) == "canopy ticket select k58")
+        #expect(
+            harness.plugin.pickerCommand(for: .create(PluginItem(id: "k59", title: "it's odd")))
+                == "canopy ticket new k59 --select")
     }
 }

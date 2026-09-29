@@ -37,7 +37,7 @@ public final class PluginPicker {
     public private(set) var isLoading = false
 
     @ObservationIgnored private let source: @Sendable (PluginQuery) async throws -> [PluginItem]
-    @ObservationIgnored private let customCommand: @Sendable (PluginItem) -> String?
+    @ObservationIgnored private let customCommand: @Sendable (PluginPickerAction) -> String?
     /// Nil until the plugin first answers.
     private var result: Result<[PluginItem], PickerError>?
     /// Changes before the sheet first loads are part of that first load.
@@ -49,12 +49,12 @@ public final class PluginPicker {
     private var selection: String?
     @ObservationIgnored private var isSelectionPicked = false
 
-    /// `items` asks the plugin, as `canopy plugin items` does. `command` is the plugin's own command for picking an
-    /// item without a row, or nil for the generic one.
+    /// `items` asks the plugin, as `canopy plugin items` does. `command` is the plugin's own command for a pick, or
+    /// nil for the generic one.
     public init(
         plugin: PluginInfo, filters: PluginFilters,
         items: @escaping @Sendable (PluginQuery) async throws -> [PluginItem],
-        command: @escaping @Sendable (PluginItem) -> String?
+        command: @escaping @Sendable (PluginPickerAction) -> String?
     ) {
         self.plugin = plugin
         self.filters = filters
@@ -114,14 +114,15 @@ public final class PluginPicker {
         selection = items[min(max(index + offset, 0), items.count - 1)].id
     }
 
-    /// The `canopy` command that does what picking does, quoted for a shell.
+    /// The `canopy` command that does what picking does, quoted for a shell: the plugin's own, or the generic one.
     public func command(for action: PluginPickerAction) -> String {
+        if let command = customCommand(action) { return command }
         switch action {
         case .create(let item):
-            customCommand(item)
-                ?? (["canopy", "plugin", "new", plugin.id, item.id].map(NewRowAction.quoted) + ["--select"])
+            return (["canopy", "plugin", "new", plugin.id, item.id].map(NewRowAction.quoted) + ["--select"])
                 .joined(separator: " ")
-        case .select(let row): (["canopy", "row", "select", row.path].map(NewRowAction.quoted)).joined(separator: " ")
+        case .select(let row):
+            return ["canopy", "row", "select", row.path].map(NewRowAction.quoted).joined(separator: " ")
         }
     }
 

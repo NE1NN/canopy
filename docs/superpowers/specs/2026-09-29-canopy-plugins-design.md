@@ -77,7 +77,7 @@ A plugin gives the base:
 - how to fill a row's folder, such as writing `ticket.md`
 - how to resolve a reference an agent typed, such as `853`, to an item
 - its control methods, such as `tickets.list`, which get the CLI's target hint and the plugin row it points at, and which reach the plugin while it is off too, so `tickets.connect` can turn it on
-- the picker footer's command for an item, when it has one of its own, such as `canopy ticket new 853 --select`
+- the picker footer's commands for picking an item and for selecting its row, when it has its own, such as `canopy ticket new 853 --select` and `canopy ticket select 0853-sameergoyal`
 
 The base gives each plugin a `PluginContext` with:
 
@@ -188,7 +188,7 @@ A plugin row with no tabs opens one tab with one pane when selected, like any ro
 The base draws one picker for every plugin, as a sheet like the New Row sheet.
 It has a search field, the plugin's filter chips, and a list of items, each with a title, a subtitle, accessories, and a mark when the item already has a row.
 Return or a click opens a row for the item and selects it, or selects the row the item already has.
-The footer shows the `canopy` command that does the same, `canopy plugin new <plugin> <item> --select` unless the plugin has its own, `canopy row select <path>` for an item with a row, and `canopy plugin items <plugin>` before anything is picked.
+The footer shows the `canopy` command that does the same: `canopy plugin new <plugin> <item> --select` for an item without a row, `canopy row select <path>` for an item with one, each unless the plugin has its own, and `canopy plugin items <plugin>` before anything is picked.
 The picker asks the plugin afresh when it opens and when a toggle changes, and otherwise lets the plugin narrow what it already fetched.
 While items load the list shows a spinner, and a plugin's error shows in its place with the fix.
 

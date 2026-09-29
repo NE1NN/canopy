@@ -144,8 +144,19 @@ public actor TicketsPlugin: CanopyPlugin {
         "canopy ticket connect \(Self.configuredURL(config) ?? "<url>")"
     }
 
-    public nonisolated func pickerCommand(for item: PluginItem) -> String? {
-        "canopy ticket new \(item.title) --select"
+    /// `canopy ticket new 0853-sameergoyal --select`, or `canopy ticket select 0853-sameergoyal` for a ticket with a
+    /// row.
+    public nonisolated func pickerCommand(for action: PluginPickerAction) -> String? {
+        switch action {
+        case .create(let item): "canopy ticket new \(Self.reference(title: item.title, id: item.id)) --select"
+        case .select(let row): "canopy ticket select \(Self.reference(title: row.title, id: row.item))"
+        }
+    }
+
+    /// The row title when it names the ticket by number, as it always does for ticket-manager's names, and the id
+    /// otherwise, quoted for a shell.
+    static func reference(title: String, id: String) -> String {
+        NewRowAction.quoted(TicketName(title).number == nil ? id : title)
     }
 
     // MARK: Items and rows

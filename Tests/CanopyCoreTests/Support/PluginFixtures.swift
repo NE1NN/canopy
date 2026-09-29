@@ -91,8 +91,9 @@ actor TestPlugin: CanopyPlugin {
         try row.item.write(toFile: row.path + "/item.txt", atomically: true, encoding: .utf8)
     }
 
-    nonisolated func pickerCommand(for item: PluginItem) -> String? {
-        item.id == "i3" ? "canopy test open \(item.id)" : nil
+    nonisolated func pickerCommand(for action: PluginPickerAction) -> String? {
+        guard case .create(let item) = action, item.id == "i3" else { return nil }
+        return "canopy test open \(item.id)"
     }
 
     func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue {
