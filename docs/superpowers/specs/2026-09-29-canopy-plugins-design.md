@@ -455,6 +455,7 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
 | The plugin is on but could not start, such as without a token | The warning says why, and commands fail with `plugin_not_started` and the fix. |
 | An address that is not `https://`, or `http://` off this Mac, or a `web` without `{id}` | `invalid_url`, and nothing is saved. |
 | ticket-manager answers something that is not its API, such as HTML, a redirect, or a 404 for `me` | `bad_response`, saying to check it is the `.convex.site` address. |
+| ticket-manager answers JSON that Canopy's models cannot read | `unreadable_answer`, naming the field, such as `tickets[37].customer`, and the ticket it belongs to. The address is right, so it does not say to check it. |
 | `ticket select` or `ticket rm` for a ticket without a row | `ticket_has_no_row`, with the `ticket new` command. |
 | `config.json` cannot be written | `plugin.enable` fails with the file system's message, and nothing changes. |
 

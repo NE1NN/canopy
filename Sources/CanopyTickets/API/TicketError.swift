@@ -14,6 +14,8 @@ public enum TicketError: Error, Sendable, Equatable {
     case notStaff(String, url: String)
     case unreachable(String, url: String)
     case badResponse(String, url: String)
+    /// ticket-manager answered with JSON this build cannot read, and what in it.
+    case unreadable(String, url: String)
     case badRequest(String)
     /// The reference that matched nothing, or the id ticket-manager does not have.
     case notFound(String)
@@ -34,6 +36,7 @@ public enum TicketError: Error, Sendable, Equatable {
         case .notStaff: "not_staff"
         case .unreachable: "tickets_unreachable"
         case .badResponse: "bad_response"
+        case .unreadable: "unreadable_answer"
         case .badRequest: "bad_request"
         case .notFound: "ticket_not_found"
         case .ambiguous: "ticket_ambiguous"
@@ -58,6 +61,9 @@ public enum TicketError: Error, Sendable, Equatable {
         case .badResponse(let reason, let url):
             "\(url) did not answer like ticket-manager: \(Self.sentence(reason)) Check that it is the deployment's "
                 + ".convex.site address."
+        case .unreadable(let reason, let url):
+            "ticket-manager at \(url) answered, but Canopy cannot read the answer: \(Self.sentence(reason)) Canopy and "
+                + "ticket-manager disagree about the API, so one of them needs an update."
         case .badRequest(let message): "ticket-manager refused the request: \(Self.sentence(message))"
         case .notFound(let reference):
             "No ticket matches \"\(reference)\". Run `canopy ticket list`, with --closed for closed ones."
@@ -81,7 +87,7 @@ public enum TicketError: Error, Sendable, Equatable {
     /// ticket-manager is not answering as it should, so the refresh schedule waits longer before asking again.
     public var backsOff: Bool {
         switch self {
-        case .tokenRejected, .notStaff, .unreachable, .badResponse: true
+        case .tokenRejected, .notStaff, .unreachable, .badResponse, .unreadable: true
         default: false
         }
     }

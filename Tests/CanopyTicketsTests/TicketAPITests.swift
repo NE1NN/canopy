@@ -48,7 +48,7 @@ struct TicketAPITests {
             (HTTPReply(status: 502, headers: [:], body: Data()), .unreachable("it answered HTTP 502", url: url)),
             (
                 HTTPReply(status: 200, headers: [:], body: Data("<html>".utf8)),
-                .badResponse("its answer was not the JSON Canopy expects", url: url)
+                .badResponse("its answer was not JSON", url: url)
             ),
             (
                 HTTPReply(status: 302, headers: ["location": "https://elsewhere"], body: Data()),
@@ -61,6 +61,41 @@ struct TicketAPITests {
             await transport.set("/api/v1/me", reply)
             await #expect(throws: error) { try await api.me() }
         }
+    }
+
+    @Test func anAnswerCanopyCannotReadNamesTheFieldAndTheTicket() async throws {
+        let transport = FakeTransport(token: "t")
+        let api = TicketAPI(base: base, token: "t", transport: transport)
+        let url = base.absoluteString
+        let good = """
+            {"id": "a", "name": "ticket-0001-a", "number": "0001", "customer": "a", "status": "open", "openedAt": 1,
+             "lastActivityAt": 2, "owner": null, "waiting": false, "staleHours": null, "discordUrl": "u"}
+            """
+        let cases: [(String, String)] = [
+            (
+                good.replacingOccurrences(of: #""customer": "a""#, with: #""customer": null"#),
+                "`tickets[1].customer` is null, where Canopy expects text (ticket ticket-0001-a)"
+            ),
+            (
+                good.replacingOccurrences(of: #""openedAt": 1"#, with: #""openedAt": "1""#),
+                "`tickets[1].openedAt` is not a whole number (ticket ticket-0001-a)"
+            ),
+            (
+                good.replacingOccurrences(of: #""discordUrl": "u""#, with: #""other": 1"#),
+                "`tickets[1].discordUrl` is missing (ticket ticket-0001-a)"
+            ),
+        ]
+        for (ticket, reason) in cases {
+            let body = #"{"tickets": [\#(good), \#(ticket)]}"#
+            await transport.set(
+                "/api/v1/tickets?status=open", HTTPReply(status: 200, headers: [:], body: Data(body.utf8)))
+            await #expect(throws: TicketError.unreadable(reason, url: url)) { try await api.tickets(status: .open) }
+        }
+
+        await transport.set("/api/v1/me", HTTPReply(status: 200, headers: [:], body: Data(#"{"user": "x"}"#.utf8)))
+        await #expect(throws: TicketError.unreadable("`email` is missing", url: url)) { try await api.me() }
+        await transport.set("/api/v1/me", HTTPReply(status: 200, headers: [:], body: Data("[]".utf8)))
+        await #expect(throws: TicketError.unreadable("the answer is not an object", url: url)) { try await api.me() }
     }
 
     @Test func aTicketThatIsGoneIsNotFound() async throws {
@@ -115,9 +150,18 @@ struct TicketAPITests {
         #expect(
             TicketError.ambiguous("853", ["0853-a", "0853-b"]).message
                 == "\"853\" matches 0853-a and 0853-b. Pass one of those.")
+        let unreadable = TicketError.unreadable("`tickets[0].number` is null", url: url)
+        #expect(unreadable.code == "unreadable_answer" && unreadable.warning == nil)
         #expect(
-            [TicketError.unreachable("r", url: url), .badResponse("r", url: url), .tokenRejected(url: url)]
-                .allSatisfy { $0.backsOff })
+            unreadable.message
+                == "ticket-manager at \(url) answered, but Canopy cannot read the answer: `tickets[0].number` is null. "
+                + "Canopy and ticket-manager disagree about the API, so one of them needs an update.")
+        #expect(
+            [
+                TicketError.unreachable("r", url: url), .badResponse("r", url: url), .unreadable("r", url: url),
+                .tokenRejected(url: url),
+            ]
+            .allSatisfy { $0.backsOff })
         #expect(![TicketError.notFound("1"), .badRequest("b")].contains { $0.backsOff })
         #expect(TicketError.from(ControlError(code: "x", message: "y"), url: url) == .unreachable("y", url: url))
         #expect(TicketError.from(TicketError.notFound("1"), url: url) == .notFound("1"))

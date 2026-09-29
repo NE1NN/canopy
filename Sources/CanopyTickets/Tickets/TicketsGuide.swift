@@ -39,7 +39,8 @@ public enum TicketsGuide {
 
         Errors: plugin_off and token_rejected say to run `canopy ticket connect <url>`, which only the author can do.
         tickets_unreachable means ticket-manager did not answer: `ticket show` then prints its saved copy, with a note
-        on stderr saying how old it is.
+        on stderr saying how old it is. unreadable_answer means Canopy and ticket-manager disagree about the API, which
+        only an update to one of them fixes: tell the author what the message says.
 
             canopy ticket list --mine --waiting
             canopy ticket new 853 --run 'claude "$(cat ticket.md)"'
