@@ -199,7 +199,7 @@ public struct ClaudeSettingsFile: Sendable {
 
     /// The settings, or an empty object when the file does not exist yet.
     public func read() throws -> OrderedJSON {
-        try Self.parse(try contents(of: target), path: url.path)
+        try settingsErrors { try file.read() }
     }
 
     public func status() throws -> ClaudeHooks.Status {
@@ -226,69 +226,20 @@ public struct ClaudeSettingsFile: Sendable {
     /// this ran is read again and transformed again. Returns whether the file changed.
     @discardableResult
     public func update(_ transform: (OrderedJSON) throws -> OrderedJSON) throws -> Bool {
-        for _ in 0..<3 {
-            let target = self.target
-            let original = try contents(of: target)
-            let settings = try Self.parse(original, path: url.path)
-            let updated = try transform(settings)
-            guard updated != settings else { return false }
-            let newline = original.map { $0.last == 0x0A } ?? true
-            let data = Data((updated.formatted() + (newline ? "\n" : "")).utf8)
-            if try write(data, to: target, replacing: original) { return true }
-        }
-        throw WorkspaceError.settingsWriteFailed(url.path, reason: "it kept changing while Canopy wrote it")
+        try settingsErrors { try file.update(transform) }
     }
 
-    /// The file the name points to, following symbolic links, so a linked file is written and the link stays.
-    var target: URL {
-        url.resolvingSymlinksInPath()
+    private var file: JSONFile {
+        JSONFile(url: url, validate: { try $0.validSettings() }, newFileMode: 0o644)
     }
 
-    private func contents(of file: URL) throws -> Data? {
+    private func settingsErrors<T>(_ body: () throws -> T) throws -> T {
         do {
-            return try Data(contentsOf: file)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return nil
-        } catch {
-            throw WorkspaceError.settingsInvalid(url.path, reason: error.localizedDescription)
-        }
-    }
-
-    private static func parse(_ data: Data?, path: String) throws -> OrderedJSON {
-        guard let data else { return .object([]) }
-        do {
-            return try OrderedJSON.parse(data).validSettings()
-        } catch let error as OrderedJSONError {
-            throw WorkspaceError.settingsInvalid(path, reason: error.description)
-        }
-    }
-
-    /// Writes beside the file and renames over it, unless the file no longer holds `original`. Returns whether it
-    /// wrote.
-    private func write(_ data: Data, to file: URL, replacing original: Data?) throws -> Bool {
-        let manager = FileManager.default
-        let folder = file.deletingLastPathComponent()
-        let temporary = folder.appending(path: ".\(file.lastPathComponent).canopy-\(UUID().uuidString.prefix(8))")
-        do {
-            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-            try data.write(to: temporary)
-            let permissions = (try? manager.attributesOfItem(atPath: file.path))?[.posixPermissions] as? Int
-            try manager.setAttributes([.posixPermissions: permissions ?? 0o644], ofItemAtPath: temporary.path)
-            guard try contents(of: file) == original else {
-                try? manager.removeItem(at: temporary)
-                return false
-            }
-            guard rename(temporary.path, file.path) == 0 else {
-                throw CocoaError(
-                    .fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errno))])
-            }
-            return true
-        } catch let error as WorkspaceError {
-            try? manager.removeItem(at: temporary)
-            throw error
-        } catch {
-            try? manager.removeItem(at: temporary)
-            throw WorkspaceError.settingsWriteFailed(url.path, reason: error.localizedDescription)
+            return try body()
+        } catch JSONFileError.unreadable(let reason) {
+            throw WorkspaceError.settingsInvalid(url.path, reason: reason)
+        } catch JSONFileError.writeFailed(let reason) {
+            throw WorkspaceError.settingsWriteFailed(url.path, reason: reason)
         }
     }
 }
