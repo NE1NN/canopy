@@ -7,13 +7,15 @@ struct LinkedRowsView: View {
     @Environment(AppModel.self) private var model
     let plugin: String
     let item: String
+    var title = "Linked rows"
+    var emptyHint = "`canopy row new` run in this row's terminal makes a row linked to it."
 
     var body: some View {
         let rows = model.snapshot.linkedRows(plugin: plugin, item: item)
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(title: "Linked rows", count: rows.isEmpty ? nil : rows.count) {}
+            SectionLabel(title: title, count: rows.isEmpty ? nil : rows.count) {}
             if rows.isEmpty {
-                Text("`canopy row new` run in this row's terminal makes a row linked to it.")
+                Text((try? AttributedString(markdown: emptyHint)) ?? AttributedString(emptyHint))
                     .font(Style.meta)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

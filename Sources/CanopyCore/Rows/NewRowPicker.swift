@@ -37,7 +37,7 @@ public enum NewRowAction: Equatable, Sendable {
     }
 
     /// `word` as a shell reads it back.
-    static func quoted(_ word: String) -> String {
+    public static func quoted(_ word: String) -> String {
         let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-@+=")
         guard word.isEmpty || !word.unicodeScalars.allSatisfy(plain.contains) else { return word }
         return "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'"

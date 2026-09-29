@@ -55,9 +55,10 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !model.snapshot.repos.isEmpty || !model.snapshot.activePlugins.isEmpty {
                     SectionLabel(title: "Repos") {
-                        IconMenu(title: "Add Repo", systemImage: "plus") {
+                        IconMenu(title: "Add", systemImage: "plus") {
                             Button("Add Local Repo…") { model.chooseFolder(for: .addRepo) }
                             Button("Clone from GitHub…", action: model.showCloneSheet)
+                            PluginSetupItems()
                         }
                     }
                 }
@@ -123,6 +124,9 @@ struct SidebarView: View {
                     Text("Add a git repository to see its worktrees.")
                 } actions: {
                     Button("Add Repo…") { model.chooseFolder(for: .addRepo) }
+                    ForEach(model.pluginSetups, id: \.id) { plugin in
+                        Button(plugin.setup.title) { model.showSetup(of: plugin.id) }
+                    }
                 }
             }
         }
@@ -482,5 +486,20 @@ struct RepoWarningView: View {
         .padding(.trailing, 5)
         .padding(.vertical, 3)
         .help(text)
+    }
+}
+
+/// "Connect Tickets…" and the like, for each plugin that is off and turns on through a sheet.
+struct PluginSetupItems: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let setups = model.pluginSetups
+        if !setups.isEmpty {
+            Divider()
+            ForEach(setups, id: \.id) { plugin in
+                Button(plugin.setup.title) { model.showSetup(of: plugin.id) }
+            }
+        }
     }
 }

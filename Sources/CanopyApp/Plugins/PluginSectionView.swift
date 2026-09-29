@@ -74,5 +74,8 @@ struct PluginMenuItems: View {
         Button("New Row…", action: onNewRow)
         Divider()
         Button("Turn Off \(section.info.name)") { model.turnOff(section) }
+        ForEach(model.builtIn(section.id)?.menuActions ?? []) { action in
+            Button(action.title) { model.ask(action, in: section) }
+        }
     }
 }
