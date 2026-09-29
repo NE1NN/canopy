@@ -15,7 +15,7 @@ struct LinkedRowsView: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionLabel(title: title, count: rows.isEmpty ? nil : rows.count) {}
             if rows.isEmpty {
-                Text((try? AttributedString(markdown: emptyHint)) ?? AttributedString(emptyHint))
+                Text(LocalizedStringKey(emptyHint))
                     .font(Style.meta)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

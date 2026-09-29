@@ -36,8 +36,7 @@ struct TicketSections: View {
         }
         LinkedRowsView(
             plugin: row.plugin, item: row.item, title: "Fix rows",
-            emptyHint:
-                "`canopy row new` run in this row's terminal, or with `--ticket \(row.title)`, makes a fix row linked to this ticket."
+            emptyHint: "Run `canopy row new` in this row's terminal to make a fix row linked to this ticket."
         )
         .padding(.horizontal, -8)
         .padding(.top, 10)

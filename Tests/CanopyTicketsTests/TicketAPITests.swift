@@ -92,6 +92,16 @@ struct TicketAPITests {
         }
     }
 
+    @Test func aReasonThatEndsASentenceGetsOnePeriod() {
+        let url = "https://tm.example.convex.site"
+        #expect(
+            TicketError.unreachable("Could not connect to the server.", url: url).message
+                == "Could not reach ticket-manager at \(url): Could not connect to the server.")
+        #expect(
+            TicketError.badResponse("it answered HTTP 418.", url: url).message.hasPrefix(
+                "\(url) did not answer like ticket-manager: it answered HTTP 418. Check"))
+    }
+
     @Test func errorsMapToCodesWarningsAndBackoff() {
         let url = "https://tm.example.convex.site"
         #expect(TicketError.tokenRejected(url: url).code == "token_rejected")

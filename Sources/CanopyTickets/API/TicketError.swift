@@ -54,9 +54,10 @@ public enum TicketError: Error, Sendable, Equatable {
         case .notStaff(let message, let url):
             "\(Self.sentence(message)) Canopy picks it up by itself once the email is on ticket-manager's staff list "
                 + "again, or run `canopy ticket connect \(url)` with another engineer's token."
-        case .unreachable(let reason, let url): "Could not reach ticket-manager at \(url): \(reason)."
+        case .unreachable(let reason, let url): "Could not reach ticket-manager at \(url): \(Self.sentence(reason))"
         case .badResponse(let reason, let url):
-            "\(url) did not answer like ticket-manager: \(reason). Check that it is the deployment's .convex.site address."
+            "\(url) did not answer like ticket-manager: \(Self.sentence(reason)) Check that it is the deployment's "
+                + ".convex.site address."
         case .badRequest(let message): "ticket-manager refused the request: \(Self.sentence(message))"
         case .notFound(let reference):
             "No ticket matches \"\(reference)\". Run `canopy ticket list`, with --closed for closed ones."
