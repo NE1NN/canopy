@@ -19,7 +19,7 @@ struct TicketsCommandTests {
         let harness = try await connected(dir)
         let row = try await harness.newRow("853")
 
-        func numbers(_ params: TicketListParams) async throws -> [String] {
+        func numbers(_ params: TicketListParams) async throws -> [String?] {
             try await harness.call(TicketMethod.list, params).decode([TicketListEntry].self).map(\.ticket.number)
         }
         #expect(try await numbers(TicketListParams()) == ["0853", "0850", "0849"])

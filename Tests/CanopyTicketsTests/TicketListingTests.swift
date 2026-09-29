@@ -11,7 +11,7 @@ struct TicketListingTests {
         + APIFixture.decode(TicketList.self, "tickets-archived").tickets
 
     func numbers(_ query: TicketListQuery, _ tickets: [TicketSummary]? = nil, me: String? = "hindie@example.com")
-        -> [String]
+        -> [String?]
     {
         TicketListing.list(tickets ?? open, query, me: me).map(\.number)
     }
