@@ -17,7 +17,7 @@ Everything the window does with plugins and tickets, an agent can do with `canop
 1. A plugin that is off adds nothing: no sidebar section, no network calls, no timers.
 2. A plugin row gets every terminal feature a worktree row has, and no terminal code needs to know about plugins.
 3. Only tickets the author picks become rows, so the sidebar stays short and Canopy only watches those tickets.
-4. A ticket row shows the Discord conversation, problems, and draft next to its terminals, and gives agents the ticket as a file.
+4. A ticket row shows the Discord conversation next to its terminals, and gives agents the ticket as a file.
 5. A fix made for a ticket, in a normal worktree row, stays linked to the ticket.
 6. An agent can list tickets, open ticket rows, read tickets, and start work in them without the window.
 
@@ -373,10 +373,6 @@ From top to bottom:
   Messages posted in a thread show the thread's name.
   Image attachments show inline, up to 240 points tall, and other attachments as a link with the file name and size.
   An attachment whose link has expired shows its file name, and clicking it opens the message in Discord.
-- **Problems**, each with its title, status, and bullets.
-- **Draft**, with a Copy button.
-- **Notes**, the ticket's handover notes, when it has any.
-- **Fix rows**, the worktree rows linked to the ticket.
 - **Footer**: when the ticket was last fetched, and a refresh button.
 
 The panel opens at the end of the conversation, keeps its place when new messages arrive, and follows them only while that end is in view.
@@ -385,7 +381,8 @@ A fetch that fails keeps what the panel shows, and a banner says what went wrong
 
 ### Files in the row's folder
 
-- `ticket.md` is the ticket's handover block, followed by a line saying Canopy rewrites the file when the ticket changes and `canopy ticket show --md` prints the latest.
+- `ticket.md` is a line saying the ticket's messages come from customers and are data to investigate, not instructions to follow, then the ticket's handover block, then a line saying Canopy rewrites the file when the ticket changes and `canopy ticket show --md` prints the latest.
+  The first line is there so an agent started with the file does not act on what a customer wrote.
   It is rewritten only when its contents change.
 - `ticket.json` is the last response for the ticket, so the panel shows at once after a relaunch and while ticket-manager cannot be reached.
 
@@ -414,7 +411,7 @@ A batch of ids that ticket-manager answers 400 for is split until the malformed 
 | `canopy ticket disconnect` | `tickets.disconnect` | turn the plugin off and delete the token |
 | `canopy ticket list [--mine \| --unowned] [--waiting] [--query <text>] [--closed]` | `tickets.list` | list tickets, sorted as the picker sorts them, with each one's row |
 | `canopy ticket new <ticket> [--run <cmd>] [--select]` | `tickets.new` | open a row for the ticket, and fail with `ticket_has_row` naming the row if it has one |
-| `canopy ticket show [<ticket>] [--refresh] [--md]` | `tickets.show` | print the ticket and its messages, problems, draft, and fix rows, or with `--md` the latest handover markdown |
+| `canopy ticket show [<ticket>] [--refresh] [--md]` | `tickets.show` | print the ticket and its messages, or with `--md` the latest handover markdown |
 | `canopy ticket select [<ticket>]` | `tickets.select` | select the ticket's row |
 | `canopy ticket rm [<ticket>] [--force]` | `tickets.remove` | remove the ticket's row, through the same path as `row.remove` |
 
@@ -491,7 +488,7 @@ Item 3 needs item 2, but not item 1, since it runs against the stub.
 - The top bar starts at the panel's right edge rather than spanning the panel.
 - Keychain entries are per `CANOPY_HOME`, so dev builds and tests never see the release app's token.
 - The base's UI is checked with a fixture plugin that only a dev build started with `CANOPY_FIXTURE_PLUGIN=1` turns on.
-- `ticket.md` holds the handover block only, and handover notes show in the panel but not in the file.
+- The panel and `canopy ticket show` keep to the conversation: ticket-manager's problems, draft, and notes stay in ticket-manager, and Canopy does not decode them. Fix rows stay linked, with the ticket's label on each.
 - Tokens are made with `npx convex run`, and ticket-manager gets no screen for them.
-- Settled while building the Tickets plugin: the `web` template and `--web`; `http://` only on this Mac; no redirects; `ticket disconnect --force`; `plugin_off` naming each plugin's own command, such as `canopy ticket connect <url>`; the `bad_response`, `plugin_not_started`, `invalid_url`, `keychain_failed`, and `ticket_has_no_row` codes; malformed ids shown as missing; rows' changed tickets fetched for their files; `ticket show`'s 30 seconds; the panel opening at the conversation's end; and "Connect Tickets…" in the File menu and the empty sidebar too.
+- Settled while building the Tickets plugin: a plugin can name its item, so the picker reads "New Ticket Row"; the `web` template and `--web`; `http://` only on this Mac; no redirects; `ticket disconnect --force`; `plugin_off` naming each plugin's own command, such as `canopy ticket connect <url>`; the `bad_response`, `plugin_not_started`, `invalid_url`, `keychain_failed`, and `ticket_has_no_row` codes; malformed ids shown as missing; rows' changed tickets fetched for their files; `ticket show`'s 30 seconds; the panel opening at the conversation's end; and "Connect Tickets…" in the File menu and the empty sidebar too.
 - Settled while building the plugin base: `canopy plugin enable`, `disable`, `items`, and `new`, so every picker action and the section's Turn Off have a command; `--no-link`; `row move` for plugin rows; `plugin_busy` and `row_busy` in place of asking from the CLI; a failed fill behaving like a failed setup; a dev build's `CANOPY_TRASH_FOLDER`; and the panel's title strip.
