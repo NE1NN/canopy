@@ -97,6 +97,7 @@ The group header also gains the "New Row…" named action the repo and plugin he
 - Modify `Sources/CanopyApp/Sidebar/SidebarView.swift`: `RepoHeaderView` gets a `summary` and `showsButtons`.
 - Modify `Sources/CanopyApp/Sidebar/GroupViews.swift`: `GroupHeaderView` the same, plus the "New Row…" named action.
 - Modify `Sources/CanopyApp/Plugins/PluginSectionView.swift`: `PluginHeaderView` the same.
+- After review: `HeaderCount` in `Style.swift` draws the three headers' counts, and `PortBadge` in `Sources/CanopyApp/Sidebar/PortsPanel.swift` moves its padding into its button's label.
 
 ## Task 1: The `…` takes clicks across its whole box
 
@@ -551,31 +552,103 @@ Each line reads like `(199.5,90.0) hover=0: menu 3, sheet 0, fold 0, nothing 0 o
 
 ## UI Checks
 
-Run on the fixed build rebased onto `00c9f8d` (PRs 31 and 32), with the fixture's sidebar at 252 points.
+Run on the final code, rebased onto `00c9f8d` (PRs 31 and 32), with the fixture's sidebar at 252 points, by `matrix.sh dark` and `matrix.sh light`.
 
 | Where | Dark | Light |
 | --- | --- | --- |
-| web-app `…`, expanded, 7 points, hover and not | menu 42 of 42 | menu 42 of 42 |
-| web-app `…`, folded, 7 points, hover and not | menu 42 of 42 | menu 41 of 42, 1 lost, then 10 of 10 |
+| web-app `…`, expanded, 7 points, hover and not | menu 42 of 42 | menu 40 of 42, 2 unread, then 20 of 20 |
+| web-app `…`, folded, 7 points, hover and not | menu 42 of 42 | menu 42 of 42 |
 | Later group `…`, 7 points, hover and not | menu 42 of 42 | menu 42 of 42 |
 | Tickets plugin `…`, 7 points, hover and not | menu 42 of 42 | menu 42 of 42 |
-| Repos `+` (Add) menu, 7 points | menu 21 of 21 | menu 20 of 21, then 10 of 10 |
-| Repo, group, and plugin `+`, 7 points each | sheet 30 of 30, no fold | sheet 30 of 30, no fold |
+| Repos `+` (Add) menu, 7 points | menu 21 of 21 | menu 21 of 21 |
+| Repo, group, and plugin `+`, 7, 7, and 1 points | sheet 30 of 30, no fold | sheet 30 of 30, no fold |
 | Name, chevron, left edge, gap between buttons, before `…` | fold 18 of 18 | fold 18 of 18 |
 
-The two lost light clicks happened while the window briefly left the window list ("no window for pid"), with another agent's dev build running beside it, and the same points passed 10 of 10 when run again.
+The two unread light clicks neither opened a menu nor folded: the helper that counts windows found no main window at that moment, as happened a few times during the run before review while another agent's dev build ran beside this one.
+The same point passed 10 of 10 with a hover and 10 of 10 without right after.
+No click on a `…` folded anything, in any run after the fix.
 
 Window shots with each menu opened by a click off its glyph, in dark and light: web-app's menu with the repo expanded and folded, the Later group's, and the Tickets section's.
 The hover fill now covers the whole 22-point box the button answers to.
 A missing repo's header at the 252-point sidebar is pixel for pixel the same as on `main`.
+A repo with a long name and 12 rows, and a group with a long name and 10 rows, keep their counts on one line and truncate their names, and hovered, keep both buttons whole (see After Review).
+A port badge opens its port from anywhere but its `x` (see After Review).
 
 ## Decisions to Review
 
 - The group header gains a "New Row…" accessibility action, like the repo and plugin headers, since its `+` shows only on hover and VoiceOver never hovers.
 - A missing repo keeps "Locate…" as a named action on its header although the button now reads as its own control, so the header offers the same actions whether a VoiceOver user lands on it or on its buttons.
 - The regression check is the scripted click loop in this plan, not a test: nothing outside the window decides where a click lands, and the app target has no tests.
+- The 8-point gap between `…` and `+` still folds the header, as on `main`, so a click just beside a button folds rather than doing nothing.
+- The port badge's dead padding is fixed here although it is outside the sidebar headers, since it was the same hit-area bug and a four-line change.
 
 ## Follow-ups
 
 - In a narrow sidebar (seen at 252 points), a missing repo's `Locate…` truncates to "Loca…", on `main` as well; it is also in the `…` menu.
+- A repo's error text reaches only the error icon's mouse tooltip, not VoiceOver, on `main` as well.
 - The dev builds share one defaults domain, so a sidebar width one agent's dev build saves is the next one's starting width, and click coordinates move with it.
+
+## After Review
+
+An independent Opus reviewer read `git diff origin/main...HEAD` with the spec and this plan, and found nothing blocking.
+
+1. **Medium, fixed: a two-digit count wrapped beside a long name.**
+   With the summary at `.layoutPriority(1)`, the count got only its smallest width, one digit.
+   A repo named customer-onboarding-service with 12 rows showed "1" over "2" at the 252-point sidebar, where `main` truncates the name instead.
+   The three headers now draw their count with one `HeaderCount` view, which is `.fixedSize()` and hidden from VoiceOver:
+
+   ```swift
+   /// A foldable header's row count. It keeps its width beside a long name, and VoiceOver hears it in the header's label.
+   struct HeaderCount: View {
+       let count: Int
+
+       var body: some View {
+           Text(verbatim: "\(count)")
+               .font(Style.meta)
+               .monospacedDigit()
+               .foregroundStyle(.tertiary)
+               .fixedSize()
+               .padding(.trailing, 5)
+               .accessibilityHidden(true)
+       }
+   }
+   ```
+
+   After the fix the same repo shows "customer-…ing-service" and "12" on one line, level with the other counts, and a group named "Waiting on review from design" with 10 rows shows "Waiting on review fr…" and "10".
+   Hovered, both names truncate further and `…` and `+` stay whole; the long repo's `…` opened its menu 9 of 9 and its name folded it 3 of 3.
+2. **Low, fixed: the repo's comment on its named actions was wrong for a missing repo**, whose `Locate…` and `…` always show.
+   The summary comments on all three headers are now shorter, and the plugin header's named action has the same one-line comment as the group's.
+3. **Low, not changed: the group's `.help(group.name)` now sits outside the summary**, so VoiceOver may no longer read it as the header's help.
+   It repeats the name, which the header's label already starts with, and the mouse tooltip is unchanged.
+4. **Low, not changed: the three headers repeat the same shape.**
+   `HeaderCount` takes out the part they drew identically; a shared foldable-header container would change more of the sidebar than this fix needs, and the headers differ in their buttons, popovers, and drop slot.
+5. **Low, not changed: the 8-point gap between `…` and `+` still folds**, as on `main`.
+   Listed under "Decisions to Review".
+6. **Pre-existing, fixed: a port badge's padding did nothing.**
+   `PortBadge` had the same shape as `IconMenu`: its button's label was the port number alone, with the badge's padding and 20-point height outside it.
+   Clicking the badge's left padding, top edge, or bottom edge opened the port 0 of 3 times each on the old build, and 3 of 3 each after this change; the `x` still stops the port.
+
+   ```diff
+    private var isStopping: Bool { model.isStopping(port, inRow: rowPath) }
+   +private var showsStop: Bool { isHovering && !isStopping }
+   ...
+            } label: {
+   +            // The badge's padding is part of the label, so a click anywhere on the badge but `x` opens the port.
+                Text(verbatim: "\(port.port)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+   +                .padding(.leading, 7)
+   +                .padding(.trailing, showsStop ? 0 : 7)
+   +                .frame(height: 20)
+   +                .contentShape(Rectangle())
+            }
+   ...
+   -    .padding(.leading, 7)
+   -    .padding(.trailing, isHovering && !isStopping ? 3 : 7)
+   -    .frame(height: 20)
+   +    .padding(.trailing, showsStop ? 3 : 0)
+   ```
+
+   The badge looks the same hovered and not.
+   The reviewer checked every other `.buttonStyle(.plain)` in the app and found the frame and `contentShape` inside the label everywhere else.
+7. **Pre-existing, not changed: a repo's error text reaches only the mouse tooltip**, not VoiceOver.
+   Listed under "Follow-ups".
