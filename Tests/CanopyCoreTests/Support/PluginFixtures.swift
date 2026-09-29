@@ -13,6 +13,7 @@ actor TestPlugin: CanopyPlugin {
     private let folders: [String: String]
     private var startError: String?
     private let defaultRun: String?
+    private let turnOn: String?
     private var fillError: String?
     private var stallFills = false
     private var stalled: [CheckedContinuation<Void, Never>] = []
@@ -24,7 +25,7 @@ actor TestPlugin: CanopyPlugin {
 
     init(
         id: String = "t", name: String = "Test", items: [String] = ["i1", "i2", "i3"], folders: [String: String] = [:],
-        startError: String? = nil, fillError: String? = nil, defaultRun: String? = nil
+        startError: String? = nil, fillError: String? = nil, defaultRun: String? = nil, turnOn: String? = nil
     ) {
         info = PluginInfo(id: id, name: name, symbol: "star")
         filters = PluginFilters(
@@ -37,6 +38,11 @@ actor TestPlugin: CanopyPlugin {
         self.startError = startError
         self.fillError = fillError
         self.defaultRun = defaultRun
+        self.turnOn = turnOn
+    }
+
+    nonisolated func turnOnCommand(config: JSONValue) -> String {
+        turnOn ?? "canopy plugin enable \(info.id)"
     }
 
     func start(_ context: PluginContext) async throws {

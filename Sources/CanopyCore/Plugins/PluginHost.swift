@@ -499,7 +499,10 @@ public final class PluginHost {
     /// The plugin, if it is on and its start succeeded.
     private func requireRunning(_ id: String) throws -> any CanopyPlugin {
         let plugin = try requirePlugin(id)
-        guard on.contains(id) else { throw WorkspaceError.pluginOff(plugin.info.name, id: id) }
+        guard on.contains(id) else {
+            throw WorkspaceError.pluginOff(
+                plugin.info.name, command: plugin.turnOnCommand(config: sections[id] ?? .object([:])))
+        }
         guard running.contains(id) else {
             throw WorkspaceError.pluginNotStarted(plugin.info.name, reason: startFailures[id] ?? "")
         }

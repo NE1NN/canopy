@@ -51,9 +51,21 @@ struct PluginHostTests {
         #expect(await plugin(setup)?.isOn == false)
         #expect(await setup.workspace.snapshot.activePlugins.isEmpty)
         #expect(await setup.host.list().map(\.on) == [false])
-        await #expect(throws: WorkspaceError.pluginOff("Test", id: "t")) {
+        await #expect(throws: WorkspaceError.pluginOff("Test", command: "canopy plugin enable t")) {
             try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
         }
+    }
+
+    @Test func aPluginOffSaysHowToTurnItOnItsOwnWay() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin(turnOn: "canopy test connect")
+        let setup = try await start(dir, [test], config: #"{"minPaneColumns": 90}"#)
+
+        await #expect(throws: WorkspaceError.pluginOff("Test", command: "canopy test connect")) {
+            try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
+        }
+        #expect(
+            WorkspaceError.pluginOff("Test", command: "canopy test connect").message.contains("`canopy test connect`"))
     }
 
     @Test func aPluginInConfigStartsWithItsSection() async throws {

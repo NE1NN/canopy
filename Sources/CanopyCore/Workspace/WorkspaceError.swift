@@ -56,7 +56,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case invalidPluginAnchor(String)
     case pluginRowsHaveNoGroups
     case pluginNotFound(String)
-    case pluginOff(String, id: String)
+    /// The plugin's name, and the command that turns it on.
+    case pluginOff(String, command: String)
     /// The path of the row the item already has.
     case itemHasRow(String)
     case rowBusy(String, programs: [String])
@@ -216,7 +217,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             "--before and --after take another row of the same plugin, and \(name) is not one."
         case .pluginRowsHaveNoGroups: "Plugin rows have no groups. Move them with --before or --after."
         case .pluginNotFound(let id): "No plugin is named \"\(id)\". Run `canopy plugin list`."
-        case .pluginOff(let name, let id): "\(name) is off. Run `canopy plugin enable \(id)` to turn it on."
+        case .pluginOff(let name, let command): "\(name) is off. Run `\(command)` to turn it on."
         case .itemHasRow(let path):
             "That item already has a row at \(path). Run `canopy row select \(path)` to show it."
         case .rowBusy(let row, let programs):

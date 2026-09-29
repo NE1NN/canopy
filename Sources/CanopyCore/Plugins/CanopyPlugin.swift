@@ -149,6 +149,9 @@ public protocol CanopyPlugin: Sendable {
     func fill(_ row: PluginRow, context: PluginContext) async throws
     /// The picker footer's command for an item without a row, or nil for `canopy plugin new <id> <item> --select`.
     func pickerCommand(for item: PluginItem) -> String?
+    /// The command that turns it on, which errors while it is off name, such as `canopy ticket connect <url>`. `config`
+    /// is its section of config.json.
+    func turnOnCommand(config: JSONValue) -> String
     func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue
 }
 
@@ -162,6 +165,8 @@ extension CanopyPlugin {
     public func status(_ context: PluginContext) async -> String? { nil }
 
     public func pickerCommand(for item: PluginItem) -> String? { nil }
+
+    public func turnOnCommand(config: JSONValue) -> String { "canopy plugin enable \(info.id)" }
 
     public func handle(_ call: PluginCall, context: PluginContext) async throws -> JSONValue {
         throw ControlError(code: "unknown_method", message: "Unknown method \(call.method)")
