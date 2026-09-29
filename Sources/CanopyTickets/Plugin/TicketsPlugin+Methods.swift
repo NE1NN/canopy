@@ -154,7 +154,7 @@ extension TicketsPlugin {
             do {
                 copy = try await fetchTicket(id)
             } catch let error as TicketError {
-                guard let old = copy, error.isUnreachable else { throw error }
+                guard let old = copy, error.fallsBackToCache else { throw error }
                 stale = "\(error.message) This copy is from \(TicketAge.ago(old.fetchedAt, now: clock.date))."
             }
         }
@@ -169,10 +169,10 @@ extension TicketsPlugin {
 }
 
 extension TicketError {
-    /// ticket-manager did not answer, or not as itself, so a cached copy is the best there is.
-    var isUnreachable: Bool {
+    /// ticket-manager did not answer, or not in a way Canopy can read, so a cached copy is the best there is.
+    var fallsBackToCache: Bool {
         switch self {
-        case .unreachable, .badResponse: true
+        case .unreachable, .badResponse, .unreadable: true
         default: false
         }
     }

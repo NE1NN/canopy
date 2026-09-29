@@ -92,10 +92,45 @@ struct TicketAPITests {
             await #expect(throws: TicketError.unreadable(reason, url: url)) { try await api.tickets(status: .open) }
         }
 
-        await transport.set("/api/v1/me", HTTPReply(status: 200, headers: [:], body: Data(#"{"user": "x"}"#.utf8)))
-        await #expect(throws: TicketError.unreadable("`email` is missing", url: url)) { try await api.me() }
-        await transport.set("/api/v1/me", HTTPReply(status: 200, headers: [:], body: Data("[]".utf8)))
-        await #expect(throws: TicketError.unreadable("the answer is not an object", url: url)) { try await api.me() }
+        let list = #"{"tickets": [null]}"#
+        await transport.set("/api/v1/tickets?status=open", HTTPReply(status: 200, headers: [:], body: Data(list.utf8)))
+        await #expect(throws: TicketError.unreadable("`tickets[0]` is null, where Canopy expects an object", url: url))
+        {
+            try await api.tickets(status: .open)
+        }
+        let fraction =
+            #"{"tickets": [\#(good.replacingOccurrences(of: #""openedAt": 1"#, with: #""openedAt": 1.5"#))]}"#
+        await transport.set(
+            "/api/v1/tickets?status=open", HTTPReply(status: 200, headers: [:], body: Data(fraction.utf8)))
+        await #expect(
+            throws: TicketError.unreadable("a value does not fit: Number 1.5 is not representable in Swift.", url: url)
+        ) { try await api.tickets(status: .open) }
+
+        var detail = try #require(
+            JSONSerialization.jsonObject(with: APIFixture.data("ticket-detail")) as? [String: Any])
+        var messages = try #require(detail["messages"] as? [[String: Any]])
+        var author = try #require(messages[0]["author"] as? [String: Any])
+        author["username"] = NSNull()
+        messages[0]["author"] = author
+        detail["messages"] = messages
+        await transport.set(
+            "/api/v1/tickets/\(id853)",
+            HTTPReply(status: 200, headers: [:], body: try JSONSerialization.data(withJSONObject: detail)))
+        let reason = "`messages[0].author.username` is null, where Canopy expects text (ticket ticket-0853-sameergoyal)"
+        await #expect(throws: TicketError.unreadable(reason, url: url)) { try await api.ticket(id: id853) }
+    }
+
+    @Test func anAnswerThatIsNotTicketManagersSaysToCheckTheAddress() async throws {
+        let transport = FakeTransport(token: "t")
+        let api = TicketAPI(base: base, token: "t", transport: transport)
+        let url = base.absoluteString
+        for (body, reason) in [
+            (#"{"status": "ok"}"#, "`email` is missing"), ("[]", "the answer is not an object"),
+            (#""ok""#, "its answer was not JSON"), ("", "its answer was not JSON"),
+        ] {
+            await transport.set("/api/v1/me", HTTPReply(status: 200, headers: [:], body: Data(body.utf8)))
+            await #expect(throws: TicketError.badResponse(reason, url: url)) { try await api.me() }
+        }
     }
 
     @Test func aTicketThatIsGoneIsNotFound() async throws {

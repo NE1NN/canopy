@@ -3,6 +3,19 @@ import Foundation
 /// Says where JSON from ticket-manager stopped matching Canopy's models, such as "`tickets[37].number` is null, where
 /// Canopy expects text (ticket closed-0079)".
 enum UnreadableAnswer {
+    /// `.unreadable` when the answer is ticket-manager's but something inside it does not fit, and `.badResponse`, with
+    /// its hint to check the address, when the answer is not JSON or its top level is not ticket-manager's.
+    static func error(_ error: DecodingError, body: Data, url: String) -> TicketError {
+        guard (try? JSONSerialization.jsonObject(with: body)) != nil else {
+            return .badResponse("its answer was not JSON", url: url)
+        }
+        if case .dataCorrupted = error { return .unreadable(reason(error, body: body), url: url) }
+        guard let context = context(of: error), !context.codingPath.isEmpty else {
+            return .badResponse(reason(error, body: body), url: url)
+        }
+        return .unreadable(reason(error, body: body), url: url)
+    }
+
     static func reason(_ error: DecodingError, body: Data) -> String {
         let problem: String
         let path: [any CodingKey]
@@ -18,12 +31,25 @@ enum UnreadableAnswer {
             problem = "\(place(path)) is missing"
         case .dataCorrupted(let context):
             path = context.codingPath
-            problem = "\(place(path)) is unreadable: \(context.debugDescription)"
+            // Foundation reports a number that does not fit, such as 1.5 for an Int64, without its path.
+            let detail =
+                (context.underlyingError as NSError?)?.userInfo["NSDebugDescription"] as? String
+                ?? context.debugDescription
+            problem = path.isEmpty ? "a value does not fit: \(detail)" : "\(place(path)) is unreadable: \(detail)"
         @unknown default:
             return "\(error)"
         }
         guard let name = ticketName(at: path, in: body) else { return problem }
         return "\(problem) (ticket \(name))"
+    }
+
+    private static func context(of error: DecodingError) -> DecodingError.Context? {
+        switch error {
+        case .valueNotFound(_, let context), .typeMismatch(_, let context), .keyNotFound(_, let context),
+            .dataCorrupted(let context):
+            context
+        @unknown default: nil
+        }
     }
 
     private static func place(_ path: [any CodingKey]) -> String {

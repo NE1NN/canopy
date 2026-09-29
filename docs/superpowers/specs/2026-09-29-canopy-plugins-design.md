@@ -274,6 +274,7 @@ A summary:
 ```
 
 `owner` is null when nobody owns the ticket, and `staleHours` is null unless the ticket is stale.
+`number` is null when the name is not `ticket-` or `closed-`, digits, a dash, and a customer, such as `closed-0079` or `ticket-transcripts`.
 Each message has its author's username, display name, avatar URL, and role (`staff` or `customer`), whether the author is a bot, its text, its mentions, its attachments with file name, URL, size, and content type, its time, and its thread's id and name when it was posted in a thread.
 Each problem has its key, title, bullets, category, and status.
 The draft has its text, status, sources used, and time.
@@ -454,8 +455,8 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
 | The Keychain refuses a read or a write | The plugin cannot start, and the warning names the Keychain's error. Commands that need it fail with `keychain_failed`. |
 | The plugin is on but could not start, such as without a token | The warning says why, and commands fail with `plugin_not_started` and the fix. |
 | An address that is not `https://`, or `http://` off this Mac, or a `web` without `{id}` | `invalid_url`, and nothing is saved. |
-| ticket-manager answers something that is not its API, such as HTML, a redirect, or a 404 for `me` | `bad_response`, saying to check it is the `.convex.site` address. |
-| ticket-manager answers JSON that Canopy's models cannot read | `unreadable_answer`, naming the field, such as `tickets[37].customer`, and the ticket it belongs to. The address is right, so it does not say to check it. |
+| ticket-manager answers something that is not its API, such as HTML, a redirect, a 404 for `me`, or JSON without `me`'s `email` | `bad_response`, saying to check it is the `.convex.site` address. |
+| ticket-manager answers JSON whose top level is its API's but which Canopy's models cannot read further in | `unreadable_answer`, naming the field, such as `tickets[37].customer`, and the ticket it belongs to. The address is right, so it does not say to check it. `ticket show` prints its saved copy, as when ticket-manager cannot be reached. |
 | `ticket select` or `ticket rm` for a ticket without a row | `ticket_has_no_row`, with the `ticket new` command. |
 | `config.json` cannot be written | `plugin.enable` fails with the file system's message, and nothing changes. |
 

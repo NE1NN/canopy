@@ -59,13 +59,10 @@ public struct TicketAPI: Sendable {
         let address = base.absoluteString
         switch reply.status {
         case 200..<300:
-            guard (try? JSONSerialization.jsonObject(with: reply.body, options: .fragmentsAllowed)) != nil else {
-                throw TicketError.badResponse("its answer was not JSON", url: address)
-            }
             do {
                 return (try JSONDecoder().decode(type, from: reply.body), reply.body)
             } catch let error as DecodingError {
-                throw TicketError.unreadable(UnreadableAnswer.reason(error, body: reply.body), url: address)
+                throw UnreadableAnswer.error(error, body: reply.body, url: address)
             }
         case 300..<400:
             let target = reply.headers["location"].map { " to \($0)" } ?? ""

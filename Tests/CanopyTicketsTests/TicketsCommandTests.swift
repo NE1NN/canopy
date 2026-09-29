@@ -184,6 +184,28 @@ struct TicketsCommandTests {
         #expect(harness.store.ticket(id853).failure == nil)
     }
 
+    @Test func showFallsBackToTheCachedCopyWhenTheAnswerCannotBeRead() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let row = try await harness.newRow("853")
+        var detail = try #require(
+            JSONSerialization.jsonObject(with: APIFixture.data("ticket-detail")) as? [String: Any])
+        var ticket = try #require(detail["ticket"] as? [String: Any])
+        ticket["customer"] = NSNull()
+        detail["ticket"] = ticket
+        await harness.transport.set(
+            "/api/v1/tickets/\(id853)",
+            HTTPReply(status: 200, headers: [:], body: try JSONSerialization.data(withJSONObject: detail)))
+        harness.clock.advance(by: .seconds(300))
+
+        let shown = try await harness.call(TicketMethod.show, TicketShowParams(refresh: true), in: row)
+            .decode(TicketShowResult.self)
+        #expect(shown.ticket.ticket.customer == "sameergoyal")
+        #expect(shown.stale?.contains("`ticket.customer` is null") == true)
+        #expect(shown.stale?.hasSuffix("This copy is from 5 min ago.") == true)
+        #expect(harness.store.ticket(id853).failure?.code == "unreadable_answer")
+    }
+
     @Test func selectAndRemoveWorkFromRowsAlone() async throws {
         let dir = try TempDir()
         let harness = try await connected(dir)

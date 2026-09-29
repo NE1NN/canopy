@@ -58,3 +58,20 @@ The fixtures Canopy shares with ticket-manager have no ticket without a number, 
 - [x] On a dev build of `main`, on a throwaway home, `canopy ticket connect https://courteous-moose-751.convex.site` with the author's token, then `ticket list` and `ticket list --closed`: both fail with the reported message.
 - [x] On this branch: 215 open and 604 closed or archived tickets list, `ticket show` prints `closed-0079`, and the window's New Ticket Row picker lists open tickets and, with Closed on, `0079`.
 - [x] Disconnect so the throwaway home's Keychain item goes, and quit the dev build by pid.
+
+## After Review
+
+An independent reviewer read `git diff main...fix/ticket-null-number` against this plan and ticket-manager's serializer.
+It agreed that list decoding should stay strict, and found these, all fixed in one commit:
+
+- `ticket show` printed its saved copy for `bad_response` but not for the new `unreadable_answer`, a regression from before this branch, when both were `bad_response`.
+  `TicketError.isUnreachable` is now `fallsBackToCache` and covers `.unreadable`, tested by `showFallsBackToTheCachedCopyWhenTheAnswerCannotBeRead`.
+- A wrong address that answers JSON, such as `{"status": "ok"}` for `me`, got `unreadable_answer` and no hint about the address.
+  A failure at the answer's top level is `bad_response` again, and only one further in is `unreadable_answer`.
+  `JSONSerialization` no longer allows fragments, so `"ok"` is not JSON either.
+- Every answer was parsed twice. `JSONSerialization` now runs only after decoding fails.
+- The spec did not say `number` can be null. It does now.
+- Tests now cover a detail's `messages` path naming its ticket, a null list element, and a value that does not fit.
+
+Writing that last test showed that Foundation reports a number that does not fit, such as `1.5` for an `Int64`, as `dataCorrupted` with an empty path and "The given data was not valid JSON."
+The top-level rule would have sent that to `bad_response` with the address hint, so a `dataCorrupted` on a body that is JSON is always `unreadable_answer`, with Foundation's own detail, such as "a value does not fit: Number 1.5 is not representable in Swift."
