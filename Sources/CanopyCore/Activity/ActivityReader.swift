@@ -134,7 +134,14 @@ extension ActivityEvent {
         case ActivityType.repoAdded, ActivityType.repoRemoved:
             return path ?? ""
         case ActivityType.rowCreated, ActivityType.rowAdopted, ActivityType.rowRemoved:
-            return text("class") ?? ""
+            guard case .object(let link)? = data["link"], case .string(let plugin)? = link["plugin"],
+                case .string(let item)? = link["item"]
+            else { return text("class") ?? "" }
+            return "\(text("class") ?? ""), for \(plugin) \(item)"
+        case ActivityType.pluginEnabled, ActivityType.pluginDisabled:
+            return text("plugin") ?? ""
+        case ActivityType.pluginRowCreated, ActivityType.pluginRowRemoved:
+            return "\(text("plugin") ?? "") \(text("item") ?? "")"
         case ActivityType.rowBranchChanged:
             return "\(text("from") ?? "detached") -> \(text("to") ?? "detached")"
         case ActivityType.rowMoved:

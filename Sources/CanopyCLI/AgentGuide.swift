@@ -65,6 +65,28 @@ struct AgentGuide: ParsableCommand {
         with `group new`. `row move --group` is safe to repeat: a row already in the group stays where it is.
         `row list` shows each row's group, and `row list --json` carries it as "group".
 
+        ## Plugin rows
+
+            canopy plugin list                            built-in plugins, whether each is on, and its status
+            canopy plugin enable <plugin>                 turn one on; disable <plugin> [--force] turns it off
+            canopy plugin items <plugin> [--query <text>] [--filter <id>]...
+                                                          its items, and the row each already has
+            canopy plugin new <plugin> <reference> [--run <cmd>] [--select]
+                                                          open a row for one of its items
+
+        A plugin adds rows that are not worktrees, such as one per support ticket, in a section below the repos. Each
+        has a folder under CANOPY_HOME/plugins/<plugin>/, which the plugin fills with files about the item, and tabs
+        and terminals like any row. Terminals there get CANOPY_PLUGIN and CANOPY_ITEM, and no CANOPY_REPO or
+        CANOPY_ROOT_PATH: a plugin row is in no repo, so pass --repo to commands about a repo. `row list` shows plugin
+        rows after the repos', under their plugin, with "plugin", "item", "title", and "path" in --json. `row select`,
+        `row rm`, and `row move --before/--after` take a plugin row's path, and `term` and `ports` work in it as in any
+        row. `row rm` moves its folder to the Trash, and refuses while a program runs in it unless --force.
+        `plugin new` fails with item_has_row, naming the row, when the item has one: `row select` that row instead.
+        `plugin list --json` names each plugin's filters for `plugin items --filter`.
+
+        `row new` run in a plugin row links the new worktree row to the row's item, so the item's panel lists it, and
+        `row list --json` carries it as "link". Pass --no-link to leave it out.
+
         ## Terminals
 
             canopy term list [--all]                      ID, row, tab, process, title, and folder
@@ -130,9 +152,9 @@ struct AgentGuide: ParsableCommand {
 
             canopy log [--since <when>] [--until <when>] [--type <t>]   what happened, oldest first
 
-        Canopy logs repos and rows coming and going, rows switching branch, PRs opening and changing state, terminals
-        opening and exiting, each command that finishes in a zsh terminal with its exit code and duration, and each
-        canopy call that changes something. Each event's source says whether it came from the Canopy window (ui), a
+        Canopy logs repos and rows coming and going, plugins turning on and off, rows switching branch, PRs opening and
+        changing state, terminals opening and exiting, each command that finishes in a zsh terminal with its exit code
+        and duration, and each canopy call that changes something. Each event's source says whether it came from the Canopy window (ui), a
         canopy command (cli), or outside Canopy (git). `--since` defaults to 24 hours ago and takes 30m, 2h, 3d, today,
         yesterday, 2026-09-27, or 2026-09-27T14:30. `--type row` matches every row event, `--type term.command` one.
         `canopy log` reads the log files directly, so it works while Canopy is not running.
@@ -162,6 +184,12 @@ struct AgentGuide: ParsableCommand {
         See which commands failed in the last hour, in any row:
 
             canopy log --since 1h --type term.command --json | jq '.[] | select(.data.exit != 0) | .data.cmd'
+
+        Open a row for a plugin's item, with an agent reading what the plugin wrote there, then start the fix from
+        that row's terminal, linked to the item:
+
+            canopy plugin new fixture fx-2 --run 'claude "read item.md and find the bug"'
+            canopy row new fix/fx-2 --repo web-app --run 'claude "fix the bug item.md describes"'
 
         Keep your review rows together, and list them:
 

@@ -93,6 +93,14 @@ public struct RowLinkParams: Codable, Sendable, Equatable {
         self.plugin = plugin
         self.reference = reference
     }
+    /// The item of the plugin row a command runs in, from CANOPY_PLUGIN and CANOPY_ITEM, so a fix row started from a
+    /// ticket row's terminal is linked to its ticket.
+    public init?(environment: [String: String]) {
+        guard let plugin = environment["CANOPY_PLUGIN"], !plugin.isEmpty, let item = environment["CANOPY_ITEM"],
+            !item.isEmpty
+        else { return nil }
+        self.init(plugin: plugin, reference: item)
+    }
 }
 
 extension PluginFilters {
