@@ -370,7 +370,7 @@ struct CloneTests {
         try await Fixture.remote(in: dir, "acme/app")
         let (started, go) = (dir.sub("started"), dir.sub("go"))
         let gh = try Fixture.cloningGH(
-            in: dir, before: "touch '\(started)'; while [[ ! -e '\(go)' ]]; do sleep 0.05; done")
+            in: dir, before: "touch '\(started)'\n" + Fixture.waitForFile(go))
         let workspace = try await makeWorkspace(dir, github: gh)
 
         let first = Task { try await workspace.cloneRepo("acme/app") }
@@ -397,7 +397,7 @@ struct CloneTests {
             before: #"""
                 if [[ "$1" == fetch ]]; then
                     touch "\#(fetching)"
-                    for _ in $(seq 1 1200); do [[ -e "\#(release)" ]] && break; sleep 0.05; done
+                    \#(Fixture.waitForFile(release))
                 fi
                 """#)
         let git = Fixture.gitRedirectingGitHub(to: dir, executable: wrapper.executable)

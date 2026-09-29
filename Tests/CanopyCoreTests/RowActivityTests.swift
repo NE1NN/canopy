@@ -106,7 +106,7 @@ struct RowActivityTests {
         let dir = try TempDir()
         let repo = try await Fixture.repo(in: dir)
         let path = dir.sub("home/worktrees/demo/feat-a")
-        let paused = dir.sub("paused")
+        let (paused, resume) = (dir.sub("paused"), dir.sub("resume"))
         // After adding the worktree, git leaves it detached until the test lets go, as if still setting it up.
         let git = try Fixture.git(
             in: dir,
@@ -115,7 +115,7 @@ struct RowActivityTests {
                     '\(Fixture.gitPath)' "$@" || exit
                     '\(Fixture.gitPath)' -C '\(path)' switch --quiet --detach
                     touch '\(paused)'
-                    while [[ -f '\(paused)' ]]; do sleep 0.05; done
+                    \(Fixture.waitForFile(resume))
                     exec '\(Fixture.gitPath)' -C '\(path)' switch --quiet feat/a
                 fi
                 """)
@@ -129,7 +129,7 @@ struct RowActivityTests {
         #expect(await eventually { FileManager.default.fileExists(atPath: paused) })
         await workspace.refresh(repoPath: repo)
         #expect(await workspace.snapshot.row(path: path)?.branch == nil)
-        try FileManager.default.removeItem(atPath: paused)
+        FileManager.default.createFile(atPath: resume, contents: nil)
         _ = try await created
         await workspace.refresh(repoPath: repo)
 

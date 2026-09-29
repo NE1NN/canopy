@@ -81,8 +81,9 @@ private typealias KeventCall = (
 ) -> Int32
 
 public enum Subprocess {
-    /// Runs a program in its own process group with stdin from /dev/null and no inherited descriptors,
-    /// blocking the calling thread until it exits. On timeout the whole group is killed.
+    /// Runs a program in a session of its own, with no controlling terminal, stdin from /dev/null, no inherited
+    /// descriptors, and every signal unblocked and at its default, blocking the calling thread until it exits.
+    /// On timeout the session's process group, the child and everything it started, is killed.
     /// Call it through `onOwnThread`, not on a Dispatch global queue, whose threads run out.
     ///
     /// Output goes to unlinked temporary files rather than pipes: a background process the child leaves
@@ -114,8 +115,18 @@ public enum Subprocess {
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
-        posix_spawnattr_setpgroup(&attributes, 0)
+        // Dispatch's threads, and threads they start, block most signals, a child inherits the caller's mask, and an
+        // ignored signal stays ignored across exec. With its signals back at their defaults, a child in a background
+        // group of a terminal the app was started from would stop the moment it touched that terminal, so it gets a
+        // session of its own, which has no terminal.
+        var none = sigset_t()
+        sigemptyset(&none)
+        posix_spawnattr_setsigmask(&attributes, &none)
+        var every = sigset_t()
+        sigfillset(&every)
+        posix_spawnattr_setsigdefault(&attributes, &every)
+        let flags = POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        posix_spawnattr_setflags(&attributes, Int16(flags))
 
         let argv = ([executable] + arguments).map { strdup($0) } + [nil]
         let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]

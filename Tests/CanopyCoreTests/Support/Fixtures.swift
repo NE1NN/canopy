@@ -65,6 +65,13 @@ enum Fixture {
             sshConfigFile: sshConfigFile)
     }
 
+    /// Bash lines for a stand-in script that holds until the test creates `path`. It gives up and goes on after about
+    /// `seconds`, as bash counts whole seconds, so a stand-in whose test was killed ends by itself.
+    static func waitForFile(_ path: String, seconds: Int = 60) -> String {
+        "stand_in_deadline=$((SECONDS + \(seconds)))\n"
+            + "until [[ -e '\(path)' ]] || ((SECONDS >= stand_in_deadline)); do sleep 0.05; done"
+    }
+
     /// A bare repo with one commit at `<dir>/remotes/<owner>/<name>.git`, to clone from.
     @discardableResult
     static func remote(in dir: TempDir, _ nameWithOwner: String) async throws -> String {

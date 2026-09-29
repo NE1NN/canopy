@@ -279,7 +279,7 @@ struct GroupRowCreationTests {
     /// sees as `added`, or with `beforeAdding`, before git starts, which it sees as `reached`.
     func stalledSetUp(_ dir: TempDir, beforeAdding: Bool = false) async throws -> (Workspace, String) {
         let repo = try await Fixture.repo(in: dir)
-        let wait = "while [ ! -e '\(dir.sub("go"))' ]; do sleep 0.05; done"
+        let wait = Fixture.waitForFile(dir.sub("go"))
         let git = try Fixture.git(
             in: dir,
             before: beforeAdding

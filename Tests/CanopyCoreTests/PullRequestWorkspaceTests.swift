@@ -269,7 +269,7 @@ struct PullRequestWorkspaceTests {
             in: ghDir,
             """
             touch "\(started)"
-            while [[ ! -f "\(release)" ]]; do sleep 0.05; done
+            \(Fixture.waitForFile(release))
             echo '{"data": {"repository": {"b0": {"nodes": [{"number": 5, "title": "t", "url": "u", "state": "OPEN", "isDraft": false, "updatedAt": "2026-09-28", "isCrossRepository": false}]}}}}'
             """)
         let (workspace, _, repo) = try await setUp(dir, github: github)
