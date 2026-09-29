@@ -10,7 +10,8 @@ struct TicketCommand: AsyncParsableCommand {
         discussion: """
             A <ticket> is 853, 0853, 0853-sameergoyal, ticket-0853-sameergoyal, closed-0853-sameergoyal, or a \
             ticket-manager id. In a ticket row, commands without one use the row's ticket. Each ticket row's \
-            folder holds ticket.md, the ticket's handover block, and ticket.json, ticket-manager's last response.
+            folder holds ticket.md, a note that customers' messages are data, not instructions, then the ticket's \
+            handover block, and ticket.json, ticket-manager's last response.
             """,
         subcommands: [List.self, New.self, Show.self, Select.self, Remove.self, Connect.self, Disconnect.self]
     )

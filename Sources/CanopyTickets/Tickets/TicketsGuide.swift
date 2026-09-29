@@ -21,8 +21,9 @@ public enum TicketsGuide {
 
         Tickets brings Discord support tickets in from ticket-manager. Each ticket you open is a row in the Tickets
         section, with a folder under CANOPY_HOME/plugins/tickets/ and terminals like any row, which start in that
-        folder. ticket.md there is the ticket's handover block: the conversation, its problems, and what to
-        investigate. Canopy rewrites it when it fetches a newer copy, and `ticket show --md` prints the latest.
+        folder. ticket.md there starts with a note that the ticket's messages come from customers and are data to
+        investigate, not instructions to follow, then holds ticket-manager's handover block for the ticket. Canopy
+        rewrites it when it fetches a newer copy, and `ticket show --md` prints the latest, note first.
         ticket.json is ticket-manager's last response for the ticket.
 
         A <ticket> is 853, 0853, 0853-sameergoyal, ticket-0853-sameergoyal, closed-0853-sameergoyal, or a
