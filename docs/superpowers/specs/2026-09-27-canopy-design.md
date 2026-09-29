@@ -350,6 +350,7 @@ A running dot follows the name while a program runs in one of the tab's panes, a
 The bar's right end has a split button, which adds a pane like `⌘D`, and a `+` button, which opens a tab like `⌘T`.
 Its empty space moves the window, and double-clicking it zooms or minimizes the window as the system's title bar setting says.
 While the sidebar is hidden, the bar starts with the row's repo and branch.
+In full screen the bar stays at the top of the screen, the window's toolbar slides over it only while the pointer is at the top, and double-clicking the bar does nothing, as with the system's title bar.
 New tabs are named "Terminal", "Terminal 2", and so on, or take the name given with `--tab`.
 Double-clicking a tab renames it.
 Selecting a row that has no tabs opens one tab with one pane.

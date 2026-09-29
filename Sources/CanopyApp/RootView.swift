@@ -7,14 +7,18 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var detailFrame = CGRect.zero
+    @State private var isFullScreen = false
 
     var body: some View {
         @Bindable var model = model
+        let isSidebarHidden = columns == .detailOnly
+        let placement = TopBarPlacement(isSidebarHidden: isSidebarHidden, isFullScreen: isFullScreen)
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 420)
         } detail: {
             RowDetailView()
+                .environment(\.topBarFillsTitleBar, placement.fillsTitleBar)
                 .onGeometryChange(for: CGRect.self) {
                     $0.frame(in: .global)
                 } action: {
@@ -23,13 +27,18 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             if let row = model.selectedRow, !row.isMissing {
-                TopBarView(row: row, isSidebarHidden: columns == .detailOnly)
-                    .frame(width: detailFrame.width)
-                    .offset(x: detailFrame.minX)
-                    .ignoresSafeArea(.container, edges: .top)
+                TopBarView(
+                    row: row, isSidebarHidden: isSidebarHidden, windowControlsOverBar: placement.windowControlsOverBar
+                )
+                .frame(width: detailFrame.width)
+                .offset(x: detailFrame.minX)
+                .ignoresSafeArea(.container, edges: placement.fillsTitleBar ? .top : [])
             }
         }
         .frame(minWidth: 900, minHeight: 560)
+        // Full screen shows the bar at the top, as a window does, with the toolbar only while the pointer is there.
+        .windowToolbarFullScreenVisibility(.onHover)
+        .background(FullScreenReader(isFullScreen: $isFullScreen))
         .overlay(alignment: .bottom) {
             if let toast = model.toast {
                 ToastView(message: toast)

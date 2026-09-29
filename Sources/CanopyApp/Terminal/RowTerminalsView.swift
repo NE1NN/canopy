@@ -4,6 +4,7 @@ import SwiftUI
 /// The detail area for a row: the top bar with its tabs, and the selected tab's terminals.
 struct RowTerminalsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.topBarFillsTitleBar) private var topBarFillsTitleBar
     let row: Row
 
     var body: some View {
@@ -34,8 +35,20 @@ struct RowTerminalsView: View {
                     }
                 }
             }
-            // The top bar takes the title bar's row. The window's title bar is hidden, so clicks reach it.
-            .ignoresSafeArea(.container, edges: .top)
+            // In a window the top bar takes the title bar's row. The title bar is hidden, so clicks reach it.
+            .ignoresSafeArea(.container, edges: topBarFillsTitleBar ? .top : [])
         }
+    }
+}
+
+private struct TopBarFillsTitleBarKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether the top bar takes the title bar's row, so the detail leaves that row to it.
+    var topBarFillsTitleBar: Bool {
+        get { self[TopBarFillsTitleBarKey.self] }
+        set { self[TopBarFillsTitleBarKey.self] = newValue }
     }
 }
