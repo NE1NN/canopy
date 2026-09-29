@@ -76,18 +76,14 @@ extension Workspace {
     }
 
     /// Folding is how the sidebar looks, so it is saved but not logged.
-    public func setGroupCollapsed(repoPath: String, name: String, collapsed: Bool) throws {
-        try changeEntry(repoPath: repoPath) { entry, repo in
-            entry.groups[try entry.requireGroup(name, repo: repo)].collapsed = collapsed
+    @discardableResult
+    public func setGroupCollapsed(repoPath: String, name: String, collapsed: Bool) throws -> GroupInfo {
+        let group = try changeEntry(repoPath: repoPath) { entry, repo in
+            let index = try entry.requireGroup(name, repo: repo)
+            entry.groups[index].collapsed = collapsed
+            return entry.groups[index].name
         }
-    }
-
-    /// Unfolds the group holding a row, so selecting the row shows it.
-    public func revealRow(path: String) throws {
-        guard let row = snapshot.row(path: path), let group = row.group,
-            snapshot.repo(path: row.repoPath)?.groups.first(where: { $0.name == group })?.collapsed == true
-        else { return }
-        try setGroupCollapsed(repoPath: row.repoPath, name: group, collapsed: false)
+        return try groupInfo(repoPath: repoPath, name: group)
     }
 
     /// Moves a Canopy or adopted row within its repo. Only a change of group is logged, as `row.moved`.

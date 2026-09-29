@@ -342,6 +342,7 @@ public final class PluginHost {
     }
 
     func select(_ path: String) async {
+        try? await workspace.revealRow(path: path)
         try? await workspace.setSelectedRow(path: path)
         await ui?.selectRow(path: path)
     }
