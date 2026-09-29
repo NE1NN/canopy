@@ -63,6 +63,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case pluginBusy(String, id: String, programs: [String])
     case trashFailed(String, reason: String)
     case folderFailed(String, reason: String)
+    case pluginNotStarted(String, reason: String)
     case git(GitError)
 
     public var code: String {
@@ -124,6 +125,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .pluginBusy: "plugin_busy"
         case .trashFailed: "trash_failed"
         case .folderFailed: "folder_failed"
+        case .pluginNotStarted: "plugin_not_started"
         case .git: "git_failed"
         }
     }
@@ -225,6 +227,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
                 + "Pass --force to turn it off anyway, which closes them."
         case .trashFailed(let path, let reason): "Could not move \(path) to the Trash: \(reason)"
         case .folderFailed(let path, let reason): "Could not make \(path): \(reason)"
+        case .pluginNotStarted(let name, let reason): "\(name) did not start. \(reason)"
         case .git(let error): error.description
         }
     }

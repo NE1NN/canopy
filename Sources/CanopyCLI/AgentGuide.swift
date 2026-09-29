@@ -185,12 +185,6 @@ struct AgentGuide: ParsableCommand {
 
             canopy log --since 1h --type term.command --json | jq '.[] | select(.data.exit != 0) | .data.cmd'
 
-        Open a row for a plugin's item, with an agent reading what the plugin wrote there, then start the fix from
-        that row's terminal, linked to the item:
-
-            canopy plugin new fixture fx-2 --run 'claude "read item.md and find the bug"'
-            canopy row new fix/fx-2 --repo web-app --run 'claude "fix the bug item.md describes"'
-
         Keep your review rows together, and list them:
 
             canopy group new Review

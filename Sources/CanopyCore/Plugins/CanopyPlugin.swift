@@ -87,14 +87,17 @@ public struct PluginItem: Sendable, Equatable, Codable, Identifiable {
     }
 }
 
-/// A new row's title, fixed from then on, and the name its folder starts from.
+/// A new row's title, fixed from then on, the name its folder starts from, and the command a new terminal in it runs
+/// when the request names none, such as a plugin's configured `run`.
 public struct PluginRowSeed: Sendable, Equatable {
     public var title: String
     public var folderName: String
+    public var run: String?
 
-    public init(title: String, folderName: String) {
+    public init(title: String, folderName: String, run: String? = nil) {
         self.title = title
         self.folderName = folderName
+        self.run = run
     }
 }
 
@@ -130,9 +133,10 @@ public protocol CanopyPlugin: Sendable {
     /// Those of `methods` that only read, which the activity log leaves out.
     var readOnlyMethods: Set<String> { get }
 
-    /// Called when it turns on, at launch or later. A failure shows as its section's warning.
+    /// Called when it turns on, at launch or later. A failure shows as its section's warning. Launching waits for it,
+    /// so it must return promptly and leave network calls to tasks of its own.
     func start(_ context: PluginContext) async throws
-    /// Called when it turns off. It must stop its timers and network calls.
+    /// Called when it turns off, and when Canopy quits. It must stop its timers and network calls, and return promptly.
     func stop(_ context: PluginContext) async
     /// One line for `canopy plugin list`, such as "connected as me@example.com, updated 20 s ago".
     func status(_ context: PluginContext) async -> String?

@@ -14,7 +14,9 @@ struct PluginHostTests {
     }
 
     /// A host on a temporary home whose config.json holds `config`, started, with its terminals closed at the end.
-    func start(_ dir: TempDir, _ plugins: [TestPlugin], config: String? = nil) async throws -> Setup {
+    func start(
+        _ dir: TempDir, _ plugins: [TestPlugin], config: String? = nil, trash: (any FolderTrash)? = nil
+    ) async throws -> Setup {
         let home = CanopyHome(path: dir.sub("home"))
         try home.ensureExists()
         if let config {
@@ -25,7 +27,7 @@ struct PluginHostTests {
         let terminals = Fixture.terminals(dir)
         let host = PluginHost(
             workspace: workspace, terminals: terminals, plugins: plugins, secrets: MemorySecretStore(),
-            bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
+            bundleID: "test", trash: trash ?? FolderMovingTrash(into: dir.sub("trash")))
         let ui = RecordingUI()
         host.ui = ui
         await host.start()
@@ -460,5 +462,103 @@ struct PluginHostTests {
         await #expect { try await setup.host.call("t.fail", params: .null, target: TargetHint(), row: nil) } throws: {
             ($0 as? ControlError)?.code == "test_failed"
         }
+    }
+
+    @Test func enablingAgainRetriesAFailedStart() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin(startError: "No token.")
+        let setup = try await start(dir, [test], config: #"{"plugins": {"t": {"url": "u"}}}"#)
+        await #expect(throws: WorkspaceError.pluginNotStarted("Test", reason: "No token.")) {
+            try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
+        }
+
+        await test.setStartError(nil)
+        _ = try await setup.host.enable("t", with: ["url": "u"])
+
+        #expect(await test.calls == ["start", "stop", "start"])
+        #expect(await plugin(setup)?.warning == nil)
+        _ = try await setup.host.createRow("t", reference: "i1", run: nil, select: false)
+    }
+
+    @Test func turningOnMakesMissingFoldersBeforeTheRowsShow() async throws {
+        let dir = try TempDir()
+        let first = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#)
+        let row = try await first.host.createRow("t", reference: "i1", run: nil, select: false).row
+        _ = try await first.host.disable("t", force: false)
+        try FileManager.default.removeItem(atPath: row.path)
+        let updates = await first.workspace.updates()
+        let watcher = Task {
+            for await snapshot in updates where snapshot.section("t")?.isOn == true {
+                return FileManager.default.fileExists(atPath: row.path)
+            }
+            return false
+        }
+
+        _ = try await first.host.enable("t")
+
+        #expect(await watcher.value)
+        #expect(await eventually { FileManager.default.fileExists(atPath: row.path + "/item.txt") })
+    }
+
+    @Test func aSeedsRunStartsNewRowsUnlessTheRequestGivesOne() async throws {
+        let dir = try TempDir()
+        let setup = try await start(
+            dir, [TestPlugin(defaultRun: #"echo seeded > run.txt"#)], config: #"{"plugins": {"t": {}}}"#)
+        defer { setup.terminals.closeAll() }
+
+        let seeded = try await setup.host.createRow("t", reference: "i1", run: nil, select: false).row
+        let asked = try await setup.host.createRow("t", reference: "i2", run: "echo asked > run.txt", select: false).row
+
+        #expect(
+            await eventually { (try? String(contentsOfFile: seeded.path + "/run.txt", encoding: .utf8)) == "seeded\n" })
+        #expect(
+            await eventually { (try? String(contentsOfFile: asked.path + "/run.txt", encoding: .utf8)) == "asked\n" })
+    }
+
+    @Test func aRowMadeWhileItsPluginTurnsOffGetsNoTerminal() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin()
+        let setup = try await start(dir, [test], config: #"{"plugins": {"t": {}}}"#)
+        defer { setup.terminals.closeAll() }
+        await test.stallFillsFromNow()
+
+        let creating = Task { try await setup.host.createRow("t", reference: "i1", run: "sleep 30", select: false) }
+        #expect(await eventually { await test.stalledFills == 1 })
+        _ = try await setup.host.disable("t", force: true)
+        await test.releaseFills()
+        let created = try await creating.value
+
+        #expect(created.pane == nil)
+        #expect(setup.terminals.tabs(inRow: created.row.path).isEmpty)
+    }
+
+    @Test func aTrashThatFailsKeepsTheRowAndItsTerminals() async throws {
+        let dir = try TempDir()
+        let setup = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#, trash: RefusingTrash())
+        defer { setup.terminals.closeAll() }
+        let row = try await setup.host.createRow("t", reference: "i1", run: nil, select: false).row
+        setup.terminals.openTab(for: PaneContext(pluginRow: row))
+
+        await #expect { try await setup.host.removeRow(row, force: false) } throws: {
+            ($0 as? WorkspaceError)?.code == "trash_failed"
+        }
+
+        #expect(setup.terminals.tabs(inRow: row.path).count == 1)
+        #expect(await plugin(setup)?.rows.count == 1)
+    }
+
+    @Test func folderNamesIgnoreCaseAndStayShort() async throws {
+        let dir = try TempDir()
+        let long = String(repeating: "é", count: 300)
+        let setup = try await start(
+            dir, [TestPlugin(folders: ["i1": "Foo", "i2": "foo", "i3": long])], config: #"{"plugins": {"t": {}}}"#)
+        let first = try await setup.host.createRow("t", reference: "i1", run: nil, select: false).row
+        try FileManager.default.removeItem(atPath: first.path)
+
+        let second = try await setup.host.createRow("t", reference: "i2", run: nil, select: false).row
+        let third = try await setup.host.createRow("t", reference: "i3", run: nil, select: false).row
+
+        #expect(second.path.hasSuffix("/foo-2"))
+        #expect((third.path as NSString).lastPathComponent.utf8.count <= 200)
     }
 }

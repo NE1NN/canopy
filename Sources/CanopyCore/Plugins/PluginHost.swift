@@ -82,6 +82,9 @@ public final class PluginHost {
     private var running: Set<String> = []
     private var lastStates: [String: PluginState] = [:]
     private var updates: Task<Void, Never>?
+    private var queues = KeyedQueue()
+    /// Why each plugin that is on but not running failed to start.
+    private var startFailures: [String: String] = [:]
 
     public init(
         workspace: Workspace, terminals: TerminalStore, plugins: [any CanopyPlugin], secrets: any SecretStore,
@@ -149,15 +152,28 @@ public final class PluginHost {
     }
 
     /// Writes the plugin's section of config.json with `fields` and without `"enabled": false`, then starts it. A
-    /// plugin that is on starts again if its section changed.
+    /// plugin that is on starts again if its section changed or its last start failed.
     @discardableResult
     public func enable(_ id: String, with fields: [String: JSONValue] = [:]) async throws -> PluginListing {
         let plugin = try requirePlugin(id)
+        return try await serialized(id) { try await self.enableNow(plugin, with: fields) }
+    }
+
+    /// Closes the terminals in the plugin's rows, asking first while programs run in them, writes `"enabled": false`
+    /// in its section of config.json, and stops it. Its rows stay in state.json for when it is on again.
+    @discardableResult
+    public func disable(_ id: String, force: Bool) async throws -> PluginListing {
+        let plugin = try requirePlugin(id)
+        return try await serialized(id) { try await self.disableNow(plugin, force: force) }
+    }
+
+    private func enableNow(_ plugin: any CanopyPlugin, with fields: [String: JSONValue]) async throws -> PluginListing {
+        let id = plugin.info.id
         let section = try configFile.enable(id, fields: fields)
         let changed = sections[id] != section
         sections[id] = section
         if on.contains(id) {
-            if changed {
+            if changed || !running.contains(id) {
                 await plugin.stop(context(of: plugin))
                 await turnOn(plugin)
             }
@@ -168,34 +184,35 @@ public final class PluginHost {
         return await listing(plugin, in: await workspace.snapshot)
     }
 
-    /// Closes the terminals in the plugin's rows, asking first while programs run in them, writes `"enabled": false`
-    /// in its section of config.json, and stops it. Its rows stay in state.json for when it is on again.
-    @discardableResult
-    public func disable(_ id: String, force: Bool) async throws -> PluginListing {
-        let plugin = try requirePlugin(id)
+    private func disableNow(_ plugin: any CanopyPlugin, force: Bool) async throws -> PluginListing {
+        let id = plugin.info.id
         guard on.contains(id) else { return await listing(plugin, in: await workspace.snapshot) }
         let paths = (await workspace.snapshot.section(id)?.rows ?? []).map(\.path)
-        let busy = paths.flatMap(terminals.busyPanes(inRow:)).compactMap { $0.foreground?.name }
+        let busy = paths.flatMap(terminals.busyPanes(inRow:))
         if !busy.isEmpty, !force {
-            throw WorkspaceError.pluginBusy(plugin.info.name, id: id, programs: Self.unique(busy))
+            throw WorkspaceError.pluginBusy(plugin.info.name, id: id, programs: Self.programs(busy))
         }
         sections[id] = try configFile.disable(id)
-        onClosingRows(paths)
-        for path in paths {
-            terminals.closeRow(path: path)
-        }
-        await plugin.stop(context(of: plugin))
+        // Off first, so nothing restores the rows' terminals while they close.
         on.remove(id)
         running.remove(id)
         await workspace.setPlugin(id, on: false)
         await workspace.setPluginWarning(id, nil)
         publishStates()
+        onClosingRows(paths)
+        for path in paths {
+            terminals.closeRow(path: path)
+        }
+        await plugin.stop(context(of: plugin))
         workspace.activity.record(ActivityType.pluginDisabled, data: ["plugin": .string(id)])
         return await listing(plugin, in: await workspace.snapshot)
     }
 
+    /// Makes the rows' missing folders before the rows show, so no terminal starts in one that is gone, then starts the
+    /// plugin and lets it fill them.
     private func turnOn(_ plugin: any CanopyPlugin) async {
         let id = plugin.info.id
+        let remade = await makeMissingFolders(of: plugin)
         on.insert(id)
         await workspace.setPluginWarning(id, nil)
         await workspace.setPlugin(id, on: true)
@@ -204,18 +221,32 @@ public final class PluginHost {
         do {
             try await plugin.start(context(of: plugin))
             running.insert(id)
+            startFailures[id] = nil
         } catch {
             running.remove(id)
+            startFailures[id] = Self.message(error)
             await workspace.setPluginWarning(id, Self.message(error))
         }
-        await recreateMissingFolders(of: plugin)
+        // In the background, so launching never waits on a plugin's network.
+        if running.contains(id) {
+            for row in remade {
+                Task { await self.fill(row, plugin: plugin) }
+            }
+        }
+    }
+
+    /// Changes to a plugin's on or off state run one at a time, so a disable and an enable never interleave.
+    private func serialized<T: Sendable>(_ id: String, _ operation: @escaping @Sendable () async throws -> T)
+        async throws -> T
+    {
+        try await queues.enqueue(id, operation).value
     }
 
     // MARK: Rows
 
     /// The plugin's items, each with the row it already has.
     public func items(_ id: String, matching query: PluginQuery) async throws -> [PluginItem] {
-        let plugin = try requireOn(id)
+        let plugin = try requireRunning(id)
         let items = try await plugin.items(matching: query, context: context(of: plugin))
         let snapshot = await workspace.snapshot
         return items.map { item in
@@ -231,7 +262,7 @@ public final class PluginHost {
     public func createRow(_ id: String, reference: String, run: String?, select: Bool) async throws
         -> PluginRowCreated
     {
-        let plugin = try requireOn(id)
+        let plugin = try requireRunning(id)
         let context = context(of: plugin)
         let item = try await plugin.resolve(reference, context: context)
         if let existing = await workspace.snapshot.pluginRow(plugin: id, item: item) {
@@ -239,6 +270,7 @@ public final class PluginHost {
         }
         let seed = try await plugin.seed(for: item, context: context)
         let folder = try await makeFolder(named: seed.folderName, plugin: id)
+        let run = run ?? seed.run
         var row: PluginRow
         do {
             row = try await workspace.addPluginRow(
@@ -256,9 +288,10 @@ public final class PluginHost {
         }
         record(ActivityType.pluginRowCreated, row)
         row = await workspace.snapshot.section(id)?.rows.first { $0.path == row.path } ?? row
-        // The terminal opens first, so selecting the row does not also give it a blank one.
+        // The terminal opens first, so selecting the row does not also give it a blank one. A plugin turned off while
+        // the row was made gets no terminal in it.
         let pane = run.flatMap { _ in
-            fillError == nil ? terminals.openTab(for: PaneContext(pluginRow: row)).focused : nil
+            fillError == nil && on.contains(id) ? terminals.openTab(for: PaneContext(pluginRow: row)).focused : nil
         }
         if select {
             await self.select(row.path)
@@ -269,22 +302,24 @@ public final class PluginHost {
         return PluginRowCreated(row: row, pane: pane?.id.description, fillError: fillError)
     }
 
-    /// Closes the row's terminals, asking first while programs run in them, moves its folder to the Trash, and forgets
-    /// the row. Links to its item stay.
+    /// Moves the row's folder to the Trash, asking first while programs run in its terminals, then closes them and
+    /// forgets the row. Links to its item stay. A folder outside the plugin's own, as a hand-edited state.json can
+    /// name, is left where it is.
     public func removeRow(_ row: PluginRow, force: Bool) async throws -> PluginRowRemoved {
-        let busy = terminals.busyPanes(inRow: row.path).compactMap { $0.foreground?.name }
+        let busy = terminals.busyPanes(inRow: row.path)
         if !busy.isEmpty, !force {
-            throw WorkspaceError.rowBusy(row.displayName, programs: Self.unique(busy))
+            throw WorkspaceError.rowBusy(row.displayName, programs: Self.programs(busy))
         }
-        terminals.closeRow(path: row.path)
+        // Moving a folder that shells are in is fine, and a move that fails leaves their programs running.
         var trashedTo: URL?
-        if FileManager.default.fileExists(atPath: row.path) {
+        if isOwnFolder(row), FileManager.default.fileExists(atPath: row.path) {
             do {
                 trashedTo = try trash.trash(URL(fileURLWithPath: row.path))
             } catch {
                 throw WorkspaceError.trashFailed(row.path, reason: error.localizedDescription)
             }
         }
+        terminals.closeRow(path: row.path)
         let removed = try await workspace.removePluginRow(path: row.path)
         record(ActivityType.pluginRowRemoved, removed)
         return PluginRowRemoved(row: removed, trashedTo: trashedTo?.path)
@@ -299,7 +334,7 @@ public final class PluginHost {
 
     /// The item a link's reference names, for `row.new`, before any git work.
     public func resolveLink(plugin id: String, reference: String) async throws -> PluginLink {
-        let plugin = try requireOn(id)
+        let plugin = try requireRunning(id)
         return PluginLink(plugin: id, item: try await plugin.resolve(reference, context: context(of: plugin)))
     }
 
@@ -374,14 +409,15 @@ public final class PluginHost {
         } catch {
             throw WorkspaceError.folderFailed(parent.path, reason: error.localizedDescription)
         }
-        let taken = Set(await workspace.snapshot.plugins.flatMap(\.rows).map(\.path))
+        // Compared ignoring case, as the file system usually does.
+        let taken = Set(await workspace.snapshot.plugins.flatMap(\.rows).map { $0.path.lowercased() })
         let base = Self.folderName(name)
         let root = Paths.canonical(parent.path)
         var suffix = 1
         while true {
             let path = root + "/" + (suffix == 1 ? base : "\(base)-\(suffix)")
             suffix += 1
-            if taken.contains(path) { continue }
+            if taken.contains(path.lowercased()) { continue }
             if mkdir(path, 0o700) == 0 { return path }
             guard errno == EEXIST else {
                 throw WorkspaceError.folderFailed(path, reason: String(cString: strerror(errno)))
@@ -389,33 +425,37 @@ public final class PluginHost {
         }
     }
 
-    /// `name` as one folder name: path separators and control characters become `-`, and leading dots and spaces go.
+    /// `name` as one folder name: path separators and control characters become `-`, leading dots and spaces go, and
+    /// it stops at a whole character within 200 bytes, leaving room for a suffix under the file system's 255.
     static func folderName(_ name: String) -> String {
         let scalars = name.unicodeScalars.map { scalar -> Character in
             scalar == "/" || scalar == ":" || scalar.properties.generalCategory == .control ? "-" : Character(scalar)
         }
-        let cleaned = String(String(scalars).drop { $0 == "." || $0.isWhitespace }.prefix(100))
-            .trimmingCharacters(in: .whitespaces)
+        var cleaned = ""
+        for character in String(scalars).drop(while: { $0 == "." || $0.isWhitespace }) {
+            guard cleaned.utf8.count + character.utf8.count <= 200 else { break }
+            cleaned.append(character)
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
         return cleaned.isEmpty ? "row" : cleaned
     }
 
-    /// Makes the plugin's rows' missing folders at once, and fills them in the background, so launching never waits
-    /// on a plugin's network.
-    private func recreateMissingFolders(of plugin: any CanopyPlugin) async {
+    /// Makes the plugin's rows' missing folders, empty, and returns the rows it made them for.
+    private func makeMissingFolders(of plugin: any CanopyPlugin) async -> [PluginRow] {
         let rows = await workspace.snapshot.section(plugin.info.id)?.rows ?? []
-        for row in rows where !FileManager.default.fileExists(atPath: row.path) {
-            guard makeRowFolder(row) else { continue }
-            guard running.contains(plugin.info.id) else { continue }
-            Task { await self.fill(row, plugin: plugin) }
-        }
+        return rows.filter { !FileManager.default.fileExists(atPath: $0.path) && makeRowFolder($0) }
     }
 
     private func refill(_ row: PluginRow) async {
-        guard makeRowFolder(row), let plugin = plugins.first(where: { $0.info.id == row.plugin }) else { return }
+        guard makeRowFolder(row), running.contains(row.plugin),
+            let plugin = plugins.first(where: { $0.info.id == row.plugin })
+        else { return }
         await fill(row, plugin: plugin)
     }
 
+    /// Only a folder inside the plugin's own is made again.
     private func makeRowFolder(_ row: PluginRow) -> Bool {
+        guard isOwnFolder(row) else { return false }
         do {
             try FileManager.default.createDirectory(
                 atPath: row.path, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -424,6 +464,12 @@ public final class PluginHost {
             onNotice("Could not make \(row.path) again: \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// Whether the row's folder is inside its plugin's folder, where Canopy made it.
+    private func isOwnFolder(_ row: PluginRow) -> Bool {
+        let parent = Paths.canonical(workspace.home.pluginsRoot.appending(path: row.plugin).path)
+        return Paths.isInside(Paths.canonical(row.path), parent) && Paths.canonical(row.path) != parent
     }
 
     private func fill(_ row: PluginRow, plugin: any CanopyPlugin) async {
@@ -450,9 +496,13 @@ public final class PluginHost {
         return plugin
     }
 
-    private func requireOn(_ id: String) throws -> any CanopyPlugin {
+    /// The plugin, if it is on and its start succeeded.
+    private func requireRunning(_ id: String) throws -> any CanopyPlugin {
         let plugin = try requirePlugin(id)
         guard on.contains(id) else { throw WorkspaceError.pluginOff(plugin.info.name, id: id) }
+        guard running.contains(id) else {
+            throw WorkspaceError.pluginNotStarted(plugin.info.name, reason: startFailures[id] ?? "")
+        }
         return plugin
     }
 
@@ -465,7 +515,7 @@ public final class PluginHost {
             type, row: row.title, path: row.path, data: ["plugin": .string(row.plugin), "item": .string(row.item)])
     }
 
-    public static func message(_ error: any Error) -> String {
+    public nonisolated static func message(_ error: any Error) -> String {
         switch error {
         case let error as WorkspaceError: error.message
         case let error as ControlError: error.message
@@ -473,8 +523,9 @@ public final class PluginHost {
         }
     }
 
-    private static func unique(_ names: [String]) -> [String] {
+    /// The programs running in busy panes, each once.
+    private static func programs(_ panes: [Pane]) -> [String] {
         var seen = Set<String>()
-        return names.filter { seen.insert($0).inserted }
+        return panes.map { $0.foreground?.name ?? "A program" }.filter { seen.insert($0).inserted }
     }
 }

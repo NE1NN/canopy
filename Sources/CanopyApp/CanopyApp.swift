@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Save layouts with every pane's current folder before the terminals close.
         Task {
             await model.saveTerminals()
+            await model.plugins.stop()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

@@ -106,9 +106,7 @@ private struct PanelDivider: View {
                 Color.clear
                     .frame(width: 7)
                     .contentShape(Rectangle())
-                    .onHover { inside in
-                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-                    }
+                    .pointerStyle(.columnResize)
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { value in

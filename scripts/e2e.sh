@@ -10,7 +10,7 @@ shots="$PWD/build/e2e"
 work=$(mktemp -d -t canopy-e2e)
 export CANOPY_HOME="$work/home"
 # Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
 export CLAUDE_CONFIG_DIR="$work/claude"
 mkdir -p "$shots"
 

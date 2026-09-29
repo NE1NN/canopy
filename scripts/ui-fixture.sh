@@ -47,7 +47,7 @@ work=$(mktemp -d -t cnp)
 export CANOPY_HOME="$work/home"
 # The app offers to install Claude Code's hooks, and must only ever find the fixture's settings.
 export CLAUDE_CONFIG_DIR="$work/claude"
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
 if [[ "${UI_FIXTURE_HOOKS_OFFER:-}" == 1 ]]; then mkdir -p "$CLAUDE_CONFIG_DIR"; fi
 
 mkdir -p "$work/bin" "$work/zdot"

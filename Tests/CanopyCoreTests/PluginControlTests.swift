@@ -320,7 +320,9 @@ struct PluginControlTests {
     @Test func rowNewSendsTheLinkOfThePluginRowItRunsIn() {
         let inRow = ["CANOPY_PLUGIN": "tickets", "CANOPY_ITEM": "k5", "CANOPY_ROW_PATH": "/h/plugins/tickets/x"]
 
-        #expect(RowLinkParams(environment: inRow) == RowLinkParams(plugin: "tickets", reference: "k5"))
+        #expect(
+            RowLinkParams(environment: inRow)
+                == RowLinkParams(plugin: "tickets", reference: "k5", fromEnvironment: true))
         #expect(RowLinkParams(environment: ["CANOPY_PLUGIN": "tickets"]) == nil)
         #expect(RowLinkParams(environment: ["CANOPY_PLUGIN": "", "CANOPY_ITEM": "k5"]) == nil)
         #expect(RowLinkParams(environment: [:]) == nil)

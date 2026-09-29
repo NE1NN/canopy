@@ -379,7 +379,8 @@ public actor Workspace {
             state.repos[index] = reconciled
         }
         let present = Set(managed.map(\.path))
-        changed = dropLinks { owns(reconciled, $0) && !present.contains($0) } || changed
+        // A row being made may be missing from a list git gave before it was, while its link is already saved.
+        changed = dropLinks { owns(reconciled, $0) && !present.contains($0) && changingRows[$0] == nil } || changed
         if changed {
             try? save()
         }

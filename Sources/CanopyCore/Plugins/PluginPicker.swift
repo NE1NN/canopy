@@ -42,6 +42,8 @@ public final class PluginPicker {
     private var result: Result<[PluginItem], PickerError>?
     /// Changes before the sheet first loads are part of that first load.
     @ObservationIgnored private var hasLoaded = false
+    /// Set until a query that asked afresh is answered, so a toggle's fetch is not lost to typing that follows it.
+    @ObservationIgnored private var needsFresh = true
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     private var selection: String?
@@ -89,8 +91,11 @@ public final class PluginPicker {
     /// Asks the plugin afresh, as when the sheet opens, and returns once it answers.
     public func load() async {
         hasLoaded = true
+        needsFresh = true
         loadTask?.cancel()
-        await fetch(fresh: true)
+        let task = Task { await self.fetch() }
+        loadTask = task
+        await task.value
     }
 
     public func select(_ id: String?) {
@@ -121,16 +126,18 @@ public final class PluginPicker {
     }
 
     private func reload(fresh: Bool) {
+        if fresh { needsFresh = true }
         guard hasLoaded else { return }
         loadTask?.cancel()
-        loadTask = Task { await self.fetch(fresh: fresh) }
+        loadTask = Task { await self.fetch() }
     }
 
     /// Only the latest query's answer is shown, whichever order the answers come in.
-    private func fetch(fresh: Bool) async {
+    private func fetch() async {
         generation += 1
         let mine = generation
         isLoading = true
+        let fresh = needsFresh
         let query = PluginQuery(text: text, choice: choice, toggles: toggles, fresh: fresh)
         let answer: Result<[PluginItem], PickerError>
         do {
@@ -139,6 +146,7 @@ public final class PluginPicker {
             answer = .failure(PickerError(error))
         }
         guard mine == generation else { return }
+        if fresh { needsFresh = false }
         result = answer
         isLoading = false
         settleSelection()

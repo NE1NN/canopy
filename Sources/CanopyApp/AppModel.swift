@@ -744,14 +744,15 @@ final class AppModel {
     /// Restores deferred rows that came back, and forgets rows git no longer lists once every repo refreshed cleanly.
     private func restoreDeferredTerminals() {
         let allHealthy = snapshot.repos.allSatisfy { !$0.isMissing && $0.error == nil }
-        // Rows of a plugin that is off wait for it to be on again.
+        // Rows of a plugin that is off, or that this build does not list, wait for it to be on again.
         let pluginRows = Set(snapshot.plugins.flatMap(\.rows).map(\.path))
+        let pluginsRoot = Paths.canonical(home.pluginsRoot.path)
         for (path, rowTerminals) in deferredTerminals {
             if let row = snapshot.sidebarRow(path: path) {
                 guard !(row.worktree?.isMissing ?? false) else { continue }
                 terminals.restore(rowTerminals, for: context(for: row))
                 deferredTerminals[path] = nil
-            } else if allHealthy, !pluginRows.contains(path) {
+            } else if allHealthy, !pluginRows.contains(path), !Paths.isInside(path, pluginsRoot) {
                 deferredTerminals[path] = nil
             }
         }

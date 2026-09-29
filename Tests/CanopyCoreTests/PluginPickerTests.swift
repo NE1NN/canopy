@@ -99,6 +99,26 @@ struct PluginPickerTests {
         #expect(queries.all.count == 2)
     }
 
+    @Test func aToggleIsFetchedAfreshEvenWhenTypingFollowsAtOnce() async {
+        let gate = AnswerGate()
+        let (picker, queries) = picker(answer: { query in
+            if query.toggles.contains("closed"), query.text.isEmpty { await gate.wait() }
+            return Self.items
+        })
+        await picker.load()
+
+        picker.setToggle("closed", true)
+        #expect(await eventually { await gate.waiters == 1 })
+        picker.text = "a"
+        #expect(await eventually { queries.all.count == 3 })
+        await gate.open()
+
+        #expect(queries.all.last == PluginQuery(text: "a", choice: "all", toggles: ["closed"], fresh: true))
+        picker.text = "ab"
+        #expect(await eventually { queries.all.count == 4 })
+        #expect(queries.all.last?.fresh == false)
+    }
+
     @Test func anOlderAnswerNeverReplacesANewerOne() async {
         let gate = AnswerGate()
         let (picker, _) = picker(answer: { query in

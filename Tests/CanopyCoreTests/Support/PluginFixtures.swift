@@ -11,7 +11,8 @@ actor TestPlugin: CanopyPlugin {
     private let items: [PluginItem]
     /// Folder names by item, for items whose folder is not named after their title.
     private let folders: [String: String]
-    private let startError: String?
+    private var startError: String?
+    private let defaultRun: String?
     private var fillError: String?
     private var stallFills = false
     private var stalled: [CheckedContinuation<Void, Never>] = []
@@ -23,7 +24,7 @@ actor TestPlugin: CanopyPlugin {
 
     init(
         id: String = "t", name: String = "Test", items: [String] = ["i1", "i2", "i3"], folders: [String: String] = [:],
-        startError: String? = nil, fillError: String? = nil
+        startError: String? = nil, fillError: String? = nil, defaultRun: String? = nil
     ) {
         info = PluginInfo(id: id, name: name, symbol: "star")
         filters = PluginFilters(
@@ -35,6 +36,7 @@ actor TestPlugin: CanopyPlugin {
         self.folders = folders
         self.startError = startError
         self.fillError = fillError
+        self.defaultRun = defaultRun
     }
 
     func start(_ context: PluginContext) async throws {
@@ -68,7 +70,7 @@ actor TestPlugin: CanopyPlugin {
         guard let found = items.first(where: { $0.id == item }) else {
             throw ControlError(code: "item_not_found", message: "No item \(item).")
         }
-        return PluginRowSeed(title: found.title, folderName: folders[item] ?? found.title)
+        return PluginRowSeed(title: found.title, folderName: folders[item] ?? found.title, run: defaultRun)
     }
 
     func fill(_ row: PluginRow, context: PluginContext) async throws {
@@ -107,10 +109,21 @@ actor TestPlugin: CanopyPlugin {
         fillError = error
     }
 
+    func setStartError(_ error: String?) {
+        startError = error
+    }
+
     /// Watches the plugin's states from start, the way a plugin that paces its refreshes would.
     func watch(_ context: PluginContext) async {
         for await state in await context.states() {
             seenStates.append(state)
         }
+    }
+}
+
+/// A Trash that refuses every folder.
+struct RefusingTrash: FolderTrash {
+    func trash(_ folder: URL) throws -> URL? {
+        throw CocoaError(.fileWriteNoPermission)
     }
 }

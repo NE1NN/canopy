@@ -88,10 +88,20 @@ public struct PluginNewParams: Codable, Sendable {
 public struct RowLinkParams: Codable, Sendable, Equatable {
     public var plugin: String
     public var reference: String
+    /// Taken from the plugin row the CLI ran in, rather than asked for.
+    public var fromEnvironment: Bool
 
-    public init(plugin: String, reference: String) {
+    public init(plugin: String, reference: String, fromEnvironment: Bool = false) {
         self.plugin = plugin
         self.reference = reference
+        self.fromEnvironment = fromEnvironment
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        plugin = try container.decode(String.self, forKey: .plugin)
+        reference = try container.decode(String.self, forKey: .reference)
+        fromEnvironment = try container.decodeIfPresent(Bool.self, forKey: .fromEnvironment) ?? false
     }
     /// The item of the plugin row a command runs in, from CANOPY_PLUGIN and CANOPY_ITEM, so a fix row started from a
     /// ticket row's terminal is linked to its ticket.
@@ -99,7 +109,7 @@ public struct RowLinkParams: Codable, Sendable, Equatable {
         guard let plugin = environment["CANOPY_PLUGIN"], !plugin.isEmpty, let item = environment["CANOPY_ITEM"],
             !item.isEmpty
         else { return nil }
-        self.init(plugin: plugin, reference: item)
+        self.init(plugin: plugin, reference: item, fromEnvironment: true)
     }
 }
 

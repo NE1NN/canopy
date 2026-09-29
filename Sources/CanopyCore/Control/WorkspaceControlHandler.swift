@@ -117,7 +117,18 @@ public struct WorkspaceControlHandler: Sendable {
             // Resolved before any git work, so a reference the plugin does not know makes nothing.
             var link: PluginLink?
             if let requested = params.link {
-                link = try await plugins.resolveLink(plugin: requested.plugin, reference: requested.reference)
+                do {
+                    link = try await plugins.resolveLink(plugin: requested.plugin, reference: requested.reference)
+                } catch  where requested.fromEnvironment {
+                    let error =
+                        (error as? ControlError)
+                        ?? ControlError(code: Self.code(of: error), message: PluginHost.message(error))
+                    throw ControlError(
+                        code: error.code,
+                        message: error.message
+                            + " The link came from the plugin row this ran in. Pass --no-link to make the row without it."
+                    )
+                }
             }
             let created =
                 switch start {
@@ -358,6 +369,10 @@ public struct WorkspaceControlHandler: Sendable {
         let moved = try await workspace.movePluginRow(path: row.path, to: placement)
         let current = await workspace.snapshot.pluginRow(path: row.path) ?? row
         return RowMoveResult(row: .plugin(current), moved: moved, from: nil)
+    }
+
+    static func code(of error: any Error) -> String {
+        (error as? WorkspaceError)?.code ?? "internal"
     }
 
     /// The params with every `token` key taken out, at any depth.
