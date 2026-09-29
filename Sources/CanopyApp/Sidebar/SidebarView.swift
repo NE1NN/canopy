@@ -194,7 +194,7 @@ struct RepoSection: View {
                 .dropSlot(repo: repo.path, .header(group.name))
                 if !group.collapsed {
                     ForEach(rows) { row in
-                        line(for: row, indent: Style.groupIndent)
+                        line(for: row)
                     }
                 }
             }
@@ -213,10 +213,10 @@ struct RepoSection: View {
         }
     }
 
-    private func line(for row: Row, indent: Double = 0) -> some View {
+    private func line(for row: Row) -> some View {
         RowLineView(
             row: row, isSelected: row.path == model.selectedRowPath, isFocused: isFocused,
-            shortcut: model.shortcut(for: row.path), removable: row.rowClass != .main, indent: indent
+            shortcut: model.shortcut(for: row.path), removable: row.rowClass != .main
         )
         .dropSlot(repo: repo.path, row.rowClass == .main ? .main(row.path) : .row(row.path, group: row.group))
         .id(row.path)
@@ -242,7 +242,7 @@ struct RepoHeaderView: View {
     var body: some View {
         HStack(spacing: 8) {
             RepoTile(mark: repo.mark, isDimmed: repo.isMissing)
-            // The tile holds the mark column, so the chevron follows the name and the tile still lines up with rows.
+            // The tile holds the header's mark column, so the chevron follows the name.
             HStack(spacing: 0) {
                 Text(repo.name)
                     .font(Style.body.weight(.semibold))
@@ -280,7 +280,7 @@ struct RepoHeaderView: View {
                     .padding(.trailing, 5)
             }
         }
-        .padding(.leading, 7)
+        .padding(.leading, Style.leadingInset(.header))
         .padding(.trailing, 3)
         .frame(height: Style.headerHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
@@ -367,8 +367,6 @@ struct RowLineView: View {
     let isFocused: Bool
     let shortcut: Int?
     let removable: Bool
-    /// How far a row sits in from its repo's other rows, as inside a group.
-    var indent = 0.0
     @State private var isHovering = false
     @State private var isConfirmingRemove = false
     @State private var isNamingGroup = false
@@ -411,6 +409,7 @@ struct RowLineView: View {
                         .font(Style.meta)
                         .monospacedDigit()
                         .foregroundStyle(.tertiary)
+                        .fixedSize()
                 }
                 if removable {
                     Button {
@@ -430,7 +429,7 @@ struct RowLineView: View {
                 }
             }
         }
-        .padding(.leading, 7 + indent)
+        .padding(.leading, Style.leadingInset(row.sidebarDepth))
         .padding(.trailing, 5)
         .frame(height: Style.rowHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
@@ -480,10 +479,12 @@ struct PullRequestNumber: View {
         Button {
             if let url = URL(string: pr.url) { openURL(url) }
         } label: {
+            // In a narrow sidebar the branch name gives way, never the number.
             Text(verbatim: "#\(pr.number)")
                 .font(Style.meta.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(pr.state.color)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .help("\(pr.state.label): \(pr.title)")
@@ -508,7 +509,7 @@ struct OtherWorktreesToggle: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 7)
+            .padding(.leading, Style.leadingInset(.section))
             .frame(height: 24)
             .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: Style.cornerRadius))
             .contentShape(Rectangle())
@@ -534,7 +535,7 @@ struct RepoWarningView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(Style.meta)
-        .padding(.leading, 7)
+        .padding(.leading, Style.leadingInset(.section))
         .padding(.trailing, 5)
         .padding(.vertical, 3)
         .help(text)

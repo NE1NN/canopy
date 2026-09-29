@@ -71,7 +71,7 @@ struct PluginHeaderView: View {
                     .padding(.trailing, 5)
             }
         }
-        .padding(.leading, 7)
+        .padding(.leading, Style.leadingInset(.header))
         .padding(.trailing, 3)
         .frame(height: Style.headerHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: Style.cornerRadius))

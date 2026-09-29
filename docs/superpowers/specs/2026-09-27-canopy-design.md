@@ -256,6 +256,14 @@ Each repo group starts with a header: a tile with the repo's first letter, its n
 The tile takes one of eight hues, picked by a stable hash of the repo's path, so a repo keeps its color across launches.
 On hover, the count gives way to a `…` menu and a `+` that creates a row.
 
+Everything a repo holds sits one step in under its header: the main row, ungrouped rows, group headers, the PR warning, and the other worktrees fold.
+A group's rows, and the rows the other worktrees fold shows, sit a second step in.
+A step is a mark's width and its gap, so each line's mark sits under the name of the header it belongs to, and the sidebar reads repo, then group, then row.
+A plugin's section works the same way: its warning and rows sit one step in under its header.
+Fills for hover and selection still span the list's width at every depth.
+The sidebar is at least 244 points wide, so a group's row keeps part of its name beside its PR number and hover hints.
+When a line runs short of room, its name truncates in the middle, and PR numbers, tags, chips, and hints stay whole.
+
 A row line reads, left to right: icon, branch name, then a right-aligned running dot and PR number.
 
 - The icon is a pull request glyph when the row has a PR, a trunk glyph for the main checkout, and a branch glyph otherwise.
@@ -281,7 +289,7 @@ A repo folds away under its header, so one repo with thirty rows does not bury t
 
 - The chevron follows the repo's name.
   It is the group header's chevron, the same glyph, size, and color, pointing right while the repo is folded and down while it is open.
-  It follows the name rather than sitting in the mark column, because the tile holds that column and lines up with the rows' marks below it.
+  It follows the name rather than sitting in the mark column, because the tile holds that column.
 - Clicking the header anywhere but its buttons folds or unfolds the repo, as a group header does.
 - New Group… in a folded repo's menu unfolds it, so the new group shows.
 - A folded repo shows its header alone: no PR warning, main row, ungrouped rows, groups, or other worktrees.

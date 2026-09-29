@@ -23,6 +23,12 @@ struct RowDropTests {
         RowDrop.target(dragging: Self.row(path), at: y, in: Self.slots)
     }
 
+    @Test func dropSlotsNameTheirRow() {
+        #expect(DropSlot.Kind.main("/web").rowPath == "/web")
+        #expect(DropSlot.Kind.row("/web/a", group: "Review").rowPath == "/web/a")
+        #expect(DropSlot.Kind.header("Review").rowPath == nil)
+    }
+
     @Test func headersTakeTheRowAtTheirEnd() {
         #expect(target("/web/a", at: 60) == RowDropTarget(placement: .group("Review"), indicator: .header("Review")))
         #expect(target("/web/b", at: 77.9) == RowDropTarget(placement: .group("Review"), indicator: .header("Review")))
