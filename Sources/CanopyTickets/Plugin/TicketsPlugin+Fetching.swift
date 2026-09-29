@@ -79,3 +79,93 @@ extension TicketsPlugin {
         tasks.append(Task { _ = try? await self.refreshMe() })
     }
 }
+
+extension TicketsPlugin {
+    /// The tickets with these ids, 50 at a time. A batch ticket-manager answers 400 for holds a malformed id, such as one
+    /// from another deployment: it is split until that id is alone, which then joins `malformed` and shows as missing,
+    /// so one bad row never stops the others refreshing.
+    func fetchSummaries(ids: [String]) async throws -> [TicketSummary] {
+        var found: [TicketSummary] = []
+        var start = 0
+        while start < ids.count {
+            let batch = Array(ids[start..<min(start + TicketAPI.maximumIDs, ids.count)])
+            found += try await fetchBatch(batch)
+            start += TicketAPI.maximumIDs
+        }
+        remember(found)
+        return found
+    }
+
+    private func fetchBatch(_ ids: [String]) async throws -> [TicketSummary] {
+        guard !ids.isEmpty else { return [] }
+        do {
+            return try await perform { try await $0.tickets(ids: ids) }
+        } catch TicketError.badRequest {
+            guard ids.count > 1 else {
+                malformed.insert(ids[0])
+                return []
+            }
+            let half = ids.count / 2
+            return try await fetchBatch(Array(ids[..<half])) + fetchBatch(Array(ids[half...]))
+        }
+    }
+
+    /// Fetches the ticket's detail and puts it everywhere it shows: the store, its rows' files, and its rows' looks.
+    /// A ticket ticket-manager no longer has marks its rows missing.
+    @discardableResult
+    func fetchTicket(_ id: String) async throws -> CachedTicket {
+        let generation = self.generation
+        await store.setFetching(id, true)
+        do {
+            let (detail, data) = try await perform { try await $0.ticket(id: id) }
+            let copy = CachedTicket(detail: detail, data: data, fetchedAt: clock.date)
+            guard generation == self.generation else { return copy }
+            cached[id] = copy
+            remember([detail.ticket])
+            missing.remove(id)
+            await store.setDetail(detail, fetchedAt: copy.fetchedAt)
+            await store.setFetching(id, false)
+            await writeFiles(copy)
+            await showLooks()
+            return copy
+        } catch let error as TicketError {
+            if generation == self.generation {
+                await store.setFetching(id, false)
+                switch error {
+                case .notFound, .badRequest:
+                    missing.insert(id)
+                    await store.setMissing(id, true)
+                    await showLooks()
+                default:
+                    await store.setFailure(id, TicketFailure(code: error.code, message: error.message, at: clock.date))
+                }
+            }
+            if case .badRequest = error { throw TicketError.notFound(id) }
+            throw error
+        }
+    }
+
+    /// Writes the copy into each of its ticket's rows' folders.
+    func writeFiles(_ copy: CachedTicket) async {
+        guard let context else { return }
+        for row in await context.state.rows where row.item == copy.detail.ticket.id {
+            _ = try? TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)
+        }
+    }
+
+    /// Sets each row's look from what the plugin knows about its ticket.
+    func showLooks() async {
+        guard let context else { return }
+        var looks: [String: PluginRowLook] = [:]
+        for row in await context.state.rows {
+            let summary = known[row.item] ?? cached[row.item]?.detail.ticket
+            let look = TicketLook.look(
+                title: row.title, summary: summary,
+                isMissing: missing.contains(row.item) || malformed.contains(row.item))
+            if row.look != look { looks[row.path] = look }
+        }
+        if !looks.isEmpty {
+            await context.setLooks(looks)
+        }
+    }
+}

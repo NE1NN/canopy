@@ -94,8 +94,9 @@ final class TicketsHarness {
             dir, serverToken: "", transport: transport, clock: clock, secretStore: secretStore)
     }
 
-    deinit {
-        MainActor.assumeIsolated { terminals.closeAll() }
+    /// Closes every terminal the test opened.
+    func close() {
+        terminals.closeAll()
     }
 
     @discardableResult

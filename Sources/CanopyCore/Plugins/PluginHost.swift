@@ -280,6 +280,8 @@ public final class PluginHost {
             try? FileManager.default.removeItem(atPath: folder)
             throw error
         }
+        // Its plugin sees the row at once, not only when the workspace's update arrives.
+        snapshotChanged(await workspace.snapshot)
         var fillError: String?
         do {
             try await plugin.fill(row, context: context)
@@ -321,6 +323,7 @@ public final class PluginHost {
         }
         terminals.closeRow(path: row.path)
         let removed = try await workspace.removePluginRow(path: row.path)
+        snapshotChanged(await workspace.snapshot)
         record(ActivityType.pluginRowRemoved, removed)
         return PluginRowRemoved(row: removed, trashedTo: trashedTo?.path)
     }

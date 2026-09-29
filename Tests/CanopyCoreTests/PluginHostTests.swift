@@ -417,6 +417,17 @@ struct PluginHostTests {
         #expect(context.state.rows == [row])
     }
 
+    @Test func aPluginSeesItsRowsChangeAsSoonAsTheHostChangesThem() async throws {
+        let dir = try TempDir()
+        let setup = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#)
+        let context = try #require(setup.host.context("t"))
+
+        let row = try await setup.host.createRow("t", reference: "i1", run: nil, select: false).row
+        #expect(context.state.rows == [row])
+        _ = try await setup.host.removeRow(row, force: false)
+        #expect(context.state.rows.isEmpty)
+    }
+
     @Test func looksAndWarningsReachTheSnapshot() async throws {
         let dir = try TempDir()
         let setup = try await start(dir, [TestPlugin()], config: #"{"plugins": {"t": {}}}"#)

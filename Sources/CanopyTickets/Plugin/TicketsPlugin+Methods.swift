@@ -11,6 +11,20 @@ extension TicketsPlugin {
                 return try await disconnect(call.decodeParams(TicketDisconnectParams.self), context: context)
             case TicketMethod.list:
                 return try .from(try await list(call.decodeParams(TicketListParams.self), context: context))
+            case TicketMethod.new:
+                return try .from(try await new(call.decodeParams(TicketNewParams.self), context: context))
+            case TicketMethod.show:
+                return try .from(
+                    try await show(call.decodeParams(TicketShowParams.self), in: call.row, context: context))
+            case TicketMethod.select:
+                let params = try call.decodeParams(TicketRefParams.self)
+                let row = try await row(for: params.reference, in: call.row, context: context)
+                await context.select(row)
+                return try .from(row)
+            case TicketMethod.remove:
+                let params = try call.decodeParams(TicketRemoveParams.self)
+                let row = try await row(for: params.reference, in: call.row, context: context)
+                return try .from(try await context.removeRow(row, force: params.force))
             default:
                 throw ControlError(code: "unknown_method", message: "Unknown method \(call.method)")
             }
@@ -93,6 +107,67 @@ extension TicketsPlugin {
         let rows = await context.state.rows
         return TicketListing.list(tickets, query, me: me).map { ticket in
             TicketListEntry(ticket: ticket, row: rows.first { $0.item == ticket.id })
+        }
+    }
+}
+
+extension TicketsPlugin {
+    /// Opens a row for the ticket, or fails with `ticket_has_row` naming the row it has.
+    func new(_ params: TicketNewParams, context: PluginContext) async throws -> PluginRowCreated {
+        let id = try await resolveID(params.reference, context: context)
+        let title = known[id].map { TicketName.rowTitle(for: $0.name) } ?? params.reference
+        if let row = await context.state.rows.first(where: { $0.item == id }) {
+            throw TicketError.hasRow(row.title, path: row.path)
+        }
+        do {
+            return try await context.createRow(for: id, run: params.run, select: params.select)
+        } catch WorkspaceError.itemHasRow(let path) {
+            throw TicketError.hasRow(title, path: path)
+        }
+    }
+
+    /// The ticket, from a copy under 30 seconds old unless `refresh`. When ticket-manager cannot be reached, the copy
+    /// Canopy has, saying how old it is.
+    func show(_ params: TicketShowParams, in callRow: PluginRow?, context: PluginContext) async throws
+        -> TicketShowResult
+    {
+        _ = try await requireConnection(context)
+        let id: String
+        if let reference = params.reference {
+            id = try await resolveID(reference, context: context)
+        } else if let callRow {
+            id = callRow.item
+        } else {
+            throw ControlError(code: "bad_params", message: "Pass a ticket, such as 853, or run this in a ticket row.")
+        }
+        var copy = cached[id]
+        var stale: String?
+        let isFresh = copy.map { clock.date.timeIntervalSince($0.fetchedAt) < Self.freshFor } ?? false
+        if params.refresh || !isFresh {
+            do {
+                copy = try await fetchTicket(id)
+            } catch let error as TicketError {
+                guard let old = copy, error.isUnreachable else { throw error }
+                stale = "\(error.message) This copy is from \(TicketAge.ago(old.fetchedAt, now: clock.date))."
+            }
+        }
+        guard let copy else { throw TicketError.notFound(params.reference ?? id) }
+        let row = await context.state.rows.first { $0.item == id }
+        return TicketShowResult(
+            ticket: copy.detail, fetchedAt: Int64(copy.fetchedAt.timeIntervalSince1970 * 1000), stale: stale, row: row,
+            fixRows: await context.linkedRows(item: id))
+    }
+
+    /// How long a copy counts as current: the selected ticket's refresh interval.
+    static let freshFor: TimeInterval = 30
+}
+
+extension TicketError {
+    /// ticket-manager did not answer, or not as itself, so a cached copy is the best there is.
+    var isUnreachable: Bool {
+        switch self {
+        case .unreachable, .badResponse: true
+        default: false
         }
     }
 }

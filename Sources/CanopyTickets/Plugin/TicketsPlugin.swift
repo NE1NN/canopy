@@ -43,6 +43,10 @@ public actor TicketsPlugin: CanopyPlugin {
     var closedTickets: [TicketSummary]?
     /// Every ticket seen, by id.
     var known: [String: TicketSummary] = [:]
+    /// Tickets ticket-manager no longer has, or finds malformed, whose rows show as missing.
+    var missing: Set<String> = []
+    /// Ids ticket-manager answers 400 for, left out of the rows' refresh.
+    var malformed: Set<String> = []
     /// Each ticket's last detail, from ticket-manager or a row's ticket.json.
     var cached: [String: CachedTicket] = [:]
     var tasks: [Task<Void, Never>] = []
@@ -99,6 +103,8 @@ public actor TicketsPlugin: CanopyPlugin {
         closedTickets = nil
         known = [:]
         cached = [:]
+        missing = []
+        malformed = []
         isLoopAsleep = true
         await store.clear()
     }
@@ -125,19 +131,57 @@ public actor TicketsPlugin: CanopyPlugin {
 
     // MARK: Items and rows
 
+    /// Open tickets, or closed and archived ones with the Closed toggle, fetched afresh when the picker opens or a
+    /// toggle changes, and narrowed from what was fetched otherwise.
     public func items(matching query: PluginQuery, context: PluginContext) async throws -> [PluginItem] {
-        throw TicketError.notFound(query.text).controlError
+        try await converting {
+            _ = try await requireConnection(context)
+            let closed = query.toggles.contains("closed")
+            let fetched = closed ? closedTickets : openTickets
+            let tickets = query.fresh || fetched == nil ? try await fetchList(closed: closed) : fetched ?? []
+            let owner = TicketOwnerFilter(rawValue: query.choice ?? "") ?? .anyone
+            if owner == .mine, me == nil {
+                try await refreshMe()
+            }
+            let now = clock.date
+            return TicketListing.list(tickets, TicketListQuery(owner: owner, text: query.text), me: me).map {
+                TicketListing.item($0, now: now)
+            }
+        }
     }
 
     public func resolve(_ reference: String, context: PluginContext) async throws -> String {
-        throw TicketError.notFound(reference).controlError
+        try await converting { try await resolveID(reference, context: context) }
     }
 
+    /// The row's title and folder name are the ticket's name without `ticket-` or `closed-`, and new rows run config's
+    /// `run`.
     public func seed(for item: String, context: PluginContext) async throws -> PluginRowSeed {
-        throw TicketError.notFound(item).controlError
+        try await converting {
+            let connection = try await requireConnection(context)
+            var summary = known[item]
+            if summary == nil {
+                summary = try await fetchSummaries(ids: [item]).first { $0.id == item }
+            }
+            guard let summary else { throw TicketError.notFound(item) }
+            let title = TicketName.rowTitle(for: summary.name)
+            return PluginRowSeed(title: title, folderName: title, run: connection.settings.run)
+        }
     }
 
-    public func fill(_ row: PluginRow, context: PluginContext) async throws {}
+    /// Writes `ticket.md` and `ticket.json`: from ticket-manager, or from the copy the plugin has when it cannot be
+    /// reached.
+    public func fill(_ row: PluginRow, context: PluginContext) async throws {
+        try await converting {
+            do {
+                let copy = try await fetchTicket(row.item)
+                try TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)
+            } catch let error as TicketError {
+                guard let copy = cached[row.item] else { throw error }
+                try TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)
+            }
+        }
+    }
 
     // MARK: Helpers
 
