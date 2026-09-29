@@ -216,8 +216,8 @@ private struct ItemLine: View {
         switch item {
         case .pullRequest(let pr):
             PullRequestGlyph()
-                .stroke(pr.state.color, style: ItemLine.stroke)
-                .frame(width: 14, height: 14)
+                .mark(pr.state.color)
+                .frame(width: 14)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(verbatim: "#\(pr.number)")
@@ -248,8 +248,8 @@ private struct ItemLine: View {
             }
         case .branch(let branch):
             BranchGlyph()
-                .stroke(.secondary, style: ItemLine.stroke)
-                .frame(width: 14, height: 14)
+                .mark(.secondary)
+                .frame(width: 14)
             Text(branch.name)
                 .font(Style.row)
                 .lineLimit(1)
@@ -295,8 +295,6 @@ private struct ItemLine: View {
         parts.append(ShortAge.text(pr.updatedAt))
         return parts.joined(separator: " · ")
     }
-
-    private static let stroke = StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
 }
 
 /// "In row" for an item a row already has, which picking opens, or "Other worktree" for one another tool made.

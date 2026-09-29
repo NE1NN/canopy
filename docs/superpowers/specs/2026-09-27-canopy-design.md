@@ -267,6 +267,8 @@ When a line runs short of room, its name truncates in the middle, and PR numbers
 A row line reads, left to right: icon, branch name, then a right-aligned running dot and PR number.
 
 - The icon is a pull request glyph when the row has a PR, a trunk glyph for the main checkout, and a branch glyph otherwise.
+  The glyphs are line drawings with a 1-point stroke, 10 points tall like the name's ascenders.
+  The branch and pull request glyphs fill the same 9 by 10 point box, so one swaps for the other in place when a PR opens.
 - The PR glyph and number are colored by state:
   green for open, gray for draft, purple for merged, red for closed.
   They keep their colors on the selected row.
