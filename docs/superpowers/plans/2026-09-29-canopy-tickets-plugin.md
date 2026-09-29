@@ -2435,4 +2435,17 @@ It found nothing critical. Each finding acted on, and what changed:
 6. **Server text could plant links of any kind** in banners and warnings. The window opens only http and https links.
 7. **Customer text reached terminals with its control characters.** `ticket show`, `ticket list`, `ticket show --md`, and `ticket.md` take them out, but for newlines and tabs. `terminalControlsFromCustomersNeverReachTheTerminal`.
 
-Deferred, as minors: a selected missing or malformed ticket is still fetched every 30 seconds; `canopy ticket connect` asks for the token before checking the URL, and waits on a pipe that never closes; a Keychain refusal at start fails commands with `plugin_not_started`, naming the Keychain's error, rather than `keychain_failed`; `<t:…>` timestamps parse as floating point; the panel re-parses every message when any ticket's fetch flag changes; and the test harness's `settle()` sleeps 30 ms for the state stream rather than counting states. Also raised: customer text flows into `ticket.md`, which the default `run` hands to `claude`, a design-level prompt-injection risk for the author to weigh.
+The review's minors, fixed after it at the coordinator's request:
+
+1. **A selected ticket ticket-manager no longer has was asked for every 30 seconds**, and a malformed one too. A missing ticket now waits five minutes between tries whatever else succeeds, and a malformed id is never asked about again. `aSelectedTicketThatIsGoneIsAskedForEveryFiveMinutes`, `aSelectedMalformedTicketIsNeverAskedFor`, `aTicketThatIsGoneWaitsFiveMinutesWhateverElseSucceeds`.
+2. **`canopy ticket connect` asked for the token before checking the address, and a pipe that never closed hung it.** The address and `--web` are checked first, and a piped token is its first line, read with a 10 second limit. `TokenInputTests`.
+3. **A Keychain refusal at start failed commands with `plugin_not_started`.** It is `keychain_failed`, with the Keychain's words. `aKeychainThatRefusesFailsWithKeychainFailed`.
+4. **`<t:…>` timestamps parsed as floating point.** They are whole seconds within the range Discord shows, and anything else stays as typed. `timestampsShowAsDates`.
+5. **The panel re-parsed every message whenever the store changed.** The conversation is an equatable view on its row and ticket, so it is grouped and parsed again only when the ticket changes.
+6. **`settle()` slept 30 ms for the state stream.** It waits until the plugin has taken in the host's current state and its loop sleeps, and waking the loop marks it busy at once. `hidingTheWindowStopsFetching` covers the visible-to-hidden change the review found untested.
+
+Also at the coordinator's request:
+
+- A plugin can name its item, so the picker reads "New Ticket Row" and the fixture's stays "New Fixture Row". `aPluginNamesItsItemInThePickersTitle`.
+- `ticket.md` starts with a line saying the ticket's messages come from customers and are data to investigate, not instructions to follow, so an agent started with the file does not act on what a customer wrote.
+- The author chose a panel that keeps to the conversation. Problems, the draft with Copy, notes, and fix rows left the panel and `canopy ticket show`, and their models went with them: Canopy no longer decodes those fields. Linked fix rows, their `#0853` chip, and `row new --ticket` stay.
