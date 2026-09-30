@@ -146,5 +146,7 @@ struct TicketsGuideTests {
         #expect(TicketsGuide.isOn(configFile: file))
         #expect(TicketsGuide.text.hasPrefix("## Tickets\n"))
         #expect(TicketsGuide.text.contains("canopy ticket new 853 --run 'claude \"$(cat ticket.md)\"'"))
+        #expect(TicketsGuide.text.contains("canopy ticket repo [<repo> | --clear]"))
+        #expect(TicketsGuide.text.contains("AGENTS.md, and a CLAUDE.md that imports it"))
     }
 }
