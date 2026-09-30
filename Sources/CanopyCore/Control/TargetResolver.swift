@@ -81,11 +81,13 @@ public enum TargetResolver {
     }
 
     static func match(repo name: String, in snapshot: WorkspaceSnapshot) -> RepoSnapshot? {
-        if isPath(name) {
-            let path = Paths.canonical(name)
-            return snapshot.repos.first { $0.path == path }
-        }
-        return snapshot.repos.first { $0.name == name }
+        snapshot.repos.first { names(name, repoNamed: $0.name, at: $0.path) }
+    }
+
+    /// Whether `--repo`'s value names the repo with this name and canonical path: a path by its path, and anything
+    /// else by its name.
+    public static func names(_ value: String, repoNamed name: String, at path: String) -> Bool {
+        isPath(value) ? Paths.canonical(value) == path : value == name
     }
 
     static func deepestRow(containing path: String, in snapshot: WorkspaceSnapshot) -> Row? {

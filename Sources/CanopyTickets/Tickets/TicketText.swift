@@ -65,6 +65,26 @@ public enum TicketText {
 
     /// `canopy ticket show --md`: `ticket.md` as Canopy writes it from this copy, starting with the note about
     /// customers' messages, without the final newline the terminal's print adds back.
+    /// `canopy ticket repo`'s line: where ticket agents read the code, or why they cannot.
+    public static func repo(_ result: TicketRepoResult) -> String {
+        guard let repo = result.repo else {
+            return "Tickets has no repo, so ticket agents are told Canopy does not know where the code is. "
+                + "Set one with `canopy ticket repo <repo>`."
+        }
+        guard let path = result.path else {
+            let registered =
+                result.registered.isEmpty
+                ? ", and none are registered." : ". Registered repos: \(result.registered.joined(separator: ", "))."
+            return "Tickets names \(repo), but Canopy has no repo of that name\(registered)"
+        }
+        if result.missing { return "Tickets names \(repo), but its folder \(path) is missing." }
+        guard let branch = result.defaultBranch else {
+            return "Ticket agents read the code in \(repo) at \(path). Canopy cannot tell its default branch, because "
+                + "origin/HEAD is not set: run `git -C \(NewRowAction.quoted(path)) remote set-head origin --auto`."
+        }
+        return "Ticket agents read the code in \(repo) at \(path), on \(branch)."
+    }
+
     public static func markdown(_ detail: TicketDetail) -> String {
         String(TicketFiles.markdown(handover: detail.handover).dropLast())
     }

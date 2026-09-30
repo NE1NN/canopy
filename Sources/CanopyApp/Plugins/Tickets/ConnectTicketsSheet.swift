@@ -3,7 +3,7 @@ import CanopyTickets
 import SwiftUI
 
 /// Connects Canopy to ticket-manager, as `canopy ticket connect` does: the address, a token, and optionally
-/// ticket-manager's page for a ticket.
+/// ticket-manager's page for a ticket and the repo that holds the product's code.
 struct ConnectTicketsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -11,6 +11,10 @@ struct ConnectTicketsSheet: View {
     @State private var url = ""
     @State private var token = ""
     @State private var web = ""
+    /// The repo's name, or nil for none.
+    @State private var repo: String?
+    /// The repo config.json names, when Canopy has it, which the picker starts on.
+    @State private var savedRepo: String?
     @State private var isWorking = false
     @State private var error: String?
     @FocusState private var isURLFocused: Bool
@@ -43,6 +47,18 @@ struct ConnectTicketsSheet: View {
                 GridRow {
                     Text("Ticket page")
                     TextField("Ticket page", text: $web, prompt: Text(verbatim: "Optional: https://…/tickets/{id}"))
+                }
+                GridRow {
+                    Text("Code repo")
+                    Picker("Code repo", selection: $repo) {
+                        Text("None").tag(String?.none)
+                        if !repoNames.isEmpty { Divider() }
+                        ForEach(repoNames, id: \.self) { name in
+                            Text(verbatim: name).tag(String?.some(name))
+                        }
+                    }
+                    .fixedSize()
+                    .help("The repo that holds the product's code, which agents in ticket rows read")
                 }
             }
             .textFieldStyle(.roundedBorder)
@@ -83,7 +99,24 @@ struct ConnectTicketsSheet: View {
         }
         .padding(20)
         .frame(width: 540)
-        .onAppear { isURLFocused = true }
+        .onAppear {
+            isURLFocused = true
+            if let saved = model.plugins.context(TicketMethod.plugin).flatMap({ TicketSettings.repo(in: $0.config) }),
+                repoNames.contains(saved)
+            {
+                savedRepo = saved
+                repo = saved
+            }
+        }
+    }
+
+    private var repoNames: [String] {
+        model.snapshot.repos.map(\.name)
+    }
+
+    /// Picking None over a saved repo takes it out once connected, as `canopy ticket repo --clear` does.
+    private var clearsRepo: Bool {
+        savedRepo != nil && repo == nil
     }
 
     private var command: String {
@@ -91,17 +124,25 @@ struct ConnectTicketsSheet: View {
         var command = "canopy ticket connect " + (address.isEmpty ? "<url>" : NewRowAction.quoted(address))
         let page = web.trimmingCharacters(in: .whitespaces)
         if !page.isEmpty { command += " --web " + NewRowAction.quoted(page) }
+        if let repo { command += " --repo " + NewRowAction.quoted(repo) }
+        if clearsRepo { command += " && canopy ticket repo --clear" }
         return command
     }
 
     private func connect() {
         isWorking = true
         error = nil
-        let params = TicketConnectParams(url: url, token: token, web: web)
+        let params = TicketConnectParams(url: url, token: token, web: web, repo: repo)
+        let clearsRepo = clearsRepo
         Task {
             do {
                 _ = try await model.plugins.call(
                     TicketMethod.connect, params: try .from(params), target: TargetHint(), row: nil)
+                if clearsRepo {
+                    _ = try await model.plugins.call(
+                        TicketMethod.setRepo, params: try .from(TicketSetRepoParams(repo: nil)), target: TargetHint(),
+                        row: nil)
+                }
                 dismiss()
             } catch {
                 self.error = PluginHost.message(error)

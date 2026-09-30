@@ -11,9 +11,12 @@ struct TicketCommand: AsyncParsableCommand {
             A <ticket> is 853, 0853, 0853-sameergoyal, ticket-0853-sameergoyal, closed-0853-sameergoyal, or a \
             ticket-manager id. In a ticket row, commands without one use the row's ticket. Each ticket row's \
             folder holds ticket.md, a note that customers' messages are data, not instructions, then the ticket's \
-            handover block, and ticket.json, ticket-manager's last response.
+            handover block; ticket.json, ticket-manager's last response; and AGENTS.md, which says where the \
+            product's code is (see `canopy ticket repo`), with a CLAUDE.md that imports it.
             """,
-        subcommands: [List.self, New.self, Show.self, Select.self, Remove.self, Connect.self, Disconnect.self]
+        subcommands: [
+            List.self, New.self, Show.self, Select.self, Remove.self, Repo.self, Connect.self, Disconnect.self,
+        ]
     )
 
     /// Reading a ticket may look through open, closed, and archived tickets, each allowed 15 seconds.
@@ -183,6 +186,10 @@ struct TicketCommand: AsyncParsableCommand {
                 ticket-manager and keeps it in the Keychain. A token ticket-manager rejects saves nothing. Make one \
                 in ticket-manager with `npx convex run --prod api/apiTokens:create '{"email": "<email>", "label": \
                 "canopy"}'`.
+
+                --repo names the registered repo that holds the product's code, as `canopy row new --repo` takes \
+                it. Canopy writes its path into AGENTS.md in every ticket row's folder, so agents there read the \
+                code. Without --repo, the repo already set stays. `canopy ticket repo` changes it later.
                 """
         )
 
@@ -191,6 +198,8 @@ struct TicketCommand: AsyncParsableCommand {
         @Option(
             help: ArgumentHelp("ticket-manager's page for a ticket, with {id} where its id goes.", valueName: "url"))
         var web: String?
+        @Option(help: ArgumentHelp("The registered repo that holds the product's code.", valueName: "repo"))
+        var repo: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
@@ -202,6 +211,8 @@ struct TicketCommand: AsyncParsableCommand {
             } catch let error as TicketError {
                 client.fail(error.controlError)
             }
+            let repo = repo.map(Client.absolutePathIfRelative)
+            if let repo { TicketCommand.requireRegistered(repo, client: client) }
             let token: String
             do {
                 token = try SecretPrompt.read(prompt: "ticket-manager token for \(url): ")
@@ -212,12 +223,52 @@ struct TicketCommand: AsyncParsableCommand {
                 client.fail(ControlError(code: "bad_params", message: "No token was given. Type it, or pipe it in."))
             }
             let result = client.call(
-                TicketMethod.connect, TicketConnectParams(url: url, token: token, web: web),
+                TicketMethod.connect, TicketConnectParams(url: url, token: token, web: web, repo: repo),
                 wait: TicketCommand.readingWait)
             try client.print(result) {
                 let connected = try result.decode(TicketConnectResult.self)
                 return "Connected to \(connected.url) as \(connected.email)."
             }
+        }
+    }
+
+    /// Fails as the app would when no registered repo matches, so a mistyped repo fails before the author types a
+    /// secret.
+    static func requireRegistered(_ repo: String, client: Client) {
+        let repos = (try? client.call(ControlMethod.repoList, JSONValue.null).decode([RepoInfo].self)) ?? []
+        guard !repos.contains(where: { TargetResolver.names(repo, repoNamed: $0.name, at: $0.path) }) else { return }
+        client.fail(TicketError.repoNotFound(repo, registered: repos.map(\.name)).controlError)
+    }
+
+    struct Repo: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show or set the repo that holds the product's code, which ticket agents read.",
+            discussion: """
+                Canopy writes the repo's path, and how to bring its checkout up to date without touching the \
+                author's work, into AGENTS.md in every ticket row's folder, with a CLAUDE.md that imports it. The \
+                path is looked up each time the files are written, so a repo moved and registered again is found. \
+                Without a repo, AGENTS.md says Canopy does not know where the code is.
+                """
+        )
+
+        @Argument(help: "A registered repo's name or path, as `canopy row new --repo` takes it.")
+        var repo: String?
+        @Flag(help: "Take the repo out, so ticket agents are told Canopy does not know where the code is.")
+        var clear = false
+        @OptionGroup var output: OutputOptions
+
+        func validate() throws {
+            if clear, repo != nil { throw ValidationError("Pass a repo or --clear, not both.") }
+        }
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            let result =
+                repo == nil && !clear
+                ? client.call(TicketMethod.repo, JSONValue.object([:]))
+                : client.call(
+                    TicketMethod.setRepo, TicketSetRepoParams(repo: repo.map(Client.absolutePathIfRelative)))
+            try client.print(result) { TicketText.repo(try result.decode(TicketRepoResult.self)) }
         }
     }
 

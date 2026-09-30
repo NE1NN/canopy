@@ -7,6 +7,35 @@ import Testing
 struct TicketTextTests {
     let now = Date(timeIntervalSince1970: 1_790_030_000)
 
+    @Test func repoSaysWhereTicketAgentsReadTheCode() {
+        func text(_ repo: String?, _ path: String?, _ branch: String?, missing: Bool = false, _ registered: [String])
+            -> String
+        {
+            TicketText.repo(
+                TicketRepoResult(
+                    repo: repo, path: path, defaultBranch: branch, missing: missing, registered: registered))
+        }
+        #expect(
+            text(nil, nil, nil, ["app"])
+                == "Tickets has no repo, so ticket agents are told Canopy does not know where the code is. "
+                + "Set one with `canopy ticket repo <repo>`.")
+        #expect(
+            text("app", "/p/app", "main", ["app"]) == "Ticket agents read the code in app at /p/app, on main.")
+        #expect(
+            text("app", "/p/app", nil, ["app"])
+                == "Ticket agents read the code in app at /p/app. Canopy cannot tell its default branch, because "
+                + "origin/HEAD is not set: run `git -C /p/app remote set-head origin --auto`.")
+        #expect(
+            text("app", "/p/app", nil, missing: true, ["app"])
+                == "Tickets names app, but its folder /p/app is missing.")
+        #expect(
+            text("gone", nil, nil, ["app", "web"])
+                == "Tickets names gone, but Canopy has no repo of that name. Registered repos: app, web.")
+        #expect(
+            text("gone", nil, nil, [])
+                == "Tickets names gone, but Canopy has no repo of that name, and none are registered.")
+    }
+
     @Test func listLinesLineUp() throws {
         let open = try APIFixture.decode(TicketList.self, "tickets-open").tickets
         let row = PluginRow(
