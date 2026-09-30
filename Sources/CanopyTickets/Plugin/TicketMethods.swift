@@ -92,14 +92,20 @@ public struct TicketRepoResult: Codable, Sendable, Equatable {
     public var defaultBranch: String?
     /// Whether its folder is gone.
     public var missing: Bool
+    /// The repos `repo` could be, when it names more than one, such as `code/web-app` and `work/web-app`.
+    public var matches: [String]
     /// The registered repos' names.
     public var registered: [String]
 
-    public init(repo: String?, path: String?, defaultBranch: String?, missing: Bool = false, registered: [String]) {
+    public init(
+        repo: String?, path: String?, defaultBranch: String?, missing: Bool = false, matches: [String] = [],
+        registered: [String]
+    ) {
         self.repo = repo
         self.path = path
         self.defaultBranch = defaultBranch
         self.missing = missing
+        self.matches = matches
         self.registered = registered
     }
 
@@ -110,6 +116,7 @@ public struct TicketRepoResult: Codable, Sendable, Equatable {
         try container.encode(path, forKey: .path)
         try container.encode(defaultBranch, forKey: .defaultBranch)
         try container.encode(missing, forKey: .missing)
+        try container.encode(matches, forKey: .matches)
         try container.encode(registered, forKey: .registered)
     }
 }

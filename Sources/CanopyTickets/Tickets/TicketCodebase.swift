@@ -9,6 +9,9 @@ public enum TicketCodebase: Sendable, Equatable {
     case notRegistered(name: String)
     /// The repo is registered, but its folder is gone.
     case missing(name: String, path: String)
+    /// config.json names a repo more than one registered repo could be, such as `web-app` once a second checkout of that
+    /// name makes both `code/web-app` and `work/web-app`, with their names.
+    case ambiguous(name: String, matches: [String])
     /// `defaultBranch` is the branch `origin/HEAD` points at, such as `main`, or nil without one.
     case repo(name: String, path: String, defaultBranch: String?)
 }
@@ -68,41 +71,49 @@ public enum TicketAgentFiles {
                 Tickets names the `\(name)` repo for the product's code, but Canopy has no repo of that name.
                 Do not guess a path: \(setRepo)
                 """
+        case .ambiguous(let name, let matches):
+            return """
+                Tickets names the `\(name)` repo for the product's code, but more than one repo matches it: \
+                \(matches.map { "`\($0)`" }.joined(separator: ", ")).
+                Do not guess which: tell the author, who can pick one with `canopy ticket repo <repo>`.
+                """
         case .missing(let name, let path):
             return """
                 The product's code is the `\(name)` repo, but its folder `\(path)` is missing.
-                Do not guess another path: tell the author, who can register it again with `canopy repo add <path>`, \
-                or set another repo with `canopy ticket repo <repo>`.
+                Do not guess another path: tell the author, who can point Canopy at its new folder with Locate… on \
+                the repo in the sidebar, or set another repo with `canopy ticket repo <repo>`.
                 """
         case .repo(let name, let path, nil):
             return """
                 The product's code is the `\(name)` repo at `\(path)`.
                 Read and grep the files there directly.
                 Canopy could not tell its default branch from `origin/HEAD`, so read the checkout as it is, without \
-                fetching or pulling, and tell the author, who can set it with \
-                `\(git(path)) remote set-head origin --auto`.
+                fetching or pulling, and tell the author. If the repo has an `origin` remote, \
+                `\(git(path)) remote set-head origin --auto` sets it.
 
                 \(hands)
                 """
         case .repo(let name, let path, let branch?):
             let git = git(path)
             let remote = "origin/" + branch
+            let quotedRemote = NewRowAction.quoted(remote)
             return """
                 The product's code is the `\(name)` repo at `\(path)`.
                 The author keeps that checkout on its default branch, `\(branch)`.
-                Read and grep the files there directly.
 
                 Once per session, before reading the code, fetch and look at the checkout:
 
                     \(git) fetch origin \(NewRowAction.quoted(branch))
                     \(git) branch --show-current
                     \(git) status --porcelain
-                    \(git) rev-list --count HEAD..\(NewRowAction.quoted(remote))
+                    \(git) rev-list --count HEAD..\(quotedRemote)
 
                 If it is on `\(branch)`, has no local changes (`status --porcelain` prints nothing), and is behind \
                 `\(remote)` (the count is above 0), update it with `\(git) pull --ff-only`.
-                If it is on another branch or has local changes, leave it alone: read from `\(remote)` with \
-                `\(git) grep <pattern> \(NewRowAction.quoted(remote))` and `\(git) show \(remote):<file>` instead, and tell the author why.
+                Then read and grep the files there directly.
+                If it is on another branch, has local changes, or the pull fails, leave it alone: read from \
+                `\(remote)` with `\(git) grep <pattern> \(quotedRemote)` and `\(git) show \(quotedRemote):<file>` \
+                instead, and tell the author why.
 
                 \(hands)
                 """

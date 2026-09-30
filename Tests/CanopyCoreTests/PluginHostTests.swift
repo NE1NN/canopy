@@ -616,6 +616,10 @@ struct PluginHostTests {
 
         try await context.setConfig("repo", to: nil)
         #expect(context.config == .object(["url": "u"]))
+        await #expect { try await context.setConfig("enabled", to: false) } throws: {
+            ($0 as? ControlError)?.code == "bad_params"
+        }
+        #expect(context.config == .object(["url": "u"]))
         #expect(await test.calls == ["start"])
     }
 

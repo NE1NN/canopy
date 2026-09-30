@@ -131,6 +131,67 @@ struct TicketsRepoTests {
         #expect(agents(row) == TicketAgentFiles.agents(.repo(name: "app", path: new, defaultBranch: "main")))
     }
 
+    @Test func aSecondCheckoutWithTheSameFolderNameMakesTheNameAmbiguousNotUnknown() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let first = try await addRepo(harness, dir, folder: "code")
+        try await harness.setConfig(["repo": "app"])
+        let row = try await harness.newRow("853")
+
+        let second = try await addRepo(harness, dir, folder: "work")
+        _ = try await harness.call(TicketMethod.show, TicketShowParams(reference: "853", refresh: true))
+        #expect(agents(row) == TicketAgentFiles.agents(.ambiguous(name: "app", matches: ["code/app", "work/app"])))
+
+        try await harness.workspace.removeRepo(path: second)
+        _ = try await harness.call(TicketMethod.show, TicketShowParams(reference: "853", refresh: true))
+        #expect(agents(row) == TicketAgentFiles.agents(.repo(name: "app", path: first, defaultBranch: "main")))
+    }
+
+    @Test func aRepoWhoseFolderIsGoneSaysSo() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let path = try await addRepo(harness, dir)
+        try await harness.setConfig(["repo": "app"])
+        let row = try await harness.newRow("853")
+
+        try FileManager.default.moveItem(atPath: path, toPath: dir.sub("moved-away"))
+        await harness.workspace.refresh(repoPath: path)
+        _ = try await harness.call(TicketMethod.show, TicketShowParams(reference: "853", refresh: true))
+
+        #expect(agents(row) == TicketAgentFiles.agents(.missing(name: "app", path: path)))
+    }
+
+    @Test func aRepoWithoutOriginHEADIsReadAsItIs() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let path = dir.sub("local")
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        try await GitRunner(environment: ["PATH": "/usr/bin:/bin"]).run(["init", "--quiet", "-b", "main"], in: path)
+        _ = try await harness.workspace.addRepo(path: path)
+        try await harness.setConfig(["repo": "local"])
+
+        let row = try await harness.newRow("853")
+
+        #expect(agents(row) == TicketAgentFiles.agents(.repo(name: "local", path: path, defaultBranch: nil)))
+    }
+
+    @Test func theRowsRefreshRewritesQuietRowsAfterTheRepoMoves() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let old = try await addRepo(harness, dir, folder: "a")
+        try await harness.setConfig(["repo": "app"])
+        let row = try await harness.newRow("853")
+        harness.setViewing(visible: true, frontmost: false)
+        await harness.settle()
+
+        try await harness.workspace.removeRepo(path: old)
+        let new = try await addRepo(harness, dir, folder: "b")
+        harness.clock.advance(by: .seconds(60))
+
+        let expected = TicketAgentFiles.agents(.repo(name: "app", path: new, defaultBranch: "main"))
+        #expect(await eventually { self.agents(row) == expected })
+    }
+
     @Test func aFetchThatChangesNothingLeavesTheFilesAlone() async throws {
         let dir = try TempDir()
         let harness = try await connected(dir)
@@ -287,7 +348,8 @@ struct TicketsRepoTests {
         #expect(
             json
                 == .object([
-                    "repo": .null, "path": .null, "defaultBranch": .null, "missing": false, "registered": .array([]),
+                    "repo": .null, "path": .null, "defaultBranch": .null, "missing": false, "matches": .array([]),
+                    "registered": .array([]),
                 ]))
     }
 }

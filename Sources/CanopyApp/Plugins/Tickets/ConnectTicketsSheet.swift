@@ -13,8 +13,7 @@ struct ConnectTicketsSheet: View {
     @State private var web = ""
     /// The repo's name, or nil for none.
     @State private var repo: String?
-    /// The repo config.json names, when Canopy has it, which the picker starts on.
-    @State private var savedRepo: String?
+    @State private var repoChoice = TicketRepoChoice(saved: nil, registered: [])
     @State private var isWorking = false
     @State private var error: String?
     @FocusState private var isURLFocused: Bool
@@ -52,9 +51,10 @@ struct ConnectTicketsSheet: View {
                     Text("Code repo")
                     Picker("Code repo", selection: $repo) {
                         Text("None").tag(String?.none)
-                        if !repoNames.isEmpty { Divider() }
-                        ForEach(repoNames, id: \.self) { name in
-                            Text(verbatim: name).tag(String?.some(name))
+                        if !repoChoice.options.isEmpty { Divider() }
+                        ForEach(repoChoice.options, id: \.self) { name in
+                            Text(verbatim: repoChoice.isRegistered(name) ? name : "\(name) (not registered)")
+                                .tag(String?.some(name))
                         }
                     }
                     .fixedSize()
@@ -101,22 +101,10 @@ struct ConnectTicketsSheet: View {
         .frame(width: 540)
         .onAppear {
             isURLFocused = true
-            if let saved = model.plugins.context(TicketMethod.plugin).flatMap({ TicketSettings.repo(in: $0.config) }),
-                repoNames.contains(saved)
-            {
-                savedRepo = saved
-                repo = saved
-            }
+            let saved = model.plugins.context(TicketMethod.plugin).flatMap { TicketSettings.repo(in: $0.config) }
+            repoChoice = TicketRepoChoice(saved: saved, registered: model.snapshot.repos.map(\.name))
+            repo = saved
         }
-    }
-
-    private var repoNames: [String] {
-        model.snapshot.repos.map(\.name)
-    }
-
-    /// Picking None over a saved repo takes it out once connected, as `canopy ticket repo --clear` does.
-    private var clearsRepo: Bool {
-        savedRepo != nil && repo == nil
     }
 
     private var command: String {
@@ -124,16 +112,16 @@ struct ConnectTicketsSheet: View {
         var command = "canopy ticket connect " + (address.isEmpty ? "<url>" : NewRowAction.quoted(address))
         let page = web.trimmingCharacters(in: .whitespaces)
         if !page.isEmpty { command += " --web " + NewRowAction.quoted(page) }
-        if let repo { command += " --repo " + NewRowAction.quoted(repo) }
-        if clearsRepo { command += " && canopy ticket repo --clear" }
+        if let repo = repoChoice.connectRepo(repo) { command += " --repo " + NewRowAction.quoted(repo) }
+        if repoChoice.clears(repo) { command += " && canopy ticket repo --clear" }
         return command
     }
 
     private func connect() {
         isWorking = true
         error = nil
-        let params = TicketConnectParams(url: url, token: token, web: web, repo: repo)
-        let clearsRepo = clearsRepo
+        let params = TicketConnectParams(url: url, token: token, web: web, repo: repoChoice.connectRepo(repo))
+        let clearsRepo = repoChoice.clears(repo)
         Task {
             do {
                 _ = try await model.plugins.call(

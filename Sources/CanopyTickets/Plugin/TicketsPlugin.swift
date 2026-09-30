@@ -205,7 +205,7 @@ public actor TicketsPlugin: CanopyPlugin {
     /// plugin has when it cannot be reached.
     public func fill(_ row: PluginRow, context: PluginContext) async throws {
         try await converting {
-            try TicketAgentFiles.write(await codebase(context), into: row.path)
+            await writeAgentFiles(into: [row], context: context)
             do {
                 let copy = try await fetchTicket(row.item)
                 try TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)

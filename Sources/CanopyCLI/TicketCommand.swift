@@ -211,7 +211,10 @@ struct TicketCommand: AsyncParsableCommand {
             } catch let error as TicketError {
                 client.fail(error.controlError)
             }
-            let repo = repo.map(Client.absolutePathIfRelative)
+            // An empty --repo keeps the repo already set, as the app treats it.
+            let repo = repo.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap {
+                $0.isEmpty ? nil : Client.absolutePathIfRelative($0)
+            }
             if let repo { TicketCommand.requireRegistered(repo, client: client) }
             let token: String
             do {
@@ -235,7 +238,12 @@ struct TicketCommand: AsyncParsableCommand {
     /// Fails as the app would when no registered repo matches, so a mistyped repo fails before the author types a
     /// secret.
     static func requireRegistered(_ repo: String, client: Client) {
-        let repos = (try? client.call(ControlMethod.repoList, JSONValue.null).decode([RepoInfo].self)) ?? []
+        let repos: [RepoInfo]
+        do {
+            repos = try client.call(ControlMethod.repoList, JSONValue.null).decode([RepoInfo].self)
+        } catch {
+            client.fail(ControlError(code: "internal", message: "Could not read the registered repos: \(error)"))
+        }
         guard !repos.contains(where: { TargetResolver.names(repo, repoNamed: $0.name, at: $0.path) }) else { return }
         client.fail(TicketError.repoNotFound(repo, registered: repos.map(\.name)).controlError)
     }

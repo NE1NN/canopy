@@ -32,6 +32,13 @@ struct TicketTextTests {
             text("gone", nil, nil, ["app", "web"])
                 == "Tickets names gone, but Canopy has no repo of that name. Registered repos: app, web.")
         #expect(
+            TicketText.repo(
+                TicketRepoResult(
+                    repo: "app", path: nil, defaultBranch: nil, matches: ["code/app", "work/app"],
+                    registered: ["code/app", "work/app"]))
+                == "Tickets names app, which more than one repo matches: code/app, work/app. "
+                + "Pick one with `canopy ticket repo <repo>`.")
+        #expect(
             text("gone", nil, nil, [])
                 == "Tickets names gone, but Canopy has no repo of that name, and none are registered.")
     }

@@ -339,6 +339,8 @@ The tests cover each error case, the shape of each response, a ticket whose cust
 The API gives no such address, so without `web` the button says how to set it.
 `repo` is optional: the name of the registered repo that holds the product's code, the same names `canopy row new --repo` takes.
 It is resolved to the repo's current path each time Canopy writes a row's files, never when it is saved, so a repo moved and registered again is found.
+Display names grow a parent folder while two registered repos share a folder name, so a name that no longer matches exactly finds the repo whose path ends in it: `web-app` still finds `code/web-app`.
+When more than one repo matches, `AGENTS.md` names them all and asks the author to pick one, rather than saying Canopy has no such repo.
 
 ### Connecting
 
@@ -355,7 +357,7 @@ Like `plugin disable`, it refuses with `plugin_busy` while a program runs in a t
 
 In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off, and so do the File menu and the empty sidebar.
 It opens a sheet with the URL and token fields, an optional ticket page, and a "Code repo" pop-up of the registered repos, which sends the same `tickets.connect` as the CLI.
-The pop-up starts on the repo already set, and picking None over it takes it out once connected.
+The pop-up starts on the repo already set, marked "not registered" when Canopy has no repo of that name, and picking None over it takes it out once connected.
 The section's `…` menu holds "Disconnect".
 
 ### Tickets and references
@@ -414,7 +416,8 @@ A fetch that fails keeps what the panel shows, and a banner says what went wrong
   Once per session, before reading the code, the agent fetches the default branch, pulls with `--ff-only` only when the checkout is on it, has no local changes, and is behind, and otherwise leaves the checkout alone, reads `origin/<default>` with `git grep` and `git show`, and tells the author why.
   It never edits, commits, switches branches, or resets in that checkout, and a fix goes in a worktree row made with `canopy row new <branch> --repo <repo>` from the ticket's terminal.
   Without a `repo`, or with one Canopy does not have, it says Canopy does not know where the code is and how the author sets it, and names no path.
-  Both are written when the row is made, whenever Canopy fetches the ticket, when the plugin starts, and when `repo` changes, each only when its contents change, so rows made before these files existed get them at the next fetch or launch.
+  A registered repo whose folder is gone gets a line saying so, pointing the author at Locate… in the sidebar, and a repo without `origin/HEAD` is read as it is, without fetching.
+  Both are written when the row is made, whenever Canopy fetches the ticket, at each rows refresh, when the plugin starts, and when `repo` changes, each only when its contents change, so rows made before these files existed get them at the next fetch or launch, and quiet rows follow a repo that moved.
 
 ### Refreshing
 

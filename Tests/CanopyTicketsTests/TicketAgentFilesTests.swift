@@ -20,7 +20,6 @@ struct TicketAgentFilesTests {
 
                 The product's code is the `solis-v1` repo at `/Users/h/Projects/solis-v1`.
                 The author keeps that checkout on its default branch, `main`.
-                Read and grep the files there directly.
 
                 Once per session, before reading the code, fetch and look at the checkout:
 
@@ -30,7 +29,8 @@ struct TicketAgentFilesTests {
                     git -C /Users/h/Projects/solis-v1 rev-list --count HEAD..origin/main
 
                 If it is on `main`, has no local changes (`status --porcelain` prints nothing), and is behind `origin/main` (the count is above 0), update it with `git -C /Users/h/Projects/solis-v1 pull --ff-only`.
-                If it is on another branch or has local changes, leave it alone: read from `origin/main` with `git -C /Users/h/Projects/solis-v1 grep <pattern> origin/main` and `git -C /Users/h/Projects/solis-v1 show origin/main:<file>` instead, and tell the author why.
+                Then read and grep the files there directly.
+                If it is on another branch, has local changes, or the pull fails, leave it alone: read from `origin/main` with `git -C /Users/h/Projects/solis-v1 grep <pattern> origin/main` and `git -C /Users/h/Projects/solis-v1 show origin/main:<file>` instead, and tell the author why.
 
                 Never edit, commit, switch branches, or reset in that checkout.
 
@@ -73,6 +73,18 @@ struct TicketAgentFilesTests {
         #expect(!text.contains("git -C"))
     }
 
+    @Test func aNameMoreThanOneRepoMatchesNamesThemAll() {
+        let text = TicketAgentFiles.agents(.ambiguous(name: "app", matches: ["code/app", "work/app"]))
+
+        #expect(
+            text.contains(
+                """
+                Tickets names the `app` repo for the product's code, but more than one repo matches it: `code/app`, `work/app`.
+                Do not guess which: tell the author, who can pick one with `canopy ticket repo <repo>`.
+                """))
+        #expect(!text.contains("git -C"))
+    }
+
     @Test func aMissingFolderSaysSo() {
         let text = TicketAgentFiles.agents(.missing(name: "solis-v1", path: "/gone/solis-v1"))
 
@@ -80,7 +92,7 @@ struct TicketAgentFilesTests {
             text.contains(
                 """
                 The product's code is the `solis-v1` repo, but its folder `/gone/solis-v1` is missing.
-                Do not guess another path: tell the author, who can register it again with `canopy repo add <path>`, or set another repo with `canopy ticket repo <repo>`.
+                Do not guess another path: tell the author, who can point Canopy at its new folder with Locate… on the repo in the sidebar, or set another repo with `canopy ticket repo <repo>`.
                 """))
         #expect(!text.contains("git -C"))
     }
@@ -93,7 +105,7 @@ struct TicketAgentFilesTests {
                 """
                 The product's code is the `app` repo at `/p/app`.
                 Read and grep the files there directly.
-                Canopy could not tell its default branch from `origin/HEAD`, so read the checkout as it is, without fetching or pulling, and tell the author, who can set it with `git -C /p/app remote set-head origin --auto`.
+                Canopy could not tell its default branch from `origin/HEAD`, so read the checkout as it is, without fetching or pulling, and tell the author. If the repo has an `origin` remote, `git -C /p/app remote set-head origin --auto` sets it.
 
                 Never edit, commit, switch branches, or reset in that checkout.
                 """))
@@ -108,6 +120,7 @@ struct TicketAgentFilesTests {
         #expect(text.contains("The product's code is the `my app` repo at `/Users/h/My Projects/it's`."))
         #expect(text.contains(#"    git -C '/Users/h/My Projects/it'\''s' fetch origin trunk"#))
         #expect(text.contains(#"`git -C '/Users/h/My Projects/it'\''s' pull --ff-only`"#))
+        #expect(text.contains(#"`git -C '/Users/h/My Projects/it'\''s' show origin/trunk:<file>`"#))
         #expect(text.contains("`canopy row new <branch> --repo 'my app'`"))
     }
 

@@ -63,13 +63,16 @@ public enum TicketText {
         return clean(lines.joined(separator: "\n"))
     }
 
-    /// `canopy ticket show --md`: `ticket.md` as Canopy writes it from this copy, starting with the note about
-    /// customers' messages, without the final newline the terminal's print adds back.
     /// `canopy ticket repo`'s line: where ticket agents read the code, or why they cannot.
     public static func repo(_ result: TicketRepoResult) -> String {
         guard let repo = result.repo else {
             return "Tickets has no repo, so ticket agents are told Canopy does not know where the code is. "
                 + "Set one with `canopy ticket repo <repo>`."
+        }
+        if !result.matches.isEmpty {
+            return
+                "Tickets names \(repo), which more than one repo matches: \(result.matches.joined(separator: ", ")). "
+                + "Pick one with `canopy ticket repo <repo>`."
         }
         guard let path = result.path else {
             let registered =
@@ -85,6 +88,8 @@ public enum TicketText {
         return "Ticket agents read the code in \(repo) at \(path), on \(branch)."
     }
 
+    /// `canopy ticket show --md`: `ticket.md` as Canopy writes it from this copy, starting with the note about
+    /// customers' messages, without the final newline the terminal's print adds back.
     public static func markdown(_ detail: TicketDetail) -> String {
         String(TicketFiles.markdown(handover: detail.handover).dropLast())
     }

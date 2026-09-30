@@ -112,6 +112,8 @@ extension TicketsPlugin {
         }
         await store.setSummaries(found)
         await showLooks()
+        // Rows whose ticket is quiet still follow a repo that moved or changed its default branch.
+        await writeAgentFiles(into: await context.state.rows, context: context)
     }
 
     /// What ticket-manager changes when a ticket's conversation or handling does. `staleHours` alone grows every hour.

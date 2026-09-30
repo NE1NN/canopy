@@ -172,9 +172,13 @@ public final class PluginHost {
     }
 
     /// Sets one key of the plugin's section of config.json, or takes it out when `value` is nil, without starting or
-    /// stopping the plugin, which reads the new value from its context.
+    /// stopping the plugin, which reads the new value from its context. `enabled` changes only through `enable` and
+    /// `disable`, which start and stop the plugin with it.
     public func setConfig(_ id: String, key: String, to value: JSONValue?) async throws {
         _ = try requirePlugin(id)
+        guard key != "enabled" else {
+            throw ControlError(code: "bad_params", message: "Turn a plugin on or off with plugin enable or disable.")
+        }
         try await serialized(id) { try await self.setConfigNow(id, key: key, to: value) }
     }
 
