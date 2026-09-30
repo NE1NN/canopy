@@ -1022,6 +1022,38 @@ grep -q '"ticket_has_row"' "$work/again853.json" && grep -q "$t853" "$work/again
 if "$cli" ticket new 999 --json > "$work/t999.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"ticket_not_found"' "$work/t999.json" || fail "an unknown ticket did not fail with ticket_not_found"
 
+step "ticket rows tell agents where the code is, from the repo ticket repo sets"
+[[ "$(cat "$t853/CLAUDE.md")" == "@AGENTS.md" ]] || fail "CLAUDE.md does not import AGENTS.md"
+grep -qx "Canopy does not know where the product's code is." "$t853/AGENTS.md" ||
+    fail "AGENTS.md without a repo does not say Canopy does not know where the code is"
+"$cli" ticket repo | grep -q '^Tickets has no repo' || fail "ticket repo without one printed $("$cli" ticket repo)"
+if "$cli" ticket repo nope --json > "$work/repo-nope.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"repo_not_found"' "$work/repo-nope.json" && grep -q 'Registered repos: demo' "$work/repo-nope.json" ||
+    fail "an unknown repo did not fail with repo_not_found listing demo"
+demo_path="$(cd "$work/demo" && pwd -P)"
+"$cli" ticket repo demo | grep -qx "Ticket agents read the code in demo at $demo_path, on main." ||
+    fail "ticket repo demo printed something else"
+grep -qx "The product's code is the \`demo\` repo at \`$demo_path\`." "$t853/AGENTS.md" ||
+    fail "AGENTS.md does not name demo's path"
+grep -qx "    git -C $demo_path fetch origin main" "$t853/AGENTS.md" || fail "AGENTS.md has no fetch step"
+/usr/bin/python3 - "$CANOPY_HOME/config.json" <<'PY' || fail "config.json does not hold the repo"
+import json, sys
+assert json.load(open(sys.argv[1]))["plugins"]["tickets"]["repo"] == "demo"
+PY
+if printf '%s\n' "$tm_token" | "$cli" ticket connect "$tm_url" --repo nope --json > "$work/connect-nope.json" 2>/dev/null
+then
+    fail "expected failure"
+fi
+grep -q '"repo_not_found"' "$work/connect-nope.json" || fail "connect --repo nope did not fail with repo_not_found"
+"$cli" ticket repo --clear | grep -q '^Tickets has no repo' || fail "ticket repo --clear printed something else"
+grep -qx "Canopy does not know where the product's code is." "$t853/AGENTS.md" ||
+    fail "clearing the repo did not put the first AGENTS.md back"
+printf '%s\n' "$tm_token" | "$cli" ticket connect "$tm_url" --repo "$work/demo" >/dev/null ||
+    fail "connect --repo with a path failed"
+[[ "$("$cli" ticket repo --json | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["repo"])')" == demo ]] ||
+    fail "connect --repo with a path did not save demo"
+"$cli" ticket repo --clear >/dev/null
+
 step "ticket show prints the ticket, its handover, and JSON, from its row too"
 "$cli" ticket show 853 > "$work/show.txt"
 head -1 "$work/show.txt" | grep -q '^ticket-0853-sameergoyal · open · sameergoyal · owner HI · waiting ' ||
