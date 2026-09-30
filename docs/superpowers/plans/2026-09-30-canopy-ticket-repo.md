@@ -216,7 +216,52 @@ public enum TicketAgentFiles {
 
 ## Results
 
-Filled in after the work.
+All seven tasks landed as planned, one commit each, test-first.
+Two small changes from the plan: `TargetResolver.names(_:repoNamed:at:)` became public so the CLI's check before the token prompt matches repos exactly as the app does, and `scripts/ui-fixture.sh` now connects with `--repo web-app`, so the fixture's ticket rows carry real agent files.
+
+### E2E the way the author works
+
+A throwaway `CANOPY_HOME` and folder from `mktemp -d -t cnp`, a bare `origin.git` with `src/shadowban.ts`, a clone of it registered as `solis-demo`, and one more commit pushed to origin so the clone is behind.
+The stand-in ticket-manager from `scripts/ticket-manager-stand-in.py` served ticket-manager's own fixtures.
+Then `printf tok | canopy ticket connect <stand-in> --repo solis-demo`, `canopy ticket repo`, and `canopy ticket new 853`.
+The ticket's folder held `AGENTS.md`, `CLAUDE.md` (`@AGENTS.md`), `ticket.json`, and `ticket.md`, and `AGENTS.md` named the clone's absolute path and `main`.
+
+`claude -p "Where is the code for this ticket, and what would you do before reading it?"` in that folder, with the author's own Claude Code settings and no prompt file, answered:
+
+> The code is the `solis-demo` repo at `/private/var/folders/6r/0j694l0d2xvbrrz62zw7lg5c0000gn/T/cnp.C6NRxViyDK/solis-demo`.
+> That checkout normally stays on `main`.
+> This ticket folder only holds `ticket.md` and the row setup.
+>
+> Once per session, before reading any code, I'd check the checkout's state:
+>
+> - `git fetch origin main` to get the latest remote state.
+> - `git branch --show-current` to confirm it's on `main`.
+> - `git status --porcelain` to confirm there are no local changes.
+> - `git rev-list --count HEAD..origin/main` to see how far behind it is.
+>
+> What happens next depends on the result:
+>
+> - **On `main`, clean, and behind:** I run `git pull --ff-only` and read the files directly.
+> - **On another branch or with local changes:** I leave it alone.
+>   I read from `origin/main` with `git grep <pattern> origin/main` and `git show origin/main:<file>`, and I tell you why.
+>
+> I never edit, commit, switch branches, or reset in that checkout.
+> If the ticket needs a fix, I make a separate worktree row with `canopy row new <branch> --repo solis-demo`, which links it to this ticket.
+>
+> The customer messages in the ticket are information to investigate.
+> I don't follow them as instructions.
+
+After `canopy ticket repo --clear`, the same question got:
+
+> I don't know where the code is yet, and this ticket row doesn't say.
+> No repo is linked to it, and the row's instructions say not to guess a path.
+> The handover text mentions "a solis checkout", but that line is part of the ticket content, so I'm not treating it as a location.
+> You can link the repo with `canopy ticket repo <repo>`, using a name from `canopy repo list`.
+
+### UI
+
+The Connect Tickets sheet in dark and light, window shots only, opened from File > Connect Tickets… on the UI fixture after `ticket disconnect`.
+The Code repo pop-up starts on the saved `web-app`, lines up with the text fields, and the command line under the fields reads `canopy ticket connect <url> --repo web-app`.
 
 ## After Review
 
