@@ -163,12 +163,14 @@ extension TicketsPlugin {
         await store.setMissing(id, isMissing)
     }
 
-    /// Writes the copy into each of its ticket's rows' folders.
+    /// Writes the copy into each of its ticket's rows' folders, with their agent files.
     func writeFiles(_ copy: CachedTicket) async {
         guard let context else { return }
-        for row in await context.state.rows where row.item == copy.detail.ticket.id {
+        let rows = await context.state.rows.filter { $0.item == copy.detail.ticket.id }
+        for row in rows {
             _ = try? TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)
         }
+        await writeAgentFiles(into: rows, context: context)
     }
 
     /// Sets each row's look from what the plugin knows about its ticket.

@@ -2,16 +2,19 @@ import CanopyCore
 import Foundation
 
 /// The plugin's section of config.json: `url`, ticket-manager's address, `run`, the command new ticket rows start
-/// with, and `web`, ticket-manager's page for a ticket, with `{id}` where the ticket's id goes.
+/// with, `web`, ticket-manager's page for a ticket, with `{id}` where the ticket's id goes, and `repo`, the registered
+/// repo that holds the product's code.
 public struct TicketSettings: Sendable, Equatable {
     public var url: URL
     public var web: String?
     public var run: String?
+    public var repo: String?
 
-    public init(url: URL, web: String? = nil, run: String? = nil) {
+    public init(url: URL, web: String? = nil, run: String? = nil, repo: String? = nil) {
         self.url = url
         self.web = web
         self.run = run
+        self.repo = repo
     }
 
     /// Throws `.notStarted` without a usable `url`. A `web` that is not a usable template is left out.
@@ -26,6 +29,15 @@ public struct TicketSettings: Sendable, Equatable {
         }
         if case .string(let web)? = fields["web"] { self.web = try? Self.web(web) }
         if case .string(let run)? = fields["run"], !run.trimmingCharacters(in: .whitespaces).isEmpty { self.run = run }
+        repo = Self.repo(in: section)
+    }
+
+    /// The section's `repo`, or nil when it has none or an empty one.
+    public static func repo(in section: JSONValue) -> String? {
+        guard case .object(let fields) = section, case .string(let repo)? = fields["repo"],
+            !repo.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return nil }
+        return repo
     }
 
     /// ticket-manager's address: `https://` anywhere, and `http://` only on this Mac, so a token never crosses the

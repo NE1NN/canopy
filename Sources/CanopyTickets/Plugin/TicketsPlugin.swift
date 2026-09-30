@@ -201,10 +201,11 @@ public actor TicketsPlugin: CanopyPlugin {
         }
     }
 
-    /// Writes `ticket.md` and `ticket.json`: from ticket-manager, or from the copy the plugin has when it cannot be
-    /// reached.
+    /// Writes `AGENTS.md` and `CLAUDE.md`, then `ticket.md` and `ticket.json`: from ticket-manager, or from the copy the
+    /// plugin has when it cannot be reached.
     public func fill(_ row: PluginRow, context: PluginContext) async throws {
         try await converting {
+            try TicketAgentFiles.write(await codebase(context), into: row.path)
             do {
                 let copy = try await fetchTicket(row.item)
                 try TicketFiles.write(detail: copy.detail, data: copy.data, fetchedAt: copy.fetchedAt, into: row.path)
