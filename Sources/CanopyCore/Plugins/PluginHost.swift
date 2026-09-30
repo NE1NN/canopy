@@ -171,6 +171,17 @@ public final class PluginHost {
         return try await serialized(id) { try await self.disableNow(plugin, force: force) }
     }
 
+    /// Sets one key of the plugin's section of config.json, or takes it out when `value` is nil, without starting or
+    /// stopping the plugin, which reads the new value from its context.
+    public func setConfig(_ id: String, key: String, to value: JSONValue?) async throws {
+        _ = try requirePlugin(id)
+        try await serialized(id) { try await self.setConfigNow(id, key: key, to: value) }
+    }
+
+    private func setConfigNow(_ id: String, key: String, to value: JSONValue?) throws {
+        sections[id] = try configFile.set(id, key: key, to: value)
+    }
+
     /// Folds or unfolds the plugin's section, on or off.
     @discardableResult
     public func setCollapsed(_ id: String, _ collapsed: Bool) async throws -> PluginListing {
