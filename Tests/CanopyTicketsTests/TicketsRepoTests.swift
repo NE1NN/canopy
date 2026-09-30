@@ -146,4 +146,148 @@ struct TicketsRepoTests {
 
         #expect(try inode("AGENTS.md") == agentsFile && inode("CLAUDE.md") == claudeFile)
     }
+
+    // MARK: Setting it
+
+    func setRepo(_ harness: TicketsHarness, _ repo: String?) async throws -> TicketRepoResult {
+        try await harness.call(TicketMethod.setRepo, TicketSetRepoParams(repo: repo)).decode(TicketRepoResult.self)
+    }
+
+    func savedRepo(_ harness: TicketsHarness) throws -> JSONValue? {
+        guard case .object(let fields)? = try PluginConfig.sections(in: harness.home.configFile)["tickets"] else {
+            return nil
+        }
+        return fields["repo"]
+    }
+
+    @Test func connectWithRepoSavesItsNameEvenFromAPath() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "t")
+        let path = try await addRepo(harness, dir)
+
+        _ = try await harness.call(
+            TicketMethod.connect, TicketConnectParams(url: harness.url, token: "t", repo: path))
+
+        #expect(try savedRepo(harness) == "app")
+        let row = try await harness.newRow("853")
+        #expect(agents(row)?.contains("at `\(path)`") == true)
+    }
+
+    @Test func connectWithAnUnknownRepoSavesNothing() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "t")
+
+        await #expect {
+            try await harness.call(
+                TicketMethod.connect, TicketConnectParams(url: harness.url, token: "t", repo: "nope"))
+        } throws: {
+            let error = $0 as? ControlError
+            return error?.code == "repo_not_found"
+                && error?.message
+                    == #"Canopy has no repo named "nope", and none are registered. Add one with `canopy repo add <path>`."#
+        }
+        try await addRepo(harness, dir, name: "app")
+        try await addRepo(harness, dir, name: "web")
+        await #expect {
+            try await harness.call(
+                TicketMethod.connect, TicketConnectParams(url: harness.url, token: "t", repo: "nope"))
+        } throws: {
+            ($0 as? ControlError)?.message == #"Canopy has no repo named "nope". Registered repos: app, web."#
+        }
+
+        #expect(await harness.transport.requests.isEmpty)
+        #expect(try harness.secrets.read("token") == nil)
+        #expect(try PluginConfig.sections(in: harness.home.configFile)["tickets"] == nil)
+    }
+
+    @Test func connectWithoutRepoKeepsTheSetting() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "t")
+        try await addRepo(harness, dir)
+        _ = try await harness.call(TicketMethod.connect, TicketConnectParams(url: harness.url, token: "t", repo: "app"))
+
+        try await harness.connect(token: "t")
+
+        #expect(try savedRepo(harness) == "app")
+    }
+
+    @Test func settingTheRepoRewritesEveryRowWithoutRestarting() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        let path = try await addRepo(harness, dir)
+        let rows = [try await harness.newRow("853"), try await harness.newRow("849")]
+        let generation = await harness.plugin.generation
+
+        let result = try await setRepo(harness, "app")
+
+        #expect(result == TicketRepoResult(repo: "app", path: path, defaultBranch: "main", registered: ["app"]))
+        #expect(try savedRepo(harness) == "app")
+        for row in rows {
+            #expect(agents(row) == TicketAgentFiles.agents(.repo(name: "app", path: path, defaultBranch: "main")))
+        }
+        #expect(await harness.plugin.generation == generation)
+        #expect(harness.store.ticket(id853).detail != nil)
+    }
+
+    @Test func clearingTheRepoPutsTheFirstTextBack() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        try await addRepo(harness, dir)
+        let row = try await harness.newRow("853")
+        _ = try await setRepo(harness, "app")
+
+        let result = try await setRepo(harness, nil)
+
+        #expect(result == TicketRepoResult(repo: nil, path: nil, defaultBranch: nil, registered: ["app"]))
+        #expect(try savedRepo(harness) == nil)
+        #expect(agents(row) == TicketAgentFiles.agents(.notSet))
+    }
+
+    @Test func settingAnUnknownRepoChangesNothing() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        try await addRepo(harness, dir)
+        _ = try await setRepo(harness, "app")
+
+        await #expect { try await setRepo(harness, "nope") } throws: {
+            ($0 as? ControlError)?.message == #"Canopy has no repo named "nope". Registered repos: app."#
+        }
+        #expect(try savedRepo(harness) == "app")
+    }
+
+    @Test func readingTheRepoSaysWhereItIs() async throws {
+        let dir = try TempDir()
+        let harness = try await connected(dir)
+        func read() async throws -> TicketRepoResult {
+            try await harness.call(TicketMethod.repo, JSONValue.object([:])).decode(TicketRepoResult.self)
+        }
+        #expect(try await read() == TicketRepoResult(repo: nil, path: nil, defaultBranch: nil, registered: []))
+
+        try await harness.setConfig(["repo": "app"])
+        #expect(try await read() == TicketRepoResult(repo: "app", path: nil, defaultBranch: nil, registered: []))
+
+        let path = try await addRepo(harness, dir)
+        #expect(
+            try await read() == TicketRepoResult(repo: "app", path: path, defaultBranch: "main", registered: ["app"]))
+        #expect(TicketMethod.readOnly.contains(TicketMethod.repo))
+        #expect(!TicketMethod.readOnly.contains(TicketMethod.setRepo))
+    }
+
+    @Test func settingTheRepoWhileOffFailsWithPluginOff() async throws {
+        let dir = try TempDir()
+        let harness = try await TicketsHarness(dir, serverToken: "t")
+        try await addRepo(harness, dir)
+
+        await #expect { try await setRepo(harness, "app") } throws: { errorCode($0) == "plugin_off" }
+        #expect(try PluginConfig.sections(in: harness.home.configFile)["tickets"] == nil)
+    }
+
+    @Test func theResultEncodesEveryFieldForAgents() throws {
+        let json = try JSONValue.from(TicketRepoResult(repo: nil, path: nil, defaultBranch: nil, registered: []))
+        #expect(
+            json
+                == .object([
+                    "repo": .null, "path": .null, "defaultBranch": .null, "missing": false, "registered": .array([]),
+                ]))
+    }
 }

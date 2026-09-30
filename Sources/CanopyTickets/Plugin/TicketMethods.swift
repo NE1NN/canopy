@@ -47,10 +47,13 @@ public enum TicketMethod {
     public static let show = "tickets.show"
     public static let select = "tickets.select"
     public static let remove = "tickets.remove"
+    /// Where the product's code is, from config.json's `repo`.
+    public static let repo = "tickets.repo"
+    public static let setRepo = "tickets.setRepo"
 
-    public static let all: Set<String> = [connect, disconnect, list, new, show, select, remove]
+    public static let all: Set<String> = [connect, disconnect, list, new, show, select, remove, repo, setRepo]
     /// Left out of the activity log.
-    public static let readOnly: Set<String> = [list, show]
+    public static let readOnly: Set<String> = [list, show, repo]
 }
 
 public struct TicketConnectParams: Codable, Sendable {
@@ -59,11 +62,55 @@ public struct TicketConnectParams: Codable, Sendable {
     public var token: String
     /// ticket-manager's page for a ticket, with `{id}` where the ticket's id goes.
     public var web: String?
+    /// The registered repo that holds the product's code, by name or path. Nil keeps the one config.json has.
+    public var repo: String?
 
-    public init(url: String, token: String, web: String? = nil) {
+    public init(url: String, token: String, web: String? = nil, repo: String? = nil) {
         self.url = url
         self.token = token
         self.web = web
+        self.repo = repo
+    }
+}
+
+public struct TicketSetRepoParams: Codable, Sendable {
+    /// A registered repo's name or path. Nil takes the setting out.
+    public var repo: String?
+
+    public init(repo: String?) {
+        self.repo = repo
+    }
+}
+
+/// config.json's `repo`, and where that repo is now.
+public struct TicketRepoResult: Codable, Sendable, Equatable {
+    /// The name config.json holds, or nil.
+    public var repo: String?
+    /// The repo's folder, while Canopy has a repo of that name.
+    public var path: String?
+    /// The branch its `origin/HEAD` points at.
+    public var defaultBranch: String?
+    /// Whether its folder is gone.
+    public var missing: Bool
+    /// The registered repos' names.
+    public var registered: [String]
+
+    public init(repo: String?, path: String?, defaultBranch: String?, missing: Bool = false, registered: [String]) {
+        self.repo = repo
+        self.path = path
+        self.defaultBranch = defaultBranch
+        self.missing = missing
+        self.registered = registered
+    }
+
+    /// Writes null for what is not there, so agents read every field.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(repo, forKey: .repo)
+        try container.encode(path, forKey: .path)
+        try container.encode(defaultBranch, forKey: .defaultBranch)
+        try container.encode(missing, forKey: .missing)
+        try container.encode(registered, forKey: .registered)
     }
 }
 
