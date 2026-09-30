@@ -305,7 +305,8 @@ fixture_row() {
 
 # Tickets, connected to the stand-in, with rows for a waiting ticket, a long conversation, and a closed ticket, their
 # terminals, and a fix row linked to the first.
-printf 'ui-fixture-token' | "$cli" ticket connect "$tm_url" --web 'https://tickets.example.com/tickets/{id}' >/dev/null
+printf 'ui-fixture-token' | "$cli" ticket connect "$tm_url" --web 'https://tickets.example.com/tickets/{id}' \
+    --repo web-app >/dev/null
 for ticket in 853 855 851; do "$cli" ticket new "$ticket" --run "$plain" >/dev/null; done
 "$cli" row new fix/shadowban-check --repo web-app --ticket 853 >/dev/null
 "$cli" term new --row "$(fixture_row 0000000000000000000010011tickets)" --run "$plain; cat ticket.md | head -5" >/dev/null
