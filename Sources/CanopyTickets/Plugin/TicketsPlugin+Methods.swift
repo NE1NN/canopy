@@ -25,19 +25,27 @@ extension TicketsPlugin {
                 let params = try call.decodeParams(TicketRemoveParams.self)
                 let row = try await row(for: params.reference, in: call.row, context: context)
                 return try .from(try await context.removeRow(row, force: params.force))
+            case TicketMethod.repo:
+                return try .from(await repoResult(context))
+            case TicketMethod.setRepo:
+                return try .from(try await setRepo(call.decodeParams(TicketSetRepoParams.self), context: context))
             default:
                 throw ControlError(code: "unknown_method", message: "Unknown method \(call.method)")
             }
         }
     }
 
-    /// Checks the token against `/api/v1/me`, saves it, and turns the plugin on with the URL. A token ticket-manager
-    /// rejects saves nothing.
+    /// Checks the repo and then the token against `/api/v1/me`, saves the token, and turns the plugin on with the URL.
+    /// A repo Canopy does not have, or a token ticket-manager rejects, saves nothing.
     func connect(_ params: TicketConnectParams, context: PluginContext) async throws -> TicketConnectResult {
         let url = try TicketSettings.url(params.url)
         var web: String?
         if let text = params.web, !text.trimmingCharacters(in: .whitespaces).isEmpty {
             web = try TicketSettings.web(text)
+        }
+        var repo: String?
+        if let text = params.repo, !text.trimmingCharacters(in: .whitespaces).isEmpty {
+            repo = try await registeredName(text, context: context)
         }
         let token = params.token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {
@@ -61,6 +69,7 @@ extension TicketsPlugin {
         }
         var fields: [String: JSONValue] = ["url": .string(address)]
         if let web { fields["web"] = .string(web) }
+        if let repo { fields["repo"] = .string(repo) }
         do {
             try await context.turnOn(with: fields)
         } catch {

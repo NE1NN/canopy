@@ -112,6 +112,8 @@ extension TicketsPlugin {
         }
         await store.setSummaries(found)
         await showLooks()
+        // Rows whose ticket is quiet still follow a repo that moved or changed its default branch.
+        await writeAgentFiles(into: await context.state.rows, context: context)
     }
 
     /// What ticket-manager changes when a ticket's conversation or handling does. `staleHours` alone grows every hour.
@@ -120,8 +122,10 @@ extension TicketsPlugin {
             || old.waiting != new.waiting || old.name != new.name
     }
 
-    /// Each row's ticket.json, so the panel and the looks show at once after a relaunch.
+    /// Each row's ticket.json, so the panel and the looks show at once after a relaunch, and each row's agent files, so
+    /// rows made before Canopy wrote them get them.
     func loadSavedTickets(_ context: PluginContext) async {
+        await writeAgentFiles(into: await context.state.rows, context: context)
         for row in await context.state.rows where cached[row.item] == nil {
             guard let copy = TicketFiles.read(from: row.path) else { continue }
             cached[row.item] = copy

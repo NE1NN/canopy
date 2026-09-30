@@ -71,6 +71,27 @@ public final class PluginContext {
         return stream
     }
 
+    /// Sets one key of its section of config.json, or takes it out when `value` is nil, without restarting it.
+    public func setConfig(_ key: String, to value: JSONValue?) async throws {
+        try await requireHost().setConfig(info.id, key: key, to: value)
+    }
+
+    /// The registered repos, in sidebar order.
+    public func repos() async -> [RepoSnapshot] {
+        await host?.workspace.snapshot.repos ?? []
+    }
+
+    /// The registered repo a name or a path names, as `canopy row new --repo` finds it.
+    public func repo(named name: String) async -> RepoSnapshot? {
+        guard let host else { return nil }
+        return TargetResolver.match(repo: name, in: await host.workspace.snapshot)
+    }
+
+    /// The branch the repo's `origin/HEAD` points at, such as `main`, or nil when it has none.
+    public func defaultBranch(ofRepo path: String) async -> String? {
+        await host?.workspace.defaultBranch(repoPath: path)
+    }
+
     /// Sets how the plugin's rows at these paths look. Its other rows keep their looks.
     public func setLooks(_ looks: [String: PluginRowLook]) async {
         await host?.workspace.setPluginLooks(looks, plugin: info.id)

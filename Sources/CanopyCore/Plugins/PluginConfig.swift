@@ -47,6 +47,13 @@ public struct PluginConfigFile: Sendable {
         try change(plugin) { $0["enabled"] = .bool(false) }
     }
 
+    /// Sets one key of the plugin's section, or takes it out when `value` is nil, keeping the rest of the section as it
+    /// was, and returns the section as written.
+    @discardableResult
+    public func set(_ plugin: String, key: String, to value: JSONValue?) throws -> JSONValue {
+        try change(plugin) { $0[key] = value.map { OrderedJSON($0) } }
+    }
+
     private func change(_ plugin: String, _ edit: (inout OrderedJSON) -> Void) throws -> JSONValue {
         var written = JSONValue.object([:])
         _ = try configErrors {

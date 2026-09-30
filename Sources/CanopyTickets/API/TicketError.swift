@@ -26,6 +26,8 @@ public enum TicketError: Error, Sendable, Equatable {
     /// The ticket's row title.
     case hasNoRow(String)
     case keychain(String)
+    /// The repo name or path that matched nothing, and the names of the registered repos.
+    case repoNotFound(String, registered: [String])
 
     public var code: String {
         switch self {
@@ -43,6 +45,7 @@ public enum TicketError: Error, Sendable, Equatable {
         case .hasRow: "ticket_has_row"
         case .hasNoRow: "ticket_has_no_row"
         case .keychain: "keychain_failed"
+        case .repoNotFound: "repo_not_found"
         }
     }
 
@@ -73,6 +76,10 @@ public enum TicketError: Error, Sendable, Equatable {
             "\(name) already has a row at \(path). Run `canopy ticket select \(name)` to show it."
         case .hasNoRow(let name): "\(name) has no row. Run `canopy ticket new \(name)` to open one."
         case .keychain(let description): "The Keychain refused: \(description)"
+        case .repoNotFound(let name, let registered) where registered.isEmpty:
+            "Canopy has no repo named \"\(name)\", and none are registered. Add one with `canopy repo add <path>`."
+        case .repoNotFound(let name, let registered):
+            "Canopy has no repo named \"\(name)\". Registered repos: \(registered.joined(separator: ", "))."
         }
     }
 

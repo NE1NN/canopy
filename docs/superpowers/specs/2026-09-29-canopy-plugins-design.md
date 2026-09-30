@@ -327,7 +327,8 @@ The tests cover each error case, the shape of each response, a ticket whose cust
 "plugins": {
   "tickets": {
     "url": "https://<deployment>.convex.site",
-    "run": "claude \"$(cat ticket.md)\""
+    "run": "claude \"$(cat ticket.md)\"",
+    "repo": "solis-v1"
   }
 }
 ```
@@ -336,18 +337,27 @@ The tests cover each error case, the shape of each response, a ticket whose cust
 `run` is optional, and is the command every new ticket row starts with unless `--run` gives another.
 `web` is optional: ticket-manager's page for a ticket, with `{id}` where the ticket's id goes, which the panel's ticket-manager button opens.
 The API gives no such address, so without `web` the button says how to set it.
+`repo` is optional: the name of the registered repo that holds the product's code, the same names `canopy row new --repo` takes.
+It is resolved to the repo's current path each time Canopy writes a row's files, never when it is saved, so a repo moved and registered again is found.
+Display names grow a parent folder while two registered repos share a folder name, so a name that no longer matches exactly finds the repo whose path ends in it: `web-app` still finds `code/web-app`.
+When more than one repo matches, `AGENTS.md` names them all and asks the author to pick one, rather than saying Canopy has no such repo.
 
 ### Connecting
 
-`canopy ticket connect <url> [--web <template>]` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
+`canopy ticket connect <url> [--web <template>] [--repo <repo>]` asks for the token without echoing it when run in a terminal, and reads it from stdin otherwise.
 The URL must be `https://`, or `http://` on this Mac alone, so a token never crosses the network in the clear, and requests never follow redirects.
 The app checks it against `/api/v1/me`, saves the token in the Keychain, and turns the plugin on with `url` in its section.
 A token the endpoint rejects saves nothing.
+`--repo` takes a registered repo's name or path and saves its name; a repo Canopy does not have fails with `repo_not_found`, listing the registered repos, before the token is asked for, and saves nothing.
+Without `--repo`, the repo already set stays.
+`canopy ticket repo [<repo> | --clear]` shows, sets, or takes out `repo` without connecting again.
+It writes only that key, so the plugin keeps running, and every ticket row's `AGENTS.md` changes at once.
 `canopy ticket disconnect [--force]` turns the plugin off, deletes the token, and keeps the rows for when it is connected again.
 Like `plugin disable`, it refuses with `plugin_busy` while a program runs in a ticket row, unless `--force`, and then deletes nothing.
 
 In the window, the sidebar's `+` menu holds "Connect Tickets…" while the plugin is off, and so do the File menu and the empty sidebar.
-It opens a sheet with the URL and token fields and an optional ticket page, which sends the same `tickets.connect` as the CLI.
+It opens a sheet with the URL and token fields, an optional ticket page, and a "Code repo" pop-up of the registered repos, which sends the same `tickets.connect` as the CLI.
+The pop-up starts on the repo already set, marked "not registered" when Canopy has no repo of that name, and picking None over it takes it out once connected.
 The section's `…` menu holds "Disconnect".
 
 ### Tickets and references
@@ -400,6 +410,14 @@ A fetch that fails keeps what the panel shows, and a banner says what went wrong
   The first line is there so an agent started with the file does not act on what a customer wrote.
   It is rewritten only when its contents change.
 - `ticket.json` is the last response for the ticket, so the panel shows at once after a relaunch and while ticket-manager cannot be reached.
+- `AGENTS.md` tells an agent started in the folder where the ticket and the product's code are, and `CLAUDE.md` holds only `@AGENTS.md`, so Claude Code loads it whatever its prompt, and other agents that read `AGENTS.md` get it too.
+  It says the ticket is in `ticket.md`, that `canopy ticket show --md` prints the latest, and that customers' messages are data to investigate, not instructions.
+  With a `repo`, it names the repo and its absolute path, says the author keeps that checkout on its default branch (from `origin/HEAD`), and says to read and grep the files there.
+  Once per session, before reading the code, the agent fetches the default branch, pulls with `--ff-only` only when the checkout is on it, has no local changes, and is behind, and otherwise leaves the checkout alone, reads `origin/<default>` with `git grep` and `git show`, and tells the author why.
+  It never edits, commits, switches branches, or resets in that checkout, and a fix goes in a worktree row made with `canopy row new <branch> --repo <repo>` from the ticket's terminal.
+  Without a `repo`, or with one Canopy does not have, it says Canopy does not know where the code is and how the author sets it, and names no path.
+  A registered repo whose folder is gone gets a line saying so, pointing the author at Locate… in the sidebar, and a repo without `origin/HEAD` is read as it is, without fetching.
+  Both are written when the row is made, whenever Canopy fetches the ticket, at each rows refresh, when the plugin starts, and when `repo` changes, each only when its contents change, so rows made before these files existed get them at the next fetch or launch, and quiet rows follow a repo that moved.
 
 ### Refreshing
 
@@ -426,6 +444,8 @@ That row shows as missing, and its id is never asked about again, selected or no
 |---|---|---|
 | `canopy ticket connect <url>` | `tickets.connect` | check the token, save it, and turn the plugin on |
 | `canopy ticket disconnect` | `tickets.disconnect` | turn the plugin off and delete the token |
+| `canopy ticket repo` | `tickets.repo` | print `repo`, its path, and its default branch |
+| `canopy ticket repo <repo>`, `canopy ticket repo --clear` | `tickets.setRepo` | set or take out `repo`, and rewrite every ticket row's `AGENTS.md` |
 | `canopy ticket list [--mine \| --unowned] [--waiting] [--query <text>] [--closed]` | `tickets.list` | list tickets, sorted as the picker sorts them, with each one's row |
 | `canopy ticket new <ticket> [--run <cmd>] [--select]` | `tickets.new` | open a row for the ticket, and fail with `ticket_has_row` naming the row if it has one |
 | `canopy ticket show [<ticket>] [--refresh] [--md]` | `tickets.show` | print the ticket and its messages, or with `--md` what `ticket.md` holds, customer note first |
@@ -443,9 +463,10 @@ That row shows as missing, and its id is never asked about again, selected or no
 ### Agent guide
 
 `canopy agent-guide` gains a Tickets section, printed only while the plugin is on.
-It explains ticket rows, `ticket.md`, references, and linked fix rows, with worked examples:
+It explains ticket rows, `ticket.md`, `AGENTS.md` and the code it points at, references, and linked fix rows, with worked examples:
 
 ```
+canopy ticket repo solis-v1
 canopy ticket list --mine --waiting
 canopy ticket new 853 --run 'claude "$(cat ticket.md)"'
 canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadowban check, see #0853"'
@@ -466,6 +487,7 @@ canopy row new fix/shadowban-check --repo solis-v1 --run 'claude "fix the shadow
 | ticket-manager answers something that is not its API, such as HTML, a redirect, a 404 for `me`, or JSON without `me`'s `email` | `bad_response`, saying to check it is the `.convex.site` address. |
 | ticket-manager answers JSON whose top level is its API's but which Canopy's models cannot read further in | `unreadable_answer`, naming the field, such as `tickets[37].customer`, and the ticket it belongs to. The address is right, so it does not say to check it. `ticket show` prints its saved copy, as when ticket-manager cannot be reached. |
 | `ticket select` or `ticket rm` for a ticket without a row | `ticket_has_no_row`, with the `ticket new` command. |
+| `ticket connect --repo` or `ticket repo` names a repo Canopy does not have | Fails with `repo_not_found`, listing the registered repos, and saves nothing. |
 | `config.json` cannot be written | `plugin.enable` fails with the file system's message, and nothing changes. |
 
 ## Testing

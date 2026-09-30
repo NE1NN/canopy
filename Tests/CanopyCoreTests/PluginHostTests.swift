@@ -601,4 +601,42 @@ struct PluginHostTests {
         #expect(second.path.hasSuffix("/foo-2"))
         #expect((third.path as NSString).lastPathComponent.utf8.count <= 200)
     }
+
+    @Test func setConfigWritesOneKeyAndKeepsThePluginRunning() async throws {
+        let dir = try TempDir()
+        let test = TestPlugin()
+        let setup = try await start(dir, [test], config: #"{"plugins": {"t": {"url": "u"}}}"#)
+        let context = try #require(setup.host.context("t"))
+
+        try await context.setConfig("repo", to: "demo")
+        #expect(context.config == .object(["url": "u", "repo": "demo"]))
+        #expect(try PluginConfig.sections(in: setup.home.configFile)["t"] == .object(["url": "u", "repo": "demo"]))
+        // The section as written counts as unchanged, so enabling with it restarts nothing.
+        _ = try await setup.host.enable("t", with: ["repo": "demo"])
+
+        try await context.setConfig("repo", to: nil)
+        #expect(context.config == .object(["url": "u"]))
+        await #expect { try await context.setConfig("enabled", to: false) } throws: {
+            ($0 as? ControlError)?.code == "bad_params"
+        }
+        #expect(context.config == .object(["url": "u"]))
+        #expect(await test.calls == ["start"])
+    }
+
+    @Test func aContextFindsReposByNameOrPathWithTheirDefaultBranch() async throws {
+        let dir = try TempDir()
+        let setup = try await start(dir, [TestPlugin()])
+        let cloned = try await Fixture.repo(in: dir, name: "cloned", origin: true)
+        let local = try await Fixture.repo(in: dir, name: "local")
+        _ = try await setup.workspace.addRepo(path: cloned)
+        _ = try await setup.workspace.addRepo(path: local)
+        let context = try #require(setup.host.context("t"))
+
+        #expect(await context.repos().map(\.name) == ["cloned", "local"])
+        #expect(await context.repo(named: "cloned")?.path == cloned)
+        #expect(await context.repo(named: local)?.name == "local")
+        #expect(await context.repo(named: "nope") == nil)
+        #expect(await context.defaultBranch(ofRepo: cloned) == "main")
+        #expect(await context.defaultBranch(ofRepo: local) == nil)
+    }
 }

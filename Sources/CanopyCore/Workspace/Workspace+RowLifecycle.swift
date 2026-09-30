@@ -343,12 +343,18 @@ extension Workspace {
     }
 
     func defaultBase(repoPath: String, hasOrigin: Bool) async -> String {
-        if hasOrigin,
+        guard hasOrigin, let branch = await defaultBranch(repoPath: repoPath) else { return "HEAD" }
+        return "origin/" + branch
+    }
+
+    /// The branch `origin/HEAD` points at, such as `main`, or nil when the repo has none.
+    public nonisolated func defaultBranch(repoPath: String) async -> String? {
+        guard
             let head = try? await git.run(
                 ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], in: repoPath)
-        {
-            return head.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return "HEAD"
+        else { return nil }
+        let name = head.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.hasPrefix("origin/"), name.count > "origin/".count else { return nil }
+        return String(name.dropFirst("origin/".count))
     }
 }

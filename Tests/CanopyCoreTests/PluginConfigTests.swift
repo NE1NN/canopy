@@ -32,6 +32,21 @@ struct PluginConfigTests {
         #expect { try PluginConfig.sections(in: file) } throws: { ($0 as? WorkspaceError)?.code == "config_invalid" }
     }
 
+    @Test func setWritesOneKeyAndKeepsTheRest() throws {
+        let dir = try TempDir()
+        let file = URL(fileURLWithPath: dir.sub("config.json"))
+        try #"{"zeta": 1, "plugins": {"tickets": {"enabled": false, "url": "u", "repo": "old"}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        let config = PluginConfigFile(url: file)
+
+        #expect(
+            try config.set("tickets", key: "repo", to: "new")
+                == .object(["enabled": false, "url": "u", "repo": "new"]))
+        #expect(try config.set("tickets", key: "repo", to: nil) == .object(["enabled": false, "url": "u"]))
+        #expect(try PluginConfig.sections(in: file)["tickets"] == .object(["enabled": false, "url": "u"]))
+        #expect(try String(contentsOf: file, encoding: .utf8).contains(#""zeta": 1"#))
+    }
+
     @Test func enableKeepsEveryOtherKeyAndItsOrder() throws {
         let dir = try TempDir()
         let file = URL(fileURLWithPath: dir.sub("config.json"))

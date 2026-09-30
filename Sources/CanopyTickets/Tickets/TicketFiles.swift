@@ -39,10 +39,7 @@ public enum TicketFiles {
     /// that is not there is left alone. Returns whether either file changed.
     @discardableResult
     public static func write(detail: TicketDetail, data: Data, fetchedAt: Date, into folder: String) throws -> Bool {
-        var isFolder: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: folder, isDirectory: &isFolder), isFolder.boolValue else {
-            return false
-        }
+        guard isFolder(folder) else { return false }
         let markdownChanged = try replace(
             folder + "/" + markdownName, with: Data(markdown(handover: detail.handover).utf8))
         let json = folder + "/" + jsonName
@@ -61,7 +58,13 @@ public enum TicketFiles {
         return CachedTicket(detail: detail, data: data, fetchedAt: fetchedAt)
     }
 
-    private static func replace(_ path: String, with data: Data) throws -> Bool {
+    static func isFolder(_ path: String) -> Bool {
+        var isFolder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+    }
+
+    /// Writes `data` to `path` unless the file already holds it, and returns whether it wrote.
+    static func replace(_ path: String, with data: Data) throws -> Bool {
         guard FileManager.default.contents(atPath: path) != data else { return false }
         try data.write(to: URL(fileURLWithPath: path), options: .atomic)
         return true

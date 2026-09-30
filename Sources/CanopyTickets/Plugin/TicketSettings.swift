@@ -2,7 +2,8 @@ import CanopyCore
 import Foundation
 
 /// The plugin's section of config.json: `url`, ticket-manager's address, `run`, the command new ticket rows start
-/// with, and `web`, ticket-manager's page for a ticket, with `{id}` where the ticket's id goes.
+/// with, and `web`, ticket-manager's page for a ticket, with `{id}` where the ticket's id goes. Its `repo` is read
+/// through `repo(in:)` at each write, since `canopy ticket repo` changes it while the plugin runs.
 public struct TicketSettings: Sendable, Equatable {
     public var url: URL
     public var web: String?
@@ -26,6 +27,14 @@ public struct TicketSettings: Sendable, Equatable {
         }
         if case .string(let web)? = fields["web"] { self.web = try? Self.web(web) }
         if case .string(let run)? = fields["run"], !run.trimmingCharacters(in: .whitespaces).isEmpty { self.run = run }
+    }
+
+    /// The section's `repo`, or nil when it has none or an empty one.
+    public static func repo(in section: JSONValue) -> String? {
+        guard case .object(let fields) = section, case .string(let repo)? = fields["repo"],
+            !repo.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return nil }
+        return repo
     }
 
     /// ticket-manager's address: `https://` anywhere, and `http://` only on this Mac, so a token never crosses the
