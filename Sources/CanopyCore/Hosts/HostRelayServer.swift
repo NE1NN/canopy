@@ -282,7 +282,7 @@ public final class HostRelayServer: Sendable {
         var discard = [UInt8](repeating: 0, count: 4096)
         var nextBeat = heartbeat.map { ContinuousClock.now + $0 }
         while true {
-            let ready = poll(&watched, 2, nextBeat.map(milliseconds(until:)) ?? -1)
+            let ready = poll(&watched, 2, nextBeat.map { milliseconds(until: $0) } ?? -1)
             if ready < 0 {
                 guard errno == EINTR || errno == EAGAIN else { return true }
                 continue
@@ -302,9 +302,11 @@ public final class HostRelayServer: Sendable {
         }
     }
 
-    private static func milliseconds(until deadline: ContinuousClock.Instant) -> Int32 {
-        let left = max(deadline - .now, .zero).components
-        return Int32(clamping: left.seconds * 1000 + left.attoseconds / 1_000_000_000_000_000)
+    static func milliseconds(until deadline: ContinuousClock.Instant, from now: ContinuousClock.Instant = .now)
+        -> Int32
+    {
+        // Rounded up, as SocketStream waits, so a beat due in under a millisecond is not polled for without waiting.
+        Int32(clamping: Int((max(deadline - now, .zero) / .milliseconds(1)).rounded(.up)))
     }
 
     private static func wait(for done: Int32) {

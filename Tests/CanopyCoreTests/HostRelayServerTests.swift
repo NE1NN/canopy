@@ -344,6 +344,17 @@ struct HostRelayServerTests {
         #expect(reply.output == "made\n")
     }
 
+    /// A heartbeat due in under a millisecond waits that millisecond, rather than polling with no wait until it is due.
+    @Test func theWaitForTheNextHeartbeatRoundsUp() {
+        let now = ContinuousClock.now
+
+        #expect(HostRelayServer.milliseconds(until: now + .microseconds(1), from: now) == 1)
+        #expect(HostRelayServer.milliseconds(until: now + .microseconds(1500), from: now) == 2)
+        #expect(HostRelayServer.milliseconds(until: now + .milliseconds(15), from: now) == 15)
+        #expect(HostRelayServer.milliseconds(until: now, from: now) == 0)
+        #expect(HostRelayServer.milliseconds(until: now - .seconds(1), from: now) == 0)
+    }
+
     @Test func twoCallsAtOnceBothAnswer() async throws {
         let setup = try await Setup()
         // Each waits for the other to have started, so calls served one at a time would each print "alone".
