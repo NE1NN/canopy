@@ -1,6 +1,7 @@
 import CanopyCore
 import Foundation
 import Synchronization
+import Testing
 
 @testable import CanopyTickets
 
@@ -163,12 +164,16 @@ final class TicketsHarness {
         _ = try await host.enable("tickets", with: fields)
     }
 
-    /// Waits until the plugin has taken in the host's latest state, has nothing in flight, and its refresh loop sleeps,
-    /// so moving the clock afterwards is the only thing that wakes it.
-    func settle() async {
-        _ = await eventually {
+    /// Waits until the plugin has taken in the host's latest state, has nothing in flight, and its refresh loop sleeps on
+    /// the clock, so moving the clock afterwards is the only thing that wakes it. The loop still reads as asleep for a
+    /// moment after the clock wakes it, until it runs again, so a connected plugin only counts once the loop waits on the
+    /// clock: settling in that moment would move the clock again before the due refresh ran.
+    func settle(sourceLocation: SourceLocation = #_sourceLocation) async {
+        let settled = await eventually {
             guard let state = self.host.context("tickets")?.state else { return true }
-            return await self.plugin.hasSettled(on: state)
+            guard await self.plugin.hasSettled(on: state) else { return false }
+            return await self.plugin.connection == nil || self.clock.sleepers > 0
         }
+        #expect(settled, "The tickets plugin never settled.", sourceLocation: sourceLocation)
     }
 }
