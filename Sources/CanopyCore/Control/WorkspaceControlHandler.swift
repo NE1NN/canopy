@@ -225,6 +225,22 @@ public struct WorkspaceControlHandler: Sendable {
                 idleDetachMinutes: params.idleDetachMinutes)
             return try .from(await withPanes(info))
 
+        case HostAttachMethod.attach:
+            let params = try request.decodeParams(HostAttachParams.self)
+            guard let pane = await rows.remotePaneInfo(params.pane) else {
+                throw WorkspaceError.paneNotFound(params.pane)
+            }
+            return try .from(await attach(pane))
+
+        case HostAttachMethod.next:
+            let params = try request.decodeParams(HostNextParams.self)
+            guard let pane = await rows.remotePaneInfo(params.pane) else {
+                return try .from(HostNextResult(action: .end))
+            }
+            let connection = try await workspace.connection(for: pane.host)
+            let state = await connection.state
+            return try .from(RemoteAttach.next(status: params.status, state: state, host: pane.host))
+
         case HostMethod.list:
             var infos: [HostInfo] = []
             for info in await workspace.hostInfos() {
@@ -435,6 +451,45 @@ public struct WorkspaceControlHandler: Sendable {
         let moved = try await workspace.movePluginRow(path: row.path, to: placement)
         let current = await workspace.snapshot.pluginRow(path: row.path) ?? row
         return RowMoveResult(row: .plugin(current), moved: moved, from: nil)
+    }
+
+    /// Connects the pane's host, waiting at most 5 seconds, so the pane can say what it is waiting for. The attempt
+    /// goes on after that, and the pane's next call shares it.
+    private func attach(_ pane: RemotePaneInfo) async throws -> HostAttachResult {
+        let connection = try await workspace.connection(for: pane.host)
+        let outcome = await withTaskGroup(of: Result<Void, any Error>?.self) { group in
+            group.addTask {
+                do {
+                    try await connection.connect()
+                    return .success(())
+                } catch {
+                    return .failure(error)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(5))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        switch outcome {
+        case nil:
+            return HostAttachResult(waiting: RemoteAttach.waitingMessage(await connection.state, host: pane.host))
+        case .failure(let error):
+            return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
+        case .success:
+            do {
+                try await workspace.prepareHost(connection)
+                return HostAttachResult(
+                    ready: try await workspace.attachCommand(
+                        host: pane.host, repoPath: pane.repoPath, session: pane.session, folder: pane.folder,
+                        pane: pane.pane, rowName: pane.rowName))
+            } catch {
+                return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
+            }
+        }
     }
 
     private func withPanes(_ info: HostInfo) async -> HostInfo {

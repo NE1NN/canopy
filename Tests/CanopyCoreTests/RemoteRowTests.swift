@@ -230,3 +230,83 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 }
+
+struct RemoteSessionTests {
+    static let tmux = HostFilesTests.tmux
+
+    /// A session on the fake host's Canopy tmux server, running bash in `folder`.
+    func startSession(_ name: String, server: String, in folder: String) throws {
+        _ = try Subprocess.run(
+            try #require(Self.tmux),
+            ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", name, "-c", folder, "/bin/bash"],
+            environment: Fixture.environment, directory: nil, timeout: .seconds(10))
+    }
+
+    func sessions(server: String) throws -> [String] {
+        let result = try Subprocess.run(
+            try #require(Self.tmux), ["-L", server, "list-sessions", "-F", "#{session_name}"],
+            environment: Fixture.environment, directory: nil, timeout: .seconds(10))
+        return String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
+    }
+
+    func killServer(_ server: String) {
+        _ = try? Subprocess.run(
+            Self.tmux ?? "/usr/bin/false", ["-L", server, "kill-server"], environment: Fixture.environment,
+            directory: nil, timeout: .seconds(10))
+    }
+
+    @Test(.enabled(if: tmux != nil, "needs tmux: brew install tmux"))
+    func aSessionClosedWhileTheHostIsDownEndsWhenItConnectsAgain() async throws {
+        let setup = try await RemoteRowTests.Setup(host: {
+            try FakeHost(in: $0, path: "/opt/homebrew/bin:/usr/bin:/bin")
+        })
+        let server = HostPaths.tmuxServer(homeID: setup.workspace.homeID)
+        defer { killServer(server) }
+        try startSession("p4", server: server, in: setup.dir.path)
+        try startSession("p5", server: server, in: setup.dir.path)
+
+        try await setup.workspace.connection(for: "box").connect()
+        await setup.workspace.killSessions(["p4"], on: "box")
+        #expect(try sessions(server: server) == ["p5"])
+        #expect(await setup.workspace.pendingSessionKills.isEmpty)
+        await setup.workspace.stop()
+
+        let down = Workspace(
+            home: setup.workspace.home, git: Fixture.git,
+            hostTooling: HostTooling(
+                sshExecutable: FakeHost.script,
+                environment: { setup.host.environment.merging(["FAKE_SSH_DOWN": "1"]) { $1 } }, clock: TestHostClock()))
+        try await down.start()
+        await down.killSessions(["p5"], on: "box")
+        #expect(await down.pendingSessionKills == ["box": ["p5"]])
+        #expect(try sessions(server: server) == ["p5"])
+        await down.stop()
+
+        let up = Workspace(
+            home: setup.workspace.home, git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { setup.host.environment }))
+        try await up.start()
+        try await up.prepareHost(try await up.connection(for: "box"))
+
+        #expect(try sessions(server: server).isEmpty)
+        #expect(await up.pendingSessionKills.isEmpty)
+        await up.stop()
+    }
+
+    @Test(.enabled(if: tmux != nil, "needs tmux: brew install tmux"))
+    func keysReachTheSessionOnceItExists() async throws {
+        let setup = try await RemoteRowTests.Setup(host: {
+            try FakeHost(in: $0, path: "/opt/homebrew/bin:/usr/bin:/bin")
+        })
+        let server = HostPaths.tmuxServer(homeID: setup.workspace.homeID)
+        defer { killServer(server) }
+        let marker = setup.dir.sub("typed")
+        try startSession("p9", server: server, in: setup.dir.path)
+
+        await setup.workspace.sendKeys("echo hi > '\(marker)'", to: "p9", on: "box")
+
+        let typed = await eventually { FileManager.default.fileExists(atPath: marker) }
+        #expect(typed)
+        await setup.workspace.stop()
+    }
+}

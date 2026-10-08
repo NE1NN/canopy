@@ -30,6 +30,8 @@ public actor HostConnection {
     public private(set) var state = HostState.idle
     /// ssh's message from the last failure to connect.
     public private(set) var lastError: String?
+    /// Counts masters that came up, so work done once per connection knows when it is a new one.
+    public private(set) var generation = 0
 
     private let launcher: any HostProcessLauncher
     private let clock: any HostClock
@@ -144,6 +146,7 @@ public actor HostConnection {
         while true {
             if try await startMaster() {
                 lastError = nil
+                generation += 1
                 lastUse = clock.now
                 lastBusy = clock.now
                 set(.connected)

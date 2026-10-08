@@ -1,9 +1,12 @@
 /// A pane as saved: only its folder. Restoring starts a fresh shell there and never re-runs old commands.
+/// A remote pane also keeps its tmux session, which restoring joins again, and its folder is on the host.
 public struct SavedPane: Codable, Hashable, Sendable {
     public var folder: String
+    public var session: String?
 
-    public init(folder: String) {
+    public init(folder: String, session: String? = nil) {
         self.folder = folder
+        self.session = session
     }
 }
 

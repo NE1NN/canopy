@@ -32,6 +32,8 @@ public enum PaneCommand: Sendable, Equatable {
     case shell
     /// A POSIX sh script, run by the user's shell. Setup and teardown use it.
     case script(String)
+    /// `canopy remote-attach`, which runs the pane's tmux session on its row's host.
+    case remoteAttach
 }
 
 /// A title a program set, and the process group in the foreground when it set it.

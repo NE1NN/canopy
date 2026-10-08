@@ -89,6 +89,9 @@ public struct AppState: Codable, Sendable, Equatable {
     public var webPanelWidth: Double?
     /// The next web page number, so `canopy web close` never closes a different page after a relaunch.
     public var nextWebPage = 1
+    /// tmux sessions on hosts that panes closed while their host could not be reached, by host, ended at its next
+    /// connection.
+    public var pendingSessionKills: [String: [String]] = [:]
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -119,5 +122,7 @@ public struct AppState: Codable, Sendable, Equatable {
         webPlacement = (try? container.decodeIfPresent(WebPlacement.self, forKey: .webPlacement)) ?? .panel
         webPanelWidth = try? container.decodeIfPresent(Double.self, forKey: .webPanelWidth)
         nextWebPage = (try? container.decodeIfPresent(Int.self, forKey: .nextWebPage)) ?? 1
+        pendingSessionKills =
+            (try? container.decodeIfPresent([String: [String]].self, forKey: .pendingSessionKills)) ?? [:]
     }
 }

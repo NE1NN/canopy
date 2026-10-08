@@ -43,6 +43,7 @@ public final class RowLifecycle {
     public init(workspace: Workspace, terminals: TerminalStore) {
         self.workspace = workspace
         self.terminals = terminals
+        terminals.remoteHooks = self
     }
 
     /// Opens the new row's first tab before returning, either Setup or the `run` command, so a caller that selects
@@ -161,5 +162,44 @@ public final class RowLifecycle {
         guard code != 0, !force else { return }
         let closed = terminals.tab(containing: teardownPane.id) == nil
         throw closed ? WorkspaceError.teardownStopped : WorkspaceError.teardownFailed(code)
+    }
+}
+
+/// A remote pane, as its attach command needs it.
+public struct RemotePaneInfo: Sendable, Equatable {
+    public var pane: String
+    public var host: String
+    public var session: String
+    /// Where the session starts when the host has none.
+    public var folder: String
+    public var repoPath: String
+    public var rowName: String
+}
+
+extension RowLifecycle: RemotePaneHooks {
+    public func run(_ text: String, in pane: Pane) async {
+        guard let remote = pane.context.remote, let session = pane.remoteSession else { return }
+        await workspace.sendKeys(text, to: session, on: remote.host)
+    }
+
+    public func closed(_ panes: [Pane]) {
+        var sessions: [String: [String]] = [:]
+        for pane in panes {
+            guard let remote = pane.context.remote, let session = pane.remoteSession else { continue }
+            sessions[remote.host, default: []].append(session)
+        }
+        for (host, names) in sessions {
+            Task { await workspace.killSessions(names, on: host) }
+        }
+    }
+
+    public func remotePaneInfo(_ id: String) -> RemotePaneInfo? {
+        guard let paneID = PaneID(id), let pane = terminals.pane(paneID), let remote = pane.context.remote,
+            let session = pane.remoteSession, let repoPath = pane.context.repoPath
+        else { return nil }
+        return RemotePaneInfo(
+            pane: id, host: remote.host, session: session,
+            folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, repoPath: repoPath,
+            rowName: pane.context.rowName)
     }
 }

@@ -36,11 +36,16 @@ public struct PaneContext: Sendable, Equatable {
     public var owner: Owner
     public var rowName: String
     public var rowPath: String
+    /// Set for a remote row, whose terminals run on its host.
+    public var remote: PaneRemote?
 
     public init(row: Row, repoName: String) {
         owner = .repo(name: repoName, path: row.repoPath)
         rowName = row.displayName
         rowPath = row.path
+        if row.rowClass == .remote, let host = row.host, let path = row.remotePath {
+            remote = PaneRemote(host: host, path: path)
+        }
     }
 
     /// A plugin row's terminals are named by its saved title, which never changes.
@@ -63,5 +68,16 @@ public struct PaneContext: Sendable, Equatable {
 
     public var repoPath: String? {
         if case .repo(_, let path) = owner { path } else { nil }
+    }
+}
+
+/// Where a remote row's terminals run: its host, and its worktree there.
+public struct PaneRemote: Sendable, Equatable {
+    public var host: String
+    public var path: String
+
+    public init(host: String, path: String) {
+        self.host = host
+        self.path = path
     }
 }

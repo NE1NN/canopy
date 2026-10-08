@@ -59,6 +59,8 @@ public actor Workspace {
     /// Names this home on hosts. Computed once, since the machine's name can change while Canopy runs.
     public nonisolated let homeID: String
     var hostConnections: [String: HostConnection] = [:]
+    /// The connection generation each host was last prepared for, by alias.
+    var preparedHosts: [String: Int] = [:]
 
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()
@@ -96,6 +98,10 @@ public actor Workspace {
         if case .recovered(_, let backup) = result {
             loadNotice =
                 "state.json could not be read. It was moved to \(backup.lastPathComponent) and Canopy started fresh."
+        }
+        // A stand-in deleted outside Canopy comes back, so the row's terminals have a folder to start in.
+        for remote in state.repos.flatMap(\.remote) {
+            try? remote.makeStandIn()
         }
         startPullRequests()
         for entry in state.repos {

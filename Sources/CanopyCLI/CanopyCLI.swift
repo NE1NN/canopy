@@ -12,7 +12,7 @@ struct CanopyCLI: AsyncParsableCommand {
             Status.self, RepoCommand.self, RowCommand.self, GroupCommand.self, TermCommand.self, WebCommand.self,
             PortsCommand.self,
             PRCommand.self, BranchCommand.self, PluginCommand.self, TicketCommand.self, LogCommand.self,
-            HooksCommand.self, HostCommand.self,
+            HooksCommand.self, HostCommand.self, RemoteAttachCommand.self,
             AgentGuide.self, AgentHookCommand.self,
         ]
     )

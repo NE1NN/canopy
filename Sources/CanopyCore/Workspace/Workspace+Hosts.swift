@@ -164,3 +164,80 @@ extension Workspace {
         hostConnections.removeAll()
     }
 }
+
+extension Workspace {
+    public var pendingSessionKills: [String: [String]] {
+        state.pendingSessionKills
+    }
+
+    /// Readies a connected host once per connection: Canopy's files at this version, and sessions closed while it was
+    /// away ended.
+    public func prepareHost(_ connection: HostConnection) async throws {
+        let alias = connection.alias
+        let generation = await connection.generation
+        guard preparedHosts[alias] != generation else { return }
+        try await installFiles(on: connection)
+        if let pending = state.pendingSessionKills[alias], !pending.isEmpty {
+            _ = try await output(of: killCommand(pending), on: connection)
+            state.pendingSessionKills[alias] = nil
+            try? save()
+        }
+        preparedHosts[alias] = generation
+    }
+
+    /// Ends tmux sessions on a host. One that is not connected keeps them for its next connection, rather than being
+    /// woken for it.
+    public func killSessions(_ sessions: [String], on alias: String) async {
+        guard !sessions.isEmpty else { return }
+        if let connection = hostConnections[alias], await connection.state == .connected,
+            (try? await output(of: killCommand(sessions), on: connection)) != nil
+        {
+            return
+        }
+        var pending = state.pendingSessionKills[alias] ?? []
+        pending += sessions.filter { !pending.contains($0) }
+        state.pendingSessionKills[alias] = pending
+        try? save()
+    }
+
+    private func killCommand(_ sessions: [String]) -> [String] {
+        ["sh", "-c", #"s=$0; for n; do tmux -L "$s" kill-session -t "=$n" 2>/dev/null; done; true"#]
+            + [HostPaths.tmuxServer(homeID: homeID)] + sessions
+    }
+
+    /// Types `text` and Return into a session, once the host has it, as a pane's `--run` does. Gives up quietly after
+    /// two minutes, as typing into a local shell that never comes up does.
+    public func sendKeys(_ text: String, to session: String, on alias: String) async {
+        guard let connection = try? await connection(for: alias) else { return }
+        let server = HostPaths.tmuxServer(homeID: homeID)
+        let deadline = ContinuousClock.now + .seconds(120)
+        while ContinuousClock.now < deadline {
+            let result = try? await connection.run(
+                ["tmux", "-L", server, "has-session", "-t", "=\(session)"], timeout: .seconds(15))
+            if result?.status == 0 { break }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        _ = try? await connection.run(
+            [
+                "sh", "-c", #"tmux -L "$0" send-keys -t "=$1:" -l "$2" && tmux -L "$0" send-keys -t "=$1:" Enter"#,
+                server, session, text,
+            ],
+            timeout: .seconds(15))
+    }
+
+    /// The ssh command line that joins a remote pane's session, or starts it in `folder`.
+    public func attachCommand(
+        host alias: String, repoPath: String, session: String, folder: String, pane: String, rowName: String
+    ) async throws -> [String] {
+        let target = try await remoteTarget(repoPath: repoPath, host: alias)
+        let row = state.repos.first { $0.path == repoPath }?.remote.first {
+            $0.host == alias && Paths.isInside(folder, $0.path)
+        }
+        let environment = RemoteAttach.environment(
+            pane: pane, rowName: rowName, repoName: target.repoName, host: alias, rowPath: row?.path ?? folder,
+            clone: target.clone)
+        let tmux = RemoteAttach.tmuxCommand(
+            server: HostPaths.tmuxServer(homeID: homeID), session: session, folder: folder, environment: environment)
+        return ssh(for: alias).attach(tmux)
+    }
+}

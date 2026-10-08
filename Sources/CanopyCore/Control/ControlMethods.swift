@@ -27,7 +27,7 @@ public enum ControlMethod {
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
     /// which records its own `agent.*` events.
-    public static let notLogged = readOnly.union([TermMethod.state])
+    public static let notLogged = readOnly.union([TermMethod.state, HostAttachMethod.attach, HostAttachMethod.next])
 
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as

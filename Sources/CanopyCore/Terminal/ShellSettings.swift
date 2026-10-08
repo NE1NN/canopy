@@ -89,6 +89,19 @@ public struct ShellSettings: Sendable, Equatable {
         )
     }
 
+    /// A remote pane's attach command. Without the bundled CLI it says so instead.
+    public func remoteAttach(environment: [String: String], directory: String) -> TerminalLaunch {
+        guard let cliDirectory else {
+            return TerminalLaunch(
+                executable: "/bin/sh",
+                arguments: ["sh", "-c", "echo 'Canopy cannot find its canopy command to reach the host.'; exit 1"],
+                environment: environment, directory: directory)
+        }
+        return TerminalLaunch(
+            executable: cliDirectory + "/canopy", arguments: ["canopy", "remote-attach"], environment: environment,
+            directory: directory)
+    }
+
     static func name(of shell: String) -> String {
         (shell as NSString).lastPathComponent
     }
