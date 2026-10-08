@@ -64,7 +64,7 @@ struct HostFilesTests {
                 timeout: .seconds(10))
         }
         func probe() throws -> [String: SessionActivity] {
-            let argv = host.ssh.exec([host.home + "/.canopy/bin/canopy-host", "probe", "--server", server])
+            let argv = host.ssh.exec(HostProbe.command(server: server))
             var environment = host.environment
             environment["FAKE_SSH_PATH"] = "/opt/homebrew/bin:/usr/bin:/bin"
             // As the app runs it: git's environment says LC_ALL=C, and ssh passes LC_* on to the host.
@@ -87,6 +87,23 @@ struct HostFilesTests {
 
         #expect(busy)
         #expect(try probe()["p1"]?.foreground == "sleep")
+    }
+
+    /// Security scanners can hold the first run of a new file for seconds, longer than a probe may take, and every
+    /// new version of the helper is a new file. Run through python3, the helper is only read.
+    @Test func theProbeReadsTheHelperInsteadOfRunningIt() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir)
+        try install(host)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: host.home + "/.canopy/bin/canopy-host")
+        let argv = host.ssh.exec(HostProbe.command(server: "canopy-test-\(UUID().uuidString.prefix(6))"))
+
+        let result = try Subprocess.run(
+            argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(try HostProbe.decode(result.stdout).isEmpty)
     }
 
     @Test func probeOutputDecodesAndAServerWithNoSessionsHasNone() throws {

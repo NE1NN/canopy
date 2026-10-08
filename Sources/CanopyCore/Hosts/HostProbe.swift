@@ -40,6 +40,6 @@ public enum HostProbe {
 
     /// The command that probes this home's tmux server on a host.
     public static func command(server: String) -> [String] {
-        ["sh", "-c", "exec ~/.canopy/bin/canopy-host probe --server \"$0\"", server]
+        ["sh", "-c", "exec python3 ~/.canopy/bin/canopy-host probe --server \"$0\"", server]
     }
 }
