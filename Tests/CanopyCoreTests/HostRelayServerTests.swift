@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CanopyCore
@@ -255,6 +256,56 @@ struct HostRelayServerTests {
         await setup.stop()
     }
 
+    /// Claude's hook hangs up 4 seconds after it starts, but once the app acknowledged its report the report is the
+    /// app's, so the run goes on. Another command whose relay hangs up stops.
+    @Test func anAcknowledgedHookRunsOnAfterItsRelayHangsUpAndAnotherCallStops() async throws {
+        let dir = try TempDir()
+        let calls = Calls()
+        let server = HostRelayServer(socketPath: dir.sub("hosts/box.sock"), host: "box", handler: calls.handle)
+        try server.start()
+        let socket = server.socketPath
+        let requests = [["agent-hook", "stop"], ["row", "list"]].map {
+            RelayRequest(version: HostFiles.version, args: $0, cwd: "/", env: [:], stdin: nil, age: nil)
+        }
+
+        let connected = try await offPool {
+            try requests.map { request in
+                let fd = try Self.connect(socket, sending: request)
+                return (fd, try SocketStream(fd: fd, deadline: .now + .seconds(60)).read())
+            }
+        }
+        let fds = connected.map(\.0)
+        #expect(connected.allSatisfy { $0.1 == HostRelayServer.acknowledgement })
+        #expect(await eventually { calls.started == ["agent-hook", "row"] })
+        for fd in fds { close(fd) }
+
+        #expect(await eventually { calls.ended["row"] == .cancelled })
+        calls.release()
+        #expect(await eventually { calls.ended["agent-hook"] == .finished })
+        server.stop()
+    }
+
+    /// A call the server cancels as it stops did not finish, so its relay hears nothing and says Canopy is not
+    /// reachable, rather than printing what a killed CLI printed.
+    @Test func stoppingTheServerAnswersNothingToTheCallsItCancels() async throws {
+        let dir = try TempDir()
+        let calls = Calls()
+        let server = HostRelayServer(socketPath: dir.sub("hosts/box.sock"), host: "box", handler: calls.handle)
+        try server.start()
+        let socket = server.socketPath
+        let request = RelayRequest(
+            version: HostFiles.version, args: ["term", "wait", "p1"], cwd: "/", env: [:], stdin: nil, age: nil)
+
+        let fd = try await offPool { try Self.connect(socket, sending: request) }
+        defer { close(fd) }
+        #expect(await eventually { calls.started == ["term"] })
+        server.stop()
+        let lines = try await offPool { try Self.lines(on: fd) }
+
+        #expect(calls.ended["term"] == .cancelled)
+        #expect(lines == [HostRelayServer.acknowledgement])
+    }
+
     @Test func twoCallsAtOnceBothAnswer() async throws {
         let setup = try await Setup()
         // Each waits for the other to have started, so calls served one at a time would each print "alone".
@@ -318,6 +369,39 @@ struct HostRelayServerTests {
         }
 
         #expect(throws: HostRelayServerError.self) { try server.start() }
+    }
+}
+
+/// A handler that runs until it is released or cancelled, and records which.
+final class Calls: Sendable {
+    enum End: Equatable { case finished, cancelled }
+
+    private struct State {
+        var started: Set<String> = []
+        var ended: [String: End] = [:]
+        var released = false
+    }
+
+    private let state = Mutex(State())
+
+    var started: Set<String> { state.withLock { $0.started } }
+    var ended: [String: End] { state.withLock { $0.ended } }
+
+    func release() {
+        state.withLock { $0.released = true }
+    }
+
+    var handle: HostRelayServer.Handler {
+        { [self] request, _ in
+            let name = request.args.first ?? ""
+            state.withLock { _ = $0.started.insert(name) }
+            while !state.withLock({ $0.released }) && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            let end: End = Task.isCancelled ? .cancelled : .finished
+            state.withLock { $0.ended[name] = end }
+            return .failure("ended")
+        }
     }
 }
 

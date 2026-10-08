@@ -281,7 +281,8 @@ It runs its own CLI with the arguments, with `CANOPY_HOME` set to its home, `CAN
 Of the request's variables only those the CLI reads from a pane cross over, `CANOPY_PANE`, `CANOPY_REPO`, `CANOPY_ROW_PATH`, `CANOPY_PLUGIN`, and `CANOPY_ITEM`, so a program on the host cannot steer the CLI with `CANOPY_APP`, `CANOPY_SSH`, or `CANOPY_SOCKET`.
 PATH, HOME, and TMPDIR are this Mac's.
 The relay sends how long ago it started, so `agent-hook` dates its report by when the hook ran on the host, not when the app ran the CLI.
-A run whose relay hangs up is stopped.
+A run whose relay hangs up is stopped, except an `agent-hook` the app acknowledged, which runs to its end, since the report is the app's from the acknowledgement on.
+A run the app stops as it quits or forgets the host answers nothing, so its relay says Canopy is not reachable.
 The relay names its working folder as the shell does, by `$PWD` when that is the same folder, so on a host whose HOME is a link the folder still matches its row's path.
 A working folder outside the host's remote rows becomes the Canopy home, so the CLI targets nothing by folder.
 The CLI's run ends when the connection closes, and has no terminal, so a command that prompts, such as `ticket connect`, reads standard input instead.

@@ -17,7 +17,8 @@ public enum HostRelayServerError: Error, Equatable, CustomStringConvertible {
 
 /// Serves one host's relayed CLI calls on the Unix socket ssh forwards the host's relay to: one request per
 /// connection, each on a thread of its own, since a call lasts as long as its CLI runs. A call whose relay hangs up is
-/// cancelled, which stops its CLI.
+/// cancelled, which stops its CLI, except a hook's report this server acknowledged: from then on the report is the
+/// app's, and Claude's hook hangs up long before a slow app is done with it.
 /// A request of the current version is acknowledged as soon as it is read, before it runs, since sshd on the host
 /// accepts a connection even while this Mac sleeps: a relay that hears nothing knows the call never reached the app.
 public final class HostRelayServer: Sendable {
@@ -113,7 +114,8 @@ public final class HostRelayServer: Sendable {
         thread.start()
     }
 
-    /// Stops listening and cancels the calls running. A call cancelled this way answers nothing.
+    /// Stops listening and cancels the calls running. A call cancelled this way did not finish, so it answers nothing,
+    /// and its relay says Canopy is not reachable rather than printing what a killed CLI printed.
     public func stop() {
         let (wake, socket, calls) = state.withLock { state in
             let taken = (state.wake, state.socket, Array(state.calls.values))
@@ -216,7 +218,7 @@ public final class HostRelayServer: Sendable {
                 // A relay that missed the acknowledgement keeps a hook's report, so the call must not run either.
                 guard (try? stream.write(Self.acknowledgement)) != nil else { return }
             }
-            guard let answered = run(request, on: connection, heartbeats: acknowledged) else { return }
+            guard let answered = run(request, on: connection, acknowledged: acknowledged) else { return }
             reply = answered
         }
         guard var line = try? JSONEncoder().encode(reply) else { return }
@@ -228,9 +230,9 @@ public final class HostRelayServer: Sendable {
         request.version == version
     }
 
-    /// Runs the call until it answers, or cancels it once the relay hangs up and returns nil. With `heartbeats`, the
-    /// relay hears from this server while the call runs.
-    private func run(_ request: RelayRequest, on connection: Int32, heartbeats: Bool) -> RelayReply? {
+    /// Runs the call until it answers, or cancels it once the relay hangs up and returns nil. An acknowledged call's
+    /// relay hears from this server while it runs, and an acknowledged hook's report runs to its end.
+    private func run(_ request: RelayRequest, on connection: Int32, acknowledged: Bool) -> RelayReply? {
         var pipe: [Int32] = [-1, -1]
         guard Darwin.pipe(&pipe) == 0 else { return .failure("Canopy is out of resources.", code: "relay_failed") }
         for fd in pipe { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
@@ -254,12 +256,14 @@ public final class HostRelayServer: Sendable {
         if !running { task.cancel() }
         let hungUp =
             !running
-            || Self.waitForAnswer(done, whileConnected: connection, heartbeat: heartbeats ? heartbeatInterval : nil)
-        if hungUp { task.cancel() }
+            || Self.waitForAnswer(done, whileConnected: connection, heartbeat: acknowledged ? heartbeatInterval : nil)
+        let isAppsReport = acknowledged && RelayInput.reading(request.args) == .hookReport
+        if hungUp && !isAppsReport { task.cancel() }
         // The task holds the pipe until it has written to it, and a cancelled one still finishes.
         Self.wait(for: done)
-        state.withLock { _ = $0.calls.removeValue(forKey: id) }
-        return hungUp ? nil : answer.reply.withLock { $0 }
+        // A call stop() took was cancelled, whether or not it hung up.
+        let stopped = state.withLock { $0.calls.removeValue(forKey: id) == nil }
+        return hungUp || stopped ? nil : answer.reply.withLock { $0 }
     }
 
     /// Waits until `done` is readable, returning true if `connection` hung up first, and writes a heartbeat to it
