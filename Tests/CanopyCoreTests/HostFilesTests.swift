@@ -29,6 +29,20 @@ struct HostFilesTests {
         #expect(try String(contentsOfFile: host.home + "/.canopy/files-version", encoding: .utf8) == HostFiles.version)
     }
 
+    /// tmux may be missing for a moment, as while the host's packages update, and the probe runs every 2 seconds.
+    @Test func withoutTmuxInstallingWorksAndTheProbeFindsNoSessions() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir, path: "/usr/bin:/bin")
+        try install(host)
+        let argv = host.ssh.exec(HostProbe.command(server: "canopy-test"))
+
+        let result = try Subprocess.run(
+            argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(try HostProbe.decode(result.stdout).isEmpty)
+    }
+
     @Test func theScriptIsValidPython() throws {
         let dir = try TempDir()
         let file = dir.sub("canopy-host")

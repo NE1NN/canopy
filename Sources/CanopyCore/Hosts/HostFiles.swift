@@ -22,8 +22,11 @@ public enum HostFiles {
             put("bin/canopy-host", sys.argv[1], 0o755)
             put("tmux.conf", sys.argv[2], 0o644)
             put("files-version", sys.argv[3], 0o644)
-            subprocess.run(["tmux", "-u", "-L", sys.argv[4], "source-file", os.path.join(home, "tmux.conf")],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                subprocess.run(["tmux", "-u", "-L", sys.argv[4], "source-file", os.path.join(home, "tmux.conf")],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass  # Without tmux there is no server to tell.
             """
         return [
             "python3", "-c", program, Data(script.utf8).base64EncodedString(),
@@ -83,11 +86,16 @@ public enum HostFiles {
         def probe(server):
             fields = "#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{pane_title}"
             # -u: under a locale that is not UTF-8, as ssh can pass on, tmux would print tabs as underscores.
-            listed = subprocess.run(
-                ["tmux", "-u", "-L", server, "list-panes", "-a", "-F", fields],
-                capture_output=True, encoding="utf-8", errors="replace",
-            )
             sessions = []
+            try:
+                listed = subprocess.run(
+                    ["tmux", "-u", "-L", server, "list-panes", "-a", "-F", fields],
+                    capture_output=True, encoding="utf-8", errors="replace",
+                )
+            except OSError:
+                # Without tmux there are no sessions, as when its server is not running.
+                print(json.dumps({"sessions": sessions}))
+                return
             # tmux titles a pane nothing has titled with the machine's name, which says nothing.
             names = {socket.gethostname(), socket.gethostname().split(".")[0]}
             if listed.returncode == 0:
