@@ -2,16 +2,31 @@ import CryptoKit
 import Foundation
 
 /// Names this Mac's Canopy home on hosts, so the release app and a dev build, or two Macs, never share a host's tmux
-/// sessions or sockets.
+/// sessions or sockets. Made once and kept in the home, since anything it was derived from, such as the Mac's host
+/// name, could change and leave running sessions where panes no longer look.
 public enum HomeID {
-    public static func of(home: CanopyHome, machine: String = HomeID.machineName) -> String {
-        hash("\(machine)\n\(home.root.path)")
+    public static func load(home: CanopyHome) -> String {
+        if let saved = read(home), isValid(saved) { return saved }
+        let made = String((0..<8).map { _ in "0123456789abcdef".randomElement()! })
+        try? FileManager.default.createDirectory(at: home.root, withIntermediateDirectories: true)
+        // A second app starting on the same home at once keeps whichever id was written first.
+        let file = open(home.homeIDFile.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        if file >= 0 {
+            _ = Data((made + "\n").utf8).withUnsafeBytes { write(file, $0.baseAddress, $0.count) }
+            close(file)
+            return made
+        }
+        if let saved = read(home), isValid(saved) { return saved }
+        try? Data((made + "\n").utf8).write(to: home.homeIDFile, options: .atomic)
+        return made
     }
 
-    public static var machineName: String {
-        var buffer = [CChar](repeating: 0, count: 256)
-        guard gethostname(&buffer, buffer.count) == 0 else { return "" }
-        return String(decoding: buffer.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+    private static func read(_ home: CanopyHome) -> String? {
+        (try? String(contentsOf: home.homeIDFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isValid(_ id: String) -> Bool {
+        id.count == 8 && id.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
     /// The first 8 hex digits of the text's SHA-256.

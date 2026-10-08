@@ -35,6 +35,8 @@ public struct CanopyHome: Sendable, Equatable {
 
     public var stateFile: URL { root.appending(path: "state.json") }
     public var configFile: URL { root.appending(path: "config.json") }
+    /// Names this home on hosts. See `HomeID`.
+    public var homeIDFile: URL { root.appending(path: "home-id") }
     public var worktreesRoot: URL { root.appending(path: "worktrees") }
     /// Repos cloned by Canopy, at repos/<owner>/<name>.
     public var reposRoot: URL { root.appending(path: "repos") }

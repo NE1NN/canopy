@@ -4,17 +4,33 @@ import Testing
 @testable import CanopyCore
 
 struct HostPathTests {
-    @Test func homeIDsDifferByHomeAndByMachineAndStayTheSame() {
-        let release = CanopyHome(path: "/Users/me/.canopy")
-        let dev = CanopyHome(path: "/Users/me/.canopy-dev")
+    /// A Mac's host name changes with its network, so the id is made once and kept in the home: a new one would leave
+    /// every running session in a tmux server the panes no longer look for.
+    @Test func homeIDsDifferByHomeAndStayTheSame() throws {
+        let dir = try TempDir()
+        let release = CanopyHome(path: dir.sub("release"))
+        let dev = CanopyHome(path: dir.sub("dev"))
 
-        let id = HomeID.of(home: release, machine: "mac-a")
+        let id = HomeID.load(home: release)
 
         #expect(id.count == 8)
         #expect(id.allSatisfy { $0.isHexDigit && !$0.isUppercase })
-        #expect(id == HomeID.of(home: release, machine: "mac-a"))
-        #expect(id != HomeID.of(home: dev, machine: "mac-a"))
-        #expect(id != HomeID.of(home: release, machine: "mac-b"))
+        #expect(HomeID.load(home: release) == id)
+        #expect(HomeID.load(home: CanopyHome(path: dir.sub("release"))) == id)
+        #expect(HomeID.load(home: dev) != id)
+        #expect(try String(contentsOf: release.homeIDFile, encoding: .utf8).trimmingCharacters(in: .newlines) == id)
+    }
+
+    @Test func aHomeIDFileThatIsNotOneIsReplaced() throws {
+        let dir = try TempDir()
+        let home = CanopyHome(path: dir.sub("home"))
+        try FileManager.default.createDirectory(at: home.root, withIntermediateDirectories: true)
+        try "not an id".write(to: home.homeIDFile, atomically: true, encoding: .utf8)
+
+        let id = HomeID.load(home: home)
+
+        #expect(id.count == 8 && id.allSatisfy(\.isHexDigit))
+        #expect(HomeID.load(home: home) == id)
     }
 
     @Test func socketsLiveInTheHomeWhenShortAndInTmpOtherwise() {

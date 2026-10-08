@@ -99,7 +99,8 @@ Canopy keeps its files under `~/.canopy` on the host:
 | `~/.canopy/<home id>/pending/` | agent reports the relay could not deliver |
 
 The scripts and `tmux.conf` carry the app's version, and are installed again whenever the app connects and finds another version.
-A Mac's Canopy home has an id, the first 8 hex digits of the SHA-256 of the Mac's host name and `CANOPY_HOME`.
+A Mac's Canopy home has an id, 8 random hex digits made the first time and kept in `CANOPY_HOME/home-id`.
+It is not derived from the Mac's host name, which macOS changes with the network: a new id would leave running sessions in a tmux server the panes no longer look for.
 The tmux server is `-L canopy-<home id>` and the forwarded sockets are named with it, so a dev build and the release app never share sessions on one host.
 
 ### The connection

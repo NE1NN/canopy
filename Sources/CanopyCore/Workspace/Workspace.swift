@@ -77,7 +77,7 @@ public actor Workspace {
         self.github = github
         self.prTiming = prTiming
         self.hostTooling = hostTooling
-        self.homeID = HomeID.of(home: home)
+        self.homeID = HomeID.load(home: home)
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),
