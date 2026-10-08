@@ -63,9 +63,13 @@ public enum RelayInput: String, Sendable, CaseIterable {
         (["agent-hook"], .hookReport), (["ticket", "connect"], .firstLine),
     ]
 
+    /// The CLI's help flags, with which a command prints its help and reads nothing.
+    static let helpFlags: Set<String> = ["-h", "--help", "--help-hidden"]
+
     /// How the command `arguments` name reads standard input, or nil for one that reads none. Options among the
     /// command's words are passed over.
     public static func reading(_ arguments: [String]) -> RelayInput? {
+        guard !arguments.prefix(while: { $0 != "--" }).contains(where: helpFlags.contains) else { return nil }
         let words = arguments.filter { !$0.hasPrefix("-") }
         return commands.first { words.starts(with: $0.words) }?.input
     }

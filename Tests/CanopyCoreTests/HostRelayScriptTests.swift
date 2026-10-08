@@ -210,6 +210,29 @@ struct HostRelayScriptTests {
         #expect(app.requests.map { $0?.input } == [Data("token\n".utf8), Data("unterminated".utf8)])
     }
 
+    /// A command's help reads none of its input, so `canopy ticket connect --help` neither waits for a token nor takes
+    /// a line meant for what runs after it.
+    @Test func aCommandsHelpLeavesItsInputAlone() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket,
+            answer: .acknowledging(RelayReply(stdout: Data("help\n".utf8), stderr: Data(), status: 0)), connections: 2)
+        let command = #"""
+            printf 'token\n' | { python3 "$0" relay ticket connect --help; cat; }
+            printf 'token\n' | { python3 "$0" relay ticket connect https://t.example -h; cat; }
+            """#
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", command, setup.script],
+                environment: setup.environment(["CANOPY_SOCKET": setup.socket]), directory: nil, timeout: .seconds(60))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "help\ntoken\nhelp\ntoken\n")
+        #expect(app.requests.count == 2 && app.requests.allSatisfy { $0 != nil && $0?.stdin == nil })
+    }
+
     /// The host's script reads its list of commands that take input from `RelayInput`, and matches them as the app
     /// does.
     @Test func theRelayForwardsInputToTheCommandsTheAppNames() async throws {
@@ -218,8 +241,11 @@ struct HostRelayScriptTests {
         try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
         let commands: [[String]] = [
             ["agent-hook"], ["agent-hook", "stop"], ["ticket", "connect", "https://t.example"],
-            ["ticket", "--json", "connect", "https://t.example"], ["--verbose", "agent-hook"], ["ticket"],
-            ["ticket", "list"], ["row", "list"], ["term", "send", "p1", "agent-hook"], ["row", "new", "ticket"], [],
+            ["ticket", "--json", "connect", "https://t.example"], ["--verbose", "agent-hook"],
+            ["ticket", "connect", "--", "--help"], ["ticket"], ["ticket", "list"], ["row", "list"],
+            ["term", "send", "p1", "agent-hook"], ["row", "new", "ticket"], [], ["ticket", "connect", "--help"],
+            ["ticket", "connect", "https://t.example", "-h"], ["ticket", "--help-hidden", "connect"],
+            ["agent-hook", "--help"],
         ]
         let program = """
             import json, sys
@@ -239,7 +265,7 @@ struct HostRelayScriptTests {
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
         let answers = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(answers == commands.map { RelayInput.reading($0)?.rawValue ?? "none" })
-        #expect(answers.prefix(5).allSatisfy { $0 != "none" } && answers.dropFirst(5).allSatisfy { $0 == "none" })
+        #expect(answers.prefix(6).allSatisfy { $0 != "none" } && answers.dropFirst(6).allSatisfy { $0 == "none" })
     }
 
     @Test func outsideACanopyPaneTheRelaySaysSo() async throws {

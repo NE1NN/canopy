@@ -185,8 +185,15 @@ public enum HostFiles {
         HOOK_REPLY_WAIT = 4
 
 
+        # The CLI's help flags, as `RelayInput.helpFlags`: a command asked for its help prints it and reads nothing.
+        HELP_FLAGS = ("-h", "--help", "--help-hidden")
+
+
         def command_input(arguments):
             """How the command in `arguments` reads standard input on the Mac, or None for one that reads none."""
+            options = arguments[:arguments.index("--")] if "--" in arguments else arguments
+            if any(argument in HELP_FLAGS for argument in options):
+                return None
             words = [argument for argument in arguments if not argument.startswith("-")]
             for command, kind in INPUT_COMMANDS:
                 if words[:len(command)] == command:

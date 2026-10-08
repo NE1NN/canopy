@@ -13,4 +13,14 @@ struct RelayInputTests {
         #expect(RelayInput.reading(["term", "send", "p1", "agent-hook"]) == nil)
         #expect(RelayInput.reading([]) == nil)
     }
+
+    /// Asking for a command's help prints it and reads nothing, however the command reads input otherwise.
+    @Test func aCommandsHelpReadsNoInput() {
+        #expect(RelayInput.reading(["ticket", "connect", "--help"]) == nil)
+        #expect(RelayInput.reading(["ticket", "connect", "https://t.example", "-h"]) == nil)
+        #expect(RelayInput.reading(["ticket", "--help-hidden", "connect"]) == nil)
+        #expect(RelayInput.reading(["agent-hook", "--help"]) == nil)
+        // After `--` it is an argument like any other.
+        #expect(RelayInput.reading(["ticket", "connect", "--", "--help"]) == .firstLine)
+    }
 }
