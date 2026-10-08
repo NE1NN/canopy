@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Plays iproute2's `ss -ltnpH` for tests: prints the lines in the file $FAKE_SS_LINES names, leaving out processes
-that have exited, as a socket goes with its last process. Without that file it fails, as `ss` can on a host."""
+that have exited, as a socket goes with its last process, and fails when that file is missing, as `ss` can on a host.
+Without $FAKE_SS_LINES it prints this Mac's listening sockets of this user, read with `lsof`, as `ss` prints a host's
+without root."""
 import os
 import re
 import subprocess
@@ -25,12 +27,52 @@ def live(line):
     return line[:line.index("users:((")] + "users:(" + ",".join(kept) + ")"
 
 
+def from_lsof():
+    """This user's listening TCP sockets, one line for each address and port with every process holding it."""
+    # The host's PATH, as a test sets it, can leave out /usr/sbin.
+    listed = subprocess.run(
+        ["/usr/sbin/lsof", "-w", "-nP", "-a", "-u", str(os.getuid()), "-iTCP", "-sTCP:LISTEN", "-F", "pcftn"],
+        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace")
+    # lsof exits 1 when nothing listens, which ss reports as no lines.
+    if listed.returncode not in (0, 1):
+        print(listed.stderr, end="", file=sys.stderr)
+        return None
+    sockets = {}
+    pid = name = descriptor = family = None
+    for line in listed.stdout.splitlines():
+        tag, value = line[:1], line[1:]
+        if tag == "p":
+            pid = value
+        elif tag == "c":
+            name = value
+        elif tag == "f":
+            descriptor = value
+        elif tag == "t":
+            family = value
+        elif tag == "n" and pid is not None and ":" in value:
+            host, _, port = value.rpartition(":")
+            if host == "*":
+                host = "0.0.0.0" if family == "IPv4" else "[::]"
+            holders = sockets.setdefault((host, port), [])
+            holders.append('("%s",pid=%s,fd=%s)' % (name, pid, descriptor))
+    peer = {True: "[::]:*", False: "0.0.0.0:*"}
+    return ["LISTEN 0 128 %s:%s %s users:(%s)" % (host, port, peer[host.startswith("[")], ",".join(holders))
+            for (host, port), holders in sockets.items()]
+
+
 def main(arguments):
     if arguments != ["-ltnpH"]:
         print("fake-ss: only -ltnpH", file=sys.stderr)
         return 1
+    if "FAKE_SS_LINES" not in os.environ:
+        lines = from_lsof()
+        if lines is None:
+            return 1
+        for line in lines:
+            print(line)
+        return 0
     try:
-        with open(os.environ.get("FAKE_SS_LINES", ""), encoding="utf-8") as file:
+        with open(os.environ["FAKE_SS_LINES"], encoding="utf-8") as file:
             lines = file.read().splitlines()
     except OSError:
         print("Cannot open netlink socket: Protocol not supported", file=sys.stderr)

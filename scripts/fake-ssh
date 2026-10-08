@@ -4,6 +4,8 @@
 # -O check and -O exit act on that pid. Anything else runs the remote command with bash in $FAKE_SSH_HOME.
 # -O forward -R remote:local links the remote socket path to the local one, which connect() follows like a forward.
 # As sshd does, it refuses a path that exists, and the forward ends with the master, leaving a file at its path.
+# -O forward -L local:target:port starts scripts/fake-ssh-forward.py, which listens on both loopbacks as ssh does and
+# ends with the master; -O cancel -L stops it.
 # FAKE_SSH_DOWN=1, or a file .fake-ssh-down in the host's home, makes every call fail as an unreachable host does,
 # with ssh's exit code 255. Calls from a Canopy terminal do not get the app's environment, so the master writes the
 # host's settings beside its control path, and later calls through that path read them.
@@ -14,6 +16,7 @@ operation=""
 master=0
 print_config=0
 forwards=()
+locals=()
 while (($#)); do
     case "$1" in
         -M) master=1 ;;
@@ -22,7 +25,8 @@ while (($#)); do
         -S) control="$2"; shift ;;
         -O) operation="$2"; shift ;;
         -R) forwards+=("$2"); shift ;;
-        -o | -L | -F | -i | -p | -l) shift ;;
+        -L) locals+=("$2"); shift ;;
+        -o | -F | -i | -p | -l) shift ;;
         --) shift; break ;;
         -*) echo "fake-ssh: unknown option $1" >&2; exit 255 ;;
         *) break ;;
@@ -48,14 +52,85 @@ master_pid() {
     echo "$pid"
 }
 
+forward_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fake-ssh-forward.py"
+
+# The pid of the process playing the local forward recorded in $1, while that pid still runs it, as its start time and
+# command line show: a pid it outlived can belong to any process by then.
+forward_pid() {
+    local pid started spec
+    [[ -f "$1" ]] || return 1
+    IFS=$'\t' read -r pid started spec < "$1" || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$(ps -o lstart= -p "$pid" 2>/dev/null)" == "$started" ]] || return 1
+    [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *"fake-ssh-forward.py $control "* ]] || return 1
+    echo "$pid"
+}
+
+forwarded_spec() {
+    cut -f3 "$1" 2>/dev/null
+}
+
+# Stops the local forward recorded in $1 and waits for its port to be let go, as ssh's cancel closes it at once.
+stop_forward() {
+    local pid tries=0
+    if pid=$(forward_pid "$1"); then
+        kill "$pid" 2>/dev/null
+        while kill -0 "$pid" 2>/dev/null && ((tries++ < 200)); do sleep 0.05; done
+    fi
+    rm -f "$1"
+}
+
+forwarding_failed() {
+    echo "mux_client_forward: forwarding request failed: Port forwarding failed" >&2
+    exit 255
+}
+
 # Ends the master's forwards. sshd leaves a forwarded socket's file behind, so a plain file takes each link's place.
 drop_forwards() {
-    [[ -n "$control" && -f "$control.links" ]] || return 0
-    local remote
-    while IFS= read -r remote; do
-        [[ -L "$remote" ]] && rm -f "$remote" && : > "$remote"
-    done < "$control.links"
-    rm -f "$control.links"
+    [[ -n "$control" ]] || return 0
+    local remote record
+    if [[ -f "$control.links" ]]; then
+        while IFS= read -r remote; do
+            [[ -L "$remote" ]] && rm -f "$remote" && : > "$remote"
+        done < "$control.links"
+        rm -f "$control.links"
+    fi
+    if [[ -d "$control.L" ]]; then
+        for record in "$control.L"/*; do
+            [[ -f "$record" ]] && stop_forward "$record"
+        done
+        rm -rf "$control.L"
+    fi
+}
+
+# Starts the forward `local:target:port` for the master $1, unless it runs already.
+forward_local() {
+    local spec="$2" local_port="${2%%:*}" rest="${2#*:}"
+    local target="${rest%:*}" target_port="${rest##*:}"
+    [[ "$local_port" =~ ^[0-9]+$ && "$target_port" =~ ^[0-9]+$ && -n "$target" ]] || {
+        echo "Bad local forwarding specification '$spec'" >&2
+        exit 255
+    }
+    mkdir -p "$control.L"
+    local record="$control.L/$local_port" ready="$control.L/.ready-$local_port"
+    if forward_pid "$record" > /dev/null; then
+        # ssh takes the same forward again as done, and another on its port fails as binding it would.
+        [[ "$(forwarded_spec "$record")" == "$spec" ]] && return 0
+        forwarding_failed
+    fi
+    rm -f "$record" "$ready"
+    # Run with python3 rather than exec'd, since this Mac's security scanner can hold a new file's first run.
+    (cd / && exec python3 "$forward_script" "$control" "$1" "$local_port" "$target" "$target_port" "$ready" \
+        < /dev/null > /dev/null 2>&1) &
+    local proxy=$!
+    printf '%s\t%s\t%s\n' "$proxy" "$(ps -o lstart= -p "$proxy")" "$spec" > "$record.tmp"
+    mv -f "$record.tmp" "$record"
+    while [[ ! -e "$ready" ]] && kill -0 "$proxy" 2>/dev/null; do sleep 0.05; done
+    if [[ ! -e "$ready" ]]; then
+        rm -f "$record"
+        forwarding_failed
+    fi
+    rm -f "$ready"
 }
 
 if [[ -n "$operation" ]]; then
@@ -88,6 +163,25 @@ if [[ -n "$operation" ]]; then
                     exit 255
                 fi
                 echo "$remote" >> "$control.links"
+            done
+            for spec in "${locals[@]+"${locals[@]}"}"; do
+                forward_local "$pid" "$spec"
+            done
+            exit 0
+            ;;
+        cancel)
+            if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+                echo "Control socket connect($control): No such file or directory" >&2
+                exit 255
+            fi
+            # ssh says a forward it does not have is not forwarded, and still exits 0.
+            for spec in "${locals[@]+"${locals[@]}"}"; do
+                record="$control.L/${spec%%:*}"
+                if forward_pid "$record" > /dev/null && [[ "$(forwarded_spec "$record")" == "$spec" ]]; then
+                    stop_forward "$record"
+                else
+                    echo "mux_client_forward: forwarding request failed: port not forwarded" >&2
+                fi
             done
             exit 0
             ;;

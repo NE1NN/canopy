@@ -40,8 +40,8 @@ A What was built section at the end says where the build differs.
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per round, and the session list it needs for attribution comes in the same answer. |
-| How often | Every 5 seconds per host, by time since the last ports probe, inside the 2-second probe loop | The spec's 5 seconds, without a second loop. |
+| Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per ports round, and the session list it needs for attribution comes in the same answer. |
+| How often | Every 5 seconds per host, by time since the last ports probe, started from the 2-second probe loop as a task of its own, one per host at a time | The spec's 5 seconds, without a second loop, and the session probe never waits for `ss`, `lsof`, or forwards. |
 | Forward target on the host | `127.0.0.1` for `0.0.0.0` or `127.0.0.1`, `[::1]` for `::` or `::1`, any other IPv4 address as it is, and any other IPv6 address in brackets | A Vite server on `::1` alone refuses `127.0.0.1`, and the probe keeps `::` for an IPv6-only wildcard, as `ss` prints sshd's `[::]`. |
 | Mac port | The same port when nothing listens there on `127.0.0.1` or `::1`, else the next free one up to 65535, skipping ports other forwards hold | A local server on `::1` would otherwise catch `localhost:5173`. |
 | A Mac port that frees later | The forward keeps its port | Moving a forward under an open browser tab breaks it. |
@@ -135,9 +135,13 @@ Modified:
   Ports no longer wanted are cancelled with `-O cancel`.
   A new master generation starts from none, and stopping the master forgets them all.
 - The Mac ports every host's forwards hold are known to the workspace, so one host never picks a port another host's forward holds.
-- `HostConnection.forwardPorts(_:taken:) async -> [UInt16: PortForward]` and `HostConnection.masterPID` (nil while not connected).
+- `HostConnection.forwardPorts(_:taken:) async -> [UInt16: PortForward]`, one round at a time, `HostConnection.forwardedPorts`, and `HostConnection.masterPID` (nil while not connected), from `-O check`'s "Master running (pid=N)".
+- `Workspace.forwardPorts(_:on:)` runs one host's round at a time, with `taken` from every other host's `forwardedPorts`.
+- `RowPort.remote: RemotePort?` (Task 4's type) arrives here, so `remotePorts` carries each port's host, Mac port, and error.
 - `HostMonitor` asks for ports when 5 seconds have passed for that host, attributes them with the host's remote rows and the panes' sessions, applies the forwards, and keeps `remotePorts: [String /* host */: [PortGroup]]`, which drops a host once it is no longer connected.
-- `fake-ssh -O forward -L local:target:port` starts a detached Python TCP proxy from `127.0.0.1:local` and `[::1]:local` to `target:port`, records its pid with its own start time beside the control path, and fails with exit 255 and ssh's "Port forwarding failed" text only when it can bind neither, as real ssh does; `-O cancel -L` and the master's exit stop the proxies they recorded, only after checking each pid still runs that proxy.
+- `fake-ssh -O forward -L local:target:port` starts a detached Python TCP proxy from `127.0.0.1:local` and `[::1]:local` to `target:port`, records its pid with its own start time beside the control path, and fails with exit 255 and ssh's "Port forwarding failed" text only when it can bind neither, as real ssh does; `-O cancel -L` and the master's exit stop the proxies they recorded, only after checking each pid still runs that proxy; a proxy also exits once its master has, as a master the app kills runs no clean-up.
+  The proxy (`scripts/fake-ssh-forward.py`) runs in `/`, so no local row claims its sockets.
+- `FakeHost(listsPorts: true)` puts `scripts/fake-ss` on the host's PATH as `ss`; without `FAKE_SS_LINES` it prints this Mac's listening sockets of this user from `lsof`.
 
 **Tests:** on the fake host, a Python HTTP server started in a remote row's tmux session is forwarded, and a GET through the Mac port answers; a busy Mac port (a test listener) moves the forward to the next; the server stopping cancels the forward and frees the Mac port; dropping the master clears the forwards, and a reconnect forwards again; a server in no remote row is not forwarded; with a stand-in runner, two hosts wanting the same Mac port get two ports (the chooser's `taken` spans every host's forwards, kept by the workspace), and a failed forward moves to the next port, keeping ssh's message once it gives up.
 

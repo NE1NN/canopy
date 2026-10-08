@@ -204,6 +204,7 @@ extension Workspace {
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
+        portForwarders[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
@@ -232,6 +233,7 @@ extension Workspace {
             await connection.stop()
         }
         hostConnections.removeAll()
+        portForwarders.removeAll()
         for server in relayServers.values {
             server.stop()
         }
@@ -401,6 +403,29 @@ extension Workspace {
             connected.append(connection)
         }
         return connected
+    }
+
+    /// The host's remote rows, in the order the sidebar has their repos.
+    public func remoteRows(on alias: String) -> [RemoteRowEntry] {
+        state.repos.flatMap(\.remote).filter { $0.host == alias }
+    }
+
+    /// Forwards a host's listening ports to Mac ports, one host at a time, so two hosts never pick the same Mac port.
+    public func forwardPorts(_ wanted: [RemoteListeningPort], on connection: HostConnection) async
+        -> [UInt16: PortForward]
+    {
+        portForwarders[connection.alias] = connection
+        let previous = forwardingPorts
+        let round = Task {
+            await previous?.value
+            var taken = Set<UInt16>()
+            for (alias, other) in portForwarders where alias != connection.alias {
+                taken.formUnion(await other.forwardedPorts)
+            }
+            return await connection.forwardPorts(wanted, taken: taken)
+        }
+        forwardingPorts = Task { _ = await round.value }
+        return await round.value
     }
 
     /// Lists the host's worktrees again for every repo with rows there.

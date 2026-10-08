@@ -69,6 +69,9 @@ final class FakeHostLauncher: HostProcessLauncher {
         /// Wakes wait here until `releaseWakes()`, as a host that takes its time to start.
         var holdWakes = false
         var heldWakes: [CheckedContinuation<Void, Never>] = []
+        /// Mac ports `-O forward -L` fails on, as when something holds both loopbacks there, or every one.
+        var refusedPorts: Set<UInt16> = []
+        var refuseEveryPort = false
         /// `-O check` waits here until it is released.
         var holdChecks = false
         var heldChecks: [CheckedContinuation<Void, Never>] = []
@@ -93,6 +96,24 @@ final class FakeHostLauncher: HostProcessLauncher {
         set { state.withLock { $0.holdChecks = newValue } }
     }
     func heldCheckCount() -> Int { state.withLock { $0.heldChecks.count } }
+
+    static let refusal = "mux_client_forward: forwarding request failed: Port forwarding failed"
+
+    func refuse(_ ports: Set<UInt16>) {
+        state.withLock { $0.refusedPorts = ports }
+    }
+
+    func refuseEveryPort(_ refuse: Bool) {
+        state.withLock { $0.refuseEveryPort = refuse }
+    }
+
+    /// The `-L` words of each `-O <operation>` run, in order.
+    func localForwards(_ operation: String) -> [String] {
+        commands.compactMap { argv in
+            guard argv.containsSequence(["-O", operation]), let at = argv.firstIndex(of: "-L") else { return nil }
+            return argv[at + 1]
+        }
+    }
 
     func releaseFirstCheck() {
         let first = state.withLock { state in state.heldChecks.isEmpty ? nil : state.heldChecks.removeFirst() }
@@ -143,6 +164,13 @@ final class FakeHostLauncher: HostProcessLauncher {
                 if !held { continuation.resume() }
             }
             return SubprocessResult(status: up ? 0 : 255, stdout: Data(), stderr: Data(), timedOut: false)
+        }
+        if argv.containsSequence(["-O", "forward"]), let at = argv.firstIndex(of: "-L"),
+            let local = argv[at + 1].split(separator: ":").first.flatMap({ UInt16($0) }),
+            state.withLock({ $0.refuseEveryPort || $0.refusedPorts.contains(local) })
+        {
+            return SubprocessResult(
+                status: 255, stdout: Data(), stderr: Data((Self.refusal + "\n").utf8), timedOut: false)
         }
         return SubprocessResult(status: execStatus, stdout: Data(), stderr: Data(), timedOut: false)
     }

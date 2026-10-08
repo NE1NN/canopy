@@ -852,3 +852,195 @@ struct RemoteReplayTests {
         await setup.stop()
     }
 }
+
+/// A remote row's servers on the fake host, which lists this Mac's listening sockets as its own, forwarded to Mac
+/// ports by the monitor. The fake host's server holds its own port on this Mac, so its forward takes the next one.
+/// One at a time, since each lists this Mac's sockets with `lsof` over and over.
+@MainActor
+@Suite(.serialized)
+struct RemotePortForwardingTests {
+    @MainActor
+    final class Setup {
+        let remote: RemoteRowTests.Setup
+        let server: String
+        let terminals: TerminalStore
+        let pane: Pane
+        let row: Row
+        let connection: HostConnection
+        let monitor: HostMonitor
+
+        init() async throws {
+            remote = try await RemoteRowTests.Setup(host: {
+                try FakeHost(in: $0, path: "/opt/homebrew/bin:/usr/bin:/bin", listsPorts: true)
+            })
+            server = HostPaths.tmuxServer(homeID: remote.workspace.homeID)
+            let created = try await remote.workspace.createRemoteRow(
+                repoPath: remote.repo, host: "box", branch: "feat/ports")
+            row = created.row
+            connection = try await remote.workspace.connection(for: "box")
+            try await remote.workspace.prepareHost(connection)
+            terminals = Fixture.terminals(remote.dir)
+            pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
+            try RemoteSessionTests().startSession(
+                try #require(pane.remoteSession), server: server, in: try #require(created.row.remotePath))
+            monitor = HostMonitor(workspace: remote.workspace, terminals: terminals, portsEvery: .zero)
+        }
+
+        /// Ends the host's sessions and the servers in them, even when a test throws.
+        func endSessions() {
+            RemoteSessionTests().killServer(server)
+        }
+
+        func stop() async {
+            terminals.closeAll()
+            await remote.workspace.stop()
+        }
+
+        func keys(_ keys: [String]) throws {
+            _ = try Subprocess.run(
+                try #require(RemoteSessionTests.tmux),
+                ["-L", server, "send-keys", "-t", try #require(pane.remoteSession)] + keys,
+                environment: Fixture.environment, directory: nil, timeout: .seconds(10))
+        }
+
+        /// A Python HTTP server in the row's session.
+        func serve(_ port: UInt16) throws {
+            try keys(["python3 -m http.server \(port) --bind 127.0.0.1", "Enter"])
+        }
+
+        /// The row's port once the monitor has forwarded it.
+        func forwarded(_ port: UInt16) async -> RowPort? {
+            var found: RowPort?
+            _ = await eventually(timeout: .seconds(60)) {
+                await monitor.probe()
+                found = monitor.remotePorts["box"]?.first { $0.rowPath == row.path }?.ports.first {
+                    $0.port == port && $0.remote?.local != nil
+                }
+                return found != nil
+            }
+            return found
+        }
+
+        /// Probes until the monitor shows none of the row's ports.
+        func noPorts() async -> Bool {
+            await eventually(timeout: .seconds(60)) {
+                await monitor.probe()
+                return monitor.remotePorts["box"]?.isEmpty ?? true
+            }
+        }
+    }
+
+    /// The status of a GET to this Mac's port.
+    static func get(_ port: UInt16) async throws -> String {
+        try await offPool {
+            let result = try Subprocess.run(
+                "/usr/bin/curl",
+                [
+                    "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10",
+                    "http://localhost:\(port)/",
+                ],
+                environment: Fixture.environment, directory: nil, timeout: .seconds(20))
+            return String(decoding: result.stdout, as: UTF8.self)
+        }
+    }
+
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aServerInARemoteRowsSessionIsForwardedAndAnswersOnTheMac() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+
+        try setup.serve(port)
+
+        let found = await setup.forwarded(port)
+        #expect(found?.remote?.host == "box")
+        #expect(found?.remote?.local == port + 1)
+        #expect(found?.remote?.error == nil)
+        #expect(found?.processes.count == 1)
+        #expect(try await Self.get(port + 1) == "200")
+        #expect(setup.monitor.remotePorts["box"]?.map(\.rowPath) == [setup.row.path])
+        await setup.stop()
+    }
+
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aBusyMacPortMovesTheForwardToTheNext() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 3)
+        let busy = try await FakeSSHForwardTests.listener("::1", port + 1)
+        defer { busy.terminate() }
+
+        try setup.serve(port)
+
+        let found = await setup.forwarded(port)
+        #expect(found?.remote?.local == port + 2)
+        #expect(try await Self.get(port + 2) == "200")
+        await setup.stop()
+    }
+
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func theServerStoppingCancelsTheForwardAndFreesTheMacPort() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        try setup.serve(port)
+        let local = try #require(await setup.forwarded(port)?.remote?.local)
+
+        try setup.keys(["C-c"])
+
+        #expect(await setup.noPorts())
+        #expect(await setup.connection.forwardedPorts.isEmpty)
+        #expect(await eventually { LocalPortChooser.isFree(local) })
+        await setup.stop()
+    }
+
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func droppingTheMasterClearsTheForwardsAndAReconnectForwardsAgain() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        try setup.serve(port)
+        let local = try #require(await setup.forwarded(port)?.remote?.local)
+        let exit = setup.connection.ssh.control("exit")
+        let environment = setup.remote.host.environment
+
+        _ = try await offPool {
+            try Subprocess.run(
+                exit[0], Array(exit.dropFirst()), environment: environment, directory: nil, timeout: .seconds(10))
+        }
+
+        #expect(await eventually { await setup.connection.state != .connected })
+        #expect(await eventually { LocalPortChooser.isFree(local) })
+        await setup.monitor.probe()
+        #expect(setup.monitor.remotePorts["box"] == nil)
+        #expect(await setup.connection.forwardedPorts.isEmpty)
+        try await setup.connection.connect()
+        let again = try #require(await setup.forwarded(port)?.remote?.local)
+        #expect(try await Self.get(again) == "200")
+        await setup.stop()
+    }
+
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aServerInNoRemoteRowIsNotForwarded() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let ports = FakeSSHForwardTests.freePort(count: 4)
+        let outside = Process()
+        outside.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        outside.arguments = ["-m", "http.server", "\(ports + 2)", "--bind", "127.0.0.1"]
+        outside.currentDirectoryURL = URL(fileURLWithPath: setup.remote.dir.path)
+        outside.standardOutput = FileHandle.nullDevice
+        outside.standardError = FileHandle.nullDevice
+        try outside.run()
+        defer { outside.terminate() }
+        #expect(await eventually { !LocalPortChooser.isFree(ports + 2) })
+
+        try setup.serve(ports)
+
+        #expect(await setup.forwarded(ports) != nil)
+        let listed = setup.monitor.remotePorts["box"]?.flatMap(\.ports).map(\.port)
+        #expect(listed == [ports])
+        #expect(await setup.connection.forwardedPorts.count == 1)
+        await setup.stop()
+    }
+}
