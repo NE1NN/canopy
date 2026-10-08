@@ -141,8 +141,10 @@ pane=$("$cli" term list --json | json '[t["pane"] for t in d if t["row"] == "e2e
 wait_for 90 screen_has before-quit-4 || fail "the relaunched pane did not rejoin its session"
 
 step "a dropped connection reconnects to the same session"
-control=$(ls "$CANOPY_HOME"/ssh/* 2>/dev/null | grep -v '\.env$' | head -1)
-[[ -n "$control" ]] || control=$(ls /tmp/canopy-"$(id -u)"/* 2>/dev/null | grep -v '\.env$' | head -1)
+# The master's control socket is named after this home's id, in the home or, when that is too long, in /tmp.
+control=$({ ls "$CANOPY_HOME"/ssh/"${server#canopy-}"-* /tmp/canopy-"$(id -u)"/"${server#canopy-}"-* 2>/dev/null || true; } |
+    grep -v '\.env$' | head -1)
+[[ -n "$control" ]] || fail "no control socket for this home"
 before=$(connections)
 "${CANOPY_SSH:-/usr/bin/ssh}" -S "$control" -O exit "$alias" >/dev/null 2>&1 || true
 wait_for 90 connected_again || fail "the host did not reconnect"
