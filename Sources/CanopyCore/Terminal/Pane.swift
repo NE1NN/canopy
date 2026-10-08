@@ -39,6 +39,8 @@ public final class Pane: Identifiable {
     @ObservationIgnored public var onAgentChange: ((Pane, AgentChange) -> Void)?
     /// Called when the pane closes for good, before its agent state clears.
     @ObservationIgnored public var onClose: ((Pane) -> Void)?
+    /// Called with a link the author ⌘-clicked in the terminal.
+    @ObservationIgnored public var onOpenLink: ((Pane, String) -> Void)?
     /// When a key was last typed or text sent. Kept out of observation, so typing redraws no dot.
     @ObservationIgnored public private(set) var lastInput = Date.distantPast
 
@@ -63,6 +65,10 @@ public final class Pane: Identifiable {
         emulator.onInput = { [weak self] in self?.input($0) }
         emulator.onResize = { [weak self] in self?.process?.resize($0) }
         emulator.onTitle = { [weak self] in self?.setProgramTitle($0) }
+        emulator.onOpenLink = { [weak self] link in
+            guard let self else { return }
+            self.onOpenLink?(self, link)
+        }
         start(command)
     }
 

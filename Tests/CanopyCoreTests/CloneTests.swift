@@ -312,9 +312,13 @@ struct CloneTests {
     @Test func cancellingStopsTheCloneAndDeletesWhatItWrote() async throws {
         let dir = try TempDir()
         try await Fixture.remote(in: dir, "acme/app")
+        // Renamed into place, so the test never reads it before the pid is in it.
         let sleeper = dir.sub("sleeper.pid")
         let gh = try Fixture.cloningGH(
-            in: dir, before: "mkdir -p \"$4\"; touch \"$4/half\"; sleep 30 & echo $! > '\(sleeper)'; wait")
+            in: dir,
+            before:
+                "mkdir -p \"$4\"; touch \"$4/half\"; sleep 30 & echo $! > '\(sleeper).tmp'; mv '\(sleeper).tmp' '\(sleeper)'; wait"
+        )
         let workspace = try await makeWorkspace(dir, github: gh)
 
         let clone = Task { try await workspace.cloneRepo("acme/app") }
@@ -331,9 +335,13 @@ struct CloneTests {
     @Test func stoppingClonesDeletesWhatTheyWroteAtOnce() async throws {
         let dir = try TempDir()
         try await Fixture.remote(in: dir, "acme/app")
+        // Renamed into place, so the test never reads it before the pid is in it.
         let sleeper = dir.sub("sleeper.pid")
         let gh = try Fixture.cloningGH(
-            in: dir, before: "mkdir -p \"$4\"; touch \"$4/half\"; sleep 30 & echo $! > '\(sleeper)'; wait")
+            in: dir,
+            before:
+                "mkdir -p \"$4\"; touch \"$4/half\"; sleep 30 & echo $! > '\(sleeper).tmp'; mv '\(sleeper).tmp' '\(sleeper)'; wait"
+        )
         let workspace = try await makeWorkspace(dir, github: gh)
 
         let clone = Task { try await workspace.cloneRepo("acme/app") }

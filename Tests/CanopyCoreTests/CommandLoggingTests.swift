@@ -116,7 +116,7 @@ struct ZshCommandLoggingTests {
         try FileManager.default.createDirectory(atPath: dir.sub("sub"), withIntermediateDirectories: true)
         let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": "alias hello='echo hi-from-alias'"])
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         #expect(await run(pane, "hello", until: "hi-from-alias"))
         await pane.run("(exit 3)")
@@ -140,7 +140,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""))
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let loaded = " .zshenv .zprofile .zshrc .zlogin"
         let home = dir.sub("user-home")
@@ -153,7 +153,7 @@ struct ZshCommandLoggingTests {
         files[".zshenv", default: ""] += "\nexport ZDOTDIR=$HOME/.config/zsh"
         let terminals = try Fixture.zshTerminals(dir, files: files)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let loaded = " .zshenv .config/zsh/.zprofile .config/zsh/.zshrc .config/zsh/.zlogin"
         let config = dir.sub("user-home/.config/zsh")
@@ -172,7 +172,7 @@ struct ZshCommandLoggingTests {
             dir, files: startupFiles(in: "").merging(startupFiles(in: "z dot")) { $1 }, logsCommands: logsCommands,
             zdotdir: zdot)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
         #expect(
@@ -188,7 +188,7 @@ struct ZshCommandLoggingTests {
         let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""))
         defer { terminals.closeAll() }
         chmod(dir.sub("user-home/.zshenv"), 0)
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let home = dir.sub("user-home")
         #expect(
@@ -202,7 +202,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, files: startupFiles(in: ""), zdotdir: "")
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         #expect(
             await run(pane, Self.check, until: "check:::scalar-export::none:none:\(dir.sub("user-home"))/.zsh_history"))
@@ -216,7 +216,7 @@ struct ZshCommandLoggingTests {
         defer { terminals.closeAll() }
         // To a file, not the screen, so the check waits for the script to end rather than for its output to arrive.
         let script = #"print -r -- "$LOADED:${ZDOTDIR-unset}" > "$HOME/check""#
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(script)).pane
 
         #expect(await pane.waitForExit() == 0)
         let loaded = " z dot/.zshenv z dot/.zprofile z dot/.zshrc z dot/.zlogin"
@@ -233,7 +233,7 @@ struct ZshCommandLoggingTests {
             """
         let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": zshrc])
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         await pane.run("echo one")
         #expect(await barrier(pane, terminals))
@@ -248,7 +248,7 @@ struct ZshCommandLoggingTests {
             let dir = try TempDir()
             let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": "user_hook() { :; }\n" + reset])
             defer { terminals.closeAll() }
-            let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+            let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
             await pane.run("echo one")
             #expect(await barrier(pane, terminals), "\(reset)")
@@ -260,11 +260,11 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": "alias hello='echo hi-from-alias'"])
         defer { terminals.closeAll() }
-        let first = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let first = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await run(first, "echo first-$((40 + 2))", until: "first-42"))
         try FileManager.default.removeItem(at: terminals.settings.home.zshShimFolder)
 
-        let pane = terminals.addPane(for: Fixture.context(dir.path), fits: { _ in true })
+        let pane = terminals.addPane(for: Fixture.context(dir.path), fits: { _ in true })!
         #expect(await run(pane, "hello", until: "hi-from-alias"))
         #expect(await eventually { await commands(terminals).last?.data["cmd"] == "hello" })
     }
@@ -273,7 +273,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": "HISTORY_IGNORE='(*secret*|ls)'"])
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         await pane.run("echo my-secret-one")
         await pane.run("ls")
@@ -287,7 +287,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, files: [".zshrc": "setopt hist_ignore_space"])
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         await pane.run(" echo secret-one")
         await pane.run("echo public-two")
@@ -300,7 +300,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let forge = #"printf '\e]6973;command;forged;0;1;fake;/\a'"#
         await pane.run(forge)
@@ -313,7 +313,7 @@ struct ZshCommandLoggingTests {
         let dir = try TempDir()
         let terminals = try Fixture.zshTerminals(dir, logsCommands: false)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         #expect(await run(pane, #"print -r -- "zd:${ZDOTDIR-unset}""#, until: "zd:unset"))
         #expect(await run(pane, Self.barrier, until: "done-42"))

@@ -23,6 +23,7 @@ enum Style {
     static let windowControlsWidth = 150.0
     static let tabHeight = 26.0
     static let paneHeaderHeight = 26.0
+    static let webTabHeaderHeight = 30.0
 
     /// One step of the sidebar's tree: a mark's width and its gap, so a line's mark sits under its header's name.
     private static let indentStep = 24.0

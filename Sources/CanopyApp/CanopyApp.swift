@@ -81,13 +81,20 @@ struct TerminalCommands: Commands {
                 .disabled(!model.canOpenTerminal)
             Button("Split Pane", action: model.splitPane)
                 .keyboardShortcut("d")
-                .disabled(!model.canOpenTerminal)
+                .disabled(!model.canSplit)
         }
         // Replacing the save group also drops File > Close, so ⌘W closes a terminal rather than the window.
         CommandGroup(replacing: .saveItem) {
-            Button("Close Terminal", action: model.closeFocusedPane)
+            Button(model.closeTitle, action: model.closeFocusedPane)
                 .keyboardShortcut("w")
-                .disabled(model.selectedTab == nil)
+                .disabled(model.selectedTab == nil && model.focusedPanelPage == nil)
+        }
+        CommandGroup(after: .sidebar) {
+            Button(model.selectedPanel?.isHidden == false ? "Hide Web Panel" : "Show Web Panel") {
+                model.toggleWebPanel()
+            }
+            .keyboardShortcut("0", modifiers: [.command, .option])
+            .disabled(model.selectedPanel == nil)
         }
         CommandGroup(before: .windowArrangement) {
             // ⌘⇧[ reaches the menu as "{", so the shortcuts are declared by the character the keys type.

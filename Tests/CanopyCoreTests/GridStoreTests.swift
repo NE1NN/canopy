@@ -13,15 +13,15 @@ struct GridStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tab = terminals.openTab(for: context)
+        let tab = terminals.openTab(for: context).tab
 
-        let second = terminals.addPane(for: context, fits: { $0 <= 2 })
-        let third = terminals.addPane(for: context, fits: { $0 <= 2 })
+        let second = terminals.addPane(for: context, fits: { $0 <= 2 })!
+        let third = terminals.addPane(for: context, fits: { $0 <= 2 })!
 
         #expect(tab.paneList.count == 3)
-        #expect(tab.focusedPaneID == third.id)
+        #expect(tab.grid?.focusedPaneID == third.id)
         #expect(
-            tab.layout
+            tab.grid?.layout
                 == .split(
                     .column,
                     [.split(.row, [.leaf(tab.paneList[0].id), .leaf(second.id)], [0.5, 0.5]), .leaf(third.id)],
@@ -33,13 +33,13 @@ struct GridStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tab = terminals.openTab(for: context)
-        let first = tab.focused
-        let second = terminals.addPane(for: context, fits: { _ in true })
+        let tab = terminals.openTab(for: context).tab
+        let first = try #require(tab.focused)
+        let second = terminals.addPane(for: context, fits: { _ in true })!
 
         terminals.closePane(second.id)
-        #expect(tab.focusedPaneID == first.id)
-        #expect(tab.layout == .leaf(first.id))
+        #expect(tab.grid?.focusedPaneID == first.id)
+        #expect(tab.grid?.layout == .leaf(first.id))
         #expect(second.status == .exited(Pane.closedExitCode))
 
         terminals.closePane(first.id)
@@ -51,18 +51,18 @@ struct GridStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tab = terminals.openTab(for: context)
-        let a = tab.focused.id
-        let b = terminals.addPane(for: context, fits: { _ in true }).id
+        let tab = terminals.openTab(for: context).tab
+        let a = try #require(tab.focused).id
+        let b = terminals.addPane(for: context, fits: { _ in true })!.id
 
         terminals.movePane(a, to: .edge(.bottom), of: b)
-        #expect(tab.layout == .split(.column, [.leaf(b), .leaf(a)], [0.5, 0.5]))
+        #expect(tab.grid?.layout == .split(.column, [.leaf(b), .leaf(a)], [0.5, 0.5]))
         terminals.movePane(a, to: .center, of: b)
-        #expect(tab.layout == .split(.column, [.leaf(a), .leaf(b)], [0.5, 0.5]))
+        #expect(tab.grid?.layout == .split(.column, [.leaf(a), .leaf(b)], [0.5, 0.5]))
 
         terminals.focus(a)
         #expect(terminals.focusNeighbor(inRow: dir.path, toward: .down, in: rect)?.id == b)
-        #expect(tab.focusedPaneID == b)
+        #expect(tab.grid?.focusedPaneID == b)
         #expect(terminals.focusNeighbor(inRow: dir.path, toward: .down, in: rect) == nil)
     }
 
@@ -71,13 +71,14 @@ struct GridStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tab = terminals.openTab(for: context)
+        let tab = terminals.openTab(for: context).tab
         terminals.addPane(for: context, fits: { _ in true })
 
         terminals.resize(
-            tab, divider: DividerID(path: [], index: 0), to: 10, in: rect, minimum: CGSize(width: 300, height: 100))
+            try #require(tab.grid), divider: DividerID(path: [], index: 0), to: 10, in: rect,
+            minimum: CGSize(width: 300, height: 100))
 
-        #expect(tab.layout.frames(in: rect)[tab.paneList[0].id]?.width == 300)
+        #expect(tab.grid?.layout.frames(in: rect)[tab.paneList[0].id]?.width == 300)
     }
 
     @Test func savedTabsRestoreWithFreshShellsInTheirFolders() async throws {
@@ -87,9 +88,9 @@ struct GridStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let server = terminals.openTab(for: context)
+        let server = terminals.openTab(for: context).tab
         terminals.renameTab(server.id, inRow: dir.path, to: "Server")
-        let moved = terminals.addPane(for: context, fits: { _ in true })
+        let moved = terminals.addPane(for: context, fits: { _ in true })!
         terminals.openTab(for: context)
         terminals.selectTab(server.id, inRow: dir.path)
         await moved.run("cd sub")
@@ -106,7 +107,7 @@ struct GridStoreTests {
         #expect(restored.selectedTab(inRow: dir.path)?.name == "Server")
         let panes = tabs[0].paneList
         #expect(panes.count == 2)
-        #expect(tabs[0].focusedPaneID == panes[1].id)
+        #expect(tabs[0].grid?.focusedPaneID == panes[1].id)
         #expect(await eventually { panes[1].currentDirectory == sub })
         #expect(await eventually { panes[0].currentDirectory == dir.path })
     }
@@ -131,7 +132,7 @@ struct GridStoreTests {
         defer { terminals.closeAll() }
         terminals.continueNumbering(from: 40)
 
-        #expect(terminals.openTab(for: Fixture.context(dir.path)).focused.id == PaneID(40))
+        #expect(terminals.openTab(for: Fixture.context(dir.path)).pane.id == PaneID(40))
         #expect(terminals.nextPaneNumber == 41)
         terminals.continueNumbering(from: 5)
         #expect(terminals.nextPaneNumber == 41)
@@ -144,7 +145,7 @@ struct GridStoreTests {
         var changes = 0
         terminals.onChange = { changes += 1 }
 
-        let tab = terminals.openTab(for: Fixture.context(dir.path))
+        let tab = terminals.openTab(for: Fixture.context(dir.path)).tab
         terminals.renameTab(tab.id, inRow: dir.path, to: "Build")
         terminals.closeTab(tab.id, inRow: dir.path)
 

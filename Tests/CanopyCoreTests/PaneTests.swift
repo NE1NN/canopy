@@ -12,7 +12,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(row)).focused
+        let pane = terminals.openTab(for: Fixture.context(row)).pane
         await pane.run(#"printf 'ready:%s:%s:%s\n' "$CANOPY_PANE" "$CANOPY_ROW" "$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("ready:p1:feat/x:\(row)") })
@@ -23,7 +23,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         await pane.run(#"printf '%s|%s\n' "it's" "héllo ✓ $CANOPY_ROW""#)
 
         #expect(await eventually { pane.screen.text.contains("it's|héllo ✓ feat/x") })
@@ -33,7 +33,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         let firstShell = try #require(pane.pid)
 
         #expect(await eventually { pane.foreground?.name == "bash" })
@@ -57,7 +57,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         pane.screen.onTitle?("my title")
@@ -77,7 +77,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         terminals.refreshActivity()
@@ -102,7 +102,7 @@ struct PaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 0.5")).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 0.5")).pane
 
         terminals.refreshActivity()
         #expect(pane.isRunningProgram)
@@ -114,7 +114,7 @@ struct PaneTests {
     @Test func closingEndsTheProcessAndWakesWaiters() async throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 30")).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("sleep 30")).pane
         let group = try #require(pane.pid)
         let waiter = Task { await pane.waitForExit() }
         try await Task.sleep(for: .milliseconds(100))
@@ -130,7 +130,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("echo working; exit 4")).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("echo working; exit 4")).pane
 
         #expect(await pane.waitForExit() == 4)
         #expect(pane.screen.text.contains("working"))
@@ -142,7 +142,7 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.sub("gone"))).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.sub("gone"))).pane
         await pane.run(#"echo "at:$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("at:\(dir.sub("user-home"))") })

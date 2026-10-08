@@ -118,6 +118,19 @@ struct AgentGuide: ParsableCommand {
         Send to a program you just started once its prompt shows in `term read`: until it reads keys itself, the
         terminal hands it typed-ahead lines together with their Return.
 
+        ## Web pages
+
+            canopy web open <url> [--tab | --panel]       show a page in your row
+            canopy web list [--all]                       ID, where it is, row, title, and URL
+            canopy web close <id>                         close a page, such as w3
+
+        After you publish a claude.ai artifact, run `canopy web open <its url>` so the author sees it in Canopy, next
+        to you, instead of in a browser. `web open` also takes any http or https URL, such as your dev server's.
+        A row shows a page in its panel on the right of the terminals or in a tab of its own, and opens new pages where
+        the author last moved one; `--tab` or `--panel` picks for this page alone. A page the row shows already is shown
+        where it is, so opening it again is safe. `web open` never changes which row the author has selected. A URL that
+        is not http or https fails with invalid_url, and `web close` of a page no row has with page_not_found.
+
         ## Agent state
 
             canopy term state [<id>] <working|waiting|done|none>   report an agent's state, your terminal's by default
@@ -169,7 +182,7 @@ struct AgentGuide: ParsableCommand {
             canopy log [--since <when>] [--until <when>] [--type <t>]   what happened, oldest first
 
         Canopy logs repos and rows coming and going, plugins turning on and off, rows switching branch, PRs opening and
-        changing state, terminals opening and exiting, each command that finishes in a zsh terminal with its exit code
+        changing state, terminals opening and exiting, web pages opening and closing, each command that finishes in a zsh terminal with its exit code
         and duration, and each canopy call that changes something. Each event's source says whether it came from the Canopy window (ui), a
         canopy command (cli), or outside Canopy (git). `--since` defaults to 24 hours ago and takes 30m, 2h, 3d, today,
         yesterday, 2026-09-27, or 2026-09-27T14:30. `--type row` matches every row event, `--type term.command` one.

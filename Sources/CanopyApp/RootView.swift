@@ -56,6 +56,9 @@ struct RootView: View {
         .sheet(item: $model.setupSheet) { request in
             request.setup.sheet()
         }
+        .sheet(item: $model.webPopUp) { popUp in
+            WebPopUpSheet(popUp: popUp)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refresh()
         }
@@ -143,7 +146,19 @@ struct TitleBarRow: View {
             TopBarView(
                 row: row, isSidebarHidden: isSidebarHidden,
                 windowControlsOverBar: placement.windowControlsOverBar && row.pluginRow == nil)
+            if let page = model.terminals.shownPanel(inRow: row.path) {
+                Rectangle().fill(.separator).frame(width: PluginDetailView.dividerWidth, height: Style.topBarHeight)
+                WebPanelHeader(page: page, path: row.path)
+                    .frame(width: model.webPanelWidth(available: webPanelRoom))
+            }
         }
+    }
+
+    /// The width beside a plugin row's panel, where the terminals and the web panel share the room.
+    private var webPanelRoom: Double {
+        guard let pluginRow = row.pluginRow else { return detailWidth }
+        return detailWidth - model.panelWidth(for: pluginRow.plugin, detailWidth: detailWidth)
+            - PluginDetailView.dividerWidth
     }
 }
 

@@ -32,6 +32,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case waitTimeout([String], String)
     case paneClosed(String)
     case agentStopped(String)
+    case invalidURL(String)
+    case pageNotFound(String)
     case settingsInvalid(String, reason: String)
     case settingsWriteFailed(String, reason: String)
     case configInvalid(String, reason: String)
@@ -98,6 +100,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .waitTimeout: "wait_timeout"
         case .paneClosed: "pane_closed"
         case .agentStopped: "agent_stopped"
+        case .invalidURL: "invalid_url"
+        case .pageNotFound: "page_not_found"
         case .settingsInvalid: "settings_invalid"
         case .settingsWriteFailed: "settings_write_failed"
         case .configInvalid: "config_invalid"
@@ -182,6 +186,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .waitTimeout(let ids, let target):
             "\(ids.joined(separator: ", ")) did not become \(target) before the timeout."
         case .paneClosed(let id): "\(id) closed during the wait."
+        case .invalidURL(let url): "\"\(url)\" is not an http or https URL."
+        case .pageNotFound(let id): "No page \(id). Run `canopy web list --all`."
         case .agentStopped(let id):
             "The agent in \(id) stopped without finishing: it exited, was interrupted, or was set to none."
         case .settingsInvalid(let path, let reason):

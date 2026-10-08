@@ -2,23 +2,23 @@ import CanopyCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A tab's panes, placed by its layout. Dividers resize, and a pane's header drags it onto another pane.
+/// A terminal tab's panes, placed by its layout. Dividers resize, and a pane's header drags it onto another pane.
 struct GridView: View {
     @Environment(AppModel.self) private var model
-    let tab: TerminalTab
+    let grid: TerminalGrid
     @State private var hover: DropHover?
 
     var body: some View {
         GeometryReader { geometry in
             let rect = CGRect(origin: .zero, size: geometry.size)
-            let frames = tab.layout.frames(in: rect)
+            let frames = grid.layout.frames(in: rect)
             ZStack(alignment: .topLeading) {
                 // Keyed by pane, so a terminal is never rebuilt when the layout around it changes.
-                ForEach(tab.layout.leaves, id: \.self) { id in
-                    if let pane = tab.panes[id], let frame = frames[id] {
+                ForEach(grid.layout.leaves, id: \.self) { id in
+                    if let pane = grid.panes[id], let frame = frames[id] {
                         PaneView(
                             pane: pane,
-                            isFocusedPane: tab.focusedPaneID == id && !model.sidebarKeepsKeyboard,
+                            isFocusedPane: grid.focusedPaneID == id && !model.sidebarKeepsKeyboard,
                             onClose: { model.requestClose(pane) },
                             onFocus: { model.terminals.focus(id) },
                             onDragStart: { model.draggedPane = id },
@@ -33,9 +33,9 @@ struct GridView: View {
                         .offset(x: frame.minX, y: frame.minY)
                     }
                 }
-                ForEach(tab.layout.dividers(in: rect), id: \.id) { divider in
+                ForEach(grid.layout.dividers(in: rect), id: \.id) { divider in
                     DividerHandle(divider: divider) { position in
-                        model.resize(tab, divider: divider.id, to: position, in: rect)
+                        model.resize(grid, divider: divider.id, to: position, in: rect)
                     }
                 }
             }

@@ -4,9 +4,9 @@
 # running programs, listening ports, a split tab, agents in every state, and the fixture plugin's section with its
 # warning, rows with every kind of accessory, a missing item, and a worktree row linked to one of them, and the Tickets
 # section with rows backed by a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of
-# message, and a closed ticket, with a fix row linked to one. Nothing outside the throwaway folder is touched, and
-# nothing reaches ticket-manager or Discord. Links the window opens are written to $work/opened-urls instead of opening
-# a browser.
+# message, and a closed ticket, with a fix row linked to one, a web panel and a web tab on local pages, and an artifact
+# link printed in a pane. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or Discord.
+# Links the window opens are written to $work/opened-urls instead of opening a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
 #   scripts/ui-fixture.sh stop           quit it and delete its folder
@@ -38,6 +38,9 @@ if [[ "${1:-}" == stop ]]; then
     fi
     if [[ -n "${tm_pid:-}" && "$(ps -p "$tm_pid" -o command= 2>/dev/null)" == *ticket-manager-stand-in.py* ]]; then
         kill "$tm_pid" 2>/dev/null || true
+    fi
+    if [[ -n "${site_pid:-}" && "$(ps -p "$site_pid" -o command= 2>/dev/null)" == *fixture-site* ]]; then
+        kill "$site_pid" 2>/dev/null || true
     fi
     # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
     if [[ "$(basename "$work")" != cnp.* || ! -x "$work/bin/gh" || ! -d "$work/zdot" ]]; then
@@ -184,6 +187,39 @@ for _ in $(seq 1 100); do
 done
 tm_url="http://127.0.0.1:$(cat "$work/tm/port")"
 
+# Pages for the web panel and a web tab, served on a free port so they never collide with another fixture's. The server
+# stops after four hours if `stop` never runs.
+mkdir -p "$work/site"
+cat > "$work/site/plan.html" <<'PAGE'
+<!doctype html><meta charset="utf-8"><title>Checkout redesign plan</title>
+<meta name="color-scheme" content="light dark">
+<style>body{font:15px/1.5 -apple-system,sans-serif;max-width:640px;margin:32px auto;padding:0 24px}
+h1{font-size:24px}code{font:13px ui-monospace,monospace}</style>
+<h1>Checkout redesign</h1><p>Three steps instead of one long form: address, delivery, and payment.</p>
+<h2>Steps</h2><ol><li>Address, with saved addresses first</li><li>Delivery, with dates</li><li>Payment</li></ol>
+<p>Each step keeps what was typed when the shopper goes back. See <code>src/checkout/Form.tsx</code>.</p>
+PAGE
+cat > "$work/site/notes.html" <<'PAGE'
+<!doctype html><meta charset="utf-8"><title>Onboarding notes</title>
+<meta name="color-scheme" content="light dark">
+<style>body{font:15px/1.5 -apple-system,sans-serif;max-width:640px;margin:32px auto;padding:0 24px}</style>
+<h1>Onboarding notes</h1><p>Welcome, workspace, and invite: three screens, each skippable.</p>
+PAGE
+(exec -a fixture-site /usr/bin/python3 -c '
+import functools, http.server, sys, threading, time
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+open(sys.argv[2], "w").write(str(server.server_port))
+threading.Thread(target=server.serve_forever, daemon=True).start()
+time.sleep(14400)
+' "$work/site" "$work/site-port" </dev/null >/dev/null 2>&1) &
+site_pid=$!
+for _ in $(seq 1 100); do
+    [[ -s "$work/site-port" ]] && break
+    sleep 0.1
+done
+site="http://127.0.0.1:$(cat "$work/site-port")"
+
 # The fixture plugin is on, with a warning under its header and one item it pretends is gone.
 mkdir -p "$CANOPY_HOME"
 cat > "$CANOPY_HOME/config.json" <<'CONFIG'
@@ -206,7 +242,7 @@ if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES);
     GIT_CONFIG_KEY_0="url.$work/remotes/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
     exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
 # Written at once, so `stop` can clean up even if a later step fails. The subshell execs, so $! is the app.
-printf 'pid=%s\nwork=%s\ntm_pid=%s\n' "$!" "$work" "$tm_pid" > "$state"
+printf 'pid=%s\nwork=%s\ntm_pid=%s\nsite_pid=%s\n' "$!" "$work" "$tm_pid" "$site_pid" > "$state"
 for _ in $(seq 1 100); do
     [[ -S "$CANOPY_HOME/canopy.sock" ]] && break
     sleep 0.1
@@ -280,7 +316,7 @@ sleep 1
 
 # A plain prompt keeps the machine's user and host names out of shots.
 plain="PROMPT='%F{blue}%B%1~%b%f %# '; clear"
-agent="$plain; "'printf "\n\033[36m●\033[0m Read \033[90msrc/checkout/\033[0mForm.tsx\n\033[36m●\033[0m Update \033[90msrc/checkout/\033[0mForm.tsx  \033[32m+48\033[0m \033[31m-21\033[0m\n\033[36m●\033[0m Bash \033[90mbun test checkout\033[0m\n  \033[32m✓\033[0m 18 passed\n\nThe form now has three steps.\n"; sleep 600'
+agent="$plain; "'printf "\n\033[36m●\033[0m Read \033[90msrc/checkout/\033[0mForm.tsx\n\033[36m●\033[0m Update \033[90msrc/checkout/\033[0mForm.tsx  \033[32m+48\033[0m \033[31m-21\033[0m\n\033[36m●\033[0m Bash \033[90mbun test checkout\033[0m\n  \033[32m✓\033[0m 18 passed\n\nThe form now has three steps. The plan: https://claude.ai/artifact/9f2c1e7a-checkout\n"; sleep 600'
 row=(--repo web-app --row feat/checkout-redesign)
 first=$("$cli" term list --all --json | /usr/bin/python3 -c \
     'import json, sys; print([t["pane"] for t in json.load(sys.stdin) if t["row"] == "feat/checkout-redesign"][0])')
@@ -293,6 +329,8 @@ first=$("$cli" term list --all --json | /usr/bin/python3 -c \
 "$cli" term new --repo api-server --row feat/rate-limits --run "$plain; python3 -m http.server 8080" >/dev/null
 "$cli" term new --repo web-app --row fix/login-redirect --run "$plain" >/dev/null
 "$cli" term new --repo web-app --row chore/bump-deps --run "$plain" >/dev/null
+"$cli" web open "$site/plan.html" "${row[@]}" --panel >/dev/null
+"$cli" web open "$site/notes.html" --repo web-app --row feat/onboarding-flow --tab >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 fixture_row() {

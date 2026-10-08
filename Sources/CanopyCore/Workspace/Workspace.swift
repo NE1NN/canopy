@@ -258,11 +258,39 @@ public actor Workspace {
         state.nextPane
     }
 
-    public func setSavedTerminals(_ terminals: [String: SavedRowTerminals], nextPane: Int? = nil) throws {
+    public var savedNextWebPage: Int {
+        state.nextWebPage
+    }
+
+    public var savedWebPlacement: WebPlacement {
+        state.webPlacement
+    }
+
+    public func setSavedTerminals(
+        _ terminals: [String: SavedRowTerminals], nextPane: Int? = nil, nextWebPage: Int? = nil,
+        webPlacement: WebPlacement? = nil
+    ) throws {
         let nextPane = max(nextPane ?? state.nextPane, state.nextPane)
-        guard state.terminals != terminals || state.nextPane != nextPane else { return }
+        let nextWebPage = max(nextWebPage ?? state.nextWebPage, state.nextWebPage)
+        let webPlacement = webPlacement ?? state.webPlacement
+        guard
+            state.terminals != terminals || state.nextPane != nextPane || state.nextWebPage != nextWebPage
+                || state.webPlacement != webPlacement
+        else { return }
         state.terminals = terminals
         state.nextPane = nextPane
+        state.nextWebPage = nextWebPage
+        state.webPlacement = webPlacement
+        try save()
+    }
+
+    public var webPanelWidth: Double? {
+        state.webPanelWidth
+    }
+
+    public func setWebPanelWidth(_ width: Double) throws {
+        guard state.webPanelWidth != width else { return }
+        state.webPanelWidth = width
         try save()
     }
 

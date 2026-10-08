@@ -19,9 +19,11 @@ struct RowTerminalsView: View {
                 }
             }
         } else {
-            TerminalArea(path: row.path, name: row.displayName)
-                // In a window the top bar takes the title bar's row. The title bar is hidden, so clicks reach it.
-                .ignoresSafeArea(.container, edges: topBarFillsTitleBar ? .top : [])
+            WebPanelSplit(path: row.path) {
+                TerminalArea(path: row.path, name: row.displayName)
+            }
+            // In a window the top bar takes the title bar's row. The title bar is hidden, so clicks reach it.
+            .ignoresSafeArea(.container, edges: topBarFillsTitleBar ? .top : [])
         }
     }
 }
@@ -36,8 +38,13 @@ struct TerminalArea: View {
         VStack(spacing: 0) {
             Color.clear.frame(height: Style.topBarHeight)
             if let tab = model.terminals.selectedTab(inRow: path) {
-                GridView(tab: tab)
-                    .id(tab.id)
+                switch tab.content {
+                case .terminals(let grid):
+                    GridView(grid: grid)
+                        .id(tab.id)
+                case .web(let page):
+                    WebTabView(tab: tab, page: page, path: path)
+                }
             } else {
                 ContentUnavailableView {
                     Label("No Terminals", systemImage: "apple.terminal")

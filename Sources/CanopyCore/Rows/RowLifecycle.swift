@@ -59,7 +59,7 @@ public final class RowLifecycle {
         }
 
         guard !commands.isEmpty else {
-            let pane = run.map { _ in terminals.openTab(for: context).focused }
+            let pane = run.map { _ in terminals.openTab(for: context).pane }
             let report = SetupReport(status: setup ? .none : .skipped)
             return Task {
                 if let pane, let run { await pane.run(run) }
@@ -69,7 +69,7 @@ public final class RowLifecycle {
 
         let script = SetupScript.render(commands, label: "Setup")
         // The setup pane, not its tab: the user may split the Setup tab while setup runs.
-        let setupPane = terminals.openTab(for: context, name: "Setup", command: .script(script)).focused
+        let setupPane = terminals.openTab(for: context, name: "Setup", command: .script(script)).pane
         return Task {
             let code = await setupPane.waitForExit()
             guard code == 0 else {
@@ -82,7 +82,7 @@ public final class RowLifecycle {
             }
             var pane: Pane?
             if run != nil {
-                pane = terminals.openTab(for: context).focused
+                pane = terminals.openTab(for: context).pane
             } else if terminals.tabs(inRow: row.path).count == 1,
                 terminals.tab(containing: setupPane.id)?.1.paneList.count == 1
             {
@@ -149,7 +149,7 @@ public final class RowLifecycle {
         let script = SetupScript.render(commands, label: "Teardown")
         let teardownPane = terminals.openTab(
             for: PaneContext(row: row, repoName: repoName), name: "Teardown", command: .script(script)
-        ).focused
+        ).pane
         let code = await teardownPane.waitForExit()
         guard code != 0, !force else { return }
         let closed = terminals.tab(containing: teardownPane.id) == nil

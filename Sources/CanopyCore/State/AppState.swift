@@ -78,6 +78,12 @@ public struct AppState: Codable, Sendable, Equatable {
     public var agentHooksOffered = false
     /// Each plugin's rows and links, keyed by the plugin's id, including plugins this build does not have.
     public var plugins: [String: PluginEntry] = [:]
+    /// Where new web pages open: where the author last moved one.
+    public var webPlacement = WebPlacement.panel
+    /// The web panel's width, the same for every row. Nil until the author drags it.
+    public var webPanelWidth: Double?
+    /// The next web page number, so `canopy web close` never closes a different page after a relaunch.
+    public var nextWebPage = 1
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -98,9 +104,15 @@ public struct AppState: Codable, Sendable, Equatable {
         nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
         portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
         agentHooksOffered = try container.decodeIfPresent(Bool.self, forKey: .agentHooksOffered) ?? false
-        terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
+        // A row whose tabs cannot be read is dropped on its own, so other rows keep theirs.
+        let terminals = try? container.decodeIfPresent([String: Lenient<SavedRowTerminals>].self, forKey: .terminals)
+        self.terminals = terminals?.compactMapValues(\.value) ?? [:]
         // A plugin's entry that cannot be read is dropped on its own, so repos and other plugins still load.
         let plugins = try? container.decodeIfPresent([String: Lenient<PluginEntry>].self, forKey: .plugins)
         self.plugins = plugins?.compactMapValues(\.value) ?? [:]
+        // Web settings that cannot be read fall back to their defaults on their own.
+        webPlacement = (try? container.decodeIfPresent(WebPlacement.self, forKey: .webPlacement)) ?? .panel
+        webPanelWidth = try? container.decodeIfPresent(Double.self, forKey: .webPanelWidth)
+        nextWebPage = (try? container.decodeIfPresent(Int.self, forKey: .nextWebPage)) ?? 1
     }
 }

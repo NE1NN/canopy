@@ -309,6 +309,61 @@ if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $por
 "$cli" term close "$server" >/dev/null
 "$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
 
+step "canopy web opens, lists, and closes pages, in the panel or a tab"
+mkdir -p "$work/site"
+printf '<title>E2E page</title><h1>Hello from e2e</h1>' > "$work/site/index.html"
+printf '<title>Second page</title><p>Two</p>' > "$work/site/two.html"
+# A local server for the pages, which ends by itself after ten minutes.
+(exec /usr/bin/python3 -c '
+import functools, http.server, sys, threading, time
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+open(sys.argv[2], "w").write(str(server.server_port))
+threading.Thread(target=server.serve_forever, daemon=True).start()
+time.sleep(600)
+' "$work/site" "$work/site-port" </dev/null >/dev/null 2>&1) &
+site_pid=$!
+for _ in $(seq 1 100); do [[ -s "$work/site-port" ]] && break; sleep 0.1; done
+site="http://127.0.0.1:$(cat "$work/site-port")"
+curl -fs "$site/index.html" | grep -q "Hello from e2e" || fail "the test page is not served"
+web_row=(--repo demo --row feat/term)
+"$cli" web open "$site/index.html" "${web_row[@]}" | grep -qx "Showing w1 in the panel of feat/term." ||
+    fail "web open did not open w1 in the panel"
+"$cli" web open "$site/index.html" --tab "${web_row[@]}" | grep -qx "Showing w1 in the panel of feat/term." ||
+    fail "the same URL opened twice did not show the first page"
+"$cli" web open "$site/two.html" --tab "${web_row[@]}" --json > "$work/web-tab.json"
+/usr/bin/python3 -c '
+import json, sys
+assert json.load(open(sys.argv[1])) == {"page": "w2", "placement": "tab", "row": "feat/term"}
+' "$work/web-tab.json" || fail "web open --tab --json said something else"
+"$cli" web list "${web_row[@]}" --json | /usr/bin/python3 -c '
+import json, sys
+pages = json.load(sys.stdin)
+assert [(p["page"], p["placement"], p["url"].rsplit("/", 1)[1]) for p in pages] == [
+    ("w1", "panel", "index.html"), ("w2", "tab", "two.html")], pages
+assert all(p["repo"] == "demo" and p["row"] == "feat/term" for p in pages), pages
+' || fail "web list has the wrong pages"
+"$cli" web list --all | grep -q "^w2 .*tab" || fail "web list --all is missing w2"
+if "$cli" web open "file:///etc/hosts" "${web_row[@]}" --json > "$work/web-bad.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"invalid_url"' "$work/web-bad.json" || fail "a file URL was not invalid_url"
+if "$cli" web open "$site/index.html" --repo demo --row nope --json > "$work/web-row.json" 2>/dev/null; then
+    fail "expected failure"
+fi
+grep -q '"row_not_found"' "$work/web-row.json" || fail "an unknown row was not row_not_found"
+if "$cli" web close w99 --json > "$work/web-gone.json" 2>/dev/null; then fail "expected failure"; fi
+grep -q '"page_not_found"' "$work/web-gone.json" || fail "an unknown page was not page_not_found"
+"$cli" web close w1 | grep -qx "Closed w1." || fail "web close said something else"
+[[ "$("$cli" web list "${web_row[@]}" --json | /usr/bin/python3 -c 'import json, sys; print([p["page"] for p in json.load(sys.stdin)])')" == "['w2']" ]] ||
+    fail "w1 is still listed"
+"$cli" log --type web --json | /usr/bin/python3 -c '
+import json, sys
+events = [(e["type"], e["data"]["page"], e["source"]) for e in json.load(sys.stdin)]
+assert events == [("web.opened", "w1", "cli"), ("web.opened", "w2", "cli"), ("web.closed", "w1", "cli")], events
+' || fail "canopy log is missing web events"
+"$cli" agent-guide | grep -q "canopy web open <url>" || fail "agent-guide is missing web pages"
+
 step "Claude Code's hooks report into a pane, and agents wait on it"
 agent=$("$cli" term new --repo demo --row feat/term --json |
     /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
@@ -455,10 +510,19 @@ stop_app() {
     [[ -z "$(app_pid)" ]] || fail "the app did not quit"
 }
 
-step "groups and folds come back after a relaunch"
+step "groups, folds, and web pages come back after a relaunch"
 "$cli" group collapse Kept --repo demo >/dev/null
 "$cli" repo collapse demo >/dev/null
+# Layouts save a second after the last change.
+sleep 2
 stop_app
+"$cli" web list --repo demo --row feat/term --json | /usr/bin/python3 -c '
+import json, sys
+pages = json.load(sys.stdin)
+assert [(p["placement"], p["url"].rsplit("/", 1)[1]) for p in pages] == [("tab", "two.html")], pages
+assert pages[0]["page"] != "w2", "a restored page kept an ID a page had before"
+' || fail "web pages did not survive a relaunch"
+kill "$site_pid" 2>/dev/null || true
 "$cli" group list --repo demo --json | /usr/bin/python3 -c '
 import json, sys
 groups = json.load(sys.stdin)

@@ -80,7 +80,10 @@ struct GitRunnerTests {
     @Test func aHandleStopsGitAndEverythingItStarted() async throws {
         let dir = try TempDir()
         let background = dir.sub("background.pid")
-        let git = try Fixture.git(in: dir, before: "sleep 60 &\necho $! > '\(background)'\nsleep 60")
+        // Renamed into place, so the test never reads it before the pid is in it.
+        let git = try Fixture.git(
+            in: dir,
+            before: "sleep 60 &\necho $! > '\(background).tmp'\nmv '\(background).tmp' '\(background)'\nsleep 60")
         let handle = SubprocessHandle()
 
         let run = Task { try await git.run(["clone"], handle: handle) }

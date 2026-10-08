@@ -320,7 +320,7 @@ public final class PluginHost {
         // The terminal opens first, so selecting the row does not also give it a blank one. A plugin turned off while
         // the row was made gets no terminal in it.
         let pane = run.flatMap { _ in
-            fillError == nil && on.contains(id) ? terminals.openTab(for: PaneContext(pluginRow: row)).focused : nil
+            fillError == nil && on.contains(id) ? terminals.openTab(for: PaneContext(pluginRow: row)).pane : nil
         }
         if select {
             await self.select(row.path)

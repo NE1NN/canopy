@@ -24,12 +24,12 @@ struct TerminalStoreAgentTests {
                 try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
             }
             terminals = Fixture.terminals(dir)
-            firstTab = terminals.openTab(for: Fixture.context(a))
-            beside = terminals.addPane(for: Fixture.context(a), fits: { _ in true })
+            firstTab = terminals.openTab(for: Fixture.context(a)).tab
+            beside = terminals.addPane(for: Fixture.context(a), fits: { _ in true })!
             focused = firstTab.paneList[0]
             terminals.focus(focused.id)
-            otherTab = terminals.openTab(for: Fixture.context(a), select: false).focused
-            otherRow = terminals.openTab(for: Fixture.context(b)).focused
+            otherTab = terminals.openTab(for: Fixture.context(a), select: false).pane
+            otherRow = terminals.openTab(for: Fixture.context(b)).pane
         }
     }
 
