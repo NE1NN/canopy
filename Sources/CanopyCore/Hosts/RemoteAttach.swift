@@ -147,16 +147,28 @@ public struct RemoteAttachLoop: Sendable {
         }
     }
 
+    /// How long the loop waits, a second at a time, for an app that is not answering, as while it starts.
+    static let appPatience = 30
+
     /// The ssh command line, once the app has one. Nil when input ends while waiting for Return.
     private func ready() async -> [String]? {
         var shown: String?
+        var refusals = 0
         while true {
             let result: HostAttachResult
             do {
                 result = try await attach()
+                refusals = 0
             } catch {
+                refusals += 1
+                if refusals == 1 { print("Waiting for Canopy…") }
+                if refusals <= Self.appPatience {
+                    await pause(.seconds(1))
+                    continue
+                }
                 print("\(error)")
                 print("Press Return to try again.")
+                refusals = 0
                 guard await readLine() != nil else { return nil }
                 continue
             }

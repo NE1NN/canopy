@@ -165,8 +165,14 @@ struct RemoteAttachTests {
     }
 }
 
+struct Unreachable: Error, CustomStringConvertible {
+    var description: String { "Could not connect to Canopy: Connection refused" }
+}
+
 /// Plays the app and the terminal for the attach loop.
 final class AttachScript: @unchecked Sendable {
+    /// Calls to `attach` that fail as an app that is not listening yet does, before `attaches` are answered.
+    var refusals = 0
     var attaches: [HostAttachResult]
     var nexts: [HostNextResult]
     var lines: [String?]
@@ -183,7 +189,13 @@ final class AttachScript: @unchecked Sendable {
 
     var loop: RemoteAttachLoop {
         RemoteAttachLoop(
-            attach: { self.attaches.removeFirst() },
+            attach: {
+                if self.refusals > 0 {
+                    self.refusals -= 1
+                    throw Unreachable()
+                }
+                return self.attaches.removeFirst()
+            },
             next: { _ in self.nexts.removeFirst() },
             runSSH: { argv in
                 self.ran.append(argv)
@@ -239,5 +251,32 @@ struct RemoteAttachLoopTests {
 
         #expect(code == 1)
         #expect(script.printed == ["Could not reach box: timed out", "Press Return to try again."])
+    }
+}
+
+extension RemoteAttachLoopTests {
+    @Test func anAppStillStartingIsWaitedForWithoutAskingForReturn() async {
+        let script = AttachScript(
+            attaches: [HostAttachResult(ready: ["ssh"])], nexts: [HostNextResult(action: .end)], statuses: [0])
+        script.refusals = 3
+
+        let code = await script.loop.run()
+
+        #expect(code == 0)
+        #expect(script.printed == ["Waiting for Canopy…"])
+        #expect(script.ran == [["ssh"]])
+    }
+
+    @Test func anAppThatNeverAnswersAsksForReturn() async {
+        let script = AttachScript(attaches: [], nexts: [], lines: [nil], statuses: [])
+        script.refusals = 1000
+
+        let code = await script.loop.run()
+
+        #expect(code == 1)
+        #expect(
+            script.printed == [
+                "Waiting for Canopy…", "Could not connect to Canopy: Connection refused", "Press Return to try again.",
+            ])
     }
 }
