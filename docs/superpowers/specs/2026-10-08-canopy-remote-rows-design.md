@@ -92,8 +92,10 @@ Canopy keeps its files under `~/.canopy` on the host:
 
 | Path | What |
 |---|---|
-| `~/.canopy/bin/canopy-host` | one Python 3 script with three commands: `relay`, `probe`, and `replay` |
-| `~/.canopy/bin/canopy` | runs `canopy-host relay`, and is linked from `~/.local/bin/canopy` so login shells find it |
+| `~/.canopy/bin/canopy-host` | one Python 3 script with four commands: `relay`, `probe`, `replay`, and `open` |
+| `~/.canopy/bin/canopy` | runs `canopy-host relay`, and is linked from `~/.local/bin/canopy` when nothing else is there, so login shells find it |
+| `~/.canopy/bin/xdg-open` | runs `canopy-host open`, first on remote panes' PATH |
+| `~/.canopy/<home id>/app.sock` | the app's relay socket, forwarded from the Mac while the host is connected |
 | `~/.canopy/tmux.conf` | Canopy's tmux settings |
 | `~/.canopy/worktrees/<repo>/<slug>` | remote rows' worktrees, named as local rows' folders are |
 | `~/.canopy/<home id>/pending/` | agent reports the relay could not deliver |
@@ -217,8 +219,10 @@ The pane's variables on the host are those a local pane gets, with these differe
 | `CANOPY_ROW_PATH` | the remote path |
 | `CANOPY_ROOT_PATH` | the host's clone |
 | `CANOPY_HOST` | the host's alias |
-| `CANOPY_SOCKET` | the pane's forwarded socket |
+| `CANOPY_SOCKET` | the host's forwarded socket, `~/.canopy/<home id>/app.sock` |
 | `CANOPY_CLI` | `~/.canopy/bin/canopy` |
+| `CANOPY_HOME_ID` | the home id, which names the host's folder for pending reports |
+| `PATH` | `~/.canopy/bin` first, so `xdg-open` is Canopy's |
 | `CANOPY_HOME`, `ZDOTDIR` | not set |
 
 ### tmux
@@ -251,13 +255,23 @@ Quitting Canopy and stopping the master only detach.
 - It sends one JSON line holding its version, its arguments, its working folder, the `CANOPY_*` variables, and its standard input when that is not a terminal, base64-encoded.
 - It reads one JSON line back holding stdout, stderr, and the exit status, writes them out, and exits with that status.
 
-Each pane's ssh forwards `/tmp/canopy-<uid>/<home id>-p<pane number>.sock` on the host to the host's socket in the app, `CANOPY_HOME/hosts/<host hash>.sock`, removing a stale file at that path first.
+Each new connection to a host forwards `~/.canopy/<home id>/app.sock` on the host to the host's socket in the app, `CANOPY_HOME/hosts/<host hash>.sock`, through the master with `ssh -O forward -R`, removing a stale file at that path first.
+One forward serves every pane on the host, since each request names its pane, and it lasts as long as the master.
+sshd makes the socket readable by its user alone.
 The app serves one request per connection on that socket and knows which host it came from.
 It runs its own CLI with the arguments, with `CANOPY_HOME` set to its home, `CANOPY_PANE` as sent, and the row's stand-in in place of the remote row's path in `CANOPY_ROW_PATH` and in the working folder.
+The relay sends how long ago it started, so `agent-hook` dates its report by when the hook ran on the host, not when the app ran the CLI.
+A run whose relay hangs up is stopped.
 A working folder outside the host's remote rows becomes the Canopy home, so the CLI targets nothing by folder.
 The CLI's run ends when the connection closes, and has no terminal, so a command that prompts, such as `ticket connect`, reads standard input instead.
 `row new` run through the relay without `--on` makes its row on the same host, and `--on local` makes a local one.
 `hooks install`, `uninstall`, and `status` through the relay say the host's hooks are kept by `canopy host add`.
+
+### Opening links
+
+Claude Code on Linux opens links with `xdg-open`, and the remote panes' `~/.canopy/bin/xdg-open` runs `canopy-host open`.
+A claude.ai artifact link, by the rule the app uses for ⌘-clicks, becomes `canopy web open <url>` through the relay, so the artifact opens in the remote row.
+Anything else goes to the next `xdg-open` on the PATH, and without one it fails as a missing `xdg-open` does.
 
 ### Hooks
 
@@ -266,8 +280,8 @@ The hook command is unchanged, since `$CANOPY_CLI` names the relay on the host.
 
 ### Reports that cannot be delivered
 
-When `agent-hook` cannot reach the app, the relay saves the report in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there.
-Before attaching, `remote-attach` runs `canopy-host replay` on the host, which sends and removes the pane's saved report.
+When `agent-hook` cannot reach the app, the relay saves the request in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there, and exits 0, as a hook must.
+Before answering `host.attach` with the ssh command, the app runs `canopy-host replay --pane p<n>` on the host, which prints and removes the pane's saved request, and runs it as if the relay had just sent it.
 An agent that finished while the Mac slept therefore shows as done when Canopy reconnects.
 
 ## Pull requests
