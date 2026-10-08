@@ -120,6 +120,13 @@ struct HostControlTests {
         await #expect {
             try await workspace.addHost(alias: "no-such-host.invalid", repos: [:], wake: nil, idleDetachMinutes: nil)
         } throws: { ($0 as? WorkspaceError)?.code == "host_unknown" }
+        // A name that only resolves while its host is awake is woken first.
+        let woken = setup.dir.sub("woken")
+        await #expect {
+            try await workspace.addHost(
+                alias: "no-such-host.invalid", repos: [:], wake: "touch '\(woken)'", idleDetachMinutes: nil)
+        } throws: { ($0 as? WorkspaceError)?.code != "host_unknown" }
+        #expect(FileManager.default.fileExists(atPath: woken))
 
         await workspace.stop()
         await setup.workspace.stop()
