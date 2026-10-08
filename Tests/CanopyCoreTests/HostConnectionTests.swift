@@ -100,6 +100,17 @@ struct HostConnectionTests {
         #expect(setup.launcher.masters.count > 1)
     }
 
+    /// ssh also ends with 255 when the session's program dies by a signal, which a new attach fixes.
+    @Test func aMasterThatAnswersButTakesNoCommandsRefusesSessions() async throws {
+        let setup = try Setup()
+        #expect(await !setup.connection.refusesSessions())
+        try await setup.connection.connect()
+
+        #expect(await !setup.connection.refusesSessions())
+        setup.launcher.execStatus = 255
+        #expect(await setup.connection.refusesSessions())
+    }
+
     @Test func aHostThatIsOffIsWokenOnceAndConnectsWhenItComesUp() async throws {
         let setup = try Setup()
         setup.launcher.masterUp = false

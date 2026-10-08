@@ -55,6 +55,8 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     struct State {
         var masterUp: Bool = true
+        /// The status of commands run through the master.
+        var execStatus: Int32 = 0
         /// What a master that does not come up says.
         var masterError = "Connection closed by UNKNOWN port 65535"
         var masters: [Master] = []
@@ -78,6 +80,10 @@ final class FakeHostLauncher: HostProcessLauncher {
     var masterError: String {
         get { state.withLock { $0.masterError } }
         set { state.withLock { $0.masterError = newValue } }
+    }
+    var execStatus: Int32 {
+        get { state.withLock { $0.execStatus } }
+        set { state.withLock { $0.execStatus = newValue } }
     }
     var holdWakes: Bool {
         get { state.withLock { $0.holdWakes } }
@@ -107,7 +113,7 @@ final class FakeHostLauncher: HostProcessLauncher {
             let up = (last?.isRunning ?? false) && !state.withLock { $0.deadSockets.contains(ObjectIdentifier(last!)) }
             return SubprocessResult(status: up ? 0 : 255, stdout: Data(), stderr: Data(), timedOut: false)
         }
-        return SubprocessResult(status: 0, stdout: Data(), stderr: Data(), timedOut: false)
+        return SubprocessResult(status: execStatus, stdout: Data(), stderr: Data(), timedOut: false)
     }
 
     func runWake(_ command: String) async -> SubprocessResult {

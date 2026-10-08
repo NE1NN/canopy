@@ -79,9 +79,9 @@ public enum RemoteAttach {
         ]
     }
 
-    /// ssh exits 255 for its own failures. The session ending ends ssh with 0. While the master still answers, a 255
-    /// means the host refused the session rather than went away, and asking again would only be refused again.
-    public static func next(status: Int32, state: HostState, host: String, masterAnswers: Bool = false)
+    /// ssh exits 255 for its own failures. The session ending ends ssh with 0. A host that refuses sessions through a
+    /// master that still answers would only refuse again.
+    public static func next(status: Int32, state: HostState, host: String, sessionRefused: Bool = false)
         -> HostNextResult
     {
         if status == 0 { return HostNextResult(action: .end) }
@@ -89,7 +89,7 @@ public enum RemoteAttach {
             return HostNextResult(
                 action: .waitForReturn, message: "Detached so \(host) can sleep. Press Return to reconnect.")
         }
-        if status == 255, state == .connected, masterAnswers {
+        if status == 255, state == .connected, sessionRefused {
             return HostNextResult(
                 action: .waitForReturn,
                 message:

@@ -108,10 +108,13 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(remote), timeout: timeout)
     }
 
-    /// Whether the master is up and answering, without starting one.
-    public func answers() async -> Bool {
-        guard state == .connected, master?.isRunning == true else { return false }
-        return await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0
+    /// Whether the master is up and answering but refuses new sessions, as past sshd's MaxSessions. Without starting
+    /// one.
+    public func refusesSessions() async -> Bool {
+        guard state == .connected, master?.isRunning == true,
+            await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0
+        else { return false }
+        return await launcher.run(ssh.exec(["true"]), timeout: .seconds(10)).status == 255
     }
 
     /// Runs `remote` only while the master is up, without counting as use, so watching an idle host never keeps it.

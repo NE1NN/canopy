@@ -239,9 +239,9 @@ public struct WorkspaceControlHandler: Sendable {
             }
             let connection = try await workspace.connection(for: pane.host)
             let state = await connection.state
-            let answers = params.status == 255 && state == .connected ? await connection.answers() : false
+            let refused = params.status == 255 && state == .connected ? await connection.refusesSessions() : false
             return try .from(
-                RemoteAttach.next(status: params.status, state: state, host: pane.host, masterAnswers: answers))
+                RemoteAttach.next(status: params.status, state: state, host: pane.host, sessionRefused: refused))
 
         case HostMethod.list:
             var listing = await workspace.hostListing()
