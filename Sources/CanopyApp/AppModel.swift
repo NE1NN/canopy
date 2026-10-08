@@ -620,13 +620,8 @@ final class AppModel {
     /// Hosts are probed every 2 seconds whether or not the window can be seen, so their panes' agents and idle detach
     /// keep going while Canopy is in the background.
     private func startWatchingHosts() {
-        hostTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                await self.hostMonitor.probe()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+        let monitor = hostMonitor
+        hostTask = Task { await monitor.watch(every: .seconds(2)) }
     }
 
     /// Ports scan every 2 seconds and running dots refresh every second while any part of the window can be seen,

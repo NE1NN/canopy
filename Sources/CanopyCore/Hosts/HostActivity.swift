@@ -39,10 +39,10 @@ public enum HostActivity {
 /// reports a host kept, so an agent that finished while the app was away shows it without its pane attaching again.
 /// Every few seconds it also lists each host's listening ports and forwards those of its remote rows to the Mac. A host's
 /// probes run one at a time, so they hold one of its ssh sessions at most, which `host add`'s MaxSessions warning
-/// counts on.
+/// counts on, and each host's run apart from the others', so a slow host holds up no other.
 @MainActor
 public final class HostMonitor {
-    /// How often the hosts' worktrees are listed again, in probes.
+    /// How often a host's worktrees are listed again, in its session probes.
     static let listEvery = 15
 
     let workspace: Workspace
@@ -50,7 +50,8 @@ public final class HostMonitor {
     /// The ports of each connected host's remote rows, a group for each row with any, in sidebar order.
     public private(set) var remotePorts: [String: [PortGroup]] = [:]
     private let portsEvery: Duration
-    private var probes = 0
+    /// Each host's session probes that it answered.
+    private var probes: [String: Int] = [:]
     /// Each host's worktree listing under way. It can wait behind a row being made, so probes go on without it.
     private var listing: [String: Task<Void, Never>] = [:]
     /// Each host's kept reports being replayed, which can each take seconds.
@@ -67,53 +68,78 @@ public final class HostMonitor {
         self.portsEvery = portsEvery
     }
 
-    /// One round: every connected host's sessions, onto its panes.
+    /// Starts a round every `interval` until cancelled, without waiting for the last, so a host still probing is
+    /// skipped and a slow one holds up no other.
+    public func watch(every interval: Duration) async {
+        while !Task.isCancelled {
+            Task { await self.probe() }
+            try? await Task.sleep(for: interval)
+        }
+    }
+
+    /// One round: every connected host's sessions, onto its panes, then its ports when they are due. Each host's
+    /// probes run in a sequence of their own, one after another, and a host whose last sequence still runs is skipped.
+    /// Returns once the session probes it started are done, without waiting for any ports probe.
     public func probe() async {
-        probes += 1
-        let command = HostProbe.command(homeID: workspace.homeID)
         let connected = await workspace.connectedHosts()
         let aliases = Set(connected.map(\.alias))
         for alias in Set(remotePorts.keys).union(lastPorts.keys) where !aliases.contains(alias) {
             remotePorts[alias] = nil
             lastPorts[alias] = nil
+            probes[alias] = nil
         }
+        var sessions: [Task<Bool, Never>] = []
         for connection in connected {
             let alias = connection.alias
             guard probing.insert(alias).inserted else { continue }
-            defer { probing.remove(alias) }
-            guard let result = await connection.probe(command, timeout: .seconds(10)),
-                result.status == 0, let report = try? HostProbe.decode(result.stdout)
-            else { continue }
-            let sessions = report.sessions
-            let panes = terminals.panes.filter { $0.context.remote?.host == alias }
-            var samples: [HostPaneSample] = []
-            for pane in panes {
-                guard let session = pane.remoteSession else { continue }
-                pane.remoteActivity = sessions[session]
-                var running = false
-                if case .running = pane.status { running = true }
-                samples.append(HostPaneSample(session: session, isRunning: running, lastInput: pane.lastInput))
+            let probed = Task { await self.probeSessions(on: connection) }
+            sessions.append(probed)
+            Task {
+                if await probed.value { await self.probePorts(on: connection) }
+                self.probing.remove(alias)
             }
-            let summary = HostActivity.summary(panes: samples, sessions: sessions, now: Date())
-            await connection.panesActive(attached: summary.attached, busy: summary.busy, quietFor: summary.quietFor)
-            if probes % Self.listEvery == 0, listing[alias] == nil {
-                let workspace = workspace
-                listing[alias] = Task {
-                    await workspace.refreshRemote(host: alias)
-                    self.listing[alias] = nil
-                }
-            }
-            if !report.pending.isEmpty, replaying[alias] == nil {
-                let workspace = workspace
-                replaying[alias] = Task {
-                    for pane in report.pending {
-                        await workspace.replayKeptReport(pane: pane, on: connection)
-                    }
-                    self.replaying[alias] = nil
-                }
-            }
-            await probePorts(on: connection)
         }
+        for probed in sessions { _ = await probed.value }
+    }
+
+    /// The host's sessions, onto its panes. Returns whether the host answered.
+    private func probeSessions(on connection: HostConnection) async -> Bool {
+        let alias = connection.alias
+        guard
+            let result = await connection.probe(HostProbe.command(homeID: workspace.homeID), timeout: .seconds(10)),
+            result.status == 0, let report = try? HostProbe.decode(result.stdout)
+        else { return false }
+        let sessions = report.sessions
+        let panes = terminals.panes.filter { $0.context.remote?.host == alias }
+        var samples: [HostPaneSample] = []
+        for pane in panes {
+            guard let session = pane.remoteSession else { continue }
+            pane.remoteActivity = sessions[session]
+            var running = false
+            if case .running = pane.status { running = true }
+            samples.append(HostPaneSample(session: session, isRunning: running, lastInput: pane.lastInput))
+        }
+        let summary = HostActivity.summary(panes: samples, sessions: sessions, now: Date())
+        await connection.panesActive(attached: summary.attached, busy: summary.busy, quietFor: summary.quietFor)
+        let probed = probes[alias, default: 0] + 1
+        probes[alias] = probed
+        if probed % Self.listEvery == 0, listing[alias] == nil {
+            let workspace = workspace
+            listing[alias] = Task {
+                await workspace.refreshRemote(host: alias)
+                self.listing[alias] = nil
+            }
+        }
+        if !report.pending.isEmpty, replaying[alias] == nil {
+            let workspace = workspace
+            replaying[alias] = Task {
+                for pane in report.pending {
+                    await workspace.replayKeptReport(pane: pane, on: connection)
+                }
+                self.replaying[alias] = nil
+            }
+        }
+        return true
     }
 
     /// Ports just stopped on a host leave the panel at once, and the host's ports are read again on its next probe.
@@ -127,7 +153,8 @@ public final class HostMonitor {
     }
 
     /// The host's listening ports, once `portsEvery` has passed, read right after its session probe so the two never
-    /// hold a session each. Its own short timeout keeps a stuck `ss` from holding up the next session probe for long.
+    /// hold a session each. Its own short timeout keeps a stuck `ss` from holding up the host's next session probe for
+    /// long, and other hosts' probes never wait for it.
     /// A probe that fails, or whose `ss` failed, keeps what the last one found and its forwards, and a host without
     /// `ss` lists none.
     private func probePorts(on connection: HostConnection) async {

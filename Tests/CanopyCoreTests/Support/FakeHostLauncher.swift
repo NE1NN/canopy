@@ -75,6 +75,22 @@ final class FakeHostLauncher: HostProcessLauncher {
         /// `-O check` waits here until it is released.
         var holdChecks = false
         var heldChecks: [CheckedContinuation<Void, Never>] = []
+        /// What `canopy-host probe` prints, by kind, when set.
+        var probeOutput: [Probe: String] = [:]
+        /// Probes of these kinds wait until released.
+        var heldKinds: Set<Probe> = []
+        var heldProbes: [Probe: [CheckedContinuation<Void, Never>]] = [:]
+    }
+
+    /// `canopy-host probe`, and with `--ports`, its ports probe.
+    enum Probe: Hashable {
+        case sessions, ports
+
+        init?(_ argv: [String]) {
+            let line = argv.joined(separator: " ")
+            guard line.contains(#"canopy-host" probe"#) else { return nil }
+            self = line.contains("--ports") ? .ports : .sessions
+        }
     }
 
     let state = Mutex(State())
@@ -113,6 +129,29 @@ final class FakeHostLauncher: HostProcessLauncher {
             guard argv.containsSequence(["-O", operation]), let at = argv.firstIndex(of: "-L") else { return nil }
             return argv[at + 1]
         }
+    }
+
+    /// Probes of `kind` print `output`, with status 0.
+    func answer(_ kind: Probe, with output: String) {
+        state.withLock { $0.probeOutput[kind] = output }
+    }
+
+    func hold(_ kind: Probe) {
+        state.withLock { _ = $0.heldKinds.insert(kind) }
+    }
+
+    func release(_ kind: Probe) {
+        let held = state.withLock { state in
+            state.heldKinds.remove(kind)
+            defer { state.heldProbes[kind] = [] }
+            return state.heldProbes[kind] ?? []
+        }
+        for probe in held { probe.resume() }
+    }
+
+    /// The probes of `kind` run so far, held ones included.
+    func probes(_ kind: Probe) -> Int {
+        commands.filter { Probe($0) == kind }.count
     }
 
     func releaseFirstCheck() {
@@ -171,6 +210,19 @@ final class FakeHostLauncher: HostProcessLauncher {
         {
             return SubprocessResult(
                 status: 255, stdout: Data(), stderr: Data((Self.refusal + "\n").utf8), timedOut: false)
+        }
+        if let kind = Probe(argv) {
+            await withCheckedContinuation { continuation in
+                let held = state.withLock { state in
+                    let held = state.heldKinds.contains(kind)
+                    if held { state.heldProbes[kind, default: []].append(continuation) }
+                    return held
+                }
+                if !held { continuation.resume() }
+            }
+            if let output = state.withLock({ $0.probeOutput[kind] }) {
+                return SubprocessResult(status: 0, stdout: Data(output.utf8), stderr: Data(), timedOut: false)
+            }
         }
         return SubprocessResult(status: execStatus, stdout: Data(), stderr: Data(), timedOut: false)
     }

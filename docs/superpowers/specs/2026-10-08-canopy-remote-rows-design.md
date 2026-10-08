@@ -244,6 +244,7 @@ After a reconnect only the current screen is drawn again, and older output is in
 
 The local process of a remote pane is the attach command, so the app asks the host instead.
 While a host is connected, the app runs `canopy-host probe` on it through the master every 2 seconds.
+Each host's probes run one after another, apart from other hosts', so a slow host holds up no other, and a host still answering the last probe is skipped.
 It prints, for each session of this home's tmux server, the foreground command, whether it is the shell, the session's folder, and its title.
 It also prints `pending`, the panes with a hook report kept for this home, and the app replays each of them as "Reports that cannot be delivered" says, one host's at a time, without holding up the next probe.
 A remote pane is busy while its foreground command is not its shell, which drives the close warnings, the agent state clearing when the program exits, and the pane's title.

@@ -9,17 +9,21 @@ public struct HostTooling: Sendable {
     public var clock: any HostClock
     /// The app's bundled CLI. Without one, hosts' calls are refused.
     public var relayCLI: String?
+    /// What runs each host's ssh, by alias; nil runs `sshExecutable`.
+    public var launcher: (@Sendable (String) -> any HostProcessLauncher)?
 
     public init(
         sshExecutable: String = SSHCommand.executable(),
         environment: @escaping @Sendable () -> [String: String] = { GitEnvironment.current },
         clock: any HostClock = SystemHostClock(),
-        relayCLI: String? = nil
+        relayCLI: String? = nil,
+        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil
     ) {
         self.sshExecutable = sshExecutable
         self.environment = environment
         self.clock = clock
         self.relayCLI = relayCLI
+        self.launcher = launcher
     }
 }
 
@@ -49,7 +53,7 @@ extension Workspace {
             attributes: [.posixPermissions: 0o700])
         let connection = HostConnection(
             alias: alias, entry: entry, ssh: ssh,
-            launcher: SubprocessHostLauncher(environment: hostTooling.environment),
+            launcher: hostTooling.launcher?(alias) ?? SubprocessHostLauncher(environment: hostTooling.environment),
             clock: hostTooling.clock, activity: activity)
         hostConnections[alias] = connection
         return connection

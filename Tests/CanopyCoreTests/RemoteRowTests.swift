@@ -603,12 +603,17 @@ struct HostMonitorListingTests {
         let monitor = HostMonitor(workspace: workspace, terminals: terminals)
         #expect(!FileManager.default.fileExists(atPath: started))
 
-        for _ in 0..<HostMonitor.listEvery {
+        // A round skips the host while its ports probe runs, so it takes more rounds than probes.
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return FileManager.default.fileExists(atPath: started)
+            })
+        for _ in 0..<3 {
             await monitor.probe()
         }
 
         #expect(!FileManager.default.fileExists(atPath: done))
-        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
         #expect(await eventually { FileManager.default.fileExists(atPath: done) })
         await workspace.stop()
         await setup.workspace.stop()
