@@ -207,6 +207,10 @@ output_of rows | grep -q "e2e/remote" || fail "canopy row list on the host does 
 in_pane terms "canopy term list"
 succeeded terms
 output_of terms | grep -q "^$pane " || fail "canopy term list on the host does not list $pane: $(output_of terms)"
+in_pane loop "printf 'a\\nb\\nc\\n' | while read x; do canopy row list >/dev/null; echo got \$x; done"
+succeeded loop
+[[ "$(output_of loop | tr '\n' ' ')" == "got a got b got c " ]] ||
+    fail "canopy in a loop over lines took the loop's input: $(output_of loop)"
 
 step "a hook's report in the remote pane shows as the pane's agent state"
 in_pane hook "$(hook_report 'Tests pass. Should I push it?')"

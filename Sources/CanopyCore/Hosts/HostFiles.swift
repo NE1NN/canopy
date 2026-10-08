@@ -7,7 +7,7 @@ public enum HostFiles {
     /// Changes whenever any of the files does, so a host with older files gets them again.
     /// The shared `canopy` stays out of it: it is the same for every version and must never ask for an install.
     public static let version =
-        "\(CanopyVersion.current)+\(HomeID.hash(scriptSource + canopyLauncherSource + xdgOpenLauncherSource + tmuxConf))"
+        "\(CanopyVersion.current)+\(HomeID.hash(scriptBody + canopyLauncherSource + xdgOpenLauncherSource + tmuxConf))"
 
     /// The remote command that writes this home's files, each through a temporary file and a rename, then the version,
     /// and has this home's tmux server, when it runs, read the new config. Contents travel in the command,
@@ -128,7 +128,9 @@ public enum HostFiles {
     /// `probe` lists the sessions of Canopy's tmux server, each with its foreground program, whether that is the shell,
     /// its folder, and its title, and the panes with a kept hook report, as JSON. `relay` is the host's `canopy`, `replay` hands the app a hook's report that
     /// found no app, and `open` is the host's `xdg-open`.
-    public static let script = scriptSource.replacingOccurrences(of: "@CANOPY_VERSION@", with: version)
+    public static let script = scriptBody.replacingOccurrences(of: "@CANOPY_VERSION@", with: version)
+
+    private static let scriptBody = scriptSource.replacingOccurrences(of: "@INPUT_COMMANDS@", with: RelayInput.literal)
 
     private static let scriptSource = #"""
         #!/usr/bin/env python3
@@ -148,9 +150,12 @@ public enum HostFiles {
         VERSION = "@CANOPY_VERSION@"
         UNREACHABLE = "Canopy is not reachable from this host right now."
         NAME = re.compile(r"[A-Za-z0-9_-]+")
-        # Long enough for a slow producer, such as a keychain, piping into `canopy ticket connect`; bounded, since a pipe
-        # its parent never closes would otherwise hold every command forever.
-        INPUT_WAIT = 10
+        # The CLI's commands that read standard input on the Mac, from `RelayInput.commands`, and how this relay reads it
+        # for them. Every other command gets none, so it never takes input meant for what runs after it.
+        INPUT_COMMANDS = @INPUT_COMMANDS@
+        # As `canopy ticket connect` reads a token on the Mac (`TokenInput`): its first line, within this wait and length.
+        LINE_WAIT = 10
+        LONGEST_LINE = 64 * 1024
         # The app acknowledges a request as soon as it reads it. sshd here accepts connections on the forwarded socket
         # even while the Mac sleeps, so silence for this long means the request never reached the app.
         ACKNOWLEDGEMENT_WAIT = 10
@@ -162,18 +167,34 @@ public enum HostFiles {
         HOOK_REPLY_WAIT = 4
 
 
-        def standard_input(deadline=None):
-            """Standard input, base64, unless it is a terminal or nothing arrives on it. By a deadline, what arrived by
-            then, so a pipe that never closes cannot hold a hook past Claude's timeout."""
+        def command_input(arguments):
+            """How the command in `arguments` reads standard input on the Mac, or None for one that reads none."""
+            words = [argument for argument in arguments if not argument.startswith("-")]
+            for command, kind in INPUT_COMMANDS:
+                if words[:len(command)] == command:
+                    return kind
+            return None
+
+
+        def piped_input():
+            """Standard input's descriptor, unless it is a terminal or there is none."""
             try:
                 if sys.stdin is None or sys.stdin.isatty() or not sys.stdin.readable():
                     return None
-                descriptor = sys.stdin.fileno()
-                first = INPUT_WAIT if deadline is None else max(0.0, deadline - time.monotonic())
-                if not select.select([descriptor], [], [], first)[0]:
+                return sys.stdin.fileno()
+            except (OSError, ValueError):
+                return None
+
+
+        def hook_input(deadline):
+            """What arrived on standard input by the deadline, base64, so a pipe that never closes cannot hold a hook
+            past Claude's timeout."""
+            descriptor = piped_input()
+            if descriptor is None:
+                return None
+            try:
+                if not select.select([descriptor], [], [], max(0.0, deadline - time.monotonic()))[0]:
                     return None
-                if deadline is None:
-                    return base64.b64encode(sys.stdin.buffer.read()).decode("ascii")
                 data = bytearray()
                 while True:
                     chunk = os.read(descriptor, 65536)
@@ -184,6 +205,28 @@ public enum HostFiles {
                 return base64.b64encode(bytes(data)).decode("ascii")
             except (OSError, ValueError):
                 return None
+
+
+        def first_line():
+            """Standard input's first line, base64, read a byte at a time so what follows stays for the next reader. Without
+            a whole line or the end of input within LINE_WAIT, none, as the Mac's CLI would give up too."""
+            descriptor = piped_input()
+            if descriptor is None:
+                return None
+            deadline = time.monotonic() + LINE_WAIT
+            data = bytearray()
+            try:
+                while len(data) <= LONGEST_LINE:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
+                        return None
+                    byte = os.read(descriptor, 1)
+                    data += byte
+                    if not byte or byte == b"\n":
+                        break
+            except (OSError, ValueError):
+                return None
+            return base64.b64encode(bytes(data)).decode("ascii")
 
 
         def folder():
@@ -299,7 +342,8 @@ public enum HostFiles {
         def relay(arguments):
             """The host's `canopy`: runs the app's CLI with these arguments and prints what it printed."""
             path = os.environ.get("CANOPY_SOCKET", "")
-            if arguments[:1] == ["agent-hook"]:
+            reads = command_input(arguments)
+            if reads == "hook":
                 # A hook never prints and never fails, so it can never disturb Claude.
                 try:
                     if path:
@@ -310,7 +354,7 @@ public enum HostFiles {
             if not path:
                 print("Run canopy in a Canopy terminal on this host.", file=sys.stderr)
                 return 1
-            request = request_for(arguments)
+            request = request_for(arguments, first_line() if reads == "line" else None)
             try:
                 with connect(path, ACKNOWLEDGEMENT_WAIT) as connection:
                     lines, first = send(connection, request, ACKNOWLEDGEMENT_WAIT)
@@ -325,7 +369,7 @@ public enum HostFiles {
 
 
         def hook(path, arguments):
-            request = request_for(arguments, STARTED + HOOK_INPUT_WAIT)
+            request = request_for(arguments, hook_input(STARTED + HOOK_INPUT_WAIT))
             deadline = STARTED + HOOK_BUDGET
             try:
                 with connect(path, left(deadline)) as connection:
@@ -344,11 +388,11 @@ public enum HostFiles {
             keep(request)
 
 
-        def request_for(arguments, input_deadline=None):
+        def request_for(arguments, stdin):
             return {
                 "version": VERSION, "args": arguments, "cwd": folder(),
                 "env": {key: value for key, value in os.environ.items() if key.startswith("CANOPY_")},
-                "stdin": standard_input(input_deadline),
+                "stdin": stdin,
             }
 
 

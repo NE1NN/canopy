@@ -44,14 +44,16 @@ struct HostRelayScriptTests {
             }
         }
 
-        /// Runs a hook whose standard input gets `input` and never closes, as from a parent that keeps the pipe open.
-        /// Returns its status, or nil when it was still running after 30 seconds, a guard against a hang only.
-        func runHookWithOpenInput(_ input: Data, environment: [String: String]) async throws -> Int32? {
+        /// Runs the relay with standard input that gets `input` and never closes, as from a parent that keeps the pipe
+        /// open. Returns its status, or nil when it was still running after 30 seconds, a guard against a hang only.
+        func runWithOpenInput(
+            _ arguments: [String] = ["agent-hook", "stop"], input: Data, environment: [String: String]
+        ) async throws -> Int32? {
             let script = script
             return try await offPool {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-                process.arguments = [script, "relay", "agent-hook", "stop"]
+                process.arguments = [script, "relay"] + arguments
                 process.environment = environment
                 let pipe = Pipe()
                 process.standardInput = pipe
@@ -78,7 +80,7 @@ struct HostRelayScriptTests {
 
     static let unreachable = "Canopy is not reachable from this host right now.\n"
 
-    @Test func theRelaySendsItsArgumentsFolderCanopyVariablesInputAndAge() async throws {
+    @Test func theRelaySendsItsArgumentsFolderCanopyVariablesAndAge() async throws {
         let setup = try Setup()
         let app = try RelayStub(
             path: setup.socket,
@@ -88,8 +90,7 @@ struct HostRelayScriptTests {
         let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_PANE": "p4", "CANOPY_ROW_PATH": "/w/x", "OTHER": "1"]
 
         let result = try await setup.run(
-            ["relay", "row", "list", "--json"], environment: setup.environment(variables),
-            stdin: Data("piped\n".utf8), directory: folder)
+            ["relay", "row", "list", "--json"], environment: setup.environment(variables), directory: folder)
 
         #expect(result.status == 3)
         #expect(result.stdout == Data([0x6F, 0xFF, 0x0A]))
@@ -99,9 +100,101 @@ struct HostRelayScriptTests {
         #expect(request.args == ["row", "list", "--json"])
         #expect(request.cwd == folder)
         #expect(request.env == ["CANOPY_SOCKET": setup.socket, "CANOPY_PANE": "p4", "CANOPY_ROW_PATH": "/w/x"])
-        #expect(request.input == Data("piped\n".utf8))
         let age = try #require(request.age)
         #expect(age >= 0)
+    }
+
+    /// Only the commands that read standard input on the Mac get it, so a command in a loop over lines leaves the
+    /// rest of them to the loop.
+    @Test func aCommandThatReadsNoInputLeavesItForWhatRunsAfterIt() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)),
+            connections: 3)
+        let loop = #"printf 'a\nb\nc\n' | while read x; do python3 "$0" relay row list; echo "got $x"; done"#
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", loop, setup.script], environment: setup.environment(["CANOPY_SOCKET": setup.socket]),
+                directory: nil, timeout: .seconds(60))
+        }
+
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "got a\ngot b\ngot c\n")
+        #expect(app.requests.map { $0?.args } == [["row", "list"], ["row", "list"], ["row", "list"]])
+        #expect(app.requests.allSatisfy { $0?.stdin == nil })
+    }
+
+    /// A pipe its parent never closes, as `tail -f log | canopy ...`, holds no command that reads no input.
+    @Test func aCommandWhoseInputNeverClosesRunsWithoutIt() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)))
+
+        let status = try await setup.runWithOpenInput(
+            ["row", "list"], input: Data("line\n".utf8),
+            environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(status == 0)
+        #expect(app.request?.args == ["row", "list"])
+        #expect(app.request?.stdin == nil)
+    }
+
+    /// `ticket connect` reads a token's line on the Mac, so the relay sends that line alone and leaves the rest.
+    @Test func ticketConnectSendsTheFirstLineOfItsInputAndLeavesTheRest() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)),
+            connections: 2)
+        let command = #"""
+            printf 'token\nrest\n' | { python3 "$0" relay ticket connect https://t.example; cat; }
+            printf 'unterminated' | python3 "$0" relay ticket connect https://t.example
+            """#
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", command, setup.script],
+                environment: setup.environment(["CANOPY_SOCKET": setup.socket]), directory: nil, timeout: .seconds(60))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "rest\n")
+        #expect(
+            app.requests.map { $0?.args } == [
+                ["ticket", "connect", "https://t.example"], ["ticket", "connect", "https://t.example"],
+            ])
+        #expect(app.requests.map { $0?.input } == [Data("token\n".utf8), Data("unterminated".utf8)])
+    }
+
+    /// The host's script reads its list of commands that take input from `RelayInput`, and matches them as the app
+    /// does.
+    @Test func theRelayForwardsInputToTheCommandsTheAppNames() async throws {
+        let setup = try Setup()
+        let module = setup.dir.sub("canopy_host.py")
+        try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
+        let commands: [[String]] = [
+            ["agent-hook"], ["agent-hook", "stop"], ["ticket", "connect", "https://t.example"],
+            ["ticket", "--json", "connect", "https://t.example"], ["--verbose", "agent-hook"], ["ticket"],
+            ["ticket", "list"], ["row", "list"], ["term", "send", "p1", "agent-hook"], ["row", "new", "ticket"], [],
+        ]
+        let program = """
+            import json, sys
+            sys.path.insert(0, sys.argv[1])
+            import canopy_host
+            for arguments in json.loads(sys.argv[2]):
+                print(canopy_host.command_input(arguments) or "none")
+            """
+        let table = String(decoding: try JSONEncoder().encode(commands), as: UTF8.self)
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/usr/bin/python3", ["-I", "-c", program, setup.dir.path, table], environment: setup.environment(),
+                directory: nil, timeout: .seconds(30))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        let answers = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
+        #expect(answers == commands.map { RelayInput.reading($0)?.rawValue ?? "none" })
+        #expect(answers.prefix(5).allSatisfy { $0 != "none" } && answers.dropFirst(5).allSatisfy { $0 == "none" })
     }
 
     @Test func outsideACanopyPaneTheRelaySaysSo() async throws {
@@ -200,7 +293,7 @@ struct HostRelayScriptTests {
         let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": "p7"]
         let input = Data(#"{"hook_event_name": "Stop"}"#.utf8)
 
-        let status = try await setup.runHookWithOpenInput(input, environment: setup.environment(variables))
+        let status = try await setup.runWithOpenInput(input: input, environment: setup.environment(variables))
 
         #expect(status == 0)
         let saved = try JSONDecoder().decode(
@@ -479,44 +572,55 @@ final class RelayStub: Sendable {
     private let path: String
     private let fd: Int32
 
-    init(path: String, answer: Answer) throws {
+    /// Answers `connections` connections one after another, each as `answer` says.
+    init(path: String, answer: Answer, connections: Int = 1) throws {
         self.path = path
         fd = try Self.bound(path)
         guard listen(fd, 4) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         let (fd, received) = (fd, received)
         Thread {
-            var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            guard poll(&ready, 1, 30_000) == 1 else { return }
-            let client = accept(fd, nil, nil)
-            guard client >= 0 else { return }
-            defer { close(client) }
-            let stream = SocketStream(fd: client, deadline: .now + .seconds(30))
-            var data = Data()
-            while !data.contains(0x0A), let chunk = try? stream.read(), !chunk.isEmpty {
-                data.append(chunk)
-            }
-            received.request.withLock {
-                $0 = try? JSONDecoder().decode(RelayRequest.self, from: data.prefix { $0 != 0x0A })
-            }
-            switch answer {
-            case .acknowledging(let reply):
-                try? stream.write(HostRelayServer.acknowledgement + Self.line(reply))
-            case .replying(let reply):
-                try? stream.write(Self.line(reply))
-            case .acknowledgingThenHangingUp:
-                try? stream.write(HostRelayServer.acknowledgement)
-            case .hangingUp:
-                break
-            case .silent:
-                // Until the relay gives up and hangs up.
-                while let chunk = try? stream.read(), !chunk.isEmpty {}
+            for _ in 0..<connections {
+                var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                guard poll(&ready, 1, 30_000) == 1 else { return }
+                let client = accept(fd, nil, nil)
+                guard client >= 0 else { return }
+                Self.answer(client, answer, into: received)
             }
         }.start()
     }
 
+    private static func answer(_ client: Int32, _ answer: Answer, into received: Received) {
+        defer { close(client) }
+        let stream = SocketStream(fd: client, deadline: .now + .seconds(30))
+        var data = Data()
+        while !data.contains(0x0A), let chunk = try? stream.read(), !chunk.isEmpty {
+            data.append(chunk)
+        }
+        let request = try? JSONDecoder().decode(RelayRequest.self, from: data.prefix { $0 != 0x0A })
+        received.requests.withLock { $0.append(request) }
+        switch answer {
+        case .acknowledging(let reply):
+            try? stream.write(HostRelayServer.acknowledgement + line(reply))
+        case .replying(let reply):
+            try? stream.write(line(reply))
+        case .acknowledgingThenHangingUp:
+            try? stream.write(HostRelayServer.acknowledgement)
+        case .hangingUp:
+            break
+        case .silent:
+            // Until the relay gives up and hangs up.
+            while let chunk = try? stream.read(), !chunk.isEmpty {}
+        }
+    }
+
     /// The request, once the relay has sent it. Read after the relay exits, which it does only after this answers.
     var request: RelayRequest? {
-        received.request.withLock { $0 }
+        received.requests.withLock { $0.first ?? nil }
+    }
+
+    /// Every request so far, nil for one that could not be read.
+    var requests: [RelayRequest?] {
+        received.requests.withLock { $0 }
     }
 
     private static func line(_ reply: RelayReply) -> Data {
@@ -550,6 +654,6 @@ final class RelayStub: Sendable {
     }
 
     private final class Received: Sendable {
-        let request = Mutex<RelayRequest?>(nil)
+        let requests = Mutex<[RelayRequest?]>([])
     }
 }

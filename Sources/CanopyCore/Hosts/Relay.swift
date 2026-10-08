@@ -48,6 +48,36 @@ public struct RelayReply: Codable, Sendable, Equatable {
     }
 }
 
+/// How the host's relay reads standard input for one of the CLI's commands. Only the commands that read it on the Mac
+/// get any, so a relayed command never takes input meant for what runs after it, as in `while read`, and never waits
+/// on a pipe nobody writes to. The host's `canopy-host` is rendered from `commands`.
+public enum RelayInput: String, Sendable, CaseIterable {
+    /// What arrives within a hook's budget, as `agent-hook` reads Claude's report to its end.
+    case hookReport = "hook"
+    /// The first line, as `ticket connect` reads a token: byte by byte, within the same wait and length as
+    /// `TokenInput`, so what follows stays for the next reader.
+    case firstLine = "line"
+
+    /// The CLI's commands that read standard input, by their words.
+    public static let commands: [(words: [String], input: RelayInput)] = [
+        (["agent-hook"], .hookReport), (["ticket", "connect"], .firstLine),
+    ]
+
+    /// How the command `arguments` name reads standard input, or nil for one that reads none. Options among the
+    /// command's words are passed over.
+    public static func reading(_ arguments: [String]) -> RelayInput? {
+        let words = arguments.filter { !$0.hasPrefix("-") }
+        return commands.first { words.starts(with: $0.words) }?.input
+    }
+
+    /// `commands` as JSON, which the host's script reads as a Python literal.
+    static var literal: String {
+        let pairs: [[Any]] = commands.map { [$0.words, $0.input.rawValue] }
+        let data = (try? JSONSerialization.data(withJSONObject: pairs, options: [.sortedKeys])) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 public enum RelayPaths {
     /// The Mac folder for a host's `remote` folder: the stand-in of the remote row holding it, with the same tail.
     /// Anything else becomes `home`, so the CLI targets nothing by folder and never reads a host path as a Mac one.
