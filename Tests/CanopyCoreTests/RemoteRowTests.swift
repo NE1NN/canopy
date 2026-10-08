@@ -310,3 +310,24 @@ struct RemoteSessionTests {
         await setup.workspace.stop()
     }
 }
+
+struct RemoteStandInPathTests {
+    @Test func aStandInIsCanonicalWhenTheHomeIsReachedThroughALink() async throws {
+        let setup = try await RemoteRowTests.Setup()
+        let link = setup.dir.sub("linked-home")
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: setup.workspace.home.root.path)
+        await setup.workspace.stop()
+        let linked = Workspace(
+            home: CanopyHome(path: link), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { setup.host.environment }))
+        try await linked.start()
+
+        let created = try await linked.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/linked")
+
+        #expect(created.row.path == Paths.canonical(created.row.path))
+        #expect(created.row.path.hasPrefix(setup.workspace.home.root.path))
+        let found = try TargetResolver.row(for: TargetHint(row: link + "/remote/box/demo/feat-linked"), in: await linked.snapshot)
+        #expect(found.path == created.row.path)
+        await linked.stop()
+    }
+}

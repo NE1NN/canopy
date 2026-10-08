@@ -183,8 +183,9 @@ extension Workspace {
     }
 
     /// A stand-in's path, at remote/<host>/<repo>/<leaf>.
+    /// Canonical, like every row path, so a home reached through a link still finds its rows.
     private nonisolated func standInPath(alias: String, dirName: String, leaf: String) -> String {
-        home.remoteRoot.appending(path: alias).appending(path: dirName).appending(path: leaf).path
+        Paths.canonical(home.remoteRoot.appending(path: alias).appending(path: dirName).appending(path: leaf).path)
     }
 
     /// Activity data for a remote row: its host and remote path, besides `data`.
