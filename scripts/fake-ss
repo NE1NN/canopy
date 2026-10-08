@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Plays iproute2's `ss -ltnpH` for tests: prints the lines in the file $FAKE_SS_LINES names, leaving out processes
+that have exited, as a socket goes with its last process. Without that file it fails, as `ss` can on a host."""
+import os
+import re
+import subprocess
+import sys
+
+USER = re.compile(r'\("[^"]*",pid=(\d+),fd=\d+\)')
+
+
+def running(pid):
+    state = subprocess.run(["ps", "-o", "stat=", "-p", pid], capture_output=True, encoding="utf-8").stdout.strip()
+    return state != "" and not state.startswith("Z")
+
+
+def live(line):
+    """The line with only the processes that still run, or None when none of its processes do."""
+    users = USER.findall(line)
+    if not users:
+        return line
+    kept = [match.group(0) for match in USER.finditer(line) if running(match.group(1))]
+    if not kept:
+        return None
+    return line[:line.index("users:((")] + "users:(" + ",".join(kept) + ")"
+
+
+def main(arguments):
+    if arguments != ["-ltnpH"]:
+        print("fake-ss: only -ltnpH", file=sys.stderr)
+        return 1
+    try:
+        with open(os.environ.get("FAKE_SS_LINES", ""), encoding="utf-8") as file:
+            lines = file.read().splitlines()
+    except OSError:
+        print("Cannot open netlink socket: Protocol not supported", file=sys.stderr)
+        return 1
+    for line in lines:
+        shown = live(line)
+        if shown is not None:
+            print(shown)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
