@@ -72,6 +72,13 @@ final class FakeHostLauncher: HostProcessLauncher {
         /// Mac ports `-O forward -L` fails on, as when something holds both loopbacks there, or every one.
         var refusedPorts: Set<UInt16> = []
         var refuseEveryPort = false
+        /// Mac ports `-O forward -L` times out on, as when the master is slow to answer.
+        var timedOutPorts: Set<UInt16> = []
+        /// `-O cancel` fails, as when the master is slow to answer.
+        var failCancels = false
+        /// `-O forward -L` waits here until it is released.
+        var holdForwards = false
+        var heldForwards: [CheckedContinuation<Void, Never>] = []
         /// `-O check` waits here until it is released.
         var holdChecks = false
         var heldChecks: [CheckedContinuation<Void, Never>] = []
@@ -121,6 +128,36 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     func refuseEveryPort(_ refuse: Bool) {
         state.withLock { $0.refuseEveryPort = refuse }
+    }
+
+    func timeOut(_ ports: Set<UInt16>) {
+        state.withLock { $0.timedOutPorts = ports }
+    }
+
+    var failCancels: Bool {
+        get { state.withLock { $0.failCancels } }
+        set { state.withLock { $0.failCancels = newValue } }
+    }
+
+    var holdForwards: Bool {
+        get { state.withLock { $0.holdForwards } }
+        set { state.withLock { $0.holdForwards = newValue } }
+    }
+
+    func heldForwardCount() -> Int { state.withLock { $0.heldForwards.count } }
+
+    func releaseFirstForward() {
+        let first = state.withLock { state in state.heldForwards.isEmpty ? nil : state.heldForwards.removeFirst() }
+        first?.resume()
+    }
+
+    func releaseForwards() {
+        let held = state.withLock { state in
+            state.holdForwards = false
+            defer { state.heldForwards = [] }
+            return state.heldForwards
+        }
+        for forward in held { forward.resume() }
     }
 
     /// The `-L` words of each `-O <operation>` run, in order.
@@ -205,11 +242,27 @@ final class FakeHostLauncher: HostProcessLauncher {
             return SubprocessResult(status: up ? 0 : 255, stdout: Data(), stderr: Data(), timedOut: false)
         }
         if argv.containsSequence(["-O", "forward"]), let at = argv.firstIndex(of: "-L"),
-            let local = argv[at + 1].split(separator: ":").first.flatMap({ UInt16($0) }),
-            state.withLock({ $0.refuseEveryPort || $0.refusedPorts.contains(local) })
+            let local = argv[at + 1].split(separator: ":").first.flatMap({ UInt16($0) })
         {
+            await withCheckedContinuation { continuation in
+                let held = state.withLock { state in
+                    if state.holdForwards { state.heldForwards.append(continuation) }
+                    return state.holdForwards
+                }
+                if !held { continuation.resume() }
+            }
+            if state.withLock({ $0.refuseEveryPort || $0.refusedPorts.contains(local) }) {
+                return SubprocessResult(
+                    status: 255, stdout: Data(), stderr: Data((Self.refusal + "\n").utf8), timedOut: false)
+            }
+            if state.withLock({ $0.timedOutPorts.contains(local) }) {
+                return SubprocessResult(status: 137, stdout: Data(), stderr: Data(), timedOut: true)
+            }
+        }
+        if argv.containsSequence(["-O", "cancel"]), failCancels {
             return SubprocessResult(
-                status: 255, stdout: Data(), stderr: Data((Self.refusal + "\n").utf8), timedOut: false)
+                status: 255, stdout: Data(), stderr: Data("mux_client_request_session: read from master failed".utf8),
+                timedOut: false)
         }
         if let kind = Probe(argv) {
             await withCheckedContinuation { continuation in

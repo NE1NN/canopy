@@ -109,6 +109,84 @@ struct HostForwardsTests {
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000", "3000:127.0.0.1:3000"])
     }
 
+    /// A forward whose cancel failed may still run in the master, so it is kept and cancelled again next round.
+    @Test func aForwardWhoseCancelFailsIsKeptAndCancelledNextRound() async throws {
+        let dir = try TempDir()
+        let host = Host("box", in: dir)
+        try await host.connection.connect()
+        _ = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        host.launcher.failCancels = true
+
+        _ = await host.connection.forwardPorts([], taken: [])
+
+        #expect(await host.connection.forwardedPorts == [5173])
+        host.launcher.failCancels = false
+        _ = await host.connection.forwardPorts([], taken: [])
+        #expect(host.launcher.localForwards("cancel") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
+        #expect(await host.connection.forwardedPorts.isEmpty)
+    }
+
+    /// A server that moved address while the old forward could not be cancelled keeps that forward, rather than
+    /// getting a second one on the next Mac port beside it.
+    @Test func aChangedTargetWhoseCancelFailsGetsNoSecondForward() async throws {
+        let dir = try TempDir()
+        let host = Host("box", in: dir)
+        try await host.connection.connect()
+        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")], taken: [])
+        host.launcher.failCancels = true
+
+        let kept = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")], taken: [])
+
+        #expect(kept == [3000: PortForward(local: 3000, error: nil)])
+        #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000"])
+        host.launcher.failCancels = false
+        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")], taken: [])
+        #expect(moved == [3000: PortForward(local: 3000, error: nil)])
+        #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000", "3000:127.0.0.1:3000"])
+        #expect(await host.connection.forwardedPorts == [3000])
+    }
+
+    /// ssh that timed out may still have made the forward, so it is cancelled before the next Mac port is tried.
+    @Test func aForwardThatTimesOutIsCancelledBeforeTheNextPort() async throws {
+        let dir = try TempDir()
+        let host = Host("box", in: dir)
+        try await host.connection.connect()
+        host.launcher.timeOut([5173])
+
+        let moved = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+
+        #expect(moved == [5173: PortForward(local: 5174, error: nil)])
+        let order = host.launcher.commands.compactMap { argv -> String? in
+            guard let at = argv.firstIndex(of: "-O"), argv.indices.contains(at + 1), argv[at + 1] != "check",
+                let spec = argv.firstIndex(of: "-L").map({ argv[$0 + 1] })
+            else { return nil }
+            return argv[at + 1] + " " + spec
+        }
+        #expect(order == ["forward 5173:127.0.0.1:5173", "cancel 5173:127.0.0.1:5173", "forward 5174:127.0.0.1:5173"])
+        #expect(await host.connection.forwardedPorts == [5174])
+    }
+
+    /// When even that cancel fails, the Mac port stays out of use and is cancelled again on the next round.
+    @Test func aForwardThatTimesOutAndCannotBeCancelledIsCancelledNextRound() async throws {
+        let dir = try TempDir()
+        let host = Host("box", in: dir)
+        try await host.connection.connect()
+        host.launcher.timeOut([5173])
+        host.launcher.failCancels = true
+
+        let unsure = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+
+        #expect(unsure[5173]?.local == nil)
+        #expect(unsure[5173]?.error != nil)
+        #expect(host.launcher.localForwards("forward") == ["5173:127.0.0.1:5173"])
+        #expect(await host.connection.forwardedPorts == [5173])
+        host.launcher.failCancels = false
+        host.launcher.timeOut([])
+        let later = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        #expect(later == [5173: PortForward(local: 5173, error: nil)])
+        #expect(host.launcher.localForwards("cancel") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
+    }
+
     @Test func aStoppedMasterForgetsItsForwardsAndTheNextMasterMakesThemAgain() async throws {
         let dir = try TempDir()
         let host = Host("box", in: dir)
