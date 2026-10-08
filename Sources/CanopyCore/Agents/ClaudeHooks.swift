@@ -235,8 +235,17 @@ public struct ClaudeSettingsFile: Sendable {
         try settingsErrors { try file.update(transform) }
     }
 
+    /// What `install` writes for a settings file holding `original`, or nil when it has Canopy's hooks already, for a
+    /// file out of this Mac's reach, as on a host. Throws `JSONFileError.unreadable` for settings Claude Code cannot
+    /// read.
+    public static func installing(into original: Data?) throws -> Data? {
+        try JSONFile.rewritten(original, validate: validate) { ClaudeHooks.installing(into: $0) }
+    }
+
+    private static let validate: @Sendable (OrderedJSON) throws -> OrderedJSON = { try $0.validSettings() }
+
     private var file: JSONFile {
-        JSONFile(url: url, validate: { try $0.validSettings() }, newFileMode: 0o644)
+        JSONFile(url: url, validate: Self.validate, newFileMode: 0o644)
     }
 
     private func settingsErrors<T>(_ body: () throws -> T) throws -> T {

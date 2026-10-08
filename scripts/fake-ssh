@@ -138,6 +138,11 @@ fi
 cd "$FAKE_SSH_HOME" || exit 255
 export HOME="$FAKE_SSH_HOME"
 export PATH="$FAKE_SSH_HOME/.fake-ssh-bin:$FAKE_SSH_HOME/.local/bin:${FAKE_SSH_PATH:-$PATH}"
+# The host's Claude Code settings are its own, never this Mac's, unless FAKE_SSH_CLAUDE_CONFIG_DIR names a folder.
+unset CLAUDE_CONFIG_DIR
+if [[ -n "${FAKE_SSH_CLAUDE_CONFIG_DIR:-}" ]]; then
+    export CLAUDE_CONFIG_DIR="$FAKE_SSH_CLAUDE_CONFIG_DIR"
+fi
 master_pid=$(master_pid || true)
 if [[ -z "$master_pid" ]] || ! kill -0 "$master_pid" 2>/dev/null; then
     exec /bin/bash -c "$*"
@@ -154,6 +159,8 @@ fi
     [[ "$(ps -o ppid= -p "$me" | tr -d ' ')" == "$$" ]] && pkill -KILL -P $$ 2>/dev/null
 ) &
 watcher=$!
+# Out of the job table, so bash never reports the watcher's end as "Terminated" in the command's stderr.
+disown "$watcher"
 /bin/bash -c "$*"
 status=$?
 kill "$watcher" 2>/dev/null

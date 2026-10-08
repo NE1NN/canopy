@@ -15,7 +15,8 @@ struct HostCommand: AsyncParsableCommand {
 
     struct Add: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Check a host, install Canopy's files on it, and save it. Run it again to update a host.",
+            abstract:
+                "Check a host, install Canopy's files and hooks on it, and save it. Run it again to update a host.",
             discussion: """
                 The host needs Linux, git, tmux 3.0 or later, and python3. Each --repo names a registered repo and \
                 its clone on the host, such as --repo solis-v1=~/Projects/solis-v1. --wake runs on this Mac when \

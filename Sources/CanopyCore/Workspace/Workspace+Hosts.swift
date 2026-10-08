@@ -66,8 +66,8 @@ extension Workspace {
         GitRunner.remote(ssh(for: alias), environment: hostTooling.environment())
     }
 
-    /// Checks the host, installs Canopy's files there, and saves it. Adding a host again updates it: `repos` join the
-    /// ones it has, and `wake` and `idleDetachMinutes` replace theirs when given.
+    /// Checks the host, installs Canopy's files and hooks there, and saves it. Adding a host again updates it: `repos`
+    /// join the ones it has, and `wake` and `idleDetachMinutes` replace theirs when given.
     @discardableResult
     public func addHost(
         alias: String, repos requested: [String: String], wake: String?, idleDetachMinutes: Int?
@@ -112,7 +112,7 @@ extension Workspace {
         return added
     }
 
-    /// Checks the host has what Canopy needs and each repo's clone, then installs Canopy's files there.
+    /// Checks the host has what Canopy needs and each repo's clone, then installs Canopy's files and hooks there.
     private func check(
         _ alias: String, _ entry: inout HostEntry, names: [String: String], on connection: HostConnection
     )
@@ -139,6 +139,7 @@ extension Workspace {
             entry.repos[name] = clone
         }
         try await installFiles(on: connection)
+        try await installHooks(on: connection)
         return facts
     }
 
@@ -147,6 +148,34 @@ extension Workspace {
         let installed = try await output(of: HostFiles.versionCommand(homeID: homeID), on: connection)
         guard installed.trimmingCharacters(in: .whitespacesAndNewlines) != HostFiles.version else { return }
         _ = try await output(of: HostFiles.installCommand(homeID: homeID), on: connection)
+    }
+
+    /// Adds Canopy's hooks to Claude Code's settings on the host, with the code `canopy hooks install` runs here. They
+    /// run `$CANOPY_CLI`, which each home's panes point at that home's relay, so every home on the host shares them.
+    /// Settings changed by someone else meanwhile are read and changed again, as here.
+    func installHooks(on connection: HostConnection) async throws {
+        let alias = connection.alias
+        var path = "Claude Code's settings"
+        for _ in 0..<3 {
+            let printed = try await output(of: HostClaudeSettings.readCommand, on: connection)
+            guard let settings = HostClaudeSettings.contents(from: printed) else {
+                throw WorkspaceError.hostCommandFailed(alias, reason: "Could not read \(path): \(printed)")
+            }
+            path = settings.path
+            let installed: Data?
+            do {
+                installed = try ClaudeSettingsFile.installing(into: settings.data)
+            } catch JSONFileError.unreadable(let reason) {
+                throw WorkspaceError.hostCommandFailed(
+                    alias,
+                    reason: "\(path) is not settings Claude Code can read (\(reason)). Fix it and add the host again.")
+            }
+            guard let installed else { return }
+            let written = try await output(
+                of: HostClaudeSettings.writeCommand(replacing: settings.data, with: installed), on: connection)
+            if written.trimmingCharacters(in: .whitespacesAndNewlines) != "changed" { return }
+        }
+        throw WorkspaceError.hostCommandFailed(alias, reason: "\(path) kept changing while Canopy wrote it.")
     }
 
     /// What a command printed on the host, failing with its message when it fails.
