@@ -319,6 +319,13 @@ struct GroupRowCreationTests {
         return (workspace, repo)
     }
 
+    /// Waits for a create to reach the stalled `git worktree add`. It runs five or so git commands first, one after another,
+    /// each through the wrapper's bash and then git, behind any other git work the repo has queued, and a loaded runner
+    /// takes seconds to start each process. The shared wait is sized for one start, so this one allows for the whole run.
+    func reachedGit(_ marker: String) async -> Bool {
+        await eventually(timeout: .seconds(90)) { FileManager.default.fileExists(atPath: marker) }
+    }
+
     @Test func aRowCreatedIntoAGroupNeverShowsUngrouped() async throws {
         let dir = try TempDir()
         let (workspace, repo) = try await stalledSetUp(dir)
@@ -334,7 +341,7 @@ struct GroupRowCreationTests {
         }
 
         let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "review") }
-        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        #expect(await reachedGit(dir.sub("added")))
         await workspace.refresh(repoPath: repo)
         #expect(await workspace.snapshot.row(path: path)?.group == "Review")
         FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
@@ -355,7 +362,7 @@ struct GroupRowCreationTests {
         let (workspace, repo) = try await stalledSetUp(dir)
 
         let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
-        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        #expect(await reachedGit(dir.sub("added")))
         try await workspace.removeGroup(repoPath: repo, name: "Review")
         FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
         let created = try await creating.value
@@ -374,9 +381,7 @@ struct GroupRowCreationTests {
             let (workspace, repo) = try await stalledSetUp(dir, beforeAdding: beforeAdding)
 
             let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
-            #expect(
-                await eventually { FileManager.default.fileExists(atPath: dir.sub(beforeAdding ? "reached" : "added")) }
-            )
+            #expect(await reachedGit(dir.sub(beforeAdding ? "reached" : "added")))
             if !beforeAdding { await workspace.refresh(repoPath: repo) }
             try await workspace.renameGroup(repoPath: repo, name: "review", to: "Code review")
             FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
@@ -395,7 +400,7 @@ struct GroupRowCreationTests {
         let path = dir.sub("home/worktrees/demo/feat-a")
 
         let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a", group: "Review") }
-        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        #expect(await reachedGit(dir.sub("added")))
         await workspace.refresh(repoPath: repo)
         _ = try await workspace.moveRow(path: path, to: .ungrouped)
         FileManager.default.createFile(atPath: dir.sub("go"), contents: nil)
@@ -408,7 +413,7 @@ struct GroupRowCreationTests {
         let dir = try TempDir()
         let (workspace, repo) = try await stalledSetUp(dir)
         let creating = Task { try await workspace.createRow(repoPath: repo, branch: "feat/a") }
-        #expect(await eventually { FileManager.default.fileExists(atPath: dir.sub("added")) })
+        #expect(await reachedGit(dir.sub("added")))
         // Lets git go on in any case, so a create that waits behind it fails the test rather than hanging it.
         let release = Task {
             try await Task.sleep(for: .seconds(10))
