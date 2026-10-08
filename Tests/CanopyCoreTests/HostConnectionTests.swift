@@ -21,7 +21,8 @@ struct HostConnectionTests {
         }
 
         func events() -> [String] {
-            ActivityReader.events(
+            activity.flushNow()
+            return ActivityReader.events(
                 in: URL(fileURLWithPath: dir.sub("activity")), since: .distantPast, until: nil
             ).map(\.type)
         }
