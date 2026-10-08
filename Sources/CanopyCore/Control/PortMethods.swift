@@ -10,9 +10,17 @@ public struct PortInfo: Codable, Sendable, Equatable {
     public var plugin: String?
     public var row: String
     public var rowPath: String
+    /// On a host, its port there.
     public var port: Int
+    /// On a host, the host's pid, which means nothing on this Mac.
     public var pid: Int32
     public var process: String
+    /// The host a remote row's port listens on. Left out for this Mac's ports.
+    public var host: String? = nil
+    /// The Mac port a remote port is forwarded to, which `localhost` opens. Left out while it has none.
+    public var localPort: Int? = nil
+    /// Why a remote port has no forward, as ssh said.
+    public var forwardError: String? = nil
 }
 
 public struct PortsListParams: Codable, Sendable {
@@ -55,6 +63,6 @@ public struct PortsStopParams: Codable, Sendable {
 public struct PortsStopResult: Codable, Sendable {
     public var port: Int
     public var stopped: [PortInfo]
-    /// Processes that ignored SIGTERM and were killed.
+    /// Processes that ignored SIGTERM and were killed, on this Mac and on hosts.
     public var killed: [Int32]
 }

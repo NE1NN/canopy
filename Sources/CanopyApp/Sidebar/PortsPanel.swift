@@ -55,6 +55,7 @@ struct PortGroupView: View {
 
     private var row: SidebarRow? { model.snapshot.sidebarRow(path: group.rowPath) }
     private var name: String { row?.displayName ?? group.rowPath }
+    private var host: String? { group.ports.first?.remote?.host }
 
     private var isStopping: Bool { group.ports.allSatisfy { model.isStopping($0, inRow: group.rowPath) } }
 
@@ -83,6 +84,10 @@ struct PortGroupView: View {
                         Text(name)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .layoutPriority(1)
+                        if let host {
+                            RemoteMark(host: host, path: row?.worktree?.remotePath)
+                        }
                         Spacer(minLength: 4)
                     }
                     .contentShape(Rectangle())
@@ -100,7 +105,7 @@ struct PortGroupView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(isStopping)
-                    .help(group.ports.count == 1 ? "Stop what listens here" : "Stop everything listening here")
+                    .help(stopHelp)
                 }
             }
             .font(Style.body)
@@ -127,6 +132,11 @@ struct PortGroupView: View {
             .padding(.bottom, 6)
         }
     }
+
+    private var stopHelp: String {
+        let what = group.ports.count == 1 ? "Stop what listens here" : "Stop everything listening here"
+        return host.map { "\(what) on \($0)" } ?? what
+    }
 }
 
 struct PortBadge: View {
@@ -138,15 +148,24 @@ struct PortBadge: View {
 
     private var isStopping: Bool { model.isStopping(port, inRow: rowPath) }
     private var showsStop: Bool { isHovering && !isStopping }
+    /// A remote port without a forward cannot be opened here.
+    private var isUnreachable: Bool { port.macPort == nil }
+
+    /// A remote port's Mac port follows its own when the two differ.
+    private var label: String {
+        guard let local = port.remote?.local, local != port.port else { return "\(port.port)" }
+        return "\(port.port) → \(local)"
+    }
 
     var body: some View {
         HStack(spacing: 2) {
             Button {
-                if let url = URL(string: "http://localhost:\(port.port)") { openURL(url) }
+                if let mac = port.macPort, let url = URL(string: "http://localhost:\(mac)") { openURL(url) }
             } label: {
                 // The badge's padding is part of the label, so a click anywhere on the badge but `x` opens the port.
-                Text(verbatim: "\(port.port)")
+                Text(verbatim: label)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isUnreachable ? .tertiary : .primary)
                     .padding(.leading, 7)
                     .padding(.trailing, showsStop ? 0 : 7)
                     .frame(height: 20)
@@ -184,14 +203,20 @@ struct PortBadge: View {
     // Tooltips are built as plain strings: in a string literal, SwiftUI would format the numbers, as in "3,000".
 
     /// The processes holding the port, such as "node (PID 812)" or "gunicorn (PIDs 90, 91, 92)".
+    /// A remote port's processes are named with their host, whose PIDs they are.
     private var holders: String {
         let names = Set(port.processes.map(\.process)).sorted().joined(separator: ", ")
         let pids = port.processes.map { String($0.pid) }.joined(separator: ", ")
-        return "\(names) (\(port.processes.count == 1 ? "PID" : "PIDs") \(pids))"
+        let host = port.remote.map { " on \($0.host)" } ?? ""
+        return "\(names) (\(port.processes.count == 1 ? "PID" : "PIDs") \(pids))\(host)"
     }
 
     private var openHelp: String {
-        "\(holders). Opens http://localhost:\(port.port)."
+        guard let mac = port.macPort else {
+            let reason = port.remote?.error ?? "ssh could not forward it."
+            return "\(holders). Not forwarded to this Mac: \(reason)"
+        }
+        return "\(holders). Opens http://localhost:\(mac)."
     }
 
     /// Stopping the processes closes every port they hold, so the tooltip says which.

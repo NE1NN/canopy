@@ -153,11 +153,14 @@ Modified:
 
 **Interfaces:**
 - `RowPort.remote: RemotePort?` with `host`, `local: UInt16?`, `error: String?`; nil for local ports.
-- `portGroups()` merges `HostMonitor`'s remote groups into sidebar order, and leaves out every connected master's pid from the local scan.
-- `PortInfo` gains `host: String?` and `localPort: Int?`; the table gains a HOST column only when a port has one, and PORT reads `5173 → 5174` when the two differ.
-- `stopPort` and `stopPorts` split by host: local ports go to `PortStopper`, remote ones to `canopy-host stop-port` through the master, and `killed` merges both.
-- `ports stop <n>` matches `port` or `localPort`.
-- The panel: a remote group's row mark is the server mark (`RemoteMark`), a badge reads `5173 → 5174` when the Mac port differs, clicking opens `http://localhost:<Mac port>`, a port without a forward is dimmed with ssh's message on hover, and the stop tooltip names the host.
+- `RowLifecycle(workspace:terminals:hostMonitor:localPorts:)`: `LocalPorts` holds this Mac's scan, process table, and stop (`.system` uses `PortScanner` and `PortStopper`), which tests replace with a stand-in that records stops.
+- `portGroups()` merges `HostMonitor`'s remote groups into sidebar order, scans this Mac for local rows only, and leaves out every connected master's pid (`Workspace.masterPIDs()`) from the local scan.
+- `PortInfo` gains `host: String?`, `localPort: Int?`, and `forwardError: String?`; the table gains a HOST column only when a port has one, and PORT reads `5173 → 5174` when the two differ, or `5173 (not forwarded)`.
+- `stopPort` and `stopPorts` build `PortStops` from `RowPort`s and go through one private `stop(_:)`: `PortStops.local` (ports without `remote`) goes to `LocalPorts.stop`, each of `PortStops.remote` to `Workspace.stopRemotePort(_:pids:on:)`, which runs `HostFiles.stopPortCommand` through the master, and `killed` merges both.
+  A remote stop that succeeds drops the port from `HostMonitor.remotePorts` and reads the host's ports again on its next probe.
+- `ports stop <n>` matches `port`, or else a remote port's `localPort` (`PortStops.matching`), so a port whose own number is `n` comes first.
+- Other ports a port's processes hold (`[PortGroup].otherPorts(of:)`) compare pids only within one host, or this Mac.
+- The panel: a remote group's name is followed by the server mark and host (`RemoteMark`), as in the sidebar, a badge reads `5173 → 5174` when the Mac port differs, clicking opens `http://localhost:<Mac port>`, a port without a forward is dimmed with ssh's message on hover, and the stop tooltip names the host.
 - The agent guide's ports section says remote rows' ports are forwarded and how they show.
 
 **Tests:** `ports list --json` in a remote row shows `host` and `localPort` for a forwarded fake-host server; the table's PORT and HOST columns; `ports stop 5173` from the remote row stops the server on the fake host (the test's own child, checked by pid and command) and never calls `kill` locally (a `PortStopper` scan stand-in records calls); `ports stop <Mac port>` does the same; the master's pid is not in the local groups.

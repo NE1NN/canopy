@@ -405,6 +405,29 @@ extension Workspace {
         return connected
     }
 
+    /// The pids of the connected hosts' masters, which hold their forwards' sockets on this Mac.
+    public func masterPIDs() async -> Set<Int32> {
+        var pids = Set<Int32>()
+        for connection in hostConnections.values {
+            if let pid = await connection.masterPID { pids.insert(pid) }
+        }
+        return pids
+    }
+
+    /// Stops what listens on `port` on the host, signalling only those of `pids` that still listen on it there.
+    /// Returns the pids it had to SIGKILL.
+    public func stopRemotePort(_ port: UInt16, pids: [Int32], on alias: String) async throws -> [Int32] {
+        struct Stopped: Decodable { var killed: [Int32] }
+        let connection = try await connection(for: alias)
+        let printed = try await output(
+            of: HostFiles.stopPortCommand(homeID: homeID, port: port, pids: pids), on: connection,
+            timeout: .seconds(30))
+        guard let stopped = try? JSONDecoder().decode(Stopped.self, from: Data(printed.utf8)) else {
+            throw WorkspaceError.hostCommandFailed(alias, reason: "canopy-host stop-port printed \(printed)")
+        }
+        return stopped.killed
+    }
+
     /// The host's remote rows, in the order the sidebar has their repos.
     public func remoteRows(on alias: String) -> [RemoteRowEntry] {
         state.repos.flatMap(\.remote).filter { $0.host == alias }

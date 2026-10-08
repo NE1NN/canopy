@@ -15,6 +15,14 @@ public struct RowPort: Sendable, Equatable, Hashable {
     }
 }
 
+extension RowPort {
+    /// The port the Mac reaches it on: its own, or its forward's, nil while a remote port has none.
+    public var macPort: UInt16? {
+        guard let remote else { return port }
+        return remote.local
+    }
+}
+
 /// A port on a host, and where the Mac reaches it.
 public struct RemotePort: Sendable, Equatable, Hashable {
     public var host: String

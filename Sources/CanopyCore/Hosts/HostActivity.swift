@@ -116,6 +116,16 @@ public final class HostMonitor {
         }
     }
 
+    /// Ports just stopped on a host leave the panel at once, and the host's ports are read again on its next probe.
+    public func portsStopped(_ ports: Set<UInt16>, on alias: String) {
+        lastPorts[alias] = nil
+        guard let groups = remotePorts[alias] else { return }
+        remotePorts[alias] = groups.compactMap { group in
+            let left = group.ports.filter { !ports.contains($0.port) }
+            return left.isEmpty ? nil : PortGroup(rowPath: group.rowPath, ports: left)
+        }
+    }
+
     /// The host's listening ports, once `portsEvery` has passed, read right after its session probe so the two never
     /// hold a session each. Its own short timeout keeps a stuck `ss` from holding up the next session probe for long.
     /// A probe that fails keeps what the last one found, and a host without `ss` lists none.

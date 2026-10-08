@@ -330,10 +330,13 @@ Ports that belong to no remote row are left out.
 
 Each port found is forwarded through the master, `ssh -O forward -L`, to the same port on the Mac when that is free, and otherwise to the next free port above it.
 The forward goes when the port stops listening on the host or the master stops.
-The ports panel lists a remote row's ports under it with the server mark, and shows `5173 → 5174` when the Mac's port differs.
+The ports panel lists a remote row's ports under it with the server mark and the host's name after the row's, and shows `5173 → 5174` when the Mac's port differs.
 Clicking one opens the Mac's port in the browser.
-Stopping one sends SIGTERM to its process on the host, never to the local ssh.
-`canopy ports` lists them with `host` and `localPort`, and `ports stop` takes them.
+A port without a forward is dimmed, with ssh's message on hover.
+Stopping one runs `canopy-host stop-port` on the host, which sends SIGTERM to its processes there while they still listen on it, never to the local ssh, and its tooltip names the host.
+The local scan leaves out the connected masters' pids, since a master holds its forwards' sockets on the Mac.
+`canopy ports` lists them with `host`, `localPort`, and `forwardError` when there is no forward; its table gains a HOST column when any port has a host.
+`ports stop <n>` takes a remote port by its port on the host or its Mac port, and a port whose own number is `n` comes before one whose Mac port is.
 
 ## Commands
 

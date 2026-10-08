@@ -119,6 +119,14 @@ public enum HostFiles {
         ]
     }
 
+    /// Stops the pids that still listen on `port` on the host, printing `{"killed": [pids]}` for those it had to
+    /// SIGKILL.
+    public static func stopPortCommand(homeID: String, port: UInt16, pids: [Int32]) -> [String] {
+        let stop =
+            #"h=$0 p=$1; shift; exec python3 "$HOME/.canopy/$h/bin/canopy-host" stop-port --port "$p" --pid "$@""#
+        return ["sh", "-c", stop, homeID, "\(port)"] + pids.map { "\($0)" }
+    }
+
     /// tmux settings for Canopy's own server. Lines scrolled off a session's one window go into Canopy's scrollback,
     /// so scrolling and selecting work as in a local pane, and titles and copies reach Canopy.
     public static let tmuxConf = """

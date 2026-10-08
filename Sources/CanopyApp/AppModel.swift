@@ -53,8 +53,9 @@ final class AppModel {
         self.activity = activity
         self.workspace = workspace
         self.terminals = terminals
-        self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
-        self.hostMonitor = HostMonitor(workspace: workspace, terminals: terminals)
+        let hostMonitor = HostMonitor(workspace: workspace, terminals: terminals)
+        self.hostMonitor = hostMonitor
+        self.rows = RowLifecycle(workspace: workspace, terminals: terminals, hostMonitor: hostMonitor)
         let environment = ProcessInfo.processInfo.environment
         let builtInPlugins = BuiltInPlugins.make(environment: environment)
         self.builtInPlugins = builtInPlugins
@@ -685,12 +686,7 @@ final class AppModel {
 
     /// The other ports a port's processes listen on, which stopping them closes too.
     func otherPorts(of port: RowPort) -> [UInt16] {
-        let pids = Set(port.processes.map(\.pid))
-        let all = (ports ?? []).flatMap(\.ports)
-        let others = all.filter { other in
-            other.port != port.port && other.processes.contains { pids.contains($0.pid) }
-        }
-        return Set(others.map(\.port)).sorted()
+        (ports ?? []).otherPorts(of: port)
     }
 
     // MARK: Agents
