@@ -246,3 +246,31 @@ An independent review of `git diff main...HEAD` found these, each fixed test-fir
 10. Task 2's interface bullets, and a few lines above them, held several sentences each, and are now one sentence per line.
 
 `HostClaudeSettings` reading `CLAUDE_CONFIG_DIR` from the non-interactive ssh environment stays as it is.
+
+### Second review
+
+A second independent review of the first review's fixes, `cd4f211..c903d0a`, found these minor issues, each fixed test-first.
+
+1. A relay stopped with Ctrl-Z and brought back with `fg`, or on a paused machine, checked its deadline before reading, so it said Canopy is not reachable with the app's heartbeats and reply waiting in its socket.
+   `Lines.next` now reads what already arrived once its deadline has passed, and the reply's silence restarts with anything received, so a long reply still arriving over a slow link is not given up on either.
+2. `RelayInputTests` scanned only the top folder of `Sources/CanopyCLI`, found helpers only by `TypeName.`, missed declarations whose `{` is on a later line, and never checked the listed commands.
+   The scan moved to a new test target, `CanopyCLITests`, which can see the CLI, as `RelayInputCommandsTests`.
+   It searches every folder, finds a helper by `TypeName.` or `TypeName(`, follows wrapped declarations, and is itself tested on sources made for it.
+   The CLI's commands come from walking `CanopyCLI`'s subcommands, so each command in `RelayInput.commands` must be one of them, and each command type the scan finds is given its words from there rather than from a list kept by hand.
+3. A call whose CLI had finished could answer nothing when `HostRelayServer.stop()` took the call map just before the call removed itself, so a `row new` that made its row said Canopy is not reachable.
+   A call is now registered as its task is made and removes itself as its handler returns, so only a call `stop()` takes while it runs answers nothing.
+   A seam, `whenAnswered`, lets the test stop the server at that moment.
+4. The shared `~/.canopy/bin/canopy` was said to be the same for every version, which stopped being true when it learned what to tell a terminal from before the CLI.
+   It now carries a revision, and an install writes it only over an earlier revision, or over this revision when the file differs, so an older build never takes back a newer one's.
+   A revision was chosen over keeping it the same forever, since the shim is likely to change again, and every build with a shared `canopy` is on this branch, so none writes one without a revision.
+5. `canopy ticket connect --help` through the relay read a line of standard input.
+   `-h`, `--help`, and `--help-hidden` before any `--` now read none, in `RelayInput.reading` and in the host's script alike.
+6. `canopy ticket connect <url>` at a remote pane's terminal sent nothing and the Mac asked for a token the relay cannot pass on.
+   The relay now fails at once without asking the app, with "error: A token cannot be typed through a host's terminal. Pipe it in: printf '%s\n' "$TOKEN" | canopy ticket connect <url>", naming the arguments given, and the JSON error under `--json`, as the CLI words its errors.
+7. The relay server's wait for the next heartbeat rounded down, so under a millisecond left became a poll that does not wait.
+   It now rounds up, as `SocketStream` does.
+8. `RelayInput.literal` wrote a slash as `\/`, an invalid escape in the Python it becomes.
+   It now writes slashes as they are, and a test reads the literal back with Python's warnings as errors.
+
+Along the way, `HostRelayServerTests` read heartbeats as replies on a slow run, so its line readers now pass over them and the tests whose calls run on get heartbeats every 20 milliseconds, and `aBranchTheMainCheckoutJustLeftIsFree` refreshes its repo rather than waiting on the watcher.
+The relay stub sets `SO_NOSIGPIPE`, since a relay that gave up could kill the test run as the stub wrote to it.
