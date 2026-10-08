@@ -13,7 +13,9 @@ struct RemoteRowTests {
         let origin: String
         let clone: String
 
-        init(host make: @Sendable (TempDir) throws -> FakeHost = { try FakeHost(in: $0) }) async throws {
+        init(
+            host make: @Sendable (TempDir) throws -> FakeHost = { try FakeHost(in: $0) }, relayCLI: String? = nil
+        ) async throws {
             dir = try TempDir()
             let host = try make(dir)
             self.host = host
@@ -25,7 +27,8 @@ struct RemoteRowTests {
             try await Fixture.git.run(["config", "user.name", "T"], in: clone)
             workspace = Workspace(
                 home: CanopyHome(path: dir.sub("home")), git: Fixture.git,
-                hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { host.environment }))
+                hostTooling: HostTooling(
+                    sshExecutable: FakeHost.script, environment: { host.environment }, relayCLI: relayCLI))
             try await workspace.start()
             try await workspace.addRepo(path: repo)
             try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": clone]))

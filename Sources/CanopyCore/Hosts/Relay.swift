@@ -32,16 +32,19 @@ public struct RelayReply: Codable, Sendable, Equatable {
     public var stdout: String
     public var stderr: String
     public var status: Int32
+    /// Why the app ran nothing, such as `relay_outdated`. The relay prints stderr either way.
+    public var code: String?
 
-    public init(stdout: Data, stderr: Data, status: Int32) {
+    public init(stdout: Data, stderr: Data, status: Int32, code: String? = nil) {
         self.stdout = stdout.base64EncodedString()
         self.stderr = stderr.base64EncodedString()
         self.status = status
+        self.code = code
     }
 
-    public static func failure(_ message: String, status: Int32 = 1) -> RelayReply {
+    public static func failure(_ message: String, status: Int32 = 1, code: String? = nil) -> RelayReply {
         let line = message.hasSuffix("\n") ? message : message + "\n"
-        return RelayReply(stdout: Data(), stderr: Data(line.utf8), status: status)
+        return RelayReply(stdout: Data(), stderr: Data(line.utf8), status: status, code: code)
     }
 }
 
@@ -72,7 +75,8 @@ public enum RelayPaths {
 
 public enum RelayRun {
     /// The environment for the app's CLI running a host's request. Only the request's `CANOPY_*` variables cross
-    /// over, so nothing else from the host, such as its PATH or HOME, misleads a program on the Mac.
+    /// over, so nothing else from the host, such as its PATH or HOME, misleads a program on the Mac; those come from
+    /// this Mac's own.
     public static func environment(
         for request: RelayRequest, host: String, rows: [RemoteRowEntry], home: CanopyHome, receivedAt: Date,
         shellEnvironment: [String: String] = GitEnvironment.current
@@ -88,7 +92,29 @@ public enum RelayRun {
         if let age = request.age, age.isFinite, age >= 0 {
             environment["CANOPY_STARTED_AT"] = String(receivedAt.timeIntervalSince1970 - age)
         }
-        environment["PATH"] = shellEnvironment["PATH"]
+        for key in ["PATH", "HOME", "TMPDIR"] {
+            environment[key] = shellEnvironment[key]
+        }
         return environment
+    }
+
+    /// The folder the app's CLI runs a host's request in: the request's, translated, or the nearest folder above it
+    /// in the same stand-in, since a stand-in holds only what Canopy put there. Without one, the home.
+    public static func folder(for request: RelayRequest, host: String, rows: [RemoteRowEntry], home: CanopyHome)
+        -> String
+    {
+        let rows = rows.filter { $0.host == host }
+        var folder = RelayPaths.local(request.cwd, rows: rows, home: home.root.path)
+        let standIn = rows.map(\.standIn).filter { folder == $0 || folder.hasPrefix($0 + "/") }
+            .max { $0.count < $1.count }
+        guard let standIn else { return home.root.path }
+        var isFolder: ObjCBool = false
+        while folder.count >= standIn.count {
+            if FileManager.default.fileExists(atPath: folder, isDirectory: &isFolder), isFolder.boolValue {
+                return folder
+            }
+            folder = (folder as NSString).deletingLastPathComponent
+        }
+        return home.root.path
     }
 }

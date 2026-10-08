@@ -1,19 +1,24 @@
 import Foundation
 
-/// How the workspace reaches hosts: which ssh, with what environment, on what clock. Tests pass a stand-in ssh.
+/// How the workspace reaches hosts: which ssh, with what environment, on what clock, and which `canopy` runs their
+/// relayed calls. Tests pass a stand-in ssh and CLI.
 public struct HostTooling: Sendable {
     public var sshExecutable: String
     public var environment: @Sendable () -> [String: String]
     public var clock: any HostClock
+    /// The app's bundled CLI. Without one, hosts' calls are refused.
+    public var relayCLI: String?
 
     public init(
         sshExecutable: String = SSHCommand.executable(),
         environment: @escaping @Sendable () -> [String: String] = { GitEnvironment.current },
-        clock: any HostClock = SystemHostClock()
+        clock: any HostClock = SystemHostClock(),
+        relayCLI: String? = nil
     ) {
         self.sshExecutable = sshExecutable
         self.environment = environment
         self.clock = clock
+        self.relayCLI = relayCLI
     }
 }
 
@@ -306,6 +311,47 @@ extension Workspace {
         let repos = state.repos.filter { $0.remote.contains { $0.host == alias } }.map(\.path)
         for repo in repos {
             await refreshRemote(repoPath: repo, host: alias)
+        }
+    }
+}
+
+extension Workspace {
+    /// Runs a call a host's relay sent, as its `canopy` would have run on this Mac. It runs as long as the CLI does,
+    /// and a cancelled task, as when the relay hangs up, stops the CLI and everything it started.
+    public func relay(_ request: RelayRequest, host alias: String) async -> RelayReply {
+        let receivedAt = Date()
+        guard request.version == HostFiles.version else {
+            if let connection = hostConnections[alias] {
+                Task { try? await self.installFiles(on: connection) }
+            }
+            return .failure("Canopy updated its files on \(alias); run it again.", code: "relay_outdated")
+        }
+        guard let cli = hostTooling.relayCLI else {
+            return .failure("This Canopy has no canopy CLI to run for \(alias).", code: "relay_unavailable")
+        }
+        let rows = state.repos.flatMap(\.remote)
+        let environment = RelayRun.environment(
+            for: request, host: alias, rows: rows, home: home, receivedAt: receivedAt,
+            shellEnvironment: hostTooling.environment())
+        let folder = RelayRun.folder(for: request, host: alias, rows: rows, home: home)
+        let input = request.input
+        let handle = SubprocessHandle()
+        let result = await withTaskCancellationHandler {
+            await onOwnThread {
+                Result {
+                    try Subprocess.run(
+                        cli, request.args, environment: environment, directory: folder, timeout: nil, stdin: input,
+                        handle: handle)
+                }
+            }
+        } onCancel: {
+            handle.cancel()
+        }
+        switch result {
+        case .success(let run):
+            return RelayReply(stdout: run.stdout, stderr: run.stderr, status: run.status)
+        case .failure(let error):
+            return .failure("\(error)", code: "relay_failed")
         }
     }
 }

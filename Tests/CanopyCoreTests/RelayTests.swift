@@ -59,7 +59,10 @@ struct RelayTests {
     static func environment(_ request: RelayRequest, receivedAt: Date = Date()) -> [String: String] {
         RelayRun.environment(
             for: request, host: "box", rows: [featX], home: CanopyHome(path: home), receivedAt: receivedAt,
-            shellEnvironment: ["PATH": "/opt/homebrew/bin:/usr/bin:/bin", "SECRET": "mac"])
+            shellEnvironment: [
+                "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "HOME": "/Users/me", "TMPDIR": "/var/folders/x/T/",
+                "SECRET": "mac",
+            ])
     }
 
     @Test func aRelayedRunGetsOnlyTheRequestsCanopyVariables() {
@@ -67,10 +70,17 @@ struct RelayTests {
             Self.request(env: ["CANOPY_PANE": "p3", "HOME": "/home/me", "PATH": "/home/me/bin", "LANG": "C"]))
 
         #expect(env["CANOPY_PANE"] == "p3")
-        #expect(env["HOME"] == nil)
         #expect(env["LANG"] == nil)
         #expect(env["SECRET"] == nil)
+    }
+
+    @Test func aRelayedRunGetsThisMacsPathHomeAndTemporaryFolder() {
+        let env = Self.environment(
+            Self.request(env: ["HOME": "/home/me", "PATH": "/home/me/bin", "TMPDIR": "/tmp/host"]))
+
         #expect(env["PATH"] == "/opt/homebrew/bin:/usr/bin:/bin")
+        #expect(env["HOME"] == "/Users/me")
+        #expect(env["TMPDIR"] == "/var/folders/x/T/")
     }
 
     @Test func aRelayedRunTargetsThisHomeAndHost() {
@@ -103,6 +113,28 @@ struct RelayTests {
 
         #expect(try #require(dated["CANOPY_STARTED_AT"].flatMap(Double.init)) == 1_799_999_997.5)
         #expect(undated["CANOPY_STARTED_AT"] == nil)
+    }
+
+    @Test func aRelayedRunStartsInTheNearestFolderTheMacHas() throws {
+        let dir = try TempDir()
+        let row = RemoteRowEntry(
+            host: "box", path: "/home/me/.canopy/worktrees/demo/feat-x", standIn: dir.sub("remote/box/demo/feat-x"),
+            branch: "feat/x", head: nil)
+        let other = RemoteRowEntry(
+            host: "other", path: "/home/me/Projects", standIn: dir.sub("remote/other/demo/main"), branch: "main",
+            head: nil)
+        try FileManager.default.createDirectory(atPath: row.standIn + "/Sources", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: other.standIn, withIntermediateDirectories: true)
+        func folder(_ cwd: String) -> String {
+            var request = Self.request(env: [:])
+            request.cwd = cwd
+            return RelayRun.folder(for: request, host: "box", rows: [row, other], home: CanopyHome(path: dir.path))
+        }
+
+        #expect(folder(row.path + "/Sources") == row.standIn + "/Sources")
+        #expect(folder(row.path + "/Sources/only/on/the/host") == row.standIn + "/Sources")
+        #expect(folder(row.path) == row.standIn)
+        #expect(folder("/home/me/Projects") == dir.path)
     }
 
     @Test func aRequestRoundTripsAsJSON() throws {
@@ -143,5 +175,7 @@ struct RelayTests {
         #expect(Data(base64Encoded: reply.stdout) == Data())
         #expect(Data(base64Encoded: reply.stderr) == Data("Canopy is not running.\n".utf8))
         #expect(RelayReply.failure("x", status: 2).status == 2)
+        #expect(reply.code == nil)
+        #expect(RelayReply.failure("x", code: "relay_outdated").code == "relay_outdated")
     }
 }
