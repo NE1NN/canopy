@@ -266,6 +266,8 @@ Quitting Canopy and stopping the master only detach.
   Those commands are `agent-hook` and `ticket connect`, listed once in the app's code, from which the relay is written.
   Every other command sends none and reads none, so a command in a `while read` loop leaves the loop its lines, and a pipe that never closes, as from `tail -f`, holds nothing.
   `ticket connect` sends its first line alone, read a byte at a time within 10 seconds and 64 KiB, as the Mac's CLI reads a token.
+  At a terminal, whose typing the relay cannot pass on, `ticket connect` asks nothing of the app and fails with how to pipe the token in, as the Mac's CLI words its errors.
+  A command asked for its help with `-h`, `--help`, or `--help-hidden` reads no input.
 - It waits for the app's acknowledgement, `{"ack": true}`, which the app sends as soon as it has read a request of the relay's version, before running it.
   sshd on the host accepts connections on the forwarded socket even while the Mac sleeps, or for the seconds a quit app's master lingers, so without one the relay could not tell an app that has its request from nothing at all.
   With no acknowledgement within 10 seconds, or with the connection ending first, it prints "Canopy is not reachable from this host right now." and exits 1.

@@ -155,6 +155,7 @@ public enum HostFiles {
         import os
         import re
         import select
+        import shlex
         import socket
         import subprocess
         import sys
@@ -199,6 +200,14 @@ public enum HostFiles {
                 if words[:len(command)] == command:
                     return kind
             return None
+
+
+        def typed_input():
+            """Whether standard input is a terminal, whose typing the relay cannot pass on to the Mac's CLI."""
+            try:
+                return sys.stdin is not None and sys.stdin.isatty()
+            except (OSError, ValueError):
+                return False
 
 
         def piped_input():
@@ -399,6 +408,8 @@ public enum HostFiles {
             if not path:
                 print("Run canopy in a Canopy terminal on this host.", file=sys.stderr)
                 return 1
+            if reads == "line" and typed_input():
+                return refuse_typed_token(arguments)
             request = request_for(arguments, first_line() if reads == "line" else None)
             try:
                 with connect(path, ACKNOWLEDGEMENT_WAIT) as connection:
@@ -410,6 +421,17 @@ public enum HostFiles {
             write(sys.stdout, output)
             write(sys.stderr, errors)
             return status
+
+
+        def refuse_typed_token(arguments):
+            """Fails as the Mac's CLI does, since a token typed here would never reach it."""
+            message = ("A token cannot be typed through a host's terminal. Pipe it in: printf '%s\\n' \"$TOKEN\" | canopy "
+                       + " ".join(shlex.quote(argument) for argument in arguments))
+            options = arguments[:arguments.index("--")] if "--" in arguments else arguments
+            if "--json" in options:
+                print(json.dumps({"error": {"code": "bad_params", "message": message}}, indent=2, sort_keys=True))
+            print("error: " + message, file=sys.stderr)
+            return 1
 
 
         def hook(path, arguments):

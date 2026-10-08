@@ -210,6 +210,51 @@ struct HostRelayScriptTests {
         #expect(app.requests.map { $0?.input } == [Data("token\n".utf8), Data("unterminated".utf8)])
     }
 
+    /// A token typed at a remote pane's terminal cannot reach the Mac's CLI, so the relay says to pipe it in, as the
+    /// CLI words its errors, without asking the app. Help still comes from the app.
+    @Test func ticketConnectAtATerminalSaysToPipeTheTokenIn() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket,
+            answer: .acknowledging(RelayReply(stdout: Data("help\n".utf8), stderr: Data(), status: 0)))
+        // The relay with a terminal for its input, and its output piped back.
+        let program = """
+            import os, subprocess, sys
+            _, terminal = os.openpty()
+            result = subprocess.run([sys.executable, sys.argv[1], "relay"] + sys.argv[2:], stdin=terminal,
+                                    capture_output=True)
+            sys.stdout.buffer.write(result.stdout)
+            sys.stderr.buffer.write(result.stderr)
+            sys.exit(result.returncode)
+            """
+        let (script, environment) = (setup.script, setup.environment(["CANOPY_SOCKET": setup.socket]))
+        func run(_ arguments: [String]) async throws -> SubprocessResult {
+            try await offPool {
+                try Subprocess.run(
+                    "/usr/bin/python3", ["-I", "-c", program, script] + arguments, environment: environment,
+                    directory: nil, timeout: .seconds(30))
+            }
+        }
+
+        let typed = try await run(["ticket", "connect", "https://t.example", "--repo", "my app"])
+        let json = try await run(["ticket", "connect", "https://t.example", "--json"])
+        let help = try await run(["ticket", "connect", "--help"])
+
+        let message =
+            #"A token cannot be typed through a host's terminal. Pipe it in: printf '%s\n' "$TOKEN" | canopy ticket connect"#
+        #expect(typed.status == 1)
+        #expect(typed.stdout.isEmpty)
+        #expect(
+            String(decoding: typed.stderr, as: UTF8.self)
+                == "error: \(message) https://t.example --repo 'my app'\n")
+        #expect(json.status == 1)
+        let error = try JSONDecoder().decode([String: ControlError].self, from: json.stdout)["error"]
+        #expect(error == ControlError(code: "bad_params", message: message + " https://t.example --json"))
+        #expect(help.status == 0, "\(String(decoding: help.stderr, as: UTF8.self))")
+        #expect(String(decoding: help.stdout, as: UTF8.self) == "help\n")
+        #expect(app.requests.map { $0?.args } == [["ticket", "connect", "--help"]])
+    }
+
     /// A command's help reads none of its input, so `canopy ticket connect --help` neither waits for a token nor takes
     /// a line meant for what runs after it.
     @Test func aCommandsHelpLeavesItsInputAlone() async throws {

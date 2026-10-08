@@ -120,9 +120,9 @@ struct AgentGuide: ParsableCommand {
 
         In a remote row's terminals, `canopy` works as it does here: it relays each command to Canopy on this Mac,
         so `term`, `web`, `row`, and the rest act on the remote row. `row new` there makes its row on the same host
-        unless you pass `--on local`. The relay has no terminal, so a command that would prompt, such as `ticket
-        connect`, reads its first line of standard input, and other commands leave standard input to what runs after
-        them. Claude Code on the host opens links with xdg-open, which opens claude.ai artifact links in Canopy, in
+        unless you pass `--on local`. The relay passes on no typing, so a command that would prompt, such as `ticket
+        connect`, takes the first line of standard input piped to it, and at a terminal says to pipe it in. Other
+        commands leave standard input to what runs after them. Claude Code on the host opens links with xdg-open, which opens claude.ai artifact links in Canopy, in
         your row, and hands any other link to the host's own xdg-open. `canopy host add` keeps Claude Code's hooks on
         the host, so `canopy hooks` there only says so. Agents on the host use the host's own git and gh, not this
         Mac's.
