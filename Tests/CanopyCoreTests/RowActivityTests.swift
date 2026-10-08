@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CanopyCore
@@ -123,14 +124,26 @@ struct RowActivityTests {
         try await workspace.start()
         try await workspace.addRepo(path: repo)
 
-        async let created = ActivitySource.$current.withValue(.cli) {
-            try await workspace.createRow(repoPath: repo, branch: "feat/a")
+        let creating = Task {
+            try await ActivitySource.$current.withValue(.cli) {
+                try await workspace.createRow(repoPath: repo, branch: "feat/a")
+            }
         }
-        #expect(await eventually { FileManager.default.fileExists(atPath: paused) })
+        // Creating runs git several times before the add, which a loaded runner can stretch past any fixed wait, so
+        // this waits for the pause or for creating to end without it.
+        let done = Mutex(false)
+        Task {
+            _ = await creating.result
+            done.withLock { $0 = true }
+        }
+        while !FileManager.default.fileExists(atPath: paused), !done.withLock({ $0 }) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(FileManager.default.fileExists(atPath: paused))
         await workspace.refresh(repoPath: repo)
         #expect(await workspace.snapshot.row(path: path)?.branch == nil)
         FileManager.default.createFile(atPath: resume, contents: nil)
-        _ = try await created
+        _ = try await creating.value
         await workspace.refresh(repoPath: repo)
 
         let events = await logged(workspace, "row")

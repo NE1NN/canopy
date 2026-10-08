@@ -205,13 +205,15 @@ struct ClaudeHookTests {
         defer { server.stop() }
 
         let socketPath = home.socketPath
-        let clock = ContinuousClock()
         try await offPool { try ControlClient(socketPath: socketPath).post(ControlRequest(method: "term.state")) }
         #expect(await eventually { received.withLock { $0 } == ["term.state"] })
 
-        // An app that takes 3 seconds to answer holds the hook for about a second, however slow the machine.
-        let slow = try await clock.measure {
-            try await offPool { try ControlClient(socketPath: socketPath).post(ControlRequest(method: "slow")) }
+        // An app that takes 3 seconds to answer holds the hook for about a second, however slow the machine. Timed on
+        // the posting thread: a test task waits for a thread of the busy concurrency pool before it can read a clock.
+        let slow = try await offPool {
+            try ContinuousClock().measure {
+                try ControlClient(socketPath: socketPath).post(ControlRequest(method: "slow"))
+            }
         }
         #expect(slow >= .milliseconds(900) && slow < .milliseconds(2900))
         #expect(await eventually { received.withLock { $0 } == ["term.state", "slow"] })
