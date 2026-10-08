@@ -86,13 +86,13 @@ extension Workspace {
         return try groupInfo(repoPath: repoPath, name: group)
     }
 
-    /// Moves a Canopy or adopted row within its repo. Only a change of group is logged, as `row.moved`.
+    /// Moves a Canopy, adopted, or remote row within its repo. Only a change of group is logged, as `row.moved`.
     public func moveRow(path: String, to placement: RowPlacement) throws -> MovedRow {
         guard let row = snapshot.row(path: path) else { throw WorkspaceError.rowNotFound(path) }
         switch row.rowClass {
         case .main: throw WorkspaceError.cannotMoveMain
         case .external: throw WorkspaceError.notManaged(path)
-        case .canopy, .adopted: break
+        case .canopy, .adopted, .remote: break
         }
         let from = row.group
         let moved = try changeEntry(repoPath: row.repoPath) { entry, repo in

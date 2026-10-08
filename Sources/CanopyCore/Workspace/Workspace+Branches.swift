@@ -31,9 +31,10 @@ extension Workspace {
         return ref.map { String($0.dropFirst(prefix.count)) }
     }
 
-    /// The worktree that has `branch` checked out, as of the last refresh.
-    func holder(of branch: String, repoPath: String) -> Row? {
-        snapshot.repo(path: repoPath)?.allRows.first { $0.branch == branch }
+    /// The worktree on this Mac, or on `host`, that has `branch` checked out, as of the last refresh. Each machine's
+    /// git only knows its own worktrees, so a row elsewhere never holds the branch.
+    func holder(of branch: String, repoPath: String, host: String? = nil) -> Row? {
+        snapshot.repo(path: repoPath)?.allRows.first { $0.branch == branch && $0.host == host }
     }
 
     /// Fails unless `branch` is free to check out, naming where it is checked out. A worktree whose folder was deleted

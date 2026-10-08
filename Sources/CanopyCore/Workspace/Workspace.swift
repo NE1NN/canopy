@@ -393,14 +393,15 @@ public actor Workspace {
             publish()
             return
         }
-        let rows = classifier.rows(
+        let local = classifier.rows(
             for: worktrees,
             repoPath: current.path,
             adopted: Set(current.adopted),
             fileExists: { FileManager.default.fileExists(atPath: $0) }
         )
-        recordRowChanges(repoPath: current.path, rows: rows)
-        let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
+        recordRowChanges(repoPath: current.path, rows: local)
+        let rows = local + remoteRows(of: current)
+        let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted || $0.rowClass == .remote }
         var reconciled = current
         let joining = rowsJoiningGroups.filter { $0.value.repoPath == current.path }.mapValues(\.group)
         var changed = reconciled.reconcile(present: managed.map(\.path), joining: joining)

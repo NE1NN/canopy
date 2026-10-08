@@ -449,9 +449,9 @@ public struct WorkspaceControlHandler: Sendable {
                 || snapshot.pluginRow(path: Paths.canonical(name)) != nil
             throw elsewhere ? WorkspaceError.invalidAnchor(name) : WorkspaceError.rowNotFound(name)
         }
-        guard found.repoPath == row.repoPath, found.path != row.path,
-            found.rowClass == .canopy || found.rowClass == .adopted
-        else { throw WorkspaceError.invalidAnchor(name) }
+        guard found.repoPath == row.repoPath, found.path != row.path, found.isMovable else {
+            throw WorkspaceError.invalidAnchor(name)
+        }
         return found.path
     }
 

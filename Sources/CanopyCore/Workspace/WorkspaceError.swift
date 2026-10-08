@@ -157,6 +157,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             case .external:
                 "Branch \(name) is checked out in another tool's worktree at \(row.path). "
                     + "Run `canopy row adopt \(row.path)` to show it as a row."
+            case .remote:
+                "Branch \(name) already has a row on \(row.host ?? "its host") at \(row.remotePath ?? row.path). "
+                    + "Run `canopy row select \(row.path)` to show it."
             }
         case .branchCheckedOut(let name, nil): "Branch \(name) is already checked out in another worktree."
         case .branchNotFound(let name, nil):

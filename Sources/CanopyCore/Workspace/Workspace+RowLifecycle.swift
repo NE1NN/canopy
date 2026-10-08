@@ -253,7 +253,7 @@ extension Workspace {
         switch row.rowClass {
         case .main:
             throw WorkspaceError.cannotRemoveMain
-        case .external:
+        case .external, .remote:
             throw WorkspaceError.notManaged(path)
         case .adopted:
             try await unadopt(path: path)

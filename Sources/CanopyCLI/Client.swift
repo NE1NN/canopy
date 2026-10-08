@@ -201,7 +201,7 @@ enum Table {
         switch holder.rowClass {
         case .main: return "main checkout"
         case .external: return "other worktree"
-        case .canopy, .adopted:
+        case .canopy, .adopted, .remote:
             guard let branch = holder.branch, let head, branch != head else { return "in row" }
             return "in row \(branch)"
         }

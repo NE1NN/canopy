@@ -22,6 +22,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
     public var prBindings: [String: PRBinding]
     /// Whether the sidebar folds the repo under its header.
     public var collapsed: Bool
+    /// Rows whose worktree is on a host, as last seen, which git on this Mac never lists.
+    public var remote: [RemoteRowEntry] = []
 
     public init(
         path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = [],
@@ -47,6 +49,9 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         // A fold that cannot be read leaves the repo expanded rather than failing to load it.
         collapsed = (try? container.decodeIfPresent(Bool.self, forKey: .collapsed)) ?? false
         // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
+        // Remote rows that cannot be read are dropped on their own, like groups.
+        let remote = try? container.decodeIfPresent([Lenient<RemoteRowEntry>].self, forKey: .remote)
+        self.remote = remote?.compactMap(\.value) ?? []
         let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
         groups = decoded?.compactMap(\.value) ?? []
         cleanGroups()

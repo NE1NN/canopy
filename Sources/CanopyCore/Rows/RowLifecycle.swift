@@ -106,7 +106,7 @@ public final class RowLifecycle {
         switch row.rowClass {
         case .main:
             throw WorkspaceError.cannotRemoveMain
-        case .external:
+        case .external, .remote:
             throw WorkspaceError.notManaged(row.path)
         case .adopted:
             break
