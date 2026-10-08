@@ -77,7 +77,12 @@ public actor HostConnection {
     /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
     public func connect() async throws {
         lastUse = clock.now
-        if state == .connected, master?.isRunning == true { return }
+        // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
+        // that is not answering would connect on its own, around the master.
+        if state == .connected, master?.isRunning == true {
+            if await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0 { return }
+            stopMaster(becoming: .idle)
+        }
         if let connecting {
             try await connecting.value
             return

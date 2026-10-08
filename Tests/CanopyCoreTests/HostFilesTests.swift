@@ -52,7 +52,11 @@ struct HostFilesTests {
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         _ = try Subprocess.run(
             // A login shell, as tmux starts one, whose name starts with a dash.
-            tmux, ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", "p1", "-c", folder, "exec -a -bash /bin/bash"],
+            tmux,
+            [
+                "-L", server, "-f", "/dev/null", "new-session", "-d", "-s", "p1", "-c", folder,
+                "exec -a -bash /bin/bash",
+            ],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         defer {
             _ = try? Subprocess.run(

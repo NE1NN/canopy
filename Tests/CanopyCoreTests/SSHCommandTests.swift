@@ -38,6 +38,10 @@ struct HostPathTests {
             HostPaths.controlSocket(home: short, homeID: "0123abcd", alias: "box", uid: 501)
                 != HostPaths.controlSocket(home: short, homeID: "0123abcd", alias: "other", uid: 501))
         #expect(HostPaths.tmuxServer(homeID: "0123abcd") == "canopy-0123abcd")
+        // ssh makes the control socket as its path plus a dot and 16 characters, then renames it.
+        let middling = CanopyHome(path: "/var/folders/6r/0j694l0d2xvbrrz62zw7lg5c0000gn/T/cnp-hosts.Gl9OurnUOa/home")
+        let tight = HostPaths.controlSocket(home: middling, homeID: "5ed625bf", alias: "hindie-box", uid: 501)
+        #expect(tight.utf8.count + 17 < 104)
         #expect(
             HostPaths.remotePaneSocket(uid: 1000, homeID: "0123abcd", pane: "p7") == "/tmp/canopy-1000/0123abcd-p7.sock"
         )

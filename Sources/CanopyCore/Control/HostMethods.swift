@@ -41,11 +41,14 @@ public struct HostInfo: Codable, Sendable, Equatable {
     public var panes: [String]
     /// Why the host could not be reached, after it failed to.
     public var error: String?
+    /// This home's tmux server on the host, as `tmux -L` names it.
+    public var tmuxServer: String
 
     public init(
         alias: String, state: HostState, repos: [String: String], wake: String?, idleDetachMinutes: Int,
-        rows: [String], panes: [String] = [], error: String? = nil
+        rows: [String], tmuxServer: String, panes: [String] = [], error: String? = nil
     ) {
+        self.tmuxServer = tmuxServer
         self.alias = alias
         self.state = state
         self.repos = repos

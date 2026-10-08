@@ -94,4 +94,19 @@ chmod +x "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
 cd "$FAKE_SSH_HOME" || exit 255
 export HOME="$FAKE_SSH_HOME"
 export PATH="$FAKE_SSH_HOME/.fake-ssh-bin:$FAKE_SSH_HOME/.local/bin:${FAKE_SSH_PATH:-$PATH}"
-exec /bin/bash -c "$*"
+master_pid=$(master_pid || true)
+if [[ -z "$master_pid" ]] || ! kill -0 "$master_pid" 2>/dev/null; then
+    exec /bin/bash -c "$*"
+fi
+# A command through a master ends with it, as ssh's do when the connection drops. It stays in the foreground, so a
+# terminal program such as tmux keeps the terminal.
+(
+    while kill -0 "$master_pid" 2>/dev/null && kill -0 $$ 2>/dev/null; do sleep 0.5; done
+    # bash -c execs its last command, so the child may be tmux by now, which waits on its server before it
+    # exits on a gentler signal.
+    pkill -KILL -P $$ 2>/dev/null
+) &
+/bin/bash -c "$*"
+status=$?
+kill -0 "$master_pid" 2>/dev/null || exit 255
+exit "$status"

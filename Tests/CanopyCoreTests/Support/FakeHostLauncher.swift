@@ -56,6 +56,8 @@ final class FakeHostLauncher: HostProcessLauncher {
         var commands: [[String]] = []
         /// Whether the control socket's file was there as each master started.
         var socketThereAtStart: [Bool] = []
+        /// Masters whose socket is gone while their process lingers, as after a dropped connection.
+        var deadSockets: Set<ObjectIdentifier> = []
     }
 
     let state = Mutex(State())
@@ -84,7 +86,8 @@ final class FakeHostLauncher: HostProcessLauncher {
     func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
         state.withLock { $0.commands.append(argv) }
         if argv.containsSequence(["-O", "check"]) {
-            let up = masters.last?.isRunning ?? false
+            let last = masters.last
+            let up = (last?.isRunning ?? false) && !state.withLock { $0.deadSockets.contains(ObjectIdentifier(last!)) }
             return SubprocessResult(status: up ? 0 : 255, stdout: Data(), stderr: Data(), timedOut: false)
         }
         return SubprocessResult(status: 0, stdout: Data(), stderr: Data(), timedOut: false)

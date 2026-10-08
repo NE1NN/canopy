@@ -75,6 +75,7 @@ struct HostControlTests {
         #expect(info.alias == "box")
         #expect(info.repos == ["demo": setup.clone])
         #expect(info.state == .connected)
+        #expect(info.tmuxServer == HostPaths.tmuxServer(homeID: setup.workspace.homeID))
         let saved = HostsConfig.load(from: setup.workspace.home.configFile).hosts["box"]
         #expect(saved == HostEntry(repos: ["demo": setup.clone], wake: "start it", idleDetachMinutes: 10))
         #expect(FileManager.default.fileExists(atPath: setup.host.home + "/.canopy/bin/canopy-host"))

@@ -154,7 +154,7 @@ extension Workspace {
             alias: alias, state: await connection?.state ?? .idle, repos: entry.repos, wake: entry.wake,
             idleDetachMinutes: entry.idleDetachMinutes,
             rows: state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.standIn),
-            error: await connection?.lastError)
+            tmuxServer: HostPaths.tmuxServer(homeID: homeID), error: await connection?.lastError)
     }
 
     /// Lets every host go, as Canopy quits. Sessions on hosts only detach.

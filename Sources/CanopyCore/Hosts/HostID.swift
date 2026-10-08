@@ -25,10 +25,13 @@ public enum HomeID {
 public enum HostPaths {
     static let socketPathLimit = 104
 
+    /// ssh makes a control socket as its path, a dot, and 16 characters, then renames it.
+    static let controlSocketSuffix = 17
+
     /// The ssh master's control socket.
     public static func controlSocket(home: CanopyHome, homeID: String, alias: String, uid: uid_t = getuid()) -> String {
         let name = "\(homeID)-\(HomeID.hash(alias))"
-        return fitting(home.root.appending(path: "ssh/\(name)").path, else: name, uid: uid)
+        return fitting(home.root.appending(path: "ssh/\(name)").path, else: name, uid: uid, room: controlSocketSuffix)
     }
 
     /// The socket the app serves a host's relayed CLI calls on.
@@ -51,7 +54,7 @@ public enum HostPaths {
         "/tmp/canopy-\(uid)"
     }
 
-    private static func fitting(_ path: String, else name: String, uid: uid_t) -> String {
-        path.utf8.count < socketPathLimit ? path : shortFolder(uid: uid) + "/" + name
+    private static func fitting(_ path: String, else name: String, uid: uid_t, room: Int = 0) -> String {
+        path.utf8.count + room < socketPathLimit ? path : shortFolder(uid: uid) + "/" + name
     }
 }

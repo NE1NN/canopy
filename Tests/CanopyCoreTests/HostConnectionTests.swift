@@ -149,6 +149,20 @@ struct HostConnectionTests {
         #expect(await setup.connection.state == .connected)
     }
 
+    @Test func aMasterThatNoLongerAnswersIsReplacedRatherThanReused() async throws {
+        let setup = try Setup()
+        try await setup.connection.connect()
+        // The connection dropped: ssh's socket is gone, and the process is on its way out.
+        let first = try #require(setup.launcher.masters.first)
+        setup.launcher.state.withLock { _ = $0.deadSockets.insert(ObjectIdentifier(first)) }
+
+        try await setup.connection.connect()
+
+        #expect(setup.launcher.masters.count == 2)
+        #expect(!first.isRunning)
+        #expect(await setup.connection.state == .connected)
+    }
+
     @Test func aSocketNoMasterAnswersOnIsClearedBeforeANewMaster() async throws {
         let setup = try Setup()
         // A master killed outright leaves its socket, and a new one would then run without multiplexing.
