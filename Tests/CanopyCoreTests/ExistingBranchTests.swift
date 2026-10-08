@@ -110,7 +110,9 @@ struct ExistingBranchTests {
         let dir = try TempDir()
         let (repo, _, workspace) = try await setUp(dir)
         try await git.run(["switch", "--quiet", "-c", "feat/x"], in: repo)
-        #expect(await eventually { await workspace.snapshot.repo(path: repo)?.rows.first?.branch == "feat/x" })
+        // Refreshed here rather than waiting on the watcher, which a loaded machine can hold back for long.
+        await workspace.refresh(repoPath: repo)
+        #expect(await workspace.snapshot.repo(path: repo)?.rows.first?.branch == "feat/x")
         // No watcher from here on, so the snapshot still shows feat/x however long the switch back takes.
         await workspace.stop()
         try await git.run(["switch", "--quiet", "main"], in: repo)

@@ -65,14 +65,16 @@ struct HostRelayServerTests {
 
     /// The reply, after the acknowledgement a request of the current version gets first, and any heartbeats.
     static func reply(on fd: Int32) throws -> RelayReply {
-        var lines = try self.lines(on: fd).filter { $0 != HostRelayServer.heartbeat }
+        var lines = try self.lines(on: fd)
         if lines.first == HostRelayServer.acknowledgement { lines.removeFirst() }
         return try JSONDecoder().decode(RelayReply.self, from: try #require(lines.first))
     }
 
     /// Every line the server sends, each with its newline, until it hangs up, or until `enough` holds for the lines
-    /// so far.
-    static func lines(on fd: Int32, until enough: ([Data]) -> Bool = { _ in false }) throws -> [Data] {
+    /// so far. Heartbeats are left out unless asked for, since a slow test run can see one before any call's end.
+    static func lines(
+        on fd: Int32, heartbeats: Bool = false, until enough: ([Data]) -> Bool = { _ in false }
+    ) throws -> [Data] {
         let stream = SocketStream(fd: fd, deadline: .now + .seconds(60))
         var received = Data()
         var lines: [Data] = []
@@ -81,7 +83,8 @@ struct HostRelayServerTests {
             if chunk.isEmpty { break }
             received.append(chunk)
             while let newline = received.firstIndex(of: 0x0A) {
-                lines.append(Data(received[received.startIndex...newline]))
+                let line = Data(received[received.startIndex...newline])
+                if heartbeats || line != HostRelayServer.heartbeat { lines.append(line) }
                 received = Data(received[received.index(after: newline)...])
             }
         }
@@ -166,7 +169,7 @@ struct HostRelayServerTests {
         defer { close(fd) }
         // Acknowledged while the call is still running.
         let acknowledgement = try await offPool {
-            try SocketStream(fd: fd, deadline: .now + .seconds(60)).read()
+            try Self.lines(on: fd) { !$0.isEmpty }.first
         }
         #expect(acknowledgement == HostRelayServer.acknowledgement)
         #expect(await eventually { FileManager.default.fileExists(atPath: started) })
@@ -199,9 +202,11 @@ struct HostRelayServerTests {
 
         let fd = try await offPool { try Self.connect(socket, sending: request) }
         defer { close(fd) }
-        let first = try await offPool { try Self.lines(on: fd) { $0.filter { $0 == heartbeat }.count >= 2 } }
+        let first = try await offPool {
+            try Self.lines(on: fd, heartbeats: true) { $0.filter { $0 == heartbeat }.count >= 2 }
+        }
         FileManager.default.createFile(atPath: release, contents: nil)
-        let rest = try await offPool { try Self.lines(on: fd) }
+        let rest = try await offPool { try Self.lines(on: fd, heartbeats: true) }
         let lines = first + rest
 
         #expect(lines.first == HostRelayServer.acknowledgement)
@@ -261,7 +266,10 @@ struct HostRelayServerTests {
     @Test func anAcknowledgedHookRunsOnAfterItsRelayHangsUpAndAnotherCallStops() async throws {
         let dir = try TempDir()
         let calls = Calls()
-        let server = HostRelayServer(socketPath: dir.sub("hosts/box.sock"), host: "box", handler: calls.handle)
+        // Heartbeats while the calls run, as on a slow test run, must not change what the test sees.
+        let server = HostRelayServer(
+            socketPath: dir.sub("hosts/box.sock"), host: "box", heartbeatInterval: .milliseconds(20),
+            handler: calls.handle)
         try server.start()
         let socket = server.socketPath
         let requests = [["agent-hook", "stop"], ["row", "list"]].map {
@@ -271,7 +279,7 @@ struct HostRelayServerTests {
         let connected = try await offPool {
             try requests.map { request in
                 let fd = try Self.connect(socket, sending: request)
-                return (fd, try SocketStream(fd: fd, deadline: .now + .seconds(60)).read())
+                return (fd, try Self.lines(on: fd) { !$0.isEmpty }.first)
             }
         }
         let fds = connected.map(\.0)
@@ -290,7 +298,10 @@ struct HostRelayServerTests {
     @Test func stoppingTheServerAnswersNothingToTheCallsItCancels() async throws {
         let dir = try TempDir()
         let calls = Calls()
-        let server = HostRelayServer(socketPath: dir.sub("hosts/box.sock"), host: "box", handler: calls.handle)
+        // Heartbeats while the calls run, as on a slow test run, must not change what the test sees.
+        let server = HostRelayServer(
+            socketPath: dir.sub("hosts/box.sock"), host: "box", heartbeatInterval: .milliseconds(20),
+            handler: calls.handle)
         try server.start()
         let socket = server.socketPath
         let request = RelayRequest(
