@@ -132,8 +132,8 @@ public enum HostFiles {
 
     /// Canopy's helper on a host, with the version it reports to the app.
     /// `probe` lists the sessions of Canopy's tmux server, each with its foreground program, whether that is the shell,
-    /// its folder, and its title, and the panes with a kept hook report, as JSON. `relay` is the host's `canopy`, `replay` hands the app a hook's report that
-    /// found no app, and `open` is the host's `xdg-open`.
+    /// its folder, and its title, and the panes with a kept hook report, as JSON. `relay` is the host's `canopy`,
+    /// `replay` hands the app a hook's report that found no app, and `open` is the host's `xdg-open`.
     public static let script = scriptBody.replacingOccurrences(of: "@CANOPY_VERSION@", with: version)
 
     private static let scriptBody = scriptSource.replacingOccurrences(of: "@INPUT_COMMANDS@", with: RelayInput.literal)
