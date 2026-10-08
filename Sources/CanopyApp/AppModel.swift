@@ -32,6 +32,8 @@ final class AppModel {
     private(set) var sidebarKeepsKeyboard = false
     @ObservationIgnored private var isSteppingRows = false
     private var started = false
+    /// The workspace started, so this app, not another one, serves the home.
+    private(set) var ownsHome = false
     private var toastTask: Task<Void, Never>?
     private var server: ControlServer?
 
@@ -84,6 +86,7 @@ final class AppModel {
         started = true
         do {
             try await workspace.start()
+            ownsHome = true
         } catch WorkspaceError.homeInUse {
             // Launched with `open -n` while another instance already owns this home; that one serves the CLI.
             NSApplication.shared.terminate(nil)

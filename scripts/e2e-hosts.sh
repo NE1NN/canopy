@@ -73,12 +73,13 @@ launch() {
     fail "the app did not start"
 }
 
+# Waits for the process, not its socket: the app closes the socket first, and still holds the home while it quits.
 stop_app() {
     local pid
     pid=$(app_pid)
     kill "$pid"
     for _ in $(seq 1 100); do
-        [[ -z "$(app_pid)" ]] && return 0
+        kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.1
     done
     fail "the app did not quit"
