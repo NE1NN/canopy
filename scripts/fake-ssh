@@ -11,10 +11,12 @@ set -uo pipefail
 control=""
 operation=""
 master=0
+print_config=0
 forwards=()
 while (($#)); do
     case "$1" in
         -M) master=1 ;;
+        -G) print_config=1 ;;
         -N | -t | -T | -f) ;;
         -S) control="$2"; shift ;;
         -O) operation="$2"; shift ;;
@@ -64,6 +66,13 @@ if [[ -z "${FAKE_SSH_HOME:-}" && -n "$control" && -f "$control.env" ]]; then
     source "$control.env"
 fi
 [[ -n "${FAKE_SSH_HOME:-}" ]] || { echo "fake-ssh: FAKE_SSH_HOME is not set" >&2; exit 255; }
+# -G prints the settings ssh would use. The fake host is reached through a proxy, unless .fake-ssh-unknown in its home
+# makes the alias one ~/.ssh/config does not name.
+if ((print_config)); then
+    echo "hostname $alias"
+    [[ -e "$FAKE_SSH_HOME/.fake-ssh-unknown" ]] || echo "proxycommand fake-ssh"
+    exit 0
+fi
 [[ "${FAKE_SSH_DOWN:-}" == 1 || -e "$FAKE_SSH_HOME/.fake-ssh-down" ]] && unreachable
 
 if ((master)); then

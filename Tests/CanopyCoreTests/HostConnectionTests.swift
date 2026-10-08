@@ -85,23 +85,19 @@ struct HostConnectionTests {
         #expect(await setup.connection.lastError == error)
     }
 
-    /// An alias ~/.ssh/config does not name is a typo. A name it maps to may only fail while the Mac is offline.
-    @Test(arguments: [
-        ("hostname box\n", true), ("hostname box.example.com\n", false),
-        ("hostname box\nproxycommand aws ssm\n", false),
-    ])
-    func aNameThatDoesNotResolveFailsAtOnceOnlyWhenSSHConfigLacksIt(_ config: String, _ fails: Bool) async throws {
+    /// A name that does not resolve may be a Mac that is offline for now, or a host whose name only resolves while it
+    /// is awake, so it is retried and woken. `host add` catches typos.
+    @Test func aNameThatDoesNotResolveIsRetriedAndWoken() async throws {
         let setup = try Setup()
         setup.launcher.masterUp = false
         setup.launcher.masterError = "ssh: Could not resolve hostname box: nodename nor servname provided, or not known"
-        setup.launcher.config = config
 
         await #expect {
             try await setup.connection.connect()
         } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
 
-        #expect(setup.launcher.wakes.isEmpty == fails)
-        #expect((setup.launcher.masters.count == 1) == fails)
+        #expect(setup.launcher.wakes.isEmpty == false)
+        #expect(setup.launcher.masters.count > 1)
     }
 
     @Test func aHostThatIsOffIsWokenOnceAndConnectsWhenItComesUp() async throws {

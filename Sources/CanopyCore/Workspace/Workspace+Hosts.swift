@@ -110,6 +110,8 @@ extension Workspace {
     )
         async throws -> HostFacts
     {
+        // Caught here rather than by the connection, which keeps trying a name that does not resolve for now.
+        if await connection.isUnknownAlias() { throw WorkspaceError.hostUnknown(alias) }
         do {
             try await connection.connect()
         } catch WorkspaceError.hostUnreachable(_, let reason) where reason.contains("Could not resolve hostname") {

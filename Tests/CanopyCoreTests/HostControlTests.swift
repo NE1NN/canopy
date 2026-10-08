@@ -104,6 +104,24 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    @Test func anAliasSSHConfigDoesNotNameAndThatDoesNotResolveIsUnknownAtOnce() async throws {
+        let setup = try await Setup()
+        FileManager.default.createFile(atPath: setup.host.home + "/.fake-ssh-unknown", contents: nil)
+        FileManager.default.createFile(atPath: setup.host.home + "/.fake-ssh-down", contents: nil)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(
+                sshExecutable: FakeHost.script, environment: { setup.host.environment }, clock: TestHostClock()))
+        try await workspace.start()
+
+        await #expect {
+            try await workspace.addHost(alias: "no-such-host.invalid", repos: [:], wake: nil, idleDetachMinutes: nil)
+        } throws: { ($0 as? WorkspaceError)?.code == "host_unknown" }
+
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func aHostAddThatFailsChangesNothing() async throws {
         let setup = try await Setup()
         _ = try await setup.workspace.addHost(

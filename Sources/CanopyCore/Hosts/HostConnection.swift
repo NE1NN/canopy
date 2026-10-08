@@ -178,7 +178,7 @@ public actor HostConnection {
                 activity.record(ActivityType.hostConnected, data: ["host": .string(alias)])
                 return
             }
-            if await noRetryCanFix(lastError ?? "") || clock.now >= deadline {
+            if noRetryCanFix(lastError ?? "") || clock.now >= deadline {
                 set(.unreachable)
                 activity.record(
                     ActivityType.hostUnreachable,
@@ -195,21 +195,30 @@ public actor HostConnection {
         }
     }
 
-    /// ssh's failures that waiting and waking cannot change. A name that does not resolve may be a Mac that is offline
-    /// for now, unless ~/.ssh/config does not know the alias at all.
-    private func noRetryCanFix(_ message: String) async -> Bool {
+    /// ssh's failures that waiting and waking cannot change. A name that does not resolve is not one: the Mac may be
+    /// offline for now, or the host's name may only resolve while it is awake.
+    private func noRetryCanFix(_ message: String) -> Bool {
         let permanent = [
             "Permission denied", "Host key verification failed", "Bad configuration option", "Bad owner or permissions",
             "Too many authentication failures",
         ]
-        if permanent.contains(where: message.contains) { return true }
-        guard message.contains("Could not resolve hostname") else { return false }
+        return permanent.contains(where: message.contains)
+    }
+
+    /// Whether the alias is most likely a typo: ~/.ssh/config gives it no host name or proxy, and the alias does not
+    /// resolve as a name.
+    public func isUnknownAlias() async -> Bool {
         let config = await launcher.run(ssh.config(), timeout: .seconds(5))
         guard config.status == 0 else { return false }
         let lines = String(decoding: config.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
         let hostname = lines.first { $0.hasPrefix("hostname ") }.map { String($0.dropFirst("hostname ".count)) }
         let proxied = lines.contains { $0.hasPrefix("proxycommand ") || $0.hasPrefix("proxyjump ") }
-        return hostname?.lowercased() == alias.lowercased() && !proxied
+        guard let hostname, hostname.lowercased() == alias.lowercased(), !proxied else { return false }
+        return await onOwnThread {
+            var found: UnsafeMutablePointer<addrinfo>?
+            defer { freeaddrinfo(found) }
+            return getaddrinfo(hostname, nil, nil, &found) != 0
+        }
     }
 
     /// Starts a master and waits until ssh says it is up, or it exits. Returns whether it is up.

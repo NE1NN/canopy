@@ -57,8 +57,6 @@ final class FakeHostLauncher: HostProcessLauncher {
         var masterUp: Bool = true
         /// What a master that does not come up says.
         var masterError = "Connection closed by UNKNOWN port 65535"
-        /// What `ssh -G` prints.
-        var config = "hostname box.example.com\n"
         var masters: [Master] = []
         var wakes: [String] = []
         var commands: [[String]] = []
@@ -80,10 +78,6 @@ final class FakeHostLauncher: HostProcessLauncher {
     var masterError: String {
         get { state.withLock { $0.masterError } }
         set { state.withLock { $0.masterError = newValue } }
-    }
-    var config: String {
-        get { state.withLock { $0.config } }
-        set { state.withLock { $0.config = newValue } }
     }
     var holdWakes: Bool {
         get { state.withLock { $0.holdWakes } }
@@ -108,9 +102,6 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
         state.withLock { $0.commands.append(argv) }
-        if argv.contains("-G") {
-            return SubprocessResult(status: 0, stdout: Data(config.utf8), stderr: Data(), timedOut: false)
-        }
         if argv.containsSequence(["-O", "check"]) {
             let last = masters.last
             let up = (last?.isRunning ?? false) && !state.withLock { $0.deadSockets.contains(ObjectIdentifier(last!)) }
