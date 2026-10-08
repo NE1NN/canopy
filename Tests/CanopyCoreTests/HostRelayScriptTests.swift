@@ -182,6 +182,12 @@ struct HostRelayScriptTests {
         _ = try await setup.run(
             ["relay", "agent-hook", "stop"], environment: setup.environment(variables), stdin: Data("{}".utf8))
         let replay = ["replay", "--pane", "p7", "--home-id", "ab12cd34"]
+        // A report waits in its file while the app is away, and keeps the time its hook ran.
+        let kept = setup.pending(homeID: "ab12cd34", pane: "p7")
+        var saved =
+            try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: kept))) as! [String: Any]
+        saved["kept"] = (saved["kept"] as! Double) - 600
+        try JSONSerialization.data(withJSONObject: saved).write(to: URL(fileURLWithPath: kept))
 
         let first = try await setup.run(replay, environment: setup.environment())
         let second = try await setup.run(replay, environment: setup.environment())
@@ -193,6 +199,7 @@ struct HostRelayScriptTests {
         let request = try JSONDecoder().decode(RelayRequest.self, from: Data(lines[0].utf8))
         #expect(request.args == ["agent-hook", "stop"])
         #expect(request.input == Data("{}".utf8))
+        #expect((request.age ?? 0) >= 600)
         #expect(!FileManager.default.fileExists(atPath: setup.pending(homeID: "ab12cd34", pane: "p7")))
         #expect(second.status == 0)
         #expect(second.stdout.isEmpty)

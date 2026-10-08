@@ -152,6 +152,9 @@ public enum HostFiles {
                 return
             pending = os.path.join(os.path.expanduser("~/.canopy"), home_id, "pending")
             path = os.path.join(pending, pane + ".json")
+            # Dated by this host's clock both when kept and when replayed, so the report keeps its hook's time.
+            request["age"] = max(0.0, time.monotonic() - STARTED)
+            request["kept"] = time.time()
             temporary = path + ".canopy-new-" + str(os.getpid())
             try:
                 os.makedirs(pending, mode=0o700, exist_ok=True)
@@ -247,8 +250,15 @@ public enum HostFiles {
                     report = file.read().strip()
             finally:
                 os.unlink(taken)
-            if report:
-                print(report)
+            if not report:
+                return 0
+            try:
+                request = json.loads(report)
+                request["age"] = float(request.get("age") or 0) + max(0.0, time.time() - float(request.pop("kept")))
+                report = json.dumps(request)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                pass
+            print(report)
             return 0
 
 
