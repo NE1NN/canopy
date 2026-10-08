@@ -147,6 +147,8 @@ struct WorkspaceGroupTests {
         let (workspace, repo, paths) = try await setUp(dir, branches: ["feat/a"])
         let path = try #require(paths["feat/a"])
         try await Fixture.worktree(repo: repo, branch: "feat/other", at: dir.sub("elsewhere"))
+        // Refreshed here rather than left to the watcher, which may not have seen the new worktree yet.
+        await workspace.refresh(repoPath: repo)
         let otherRepo = try await Fixture.repo(in: dir, name: "other")
         try await workspace.addRepo(path: otherRepo)
         let otherRow = try await workspace.createRow(repoPath: otherRepo, branch: "feat/x").row.path

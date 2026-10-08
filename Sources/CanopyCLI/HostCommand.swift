@@ -15,13 +15,17 @@ struct HostCommand: AsyncParsableCommand {
 
     struct Add: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Check a host, install Canopy's files on it, and save it. Run it again to update a host.",
+            abstract:
+                "Check a host, install Canopy's files and hooks on it, and save it. Run it again to update a host.",
             discussion: """
                 The host needs Linux, git, tmux 3.0 or later, and python3. Each --repo names a registered repo and \
                 its clone on the host, such as --repo solis-v1=~/Projects/solis-v1. --wake runs on this Mac when \
                 the host cannot be reached, such as a command that starts it. Panes detach after --idle-detach \
                 minutes with nothing running and nothing typed, 30 by default, so the host can power itself off; 0 \
                 never detaches.
+
+                Programs on the host can then run canopy, which drives this Mac's Canopy as a local agent can, so \
+                add only a host whose account you trust as you trust this Mac.
                 """
         )
 

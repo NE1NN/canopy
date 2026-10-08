@@ -153,6 +153,22 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    /// `row new --on local` means this Mac, so no host may take that name.
+    @Test func aHostCannotBeNamedLocal() async throws {
+        let setup = try await Setup()
+
+        await #expect {
+            try await setup.workspace.addHost(alias: "local", repos: [:], wake: nil, idleDetachMinutes: nil)
+        } throws: { error in
+            guard let error = error as? WorkspaceError else { return false }
+            return error.code == "host_reserved" && error.message.contains("--on local")
+        }
+        #expect(await setup.workspace.hostConnections["local"] == nil)
+        #expect(await setup.workspace.hostListing().hosts.isEmpty)
+        _ = try await setup.workspace.addHost(alias: "Local", repos: [:], wake: nil, idleDetachMinutes: nil)
+        await setup.workspace.stop()
+    }
+
     /// A host added again gets a new connection, whose generations start over, so it must be prepared again.
     @Test func aRemovedHostIsPreparedAgainOnceAddedBack() async throws {
         let setup = try await Setup()
@@ -190,7 +206,9 @@ struct HostControlTests {
         #expect(info.tmuxServer == HostPaths.tmuxServer(homeID: setup.workspace.homeID))
         let saved = HostsConfig.load(from: setup.workspace.home.configFile).hosts["box"]
         #expect(saved == HostEntry(repos: ["demo": setup.clone], wake: "start it", idleDetachMinutes: 10))
-        #expect(FileManager.default.fileExists(atPath: setup.host.home + "/.canopy/bin/canopy-host"))
+        #expect(
+            FileManager.default.fileExists(
+                atPath: setup.host.home + "/.canopy/\(setup.workspace.homeID)/bin/canopy-host"))
         setup.workspace.activity.flushNow()
         let events = ActivityReader.events(in: setup.workspace.home.activityFolder, since: .distantPast, until: nil)
         #expect(events.contains { $0.type == "host.added" && $0.data["host"] == .string("box") })
@@ -323,5 +341,184 @@ struct StaleMasterTests {
 
         #expect(await eventually { !stray.isRunning })
         await relaunched.stop()
+    }
+}
+
+struct HostHooksTests {
+    typealias Setup = HostControlTests.Setup
+
+    static func settings(_ setup: Setup, _ path: String = ".claude/settings.json") -> String {
+        setup.host.home + "/" + path
+    }
+
+    static func add(_ workspace: Workspace) async throws {
+        try await workspace.addHost(alias: "box", repos: [:], wake: nil, idleDetachMinutes: nil)
+    }
+
+    static func inode(_ path: String) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: path)[.systemFileNumber] as? Int
+    }
+
+    static func mode(_ path: String) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int
+    }
+
+    /// What `canopy hooks install` makes of `text` on this Mac.
+    static func installedLocally(_ text: String, in dir: TempDir) throws -> Data {
+        let file = Fixture.claudeSettings(dir, "local/settings.json")
+        try FileManager.default.createDirectory(
+            at: file.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: file.url)
+        try file.install()
+        return try Data(contentsOf: file.url)
+    }
+
+    @Test func aHostGetsCanopysHooksAsHooksInstallWritesThem() async throws {
+        let setup = try await Setup()
+
+        try await Self.add(setup.workspace)
+
+        let path = Self.settings(setup)
+        let file = ClaudeSettingsFile(url: URL(fileURLWithPath: path))
+        #expect(try file.status() == .installed)
+        let local = Fixture.claudeSettings(setup.dir, "local/settings.json")
+        try local.install()
+        #expect(try Data(contentsOf: file.url) == Data(contentsOf: local.url))
+        #expect(try Self.mode(path) == 0o644)
+        await setup.workspace.stop()
+    }
+
+    @Test func aHostsOtherSettingsStayAsTheyWere() async throws {
+        let setup = try await Setup()
+        // A settings file kept with dotfiles, through a link that must stay one.
+        let target = Self.settings(setup, "dotfiles/claude.json")
+        try FileManager.default.createDirectory(
+            atPath: Self.settings(setup, "dotfiles"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            atPath: Self.settings(setup, ".claude"), withIntermediateDirectories: true)
+        try Data(ClaudeSettingsTests.written.utf8).write(to: URL(fileURLWithPath: target))
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target)
+        try FileManager.default.createSymbolicLink(atPath: Self.settings(setup), withDestinationPath: target)
+
+        try await Self.add(setup.workspace)
+
+        #expect(
+            try Data(contentsOf: URL(fileURLWithPath: target))
+                == Self.installedLocally(ClaudeSettingsTests.written, in: setup.dir))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: Self.settings(setup)) == target)
+        #expect(try Self.mode(target) == 0o600)
+        await setup.workspace.stop()
+    }
+
+    /// The hooks run `$CANOPY_CLI`, which each home's panes point at their own relay, so every home on a host shares
+    /// them.
+    @Test func addingAgainOrFromAnotherHomeChangesNothing() async throws {
+        let setup = try await Setup()
+        try await Self.add(setup.workspace)
+        let path = Self.settings(setup)
+        let installed = try Data(contentsOf: URL(fileURLWithPath: path))
+        let inode = try Self.inode(path)
+
+        try await Self.add(setup.workspace)
+        let other = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { setup.host.environment }))
+        try await other.start()
+        try await Self.add(other)
+
+        #expect(other.homeID != setup.workspace.homeID)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == installed)
+        #expect(try Self.inode(path) == inode)
+        await other.stop()
+        await setup.workspace.stop()
+    }
+
+    @Test func settingsClaudeCodeCannotReadStopTheHostBeingAdded() async throws {
+        let setup = try await Setup()
+        let path = Self.settings(setup)
+        try FileManager.default.createDirectory(
+            atPath: Self.settings(setup, ".claude"), withIntermediateDirectories: true)
+        try "{ \"model\": ".write(toFile: path, atomically: true, encoding: .utf8)
+
+        await #expect {
+            try await Self.add(setup.workspace)
+        } throws: { error in
+            guard let error = error as? WorkspaceError else { return false }
+            return error.code == "host_command_failed" && error.message.contains(path)
+        }
+
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "{ \"model\": ")
+        #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts.isEmpty)
+        await setup.workspace.stop()
+    }
+
+    @Test func theHooksGoWhereTheHostsClaudeConfigDirSays() async throws {
+        let setup = try await Setup()
+        var environment = setup.host.environment
+        environment["FAKE_SSH_CLAUDE_CONFIG_DIR"] = "~/claude-config"
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { [environment] in environment }))
+        try await workspace.start()
+
+        try await Self.add(workspace)
+
+        let file = ClaudeSettingsFile(url: URL(fileURLWithPath: Self.settings(setup, "claude-config/settings.json")))
+        #expect(try file.status() == .installed)
+        #expect(!FileManager.default.fileExists(atPath: Self.settings(setup)))
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
+    /// Outside a Canopy pane on the host, and in one whose app is away, a hook stays silent and lets Claude go on.
+    @Test func theInstalledHookIsQuietWithoutCanopy() async throws {
+        let setup = try await Setup()
+        try await Self.add(setup.workspace)
+        let settings = try OrderedJSON.parse(try Data(contentsOf: URL(fileURLWithPath: Self.settings(setup))))
+        guard case .array(let groups) = settings["hooks"]?["Stop"], case .array(let handlers) = groups.first?["hooks"],
+            case .string(let command) = handlers.first?["command"]
+        else {
+            Issue.record("No Stop hook")
+            return
+        }
+        let connection = try await setup.workspace.connection(for: "box")
+        let files = setup.host.home + "/.canopy/\(setup.workspace.homeID)"
+        let outside = [
+            "env", "-u", "CANOPY_CLI", "-u", "CANOPY_SOCKET", "-u", "CANOPY_PANE", "-u", "CANOPY_HOME_ID", "sh", "-c",
+            command,
+        ]
+        let appAway = [
+            "env", "CANOPY_CLI=\(files)/bin/canopy", "CANOPY_SOCKET=\(files)/app.sock", "CANOPY_PANE=p1",
+            "CANOPY_HOME_ID=\(setup.workspace.homeID)", "sh", "-c", command,
+        ]
+
+        for remote in [outside, appAway] {
+            let result = try await connection.run(remote, timeout: .seconds(60))
+            #expect(result.status == 0, "\(remote)")
+            #expect(String(decoding: result.stdout, as: UTF8.self) == "", "\(remote)")
+            #expect(String(decoding: result.stderr, as: UTF8.self) == "", "\(remote)")
+        }
+        // The hook did run the relay, which kept the report for the app.
+        #expect(FileManager.default.fileExists(atPath: files + "/pending/p1.json"))
+        await setup.workspace.stop()
+    }
+
+    @Test func settingsChangedSinceTheyWereReadAreNotWrittenOver() async throws {
+        let setup = try await Setup()
+        let path = Self.settings(setup)
+        try FileManager.default.createDirectory(
+            atPath: Self.settings(setup, ".claude"), withIntermediateDirectories: true)
+        try "{}\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try HostsConfigFile(url: setup.workspace.home.configFile).save("box", HostEntry(repos: [:]))
+        let connection = try await setup.workspace.connection(for: "box")
+
+        let stale = HostClaudeSettings.writeCommand(
+            replacing: Data("{\"a\": 1}\n".utf8), with: Data("{\"b\": 2}\n".utf8))
+        let result = try await connection.run(stale, timeout: .seconds(60))
+
+        #expect(result.status == 0)
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "changed\n")
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "{}\n")
+        await setup.workspace.stop()
     }
 }

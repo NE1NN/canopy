@@ -74,9 +74,8 @@ struct HostPathTests {
         let middling = CanopyHome(path: "/var/folders/6r/0j694l0d2xvbrrz62zw7lg5c0000gn/T/cnp-hosts.Gl9OurnUOa/home")
         let tight = HostPaths.controlSocket(home: middling, homeID: "5ed625bf", alias: "hindie-box", uid: 501)
         #expect(tight.utf8.count + 17 < 104)
-        #expect(
-            HostPaths.remotePaneSocket(uid: 1000, homeID: "0123abcd", pane: "p7") == "/tmp/canopy-1000/0123abcd-p7.sock"
-        )
+        #expect(HostPaths.relaySocket(home: "/home/u", homeID: "0123abcd") == "/home/u/.canopy/0123abcd/app.sock")
+        #expect(HostPaths.relayCLI(home: "/home/u", homeID: "0123abcd") == "/home/u/.canopy/0123abcd/bin/canopy")
     }
 }
 
@@ -97,7 +96,7 @@ struct SSHCommandTests {
 
     @Test func commandsGoThroughTheMasterAndNeverBecomeOne() {
         let exec = ssh.exec(["git", "-C", "/a b", "status"])
-        let attach = ssh.attach(["tmux", "attach"], forwards: [(remote: "/tmp/r.sock", local: "/l.sock")])
+        let attach = ssh.attach(["tmux", "attach"])
 
         for argv in [exec, attach] {
             #expect(argv.containsSequence(["-S", "/c/sock"]))
@@ -113,8 +112,17 @@ struct SSHCommandTests {
         #expect(!exec.contains("-t"))
         #expect(attach.contains("-t"))
         #expect(attach.containsSequence(["-o", "LogLevel=ERROR"]))
-        #expect(attach.containsSequence(["-R", "/tmp/r.sock:/l.sock"]))
+        #expect(!attach.contains("-R"))
         #expect(ssh.control("check") == ["/usr/bin/ssh", "-S", "/c/sock", "-O", "check", "box"])
+    }
+
+    /// One forward per connection, asked of the master, lasts as long as it does.
+    @Test func theRelaysForwardIsAskedOfTheMaster() {
+        #expect(
+            ssh.forward(remote: "/home/u/.canopy/0123abcd/app.sock", local: "/l/box.sock") == [
+                "/usr/bin/ssh", "-S", "/c/sock", "-O", "forward", "-R", "/home/u/.canopy/0123abcd/app.sock:/l/box.sock",
+                "box",
+            ])
     }
 
     @Test func quotedWordsReachTheRemoteShellUnchanged() throws {

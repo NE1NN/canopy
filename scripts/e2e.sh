@@ -10,7 +10,7 @@ shots="$PWD/build/e2e"
 work=$(mktemp -d -t canopy-e2e)
 export CANOPY_HOME="$work/home"
 # Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST
 export CLAUDE_CONFIG_DIR="$work/claude"
 mkdir -p "$shots"
 
@@ -28,6 +28,16 @@ trap cleanup EXIT
 
 step() { printf '\n==> %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# A window shot for a visual check. A locked screen draws no windows, so a run then goes on without the picture.
+shot() {
+    local status=0
+    swift scripts/window-shot.swift "$(app_pid)" "$1" || status=$?
+    case $status in
+        0) echo "saved $1" ;;
+        75) echo "skipped $1: the screen is locked" ;;
+        *) fail "could not capture $1" ;;
+    esac
+}
 
 step "fixture repo with an origin"
 git init -q --bare -b main "$work/origin.git"
@@ -76,13 +86,21 @@ done
 step "running inside a row resolves the repo from the folder"
 (cd "$CANOPY_HOME/worktrees/demo/feat-plain" && "$cli" row new feat/from-cwd --json) >/dev/null
 
+step "through a host's relay, --on local makes the row on this Mac, and no host may be named local"
+CANOPY_HOST=box "$cli" row new feat/on-local --repo demo --on local --no-setup >/dev/null ||
+    fail "row new --on local through a host's relay failed"
+[[ -d "$CANOPY_HOME/worktrees/demo/feat-on-local" ]] || fail "row new --on local made no local worktree"
+"$cli" row rm feat/on-local --repo demo --delete-branch >/dev/null
+if "$cli" host add local --json > "$work/host-local.json" 2>/dev/null; then fail "host add local succeeded"; fi
+grep -q '"code" : "host_reserved"' "$work/host-local.json" || fail "host add local did not fail with host_reserved"
+grep -q -- "--on local" <<<"$("$cli" agent-guide)" || fail "agent-guide does not say how to make a local row from a host"
+
 step "listing"
 "$cli" row list
 
 step "screenshot"
 sleep 1
-swift scripts/window-shot.swift "$(app_pid)" "$shots/rows.png"
-echo "saved $shots/rows.png"
+shot "$shots/rows.png"
 
 step "canopy group and canopy row move arrange rows"
 group_of() {
@@ -122,7 +140,7 @@ if "$cli" row move feat/grouped --repo demo --json > /dev/null 2>&1; then fail "
 [[ "$(group_of feat/grouped)" == None ]] || fail "group rm left the row grouped"
 "$cli" log --type group | grep -q "Code review, 1 row" || fail "canopy log is missing group.removed"
 "$cli" log --type row.moved | grep -q "none -> Review" || fail "canopy log is missing row.moved"
-"$cli" agent-guide | grep -q "canopy group new" || fail "agent-guide is missing groups"
+grep -q "canopy group new" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing groups"
 # Kept for the relaunch check at the end.
 "$cli" group new Kept --repo demo >/dev/null
 "$cli" row move feat/grouped --repo demo --group Kept >/dev/null
@@ -156,7 +174,7 @@ if "$cli" group collapse Nope --repo demo --json > "$work/nofold.json" 2>/dev/nu
 grep -q '"group_not_found"' "$work/nofold.json" || fail "group collapse of a missing group did not fail with group_not_found"
 "$cli" log --type cli | grep -q "repo.collapse" || fail "canopy log is missing the repo.collapse call"
 if "$cli" log --since 1m | grep -v "cli.call" | grep -qi "collapse\|expand"; then fail "folding logged an event of its own"; fi
-"$cli" agent-guide | grep -q "canopy repo collapse" || fail "agent-guide is missing repo collapse"
+grep -q "canopy repo collapse" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing repo collapse"
 
 step "canopy row rm removes the worktree and branch"
 "$cli" row rm feat/e2e --repo demo --delete-branch
@@ -189,8 +207,7 @@ for _ in $(seq 1 100); do
 done
 [[ "$(cat "$work/ran" 2>/dev/null)" == "$pane" ]] || fail "--run did not reach pane $pane"
 sleep 1
-swift scripts/window-shot.swift "$(app_pid)" "$shots/terminal.png"
-echo "saved $shots/terminal.png"
+shot "$shots/terminal.png"
 
 step "--no-setup skips setup"
 "$cli" row new feat/no-setup --repo demo --no-setup --json | grep -q '"status" : "skipped"' || fail "setup not skipped"
@@ -248,7 +265,7 @@ wait_for_text sent-text || fail "term send did not reach the terminal"
 "$cli" term list --repo demo --row feat/term --json | grep -q "\"$pane\"" || fail "term list is missing $pane"
 "$cli" term close "$pane" >/dev/null
 if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
-"$cli" agent-guide | grep -q "canopy term read" || fail "agent-guide is missing term read"
+grep -q "canopy term read" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing term read"
 
 step "term send --enter presses Return as a keystroke of its own, with no paste markers"
 # Puts its terminal in raw mode, turns on bracketed paste as Claude Code and vim do, and logs each read, with Return
@@ -285,7 +302,7 @@ wait_for_reads "$message"$'\n'"<0d>" || fail "Return did not come in a read of i
 "$cli" term send "$recorder" "" --enter >/dev/null
 wait_for_reads "$message"$'\n'"<0d>"$'\n'"<0d>" || fail "a lone --enter did not send Return"
 "$cli" term close "$recorder" --force >/dev/null
-"$cli" agent-guide | grep -q "keystroke of its own" || fail "agent-guide does not say how --enter presses Return"
+grep -q "keystroke of its own" <<<"$("$cli" agent-guide)" || fail "agent-guide does not say how --enter presses Return"
 
 step "canopy ports lists a server started in a row's terminal, and stops it"
 # A free port below the system's random range, where Canopy looks for servers.
@@ -307,7 +324,7 @@ done
 "$cli" ports stop "$port" | grep -q "Stopped perl" || fail "ports stop did not stop the server"
 if "$cli" ports --all --json | grep -q "\"port\" : $port,"; then fail "port $port is still listed"; fi
 "$cli" term close "$server" >/dev/null
-"$cli" agent-guide | grep -q "canopy ports stop" || fail "agent-guide is missing ports"
+grep -q "canopy ports stop" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing ports"
 
 step "canopy web opens, lists, and closes pages, in the panel or a tab"
 mkdir -p "$work/site"
@@ -362,7 +379,7 @@ import json, sys
 events = [(e["type"], e["data"]["page"], e["source"]) for e in json.load(sys.stdin)]
 assert events == [("web.opened", "w1", "cli"), ("web.opened", "w2", "cli"), ("web.closed", "w1", "cli")], events
 ' || fail "canopy log is missing web events"
-"$cli" agent-guide | grep -q "canopy web open <url>" || fail "agent-guide is missing web pages"
+grep -q "canopy web open <url>" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing web pages"
 
 step "Claude Code's hooks report into a pane, and agents wait on it"
 agent=$("$cli" term new --repo demo --row feat/term --json |
@@ -412,7 +429,7 @@ printf '{"session_id": "x", "hook_event_name": "Stop"}' | CANOPY_PANE=p1 CANOPY_
 [[ ! -e "$work/nobody" ]] || fail "agent-hook started an app"
 printf '{"session_id": "x", "hook_event_name": "Stop"}' | env -u CANOPY_PANE "$cli" agent-hook || fail "agent-hook failed outside Canopy"
 "$cli" term close "$agent" >/dev/null
-"$cli" agent-guide | grep -q "canopy term wait" || fail "agent-guide is missing term wait"
+grep -q "canopy term wait" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing term wait"
 
 step "canopy hooks adds its hooks to Claude Code's settings and takes only its own out"
 settings="$CLAUDE_CONFIG_DIR/settings.json"
@@ -427,12 +444,18 @@ grep -q 'agent-hook' "$settings" || fail "the settings file has no agent-hook"
 cmp -s "$settings" "$work/settings.before" || fail "uninstall did not give back the settings file"
 "$cli" hooks install --settings "$work/other-settings.json" >/dev/null
 grep -q 'agent-hook' "$work/other-settings.json" || fail "hooks install --settings wrote elsewhere"
-"$cli" agent-guide | grep -q "canopy hooks install" || fail "agent-guide is missing canopy hooks"
+grep -q "canopy hooks install" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing canopy hooks"
+cp "$settings" "$work/settings.before"
+for verb in install uninstall status; do
+    said=$(CANOPY_HOST=box "$cli" hooks "$verb") || fail "hooks $verb through a host's relay failed"
+    [[ "$said" == "Canopy's hooks on box are kept by \`canopy host add\`." ]] || fail "hooks $verb on a host said: $said"
+done
+cmp -s "$settings" "$work/settings.before" || fail "hooks through a host's relay changed this Mac's settings"
 
 step "canopy pr says when a repo's origin is not on GitHub"
 if "$cli" pr feat/term --repo demo --json > "$work/pr-local.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"not_github"' "$work/pr-local.json" || fail "missing not_github"
-"$cli" agent-guide | grep -q "canopy pr" || fail "agent-guide is missing canopy pr"
+grep -q "canopy pr" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing canopy pr"
 
 step "canopy pr finds a real PR through gh"
 # The newest merged PR of this checkout's own GitHub repo whose branch has no other PR, so it is the row's PR.
@@ -455,8 +478,7 @@ if merged=$(gh pr list --state all --limit 100 --json number,headRefName,state -
     grep -q '"state" : "merged"' "$work/pr.json" || fail "PR $number is not shown as merged"
     "$cli" row select "$branch" --repo ghdemo >/dev/null
     sleep 1
-    swift scripts/window-shot.swift "$(app_pid)" "$shots/pr.png"
-    echo "saved $shots/pr.png"
+    shot "$shots/pr.png"
 else
     echo "skipped: needs gh logged in and an origin on GitHub with a merged PR"
 fi
@@ -489,7 +511,7 @@ if [[ "$(dscl . -read "/Users/$USER" UserShell | awk '{print $2}')" == */zsh ]];
 else
     echo "skipped: the login shell is not zsh"
 fi
-"$cli" agent-guide | grep -q "canopy log" || fail "agent-guide is missing canopy log"
+grep -q "canopy log" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing canopy log"
 
 step "errors are machine-readable"
 if "$cli" row new "bad name" --repo demo --json > "$work/err.json" 2>/dev/null; then fail "expected failure"; fi
@@ -625,8 +647,7 @@ grep -q '"folder_taken"' "$work/taken.json" || fail "missing folder_taken"
 step "screenshot"
 "$cli" row select main --repo acme/app >/dev/null
 sleep 1
-swift scripts/window-shot.swift "$(app_pid)" "$shots/clone.png"
-echo "saved $shots/clone.png"
+shot "$shots/clone.png"
 
 step "terminals take ZDOTDIR from the login session, not from whatever launched Canopy, and still log commands"
 # A Terminal window would not get the ZDOTDIR this app was launched with, whose .zshrc puts the stand-in gh on PATH.
@@ -657,7 +678,7 @@ if len(added) != 1 or added[0]["source"] != "cli":
 if len(calls) < 5 or not any(c["data"].get("error") == "clone_failed" for c in calls):
     sys.exit(f"repo.clone calls: {calls}")
 EOF
-"$cli" agent-guide | grep -q "canopy repo clone" || fail "agent-guide is missing repo clone"
+grep -q "canopy repo clone" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing repo clone"
 
 step "row new --pr checks out a PR's branch, from the repo and from a fork"
 # The app running now answers gh from the clone steps' stand-in, so this part starts one of its own.
@@ -768,8 +789,7 @@ step "a fork PR's row gets its badge"
 "$cli" pr feat/fork --repo shop --refresh --json > "$work/pr22-badge.json"
 [[ "$(field "$work/pr22-badge.json" pr.number)" == 22 ]] || fail "the fork PR row has no PR"
 sleep 1
-swift scripts/window-shot.swift "$(app_pid)" "$shots/pr-fork.png"
-echo "saved $shots/pr-fork.png"
+shot "$shots/pr-fork.png"
 
 step "row new says which branch it used, and --existing refuses a name that matches nothing"
 git -C "$work/shop" branch feat/local
@@ -779,7 +799,7 @@ git -C "$work/shop" branch feat/local
 if "$cli" row new feat/typo --repo shop --existing --json > "$work/typo.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"branch_not_found"' "$work/typo.json" || fail "missing branch_not_found"
 if git -C "$work/shop" show-ref --verify --quiet refs/heads/feat/typo; then fail "--existing created a branch"; fi
-"$cli" agent-guide | grep -q "row new --pr" || fail "agent-guide is missing row new --pr"
+grep -q "row new --pr" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing row new --pr"
 
 step "pr list shows the repo's PRs and the row that has each"
 author switch -q -c fix/old main
@@ -826,7 +846,7 @@ assert branches["main"]["row"]["class"] == "main", branches
 EOF
 "$cli" branch list --repo shop --query "just push" | grep -Eq '^feat/just-pushed +origin ' ||
     fail "branch list --query printed $("$cli" branch list --repo shop --query "just push")"
-"$cli" agent-guide | grep -q "canopy branch list" || fail "agent-guide is missing branch list"
+grep -q "canopy branch list" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing branch list"
 
 step "plugins: the fixture plugin does nothing until config.json turns it on"
 # A dev build lists the fixture plugin only when launched with CANOPY_FIXTURE_PLUGIN=1, and removed rows' folders go to
@@ -1010,7 +1030,7 @@ types = {e["type"] for e in events}
 assert types == {"plugin.enabled", "plugin.disabled", "plugin.row.created", "plugin.row.removed"}, types
 assert all("repo" not in e for e in events), events
 ' || fail "canopy log is missing plugin events"
-"$cli" agent-guide | grep -q "canopy plugin new" || fail "agent-guide is missing plugin rows"
+grep -q "canopy plugin new" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing plugin rows"
 
 step "tickets: a stand-in ticket-manager, and Tickets off until it is connected"
 # The stand-in serves ticket-manager's own response fixtures on this Mac. Nothing here reaches a real deployment.
@@ -1218,13 +1238,13 @@ assert rows["fix/shadowban"]["link"] == {"plugin": "tickets", "item": sys.argv[1
 ' "$id853" || fail "the fix row lost its link"
 
 step "the agent guide has Tickets while it is on"
-"$cli" agent-guide | grep -q "canopy ticket list --mine --waiting" || fail "agent-guide has no Tickets section"
+grep -q "canopy ticket list --mine --waiting" <<<"$("$cli" agent-guide)" || fail "agent-guide has no Tickets section"
 
 step "disconnect turns Tickets off and deletes the token"
 "$cli" ticket disconnect | grep -qx "Disconnected Tickets. Its rows stay for when you connect again." ||
     fail "ticket disconnect said something else"
 has_ticket_token && fail "the token is still in the Keychain"
-"$cli" agent-guide | grep -q "canopy ticket list" && fail "agent-guide still has the Tickets section"
+grep -q "canopy ticket list" <<<"$("$cli" agent-guide)" && fail "agent-guide still has the Tickets section"
 if "$cli" ticket list --json > "$work/off2.json" 2>/dev/null; then fail "expected failure"; fi
 grep -q '"plugin_off"' "$work/off2.json" || fail "ticket list after disconnect did not fail with plugin_off"
 stop_tm

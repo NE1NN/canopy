@@ -80,3 +80,24 @@ private struct Sleeper {
         return pid
     }
 }
+
+extension SubprocessTests {
+    @Test func stdinReachesTheChild() async throws {
+        let input = Data("line one\nline two\n".utf8)
+        let result = try await offPool {
+            try Subprocess.run("/bin/cat", [], environment: [:], directory: nil, timeout: .seconds(20), stdin: input)
+        }
+
+        #expect(result.status == 0)
+        #expect(result.stdout == input)
+    }
+
+    @Test func withoutStdinTheChildReadsNothing() async throws {
+        let result = try await offPool {
+            try Subprocess.run("/bin/cat", [], environment: [:], directory: nil, timeout: .seconds(20))
+        }
+
+        #expect(result.status == 0)
+        #expect(result.stdout.isEmpty)
+    }
+}

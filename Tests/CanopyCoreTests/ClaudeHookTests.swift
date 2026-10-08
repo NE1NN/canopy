@@ -174,6 +174,24 @@ struct ClaudeHookTests {
         #expect(AgentHook.request(input: Data("{}".utf8), environment: environment, startedAt: started) == nil)
     }
 
+    @Test func aRelayedHookIsDatedByWhenItRanOnTheHost() throws {
+        let input = Data(#"{"session_id": "abc123", "hook_event_name": "Stop"}"#.utf8)
+        func at(_ startedAtVariable: String?) throws -> Double? {
+            var environment = ["CANOPY_PANE": "p12", "CANOPY_HOME": "/tmp/canopy-home"]
+            environment["CANOPY_STARTED_AT"] = startedAtVariable
+            let built = try #require(AgentHook.request(input: input, environment: environment, startedAt: started))
+            return try #require(built.request.params).decode(TermStateParams.self).at
+        }
+
+        let fractional = try #require(try at("1791460000.123456"))
+        #expect(abs(fractional - 1_791_460_000.123456) < 1e-5)
+        #expect(try at("1791460000") == 1_791_460_000)
+        for malformed in ["", "soon", "nan", "inf", "-inf", "1791460000s"] {
+            #expect(try at(malformed) == started.timeIntervalSince1970, "\(malformed)")
+        }
+        #expect(try at(nil) == started.timeIntervalSince1970)
+    }
+
     @Test func aProcessStartTimeOrdersProcesses() throws {
         let own = try #require(ProcessTable.startTime(of: getpid()))
         #expect(own <= Date())

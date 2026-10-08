@@ -128,6 +128,13 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(remote), timeout: timeout)
     }
 
+    /// Asks the master to forward the socket `remote` on the host to `local` here, for as long as it runs. Nil when
+    /// the master is not up.
+    public func forward(remote: String, local: String) async -> SubprocessResult? {
+        guard state == .connected, master?.isRunning == true else { return nil }
+        return await launcher.run(ssh.forward(remote: remote, local: local), timeout: .seconds(15))
+    }
+
     /// The host user's home folder, asked once per connection.
     public func home() async throws -> String {
         if let home = cachedHome { return home }

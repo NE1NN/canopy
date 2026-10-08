@@ -18,7 +18,7 @@ struct JSONFile: Sendable {
 
     /// The file's contents, or an empty object when it does not exist yet.
     func read() throws -> OrderedJSON {
-        try parse(try contents(of: target))
+        try Self.parse(try contents(of: target), validate: validate)
     }
 
     /// Rewrites the file with `transform`'s result, unless it changed nothing. A file changed by someone else while
@@ -28,14 +28,25 @@ struct JSONFile: Sendable {
         for _ in 0..<3 {
             let target = self.target
             let original = try contents(of: target)
-            let json = try parse(original)
-            let updated = try transform(json)
-            guard updated != json else { return false }
-            let newline = original.map { $0.last == 0x0A } ?? true
-            let data = Data((updated.formatted() + (newline ? "\n" : "")).utf8)
+            guard let data = try Self.rewritten(original, validate: validate, transform: transform) else {
+                return false
+            }
             if try write(data, to: target, replacing: original) { return true }
         }
         throw JSONFileError.writeFailed("it kept changing while Canopy wrote it")
+    }
+
+    /// What `update` writes for a file holding `original`, or nil when `transform` changes nothing. It keeps the file's
+    /// final newline, or adds one to a new file.
+    static func rewritten(
+        _ original: Data?, validate: (OrderedJSON) throws -> OrderedJSON,
+        transform: (OrderedJSON) throws -> OrderedJSON
+    ) throws -> Data? {
+        let json = try parse(original, validate: validate)
+        let updated = try transform(json)
+        guard updated != json else { return nil }
+        let newline = original.map { $0.last == 0x0A } ?? true
+        return Data((updated.formatted() + (newline ? "\n" : "")).utf8)
     }
 
     /// The file the name points to, following symbolic links, so a linked file is written and the link stays.
@@ -53,7 +64,7 @@ struct JSONFile: Sendable {
         }
     }
 
-    private func parse(_ data: Data?) throws -> OrderedJSON {
+    private static func parse(_ data: Data?, validate: (OrderedJSON) throws -> OrderedJSON) throws -> OrderedJSON {
         guard let data else { return .object([]) }
         do {
             return try validate(try OrderedJSON.parse(data))

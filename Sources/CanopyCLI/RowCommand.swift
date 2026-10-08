@@ -62,7 +62,8 @@ struct RowCommand: AsyncParsableCommand {
             abstract: "Create a row: a branch and a worktree under the Canopy folder.",
             discussion: """
                 With --on, the row's worktree is made on that host, in its clone of the repo, and its terminals \
-                open there in tmux. See `canopy host --help`.
+                open there in tmux. See `canopy host --help`. Run on a host, the row is made on that host, unless \
+                --on local makes it on this Mac.
 
                 An existing local branch is checked out, after a fast-forward if it is only behind origin. A branch \
                 that only exists on origin is tracked. Anything else is created from --from, which defaults to \
@@ -106,13 +107,20 @@ struct RowCommand: AsyncParsableCommand {
         var ticket: String?
         @Option(
             name: .customLong("on"),
-            help: ArgumentHelp("Make the row on this host, from `canopy host list`.", valueName: "host"))
-        var host: String?
+            help: ArgumentHelp(
+                "Make the row on this host, from `canopy host list`, or on this Mac with local.", valueName: "host"))
+        var on: String?
         @OptionGroup var output: OutputOptions
 
+        private var host: String? { RowTarget.host(on: on, environment: ProcessInfo.processInfo.environment) }
+
         func validate() throws {
-            if host != nil, pr != nil {
-                throw ValidationError("--pr cannot make a remote row yet. Pass the PR's branch instead.")
+            if let host, pr != nil {
+                throw ValidationError(
+                    on == nil
+                        ? "Run on \(host), row new makes a remote row there, and --pr cannot make one yet. "
+                            + "Pass the PR's branch instead, or --on local."
+                        : "--pr cannot make a remote row yet. Pass the PR's branch instead.")
             }
             if ticket != nil, noLink {
                 throw ValidationError("--ticket links the row and --no-link leaves the link out. Pass one of them.")

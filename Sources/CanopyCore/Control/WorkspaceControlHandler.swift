@@ -458,7 +458,7 @@ public struct WorkspaceControlHandler: Sendable {
     }
 
     /// Connects the pane's host, waiting at most 5 seconds, so the pane can say what it is waiting for. The attempt
-    /// goes on after that, and the pane's next call shares it.
+    /// goes on after that, and the pane's next call shares it. A report the pane's hook kept meanwhile runs first.
     private func attach(_ pane: RemotePaneInfo) async throws -> HostAttachResult {
         let connection = try await workspace.connection(for: pane.host)
         do {
@@ -470,6 +470,7 @@ public struct WorkspaceControlHandler: Sendable {
         }
         do {
             try await workspace.prepareHost(connection)
+            await workspace.replayKeptReport(pane: pane.pane, on: connection)
             return HostAttachResult(
                 ready: try await workspace.attachCommand(
                     host: pane.host, repoPath: pane.repoPath, standIn: pane.rowPath, session: pane.session,

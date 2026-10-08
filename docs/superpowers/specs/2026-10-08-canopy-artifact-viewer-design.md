@@ -173,7 +173,7 @@ Once they land:
 
 - ⌘-clicking an artifact link in a remote pane works with no further change, since a remote pane is a local terminal running `ssh`.
 - `canopy web open` on the host works through the relay, from that spec's milestone 2, like every other command, and opens in the remote row.
-- That milestone also installs `~/.canopy/bin/xdg-open` on the host, first on the remote panes' PATH.
+- That milestone also installs `~/.canopy/<home id>/bin/xdg-open` on the host, first on the remote panes' PATH.
   It runs `canopy web open` for artifact links and hands everything else to the host's own `xdg-open` when there is one.
   Claude Code on Linux opens links with `xdg-open`, so its own "open this artifact" on the host then shows the artifact in Canopy.
   This goes into the remote rows spec as an addition when its milestone 2 is planned.

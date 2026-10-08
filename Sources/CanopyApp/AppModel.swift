@@ -41,7 +41,9 @@ final class AppModel {
         self.home = home
         let config = GlobalConfig.load(from: home.configFile)
         let activity = ActivityLog(folder: home.activityFolder, logsCommands: config.logCommands)
-        let workspace = Workspace(home: home, activity: activity)
+        let workspace = Workspace(
+            home: home, activity: activity,
+            hostTooling: HostTooling(relayCLI: Self.bundledCLIDirectory().map { $0 + "/canopy" }))
         let terminals = TerminalStore(
             engine: SwiftTermEngine(),
             settings: .current(

@@ -81,8 +81,8 @@ private typealias KeventCall = (
 ) -> Int32
 
 public enum Subprocess {
-    /// Runs a program in a session of its own, with no controlling terminal, stdin from /dev/null, no inherited
-    /// descriptors, and every signal unblocked and at its default, blocking the calling thread until it exits.
+    /// Runs a program in a session of its own, with no controlling terminal, stdin from `stdin` or else /dev/null, no
+    /// inherited descriptors, and every signal unblocked and at its default, blocking the calling thread until it exits.
     /// On timeout the session's process group, the child and everything it started, is killed.
     /// Call it through `onOwnThread`, not on a Dispatch global queue, whose threads run out.
     ///
@@ -95,8 +95,11 @@ public enum Subprocess {
         environment: [String: String],
         directory: String?,
         timeout: Duration?,
+        stdin: Data? = nil,
         handle: SubprocessHandle? = nil
     ) throws -> SubprocessResult {
+        let input = try stdin.map { try inputFile(holding: $0, for: executable) }
+        defer { input.map { _ = close($0) } }
         let output = try temporaryFile(for: executable)
         defer { close(output) }
         let errors = try temporaryFile(for: executable)
@@ -105,7 +108,11 @@ public enum Subprocess {
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        if let input {
+            posix_spawn_file_actions_adddup2(&actions, input, 0)
+        } else {
+            posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        }
         posix_spawn_file_actions_adddup2(&actions, output, 1)
         posix_spawn_file_actions_adddup2(&actions, errors, 2)
         if let directory {
@@ -190,6 +197,28 @@ public enum Subprocess {
         let descriptor = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
         guard descriptor >= 0 else { throw SubprocessError(executable: executable, code: errno) }
         template.withUnsafeBufferPointer { _ = unlink($0.baseAddress!) }
+        return descriptor
+    }
+
+    private static func inputFile(holding data: Data, for executable: String) throws -> Int32 {
+        let descriptor = try temporaryFile(for: executable)
+        let failure: Int32? = data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = write(descriptor, bytes.baseAddress! + offset, bytes.count - offset)
+                if count > 0 {
+                    offset += count
+                } else if errno != EINTR {
+                    return errno
+                }
+            }
+            return nil
+        }
+        if let failure {
+            close(descriptor)
+            throw SubprocessError(executable: executable, code: failure)
+        }
+        lseek(descriptor, 0, SEEK_SET)
         return descriptor
     }
 

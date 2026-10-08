@@ -6,6 +6,12 @@ public enum ClaudeHooks {
     /// in Claude's transcript.
     public static let command = #"[ -z "$CANOPY_CLI" ] || "$CANOPY_CLI" agent-hook >/dev/null 2>&1 || true"#
 
+    /// What `canopy hooks` says when run through a host's relay. The host's settings file is out of this Mac's reach,
+    /// and `host add` installs the hooks there.
+    public static func keptByHostAdd(on host: String) -> String {
+        "Canopy's hooks on \(host) are kept by `canopy host add`."
+    }
+
     public enum Status: String, Codable, Sendable {
         case installed
         /// Some of Canopy's hooks are missing or differ, as after an older Canopy installed them.
@@ -229,8 +235,17 @@ public struct ClaudeSettingsFile: Sendable {
         try settingsErrors { try file.update(transform) }
     }
 
+    /// What `install` writes for a settings file holding `original`, or nil when it has Canopy's hooks already, for a
+    /// file out of this Mac's reach, as on a host. Throws `JSONFileError.unreadable` for settings Claude Code cannot
+    /// read.
+    public static func installing(into original: Data?) throws -> Data? {
+        try JSONFile.rewritten(original, validate: validate) { ClaudeHooks.installing(into: $0) }
+    }
+
+    private static let validate: @Sendable (OrderedJSON) throws -> OrderedJSON = { try $0.validSettings() }
+
     private var file: JSONFile {
-        JSONFile(url: url, validate: { try $0.validSettings() }, newFileMode: 0o644)
+        JSONFile(url: url, validate: Self.validate, newFileMode: 0o644)
     }
 
     private func settingsErrors<T>(_ body: () throws -> T) throws -> T {

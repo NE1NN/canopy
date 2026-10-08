@@ -56,26 +56,31 @@ public struct HostNextResult: Codable, Sendable, Equatable {
 }
 
 public enum RemoteAttach {
-    /// Starts the pane's session on the host, or joins it when it runs already, with Canopy's tmux server and config.
-    /// The variables only apply to a session it starts.
-    public static func tmuxCommand(server: String, session: String, folder: String, environment: [String: String])
+    /// Starts the pane's session on the host, or joins it when it runs already, with this home's tmux server and
+    /// config. The variables only apply to a session it starts. Its PATH starts with this home's `bin`, so `canopy`
+    /// and `xdg-open` there are this home's. tmux gives a new session's first shell the PATH of the client that made
+    /// it, over `-e PATH`, so the client runs with it too.
+    public static func tmuxCommand(homeID: String, session: String, folder: String, environment: [String: String])
         -> [String]
     {
         let script =
-            #"s=$0 n=$1 d=$2; shift 2; exec tmux -u -L "$s" -f "$HOME/.canopy/tmux.conf" new-session -A -s "$n" -c "$d" "$@""#
+            #"h=$0 s=$1 n=$2 d=$3; shift 3; PATH="$HOME/.canopy/$h/bin:$PATH"; export PATH; exec tmux -u -L "$s" -f "$HOME/.canopy/$h/tmux.conf" new-session -A -s "$n" -c "$d" -e "PATH=$PATH" "$@""#
         let variables = environment.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
-        return ["sh", "-c", script, server, session, folder] + variables
+        return ["sh", "-c", script, homeID, HostPaths.tmuxServer(homeID: homeID), session, folder] + variables
     }
 
-    /// What a remote pane's shell gets, as a local pane would, with the host's paths. No CANOPY_HOME or ZDOTDIR: those
-    /// name folders on this Mac.
+    /// What a remote pane's shell gets, as a local pane would, with the host's paths, and this home's `canopy` on the
+    /// host and the socket it relays through. No CANOPY_HOME or ZDOTDIR: those name folders on this Mac.
     public static func environment(
-        pane: String, rowName: String, repoName: String, host: String, rowPath: String, clone: String
+        pane: String, rowName: String, repoName: String, host: String, rowPath: String, clone: String,
+        hostHome: String, homeID: String
     ) -> [String: String] {
         [
             "CANOPY_PANE": pane, "CANOPY_ROW": rowName, "CANOPY_REPO": repoName, "CANOPY_HOST": host,
-            "CANOPY_ROW_PATH": rowPath, "CANOPY_ROOT_PATH": clone, "TERM_PROGRAM": "Canopy",
-            "TERM_PROGRAM_VERSION": CanopyVersion.current, "COLORTERM": "truecolor",
+            "CANOPY_ROW_PATH": rowPath, "CANOPY_ROOT_PATH": clone,
+            "CANOPY_SOCKET": HostPaths.relaySocket(home: hostHome, homeID: homeID),
+            "CANOPY_CLI": HostPaths.relayCLI(home: hostHome, homeID: homeID), "CANOPY_HOME_ID": homeID,
+            "TERM_PROGRAM": "Canopy", "TERM_PROGRAM_VERSION": CanopyVersion.current, "COLORTERM": "truecolor",
         ]
     }
 

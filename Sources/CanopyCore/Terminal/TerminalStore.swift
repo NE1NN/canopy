@@ -552,8 +552,12 @@ public final class TerminalStore {
             return TerminalTab(id: TabID(nextTab), page: page)
         }
         guard let savedLayout = saved.layout else { return nil }
-        let panes = savedLayout.leaves.map {
-            makePane(context, command: .shell, directory: $0.folder, session: $0.session)
+        var panes: [Pane] = []
+        for leaf in savedLayout.leaves {
+            let kept = leaf.session.flatMap(PaneID.init).flatMap { id in
+                pane(id) == nil && !panes.contains { $0.id == id } ? id : nil
+            }
+            panes.append(makePane(context, command: .shell, directory: leaf.folder, session: leaf.session, id: kept))
         }
         var index = 0
         let layout: Layout<PaneID> = savedLayout.map { _ in
@@ -575,14 +579,16 @@ public final class TerminalStore {
             openedURL: saved.opened.flatMap(WebAddress.parse))
     }
 
-    /// A remote row's terminals attach to their host rather than start a shell here.
+    /// A remote row's terminals attach to their host rather than start a shell here. A restored one takes the ID its
+    /// session is named after, which the session's shell and the agents in it know as CANOPY_PANE.
     private func makePane(
-        _ context: PaneContext, command: PaneCommand, directory: String?, session: String? = nil
+        _ context: PaneContext, command: PaneCommand, directory: String?, session: String? = nil, id: PaneID? = nil
     ) -> Pane {
-        defer { nextPane += 1 }
+        let id = id ?? PaneID(nextPane)
+        nextPane = max(nextPane, id.number + 1)
         let command = context.remote != nil && command == .shell ? .remoteAttach : command
         let pane = Pane(
-            id: PaneID(nextPane), context: context, command: command, settings: settings,
+            id: id, context: context, command: command, settings: settings,
             emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory,
             session: session)
         pane.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }

@@ -17,6 +17,14 @@ public struct SessionActivity: Codable, Sendable, Equatable {
 }
 
 public enum HostProbe {
+    /// What one probe of a host found.
+    public struct Report: Sendable, Equatable {
+        /// By session name.
+        public var sessions: [String: SessionActivity]
+        /// The panes with a hook report the host kept for this home.
+        public var pending: [String]
+    }
+
     struct Output: Decodable {
         struct Session: Decodable {
             var name: String
@@ -27,19 +35,25 @@ public enum HostProbe {
         }
 
         var sessions: [Session]
+        /// Missing from helpers that do not list them.
+        var pending: [String]?
     }
 
-    /// `canopy-host probe`'s output, by session name.
-    public static func decode(_ data: Data) throws -> [String: SessionActivity] {
+    /// `canopy-host probe`'s output.
+    public static func decode(_ data: Data) throws -> Report {
         let output = try JSONDecoder().decode(Output.self, from: data)
-        return Dictionary(
+        let sessions = Dictionary(
             output.sessions.map {
                 ($0.name, SessionActivity(busy: $0.busy, foreground: $0.foreground, folder: $0.folder, title: $0.title))
             }, uniquingKeysWith: { first, _ in first })
+        return Report(sessions: sessions, pending: output.pending ?? [])
     }
 
-    /// The command that probes this home's tmux server on a host.
-    public static func command(server: String) -> [String] {
-        ["sh", "-c", "exec python3 ~/.canopy/bin/canopy-host probe --server \"$0\"", server]
+    /// The command that probes this home's tmux server and kept reports on a host, with this home's helper.
+    public static func command(homeID: String) -> [String] {
+        [
+            "sh", "-c", #"exec python3 "$HOME/.canopy/$0/bin/canopy-host" probe --server "$1" --home-id "$0""#, homeID,
+            HostPaths.tmuxServer(homeID: homeID),
+        ]
     }
 }

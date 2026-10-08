@@ -24,9 +24,15 @@ struct HooksCommand: ParsableCommand {
                 homeDirectory: NSHomeDirectory())
         }
 
-        /// Runs `work`, then prints the file's state, or the error.
-        func report(_ work: (ClaudeSettingsFile) throws -> String) -> ClaudeHooks.Status {
+        /// Runs `work`, then prints the file's state, or the error. Through a host's relay it only says that
+        /// `host add` keeps the host's hooks, and returns nil.
+        func report(_ work: (ClaudeSettingsFile) throws -> String) -> ClaudeHooks.Status? {
             let client = Client(json: output.json)
+            if let host = RelayRun.host(in: ProcessInfo.processInfo.environment) {
+                let message = ClaudeHooks.keptByHostAdd(on: host)
+                try? client.print(.object(["host": .string(host), "message": .string(message)])) { message }
+                return nil
+            }
             let file = self.file
             do {
                 let message = try work(file)
@@ -90,7 +96,7 @@ struct HooksCommand: ParsableCommand {
                 case .notInstalled: "Not installed: \(file.url.path) has no Canopy hooks. Run `canopy hooks install`."
                 }
             }
-            if status != .installed { throw ExitCode(1) }
+            if let status, status != .installed { throw ExitCode(1) }
         }
     }
 }
