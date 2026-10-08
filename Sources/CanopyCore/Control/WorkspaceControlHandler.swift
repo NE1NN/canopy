@@ -326,6 +326,28 @@ public struct WorkspaceControlHandler: Sendable {
         case TermMethod.wait:
             return try .from(try await rows.waitForAgents(request.decodeParams(TermWaitParams.self)))
 
+        case WebMethod.open:
+            let params = try request.decodeParams(WebOpenParams.self)
+            guard let url = WebAddress.parse(params.url) else { throw WorkspaceError.invalidURL(params.url) }
+            let snapshot = await workspace.snapshot
+            let row = try TargetResolver.sidebarRow(for: params.target, in: snapshot)
+            if let worktree = row.worktree, worktree.isMissing { throw WorkspaceError.pathNotFound(worktree.path) }
+            let repoName = row.worktree.flatMap { snapshot.repo(path: $0.repoPath)?.name } ?? ""
+            return try .from(
+                await rows.openPage(url, for: PaneContext(row, repoName: repoName), placement: params.placement))
+
+        case WebMethod.list:
+            let params = try request.decodeParams(WebListParams.self)
+            let snapshot = await workspace.snapshot
+            let row = try await rowUnlessAll(params.target, all: params.all)
+            let names = Dictionary(snapshot.repos.map { ($0.path, $0.name) }, uniquingKeysWith: { first, _ in first })
+            return try .from(await rows.pageInfo(rowPath: row?.path, repoNames: names))
+
+        case WebMethod.close:
+            let params = try request.decodeParams(WebCloseParams.self)
+            try await rows.closePage(params.page)
+            return .object(["page": .string(params.page)])
+
         case PluginMethod.list:
             return try .from(await plugins.list())
 

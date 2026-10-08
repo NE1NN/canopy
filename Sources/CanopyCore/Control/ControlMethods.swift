@@ -21,7 +21,7 @@ public enum ControlMethod {
     /// Methods that only read, which the activity log leaves out: agents poll some of them every few seconds.
     public static let readOnly: Set<String> = [
         status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
-        PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items,
+        PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items, WebMethod.list,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
