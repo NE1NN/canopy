@@ -44,6 +44,8 @@ public final class HostMonitor {
     let workspace: Workspace
     let terminals: TerminalStore
     private var probes = 0
+    /// Each host's worktree listing under way. It can wait behind a row being made, so probes go on without it.
+    private var listing: [String: Task<Void, Never>] = [:]
 
     public init(workspace: Workspace, terminals: TerminalStore) {
         self.workspace = workspace
@@ -70,8 +72,12 @@ public final class HostMonitor {
             }
             let summary = HostActivity.summary(panes: samples, sessions: sessions, now: Date())
             await connection.panesActive(attached: summary.attached, busy: summary.busy, quietFor: summary.quietFor)
-            if probes % Self.listEvery == 0 {
-                await workspace.refreshRemote(host: alias)
+            if probes % Self.listEvery == 0, listing[alias] == nil {
+                let workspace = workspace
+                listing[alias] = Task {
+                    await workspace.refreshRemote(host: alias)
+                    self.listing[alias] = nil
+                }
             }
         }
     }

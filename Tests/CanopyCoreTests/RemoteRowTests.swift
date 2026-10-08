@@ -547,6 +547,44 @@ struct HostMonitorTests {
     }
 }
 
+struct HostMonitorListingTests {
+    /// Listing a host's worktrees waits its turn behind rows being made there, which can take a minute, and probes
+    /// drive every host's busy state and idle detach meanwhile.
+    @Test @MainActor func probingDoesNotWaitForTheHostsWorktreesToBeListed() async throws {
+        let setup = try await RemoteRowTests.Setup()
+        let started = setup.dir.sub("listing-started")
+        let done = setup.dir.sub("listing-done")
+        let script = setup.dir.sub("slow-ssh")
+        try """
+        #!/bin/bash
+        if [[ "$*" == *"'worktree' 'list'"* ]]; then touch '\(started)'; sleep 6; touch '\(done)'; fi
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try await workspace.addRepo(path: setup.repo)
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        _ = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/probed")
+        try await workspace.prepareHost(try await workspace.connection(for: "box"))
+        let terminals = Fixture.terminals(setup.dir)
+        let monitor = HostMonitor(workspace: workspace, terminals: terminals)
+        #expect(!FileManager.default.fileExists(atPath: started))
+
+        for _ in 0..<HostMonitor.listEvery {
+            await monitor.probe()
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: done))
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        #expect(await eventually { FileManager.default.fileExists(atPath: done) })
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+}
+
 struct RemoteLinkedHomeTests {
     @Test func aHostWhoseHomeIsALinkStillListsItsRows() async throws {
         let setup = try await RemoteRowTests.Setup(host: { try FakeHost(in: $0, linkedHome: true) })
