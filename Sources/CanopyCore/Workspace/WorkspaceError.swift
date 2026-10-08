@@ -74,6 +74,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case hostHasRows(String, rows: [String])
     case hostCommandFailed(String, reason: String)
     case cloneNotFound(String, path: String)
+    case hostHasNoRepo(String, repo: String, hosts: [String])
     case git(GitError)
 
     public var code: String {
@@ -145,6 +146,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .hostHasRows: "host_has_rows"
         case .hostCommandFailed: "host_command_failed"
         case .cloneNotFound: "repo_not_found"
+        case .hostHasNoRepo: "host_has_no_repo"
         case .git: "git_failed"
         }
     }
@@ -265,6 +267,11 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .hostHasRows(let host, let rows):
             "\(host) still has rows: \(rows.joined(separator: ", ")). Remove them with `canopy row rm` first."
         case .hostCommandFailed(let host, let reason): "A command on \(host) failed: \(reason)"
+        case .hostHasNoRepo(let host, let repo, let hosts):
+            "\(host) has no clone of \(repo). "
+                + (hosts.isEmpty
+                    ? "Add one with `canopy host add \(host) --repo \(repo)=<path>`."
+                    : "\(Self.list(hosts)) \(hosts.count == 1 ? "has" : "have") one.")
         case .cloneNotFound(let host, let path):
             "\(path) on \(host) is not a git checkout. Clone the repo there first, or pass the path of a clone."
         case .git(let error): error.description

@@ -139,6 +139,13 @@ public struct WorkspaceControlHandler: Sendable {
             }
             let created =
                 switch start {
+                case .branch(let branch) where params.host != nil:
+                    try await workspace.createRemoteRow(
+                        repoPath: repo.path, host: params.host ?? "", branch: branch, base: params.base,
+                        existing: params.existing, group: params.group, link: link)
+                case .pullRequest where params.host != nil:
+                    throw ControlError(
+                        code: "bad_params", message: "--pr cannot make a remote row yet. Pass the PR's branch instead.")
                 case .branch(let branch):
                     try await workspace.createRow(
                         repoPath: repo.path, branch: branch, base: params.base, existing: params.existing,

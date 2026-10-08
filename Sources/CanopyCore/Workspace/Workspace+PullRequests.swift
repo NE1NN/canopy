@@ -79,7 +79,7 @@ extension Workspace {
 
     /// Main and external rows are never looked up, and neither is a detached HEAD.
     static func looksUpPullRequest(_ row: Row) -> Bool {
-        (row.rowClass == .canopy || row.rowClass == .adopted) && row.branch != nil
+        (row.rowClass == .canopy || row.rowClass == .adopted || row.rowClass == .remote) && row.branch != nil
     }
 
     /// The PRs bound to `branches`, while origin is still the repo they were bound in.

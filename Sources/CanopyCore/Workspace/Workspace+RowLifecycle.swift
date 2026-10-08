@@ -130,7 +130,7 @@ extension Workspace {
         } else {
             guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
             (branch, source) = (requested, .new)
-            start = try await startPoint(base, repoPath: repoPath, hasOrigin: hasOrigin)
+            start = try await startPoint(base, in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)
         }
         if source != .local {
             // A PR bound to an old branch of this name is not the new branch's.
@@ -170,19 +170,29 @@ extension Workspace {
     }
 
     func requireValidBranchName(_ branch: String, repoPath: String) async throws {
-        guard await isValidBranchName(branch, repoPath: repoPath) else { throw WorkspaceError.invalidBranch(branch) }
+        try await requireValidBranchName(branch, in: RepoGit(git: git, path: repoPath))
+    }
+
+    /// A host that cannot be reached fails as such, not as a bad name.
+    func requireValidBranchName(_ branch: String, in clone: RepoGit) async throws {
+        guard !branch.hasPrefix("-"), branch != "HEAD",
+            try await clone.succeedsOnHost(["check-ref-format", "refs/heads/\(branch)"])
+        else { throw WorkspaceError.invalidBranch(branch) }
+    }
+
+    func isValidBranchName(_ branch: String, repoPath: String) async -> Bool {
+        await isValidBranchName(branch, in: RepoGit(git: git, path: repoPath))
     }
 
     /// `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
-    func isValidBranchName(_ branch: String, repoPath: String) async -> Bool {
+    func isValidBranchName(_ branch: String, in clone: RepoGit) async -> Bool {
         guard !branch.hasPrefix("-"), branch != "HEAD" else { return false }
-        return await git.succeeds(["check-ref-format", "refs/heads/\(branch)"], in: repoPath)
+        return await clone.succeeds(["check-ref-format", "refs/heads/\(branch)"])
     }
 
-    private func startPoint(_ base: String?, repoPath: String, hasOrigin: Bool) async throws -> String {
-        guard let base else { return await defaultBase(repoPath: repoPath, hasOrigin: hasOrigin) }
-        guard !base.hasPrefix("-"),
-            await git.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"], in: repoPath)
+    func startPoint(_ base: String?, in clone: RepoGit, hasOrigin: Bool) async throws -> String {
+        guard let base else { return await defaultBase(in: clone, hasOrigin: hasOrigin) }
+        guard !base.hasPrefix("-"), await clone.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"])
         else {
             throw WorkspaceError.invalidBase(base)
         }
@@ -253,8 +263,10 @@ extension Workspace {
         switch row.rowClass {
         case .main:
             throw WorkspaceError.cannotRemoveMain
-        case .external, .remote:
+        case .external:
             throw WorkspaceError.notManaged(path)
+        case .remote:
+            return try await removeRemoteRow(standIn: path, force: force, deleteBranch: deleteBranch)
         case .adopted:
             try await unadopt(path: path)
             return []
@@ -308,18 +320,25 @@ extension Workspace {
     /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
     /// Returns why the fetch failed, or nil. Pruning drops branches deleted on origin, which are no longer on it.
     func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
-        if let attempt = lastFetch[repoPath], attempt.finishedAt > requestedAt {
+        await fetchUnlessFresh(RepoGit(git: git, path: repoPath), key: repoPath, since: requestedAt)
+    }
+
+    /// `key` names the clone among every clone Canopy fetches, here and on hosts.
+    func fetchUnlessFresh(_ clone: RepoGit, key: String, since requestedAt: ContinuousClock.Instant) async -> String? {
+        if let attempt = lastFetch[key], attempt.finishedAt > requestedAt {
             return attempt.failure
         }
         var failure: String?
         do {
-            try await git.run(["fetch", "--quiet", "--prune", "origin"], in: repoPath, timeout: fetchTimeout)
+            try await clone.run(["fetch", "--quiet", "--prune", "origin"], timeout: fetchTimeout)
+        } catch let error as GitError where error.hostUnreachable {
+            failure = "git fetch could not reach the host: \(error)"
         } catch let error as GitError where error.timedOut {
             failure = "git fetch timed out"
         } catch {
             failure = "git fetch failed: \(error)"
         }
-        lastFetch[repoPath] = FetchAttempt(finishedAt: .now, failure: failure)
+        lastFetch[key] = FetchAttempt(finishedAt: .now, failure: failure)
         return failure
     }
 
@@ -343,15 +362,21 @@ extension Workspace {
     }
 
     func defaultBase(repoPath: String, hasOrigin: Bool) async -> String {
-        guard hasOrigin, let branch = await defaultBranch(repoPath: repoPath) else { return "HEAD" }
+        await defaultBase(in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)
+    }
+
+    func defaultBase(in clone: RepoGit, hasOrigin: Bool) async -> String {
+        guard hasOrigin, let branch = await defaultBranch(in: clone) else { return "HEAD" }
         return "origin/" + branch
     }
 
     /// The branch `origin/HEAD` points at, such as `main`, or nil when the repo has none.
     public nonisolated func defaultBranch(repoPath: String) async -> String? {
-        guard
-            let head = try? await git.run(
-                ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], in: repoPath)
+        await defaultBranch(in: RepoGit(git: git, path: repoPath))
+    }
+
+    nonisolated func defaultBranch(in clone: RepoGit) async -> String? {
+        guard let head = try? await clone.run(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
         else { return nil }
         let name = head.trimmingCharacters(in: .whitespacesAndNewlines)
         guard name.hasPrefix("origin/"), name.count > "origin/".count else { return nil }

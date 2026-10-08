@@ -182,12 +182,15 @@ public struct RowNewParams: Codable, Sendable {
     public var group: String?
     /// A plugin's item to tie the row to, such as the ticket it fixes.
     public var link: RowLinkParams?
+    /// The host to make the row on, by its alias, for a remote row.
+    public var host: String?
 
     public init(
         target: TargetHint = TargetHint(), branch: String? = nil, pr: String? = nil, base: String? = nil,
         existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil, group: String? = nil,
-        link: RowLinkParams? = nil
+        link: RowLinkParams? = nil, host: String? = nil
     ) {
+        self.host = host
         self.target = target
         self.branch = branch
         self.pr = pr
@@ -216,6 +219,7 @@ public struct RowNewParams: Codable, Sendable {
         run = try container.decodeIfPresent(String.self, forKey: .run)
         group = try container.decodeIfPresent(String.self, forKey: .group)
         link = try container.decodeIfPresent(RowLinkParams.self, forKey: .link)
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 

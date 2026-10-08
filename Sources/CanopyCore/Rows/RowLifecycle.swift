@@ -106,8 +106,15 @@ public final class RowLifecycle {
         switch row.rowClass {
         case .main:
             throw WorkspaceError.cannotRemoveMain
-        case .external, .remote:
+        case .external:
             throw WorkspaceError.notManaged(row.path)
+        case .remote:
+            // Checked first, so a refused removal leaves the row's sessions running.
+            if !force, try await workspace.remoteHasUncommittedChanges(standIn: row.path) {
+                throw WorkspaceError.worktreeDirty(row.path)
+            }
+            terminals.closeRow(path: row.path)
+            return try await workspace.removeRemoteRow(standIn: row.path, force: force, deleteBranch: deleteBranch)
         case .adopted:
             break
         case .canopy:

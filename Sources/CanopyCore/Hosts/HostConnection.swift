@@ -40,6 +40,7 @@ public actor HostConnection {
     private var lastUse: ContinuousClock.Instant
     private var lastBusy: ContinuousClock.Instant
     private var observers: [UUID: AsyncStream<HostState>.Continuation] = [:]
+    private var cachedHome: String?
 
     public init(
         alias: String, entry: HostEntry, ssh: SSHCommand, launcher: any HostProcessLauncher = SubprocessHostLauncher(),
@@ -90,6 +91,19 @@ public actor HostConnection {
         try await connect()
         lastUse = clock.now
         return await launcher.run(ssh.exec(remote), timeout: timeout)
+    }
+
+    /// The host user's home folder, asked once per connection.
+    public func home() async throws -> String {
+        if let home = cachedHome { return home }
+        let result = try await run(["sh", "-c", #"printf %s "$HOME""#], timeout: .seconds(30))
+        let home = String(decoding: result.stdout, as: UTF8.self)
+        guard result.status == 0, home.hasPrefix("/") else {
+            let reason = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw WorkspaceError.hostUnreachable(alias, reason: reason.isEmpty ? "ssh failed." : reason)
+        }
+        cachedHome = home
+        return home
     }
 
     /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, and how
