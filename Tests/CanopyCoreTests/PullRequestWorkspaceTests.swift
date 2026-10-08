@@ -231,9 +231,13 @@ struct PullRequestWorkspaceTests {
             afterPushDuration: .seconds(120))
         let (workspace, gh, repo) = try await setUp(dir, timing: timing)
         await workspace.refreshPullRequests(repoPath: repo)
+        // Counted once the lookups already queued are done, so only the timer's own count.
+        await workspace.prQueues[repo]?.value
         let before = gh.calls.count
 
-        let refreshed = await eventually { gh.calls.count >= before + 3 }
+        // Two lookups show the timer repeats. Each waits for its sleep to resume, hops to the workspace, and starts git
+        // and gh, which took up to 17 seconds on a loaded runner, so the wait allows for that.
+        let refreshed = await eventually(timeout: .seconds(60)) { gh.calls.count >= before + 2 }
 
         #expect(refreshed, "\(gh.calls.count - before) lookups on the timer")
         await workspace.stop()
