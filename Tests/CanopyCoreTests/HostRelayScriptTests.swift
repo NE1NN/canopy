@@ -55,7 +55,7 @@ struct HostRelayScriptTests {
         let setup = try Setup()
         let app = try RelayStub(
             path: setup.socket,
-            reply: RelayReply(stdout: Data([0x6F, 0xFF, 0x0A]), stderr: Data("e\n".utf8), status: 3))
+            answer: .acknowledging(RelayReply(stdout: Data([0x6F, 0xFF, 0x0A]), stderr: Data("e\n".utf8), status: 3)))
         let folder = setup.dir.sub("work")
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_PANE": "p4", "CANOPY_ROW_PATH": "/w/x", "OTHER": "1"]
@@ -103,7 +103,7 @@ struct HostRelayScriptTests {
 
     @Test func anAppThatHangsUpWithoutAnsweringIsNotReachable() async throws {
         let setup = try Setup()
-        let app = try RelayStub(path: setup.socket, reply: nil)
+        let app = try RelayStub(path: setup.socket, answer: .hangingUp)
 
         let result = try await setup.run(
             ["relay", "row", "list"], environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
@@ -137,6 +137,75 @@ struct HostRelayScriptTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder) == ["p7.json"])
     }
 
+    /// sshd on the host accepts connections on the forwarded socket while the Mac sleeps, but nothing answers them.
+    @Test func aHookTheAppDoesNotAcknowledgeKeepsItsReport() async throws {
+        let setup = try Setup()
+        let answers: [(String, RelayStub.Answer)] = [
+            ("p1", .silent), ("p2", .hangingUp),
+            ("p3", .replying(.failure("Canopy updated its files on box; run it again.", code: "relay_outdated"))),
+        ]
+        var stubs: [RelayStub] = []
+
+        for (pane, answer) in answers {
+            let socket = setup.dir.sub("\(pane).sock")
+            stubs.append(try RelayStub(path: socket, answer: answer))
+            let variables = ["CANOPY_SOCKET": socket, "CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": pane]
+
+            let result = try await setup.run(
+                ["relay", "agent-hook", "stop"], environment: setup.environment(variables), stdin: Data(pane.utf8))
+
+            #expect(result.status == 0)
+            #expect(result.stdout.isEmpty && result.stderr.isEmpty)
+            let saved = try JSONDecoder().decode(
+                RelayRequest.self,
+                from: Data(contentsOf: URL(fileURLWithPath: setup.pending(homeID: "ab12cd34", pane: pane))))
+            #expect(saved.input == Data(pane.utf8), "\(answer)")
+        }
+        let stubsRead = stubs
+        #expect(await eventually { stubsRead.allSatisfy { $0.request?.args == ["agent-hook", "stop"] } })
+    }
+
+    @Test func aHookTheAppAcknowledgesIsNotKeptWhetherOrNotItAnswers() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(path: setup.socket, answer: .acknowledgingThenHangingUp)
+        let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": "p7"]
+
+        let result = try await setup.run(
+            ["relay", "agent-hook", "stop"], environment: setup.environment(variables), stdin: Data("{}".utf8))
+
+        #expect(result.status == 0)
+        #expect(result.stdout.isEmpty && result.stderr.isEmpty)
+        #expect(app.request?.args == ["agent-hook", "stop"])
+        #expect(!FileManager.default.fileExists(atPath: setup.pending(homeID: "ab12cd34", pane: "p7")))
+    }
+
+    @Test func aCommandTheAppDoesNotAcknowledgeIsNotReachable() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(path: setup.socket, answer: .silent)
+
+        let result = try await setup.run(
+            ["relay", "row", "list"], environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(result.status == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == Self.unreachable)
+        #expect(await eventually { app.request?.args == ["row", "list"] })
+    }
+
+    /// An app that ran nothing, as for a relay of another version, answers without acknowledging.
+    @Test func aCommandPrintsAReplyThatCameWithoutAnAcknowledgement() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket,
+            answer: .replying(.failure("Canopy updated its files on box; run it again.", code: "relay_outdated")))
+
+        let result = try await setup.run(
+            ["relay", "row", "list"], environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(result.status == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "Canopy updated its files on box; run it again.\n")
+        #expect(app.request?.args == ["row", "list"])
+    }
+
     @Test func aHookKeepsNothingWithoutAPlainPaneAndHomeID() async throws {
         let setup = try Setup()
         let cases: [[String: String]] = [
@@ -164,7 +233,8 @@ struct HostRelayScriptTests {
     @Test func aHookPrintsNothingAndSucceedsWhateverTheAppAnswers() async throws {
         let setup = try Setup()
         let app = try RelayStub(
-            path: setup.socket, reply: RelayReply(stdout: Data("o".utf8), stderr: Data("e".utf8), status: 1))
+            path: setup.socket,
+            answer: .acknowledging(RelayReply(stdout: Data("o".utf8), stderr: Data("e".utf8), status: 1)))
         let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": "p7"]
 
         let result = try await setup.run(
@@ -210,7 +280,8 @@ struct HostRelayScriptTests {
 
     @Test func openSendsAnArtifactLinkToCanopy() async throws {
         let setup = try Setup()
-        let app = try RelayStub(path: setup.socket, reply: RelayReply(stdout: Data(), stderr: Data(), status: 0))
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)))
         let link = "https://claude.ai/artifact/abc_12"
 
         let result = try await setup.run(
@@ -316,14 +387,24 @@ struct HostRelayScriptTests {
     }
 }
 
-/// The app's end of a relay socket: takes one connection, keeps its request, and answers it with `reply`, or hangs up
-/// without answering when that is nil.
+/// The app's end of a relay socket: takes one connection, keeps its request, and answers it as `answer` says.
 final class RelayStub: Sendable {
+    enum Answer: Sendable {
+        /// As the app answers a request of the current version.
+        case acknowledging(RelayReply)
+        /// As the app answers a request it runs nothing for.
+        case replying(RelayReply)
+        case acknowledgingThenHangingUp
+        case hangingUp
+        /// As the host's sshd while the Mac sleeps: holds the connection and sends nothing.
+        case silent
+    }
+
     private let received = Received()
     private let path: String
     private let fd: Int32
 
-    init(path: String, reply: RelayReply?) throws {
+    init(path: String, answer: Answer) throws {
         self.path = path
         fd = try Self.bound(path)
         guard listen(fd, 4) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
@@ -342,14 +423,29 @@ final class RelayStub: Sendable {
             received.request.withLock {
                 $0 = try? JSONDecoder().decode(RelayRequest.self, from: data.prefix { $0 != 0x0A })
             }
-            guard let reply, let line = try? JSONEncoder().encode(reply) else { return }
-            try? stream.write(line + Data("\n".utf8))
+            switch answer {
+            case .acknowledging(let reply):
+                try? stream.write(HostRelayServer.acknowledgement + Self.line(reply))
+            case .replying(let reply):
+                try? stream.write(Self.line(reply))
+            case .acknowledgingThenHangingUp:
+                try? stream.write(HostRelayServer.acknowledgement)
+            case .hangingUp:
+                break
+            case .silent:
+                // Until the relay gives up and hangs up.
+                while let chunk = try? stream.read(), !chunk.isEmpty {}
+            }
         }.start()
     }
 
     /// The request, once the relay has sent it. Read after the relay exits, which it does only after this answers.
     var request: RelayRequest? {
         received.request.withLock { $0 }
+    }
+
+    private static func line(_ reply: RelayReply) -> Data {
+        ((try? JSONEncoder().encode(reply)) ?? Data()) + Data("\n".utf8)
     }
 
     /// A socket file nothing listens on, as one left by an app that quit.

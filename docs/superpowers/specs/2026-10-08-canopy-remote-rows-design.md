@@ -260,7 +260,12 @@ Quitting Canopy and stopping the master only detach.
 
 - It connects to `$CANOPY_SOCKET`, and outside a Canopy pane fails with "Run canopy in a Canopy terminal on this host."
 - It sends one JSON line holding its version, its arguments, its working folder, the `CANOPY_*` variables, and its standard input when that is not a terminal, base64-encoded.
+- It waits for the app's acknowledgement, `{"ack": true}`, which the app sends as soon as it has read a request of the relay's version, before running it.
+  sshd on the host accepts connections on the forwarded socket even while the Mac sleeps, or for the seconds a quit app's master lingers, so without one the relay could not tell an app that has its request from nothing at all.
+  With no acknowledgement within 10 seconds, or with the connection ending first, it prints "Canopy is not reachable from this host right now." and exits 1.
 - It reads one JSON line back holding stdout, stderr, and the exit status, writes them out, and exits with that status.
+  It waits for that line as long as the command runs, since a command such as `term wait` may run long.
+  A request of another version gets only that line, `relay_outdated`, so an older relay never reads a line it does not expect.
 
 Each new connection to a host forwards `~/.canopy/<home id>/app.sock` on the host to the host's socket in the app, `CANOPY_HOME/hosts/<host hash>.sock`, through the master with `ssh -O forward -R`, removing a stale file at that path first.
 One forward serves every pane on the host, since each request names its pane, and it lasts as long as the master.
@@ -287,7 +292,10 @@ The hook command is unchanged, since `$CANOPY_CLI` names the relay on the host.
 
 ### Reports that cannot be delivered
 
-When `agent-hook` cannot reach the app, the relay saves the request in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there, and exits 0, as a hook must.
+When `agent-hook` cannot reach the app, or the app does not acknowledge its request within 5 seconds, the relay saves the request in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there, and exits 0, as a hook must.
+A reply that comes without an acknowledgement means the app ran nothing, so the report is saved then too.
+Once acknowledged, the report is the app's: the relay waits up to 10 seconds for the reply and exits 0 whatever comes, saving nothing.
+An acknowledgement lost on its way back saves a report the app has run, so its replay runs it twice; that is rare, and better than losing it.
 Before answering `host.attach` with the ssh command, the app runs `canopy-host replay --pane p<n>` on the host, which prints and removes the pane's saved request, and runs it as if the relay had just sent it.
 An agent that finished while the Mac slept therefore shows as done when Canopy reconnects.
 

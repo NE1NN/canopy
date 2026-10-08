@@ -171,6 +171,19 @@ A shared `~/.canopy/bin/canopy`, the same for every home and version and outside
 
 **Commit:** `test: the CLI on hosts end to end`
 
+### Fix after Task 7: the app acknowledges a request
+
+While the Mac sleeps, or for the two seconds a quit app's master lingers, sshd on the host still accepts connections on the forwarded `app.sock`, but nothing answers.
+The relay kept a hook's report only when it could not connect, so a report from an agent that finished while the Mac slept was lost, and held Claude for `HOOK_TIMEOUT`.
+`HostRelayServer` now writes `{"ack": true}` as soon as it has read a request whose version it acknowledges (`HostFiles.version` by default), before running it, then the reply as before; a request of another version gets the reply alone.
+The relay waits for the acknowledgement for 5 seconds for `agent-hook` and 10 for other commands.
+Without one, or with a reply that came without one, `agent-hook` keeps its report and exits 0, and other commands print that Canopy is not reachable and exit 1, except that a reply without an acknowledgement is printed as before.
+After the acknowledgement, `agent-hook` waits up to `HOOK_TIMEOUT` for the reply and keeps nothing, and other commands wait for the reply as long as it takes.
+
+**Tests:** an app that never answers, one that hangs up, and one that replies without an acknowledgement each leave the hook's report kept; one that acknowledges and hangs up leaves none; a command an app never answers is not reachable; a reply without an acknowledgement is printed; the real server acknowledges a current request before its reply, while it runs, and answers another version with the reply alone.
+
+**Commit:** `fix: a hook's report is kept when the app does not acknowledge it`
+
 ### Task 8: Merge bar
 
 - [ ] `make lint`, `make build` 0 warnings, `make test` three clean runs.

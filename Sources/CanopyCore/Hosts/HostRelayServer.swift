@@ -18,6 +18,8 @@ public enum HostRelayServerError: Error, Equatable, CustomStringConvertible {
 /// Serves one host's relayed CLI calls on the Unix socket ssh forwards the host's relay to: one request per
 /// connection, each on a thread of its own, since a call lasts as long as its CLI runs. A call whose relay hangs up is
 /// cancelled, which stops its CLI.
+/// A request of the current version is acknowledged as soon as it is read, before it runs, since sshd on the host
+/// accepts a connection even while this Mac sleeps: a relay that hears nothing knows the call never reached the app.
 public final class HostRelayServer: Sendable {
     public typealias Handler = @Sendable (RelayRequest, _ host: String) async -> RelayReply
 
@@ -25,9 +27,14 @@ public final class HostRelayServer: Sendable {
     static let maximumRequest = 16 << 20
     /// The relay sends its request as it connects and reads its reply at once, so a longer wait means it is stuck.
     static let transferWait: Duration = .seconds(60)
+    /// The line a request of the current version gets before its reply. A relay of another version gets the reply
+    /// alone, so an older relay never reads a line it does not expect.
+    static let acknowledgement = Data("{\"ack\": true}\n".utf8)
 
     public let socketPath: String
     public let host: String
+    /// The relay version this server acknowledges, which is the one the handler runs.
+    let version: String
     private let handler: Handler
 
     private struct State {
@@ -42,9 +49,12 @@ public final class HostRelayServer: Sendable {
 
     private let state = Mutex(State())
 
-    public init(socketPath: String, host: String, handler: @escaping Handler) {
+    public init(
+        socketPath: String, host: String, version: String = HostFiles.version, handler: @escaping Handler
+    ) {
         self.socketPath = socketPath
         self.host = host
+        self.version = version
         self.handler = handler
     }
 
@@ -192,12 +202,21 @@ public final class HostRelayServer: Sendable {
         case .invalid(let message):
             reply = .failure(message, code: "bad_request")
         case .request(let request):
+            if acknowledges(request) {
+                let stream = SocketStream(fd: connection, deadline: .now + Self.transferWait)
+                // A relay that missed the acknowledgement keeps a hook's report, so the call must not run either.
+                guard (try? stream.write(Self.acknowledgement)) != nil else { return }
+            }
             guard let answered = run(request, on: connection) else { return }
             reply = answered
         }
         guard var line = try? JSONEncoder().encode(reply) else { return }
         line.append(0x0A)
         try? SocketStream(fd: connection, deadline: .now + Self.transferWait).write(line)
+    }
+
+    func acknowledges(_ request: RelayRequest) -> Bool {
+        request.version == version
     }
 
     /// Runs the call until it answers, or cancels it once the relay hangs up and returns nil.

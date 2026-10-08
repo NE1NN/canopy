@@ -153,6 +153,10 @@ public enum HostFiles {
         INPUT_WAIT = 10
         # A hook reports and goes: Claude waits on it, and a stalled connection must not hold Claude for long.
         HOOK_TIMEOUT = 10
+        # The app acknowledges a request as soon as it reads it. sshd here accepts connections on the forwarded socket
+        # even while the Mac sleeps, so silence for this long means the request never reached the app.
+        HOOK_ACKNOWLEDGEMENT_WAIT = 5
+        ACKNOWLEDGEMENT_WAIT = 10
 
 
         def standard_input():
@@ -174,14 +178,29 @@ public enum HostFiles {
                 return os.environ.get("PWD") or "/"
 
 
-        def receive_line(connection):
-            data = bytearray()
-            while b"\n" not in data:
-                chunk = connection.recv(65536)
-                if not chunk:
-                    break
-                data += chunk
-            return bytes(data).split(b"\n", 1)[0]
+        class Lines:
+            """A connection's JSON lines, one at a time, each by a deadline on this host's clock, or none."""
+
+            def __init__(self, connection):
+                self.connection = connection
+                self.data = bytearray()
+
+            def next(self, deadline):
+                while b"\n" not in self.data:
+                    if deadline is None:
+                        self.connection.settimeout(None)
+                    else:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise socket.timeout("no line in time")
+                        self.connection.settimeout(remaining)
+                    chunk = self.connection.recv(65536)
+                    if not chunk:
+                        raise ConnectionError("the connection ended")
+                    self.data += chunk
+                line, _, rest = bytes(self.data).partition(b"\n")
+                self.data = bytearray(rest)
+                return json.loads(line)
 
 
         def write(stream, data):
@@ -230,14 +249,27 @@ public enum HostFiles {
             return connection
 
 
-        def exchange(connection, request):
-            """Sends the request and returns the app's reply, or raises when there is none."""
-            with connection:
-                request["age"] = max(0.0, time.monotonic() - STARTED)
-                connection.sendall(json.dumps(request).encode("ascii") + b"\n")
-                reply = json.loads(receive_line(connection))
-                return (base64.b64decode(reply["stdout"], validate=True),
-                        base64.b64decode(reply["stderr"], validate=True), int(reply["status"]))
+        def send(connection, request, wait):
+            """Sends the request and returns its lines and the app's first: its acknowledgement, or a reply without one,
+            which means it ran nothing, as for a relay of another version. Raises when neither comes within `wait`
+            seconds of the request going, or the connection ends first."""
+            request["age"] = max(0.0, time.monotonic() - STARTED)
+            data = memoryview(json.dumps(request).encode("ascii") + b"\n")
+            # Each part must go within the wait, rather than all of it, so a long input on a slow link still goes.
+            connection.settimeout(wait)
+            while data:
+                data = data[connection.send(data):]
+            lines = Lines(connection)
+            return lines, lines.next(time.monotonic() + wait)
+
+
+        def acknowledged(line):
+            return isinstance(line, dict) and line.get("ack") is True
+
+
+        def decoded(reply):
+            return (base64.b64decode(reply["stdout"], validate=True),
+                    base64.b64decode(reply["stderr"], validate=True), int(reply["status"]))
 
 
         def relay(arguments):
@@ -254,9 +286,13 @@ public enum HostFiles {
             if not path:
                 print("Run canopy in a Canopy terminal on this host.", file=sys.stderr)
                 return 1
+            request = request_for(arguments)
             try:
-                output, errors, status = exchange(connect(path, None), request_for(arguments))
-            except (OSError, ValueError, KeyError, TypeError):
+                with connect(path, ACKNOWLEDGEMENT_WAIT) as connection:
+                    lines, first = send(connection, request, ACKNOWLEDGEMENT_WAIT)
+                    # A relayed command may run as long as it likes, such as `term wait`.
+                    output, errors, status = decoded(lines.next(None) if acknowledged(first) else first)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 print(UNREACHABLE, file=sys.stderr)
                 return 1
             write(sys.stdout, output)
@@ -267,12 +303,20 @@ public enum HostFiles {
         def hook(path, arguments):
             request = request_for(arguments)
             try:
-                connection = connect(path, HOOK_TIMEOUT)
-            except OSError:
-                keep(request)
-                return
-            # Once connected, the app may have run it, so it is not kept: the app must never run one report twice.
-            exchange(connection, request)
+                with connect(path, HOOK_ACKNOWLEDGEMENT_WAIT) as connection:
+                    lines, first = send(connection, request, HOOK_ACKNOWLEDGEMENT_WAIT)
+                    if acknowledged(first):
+                        # The app has the report, so it is not kept. Were the acknowledgement lost on its way here,
+                        # the report would be kept although the app ran it, and run again at replay: rare, and better
+                        # than losing it.
+                        try:
+                            lines.next(time.monotonic() + HOOK_TIMEOUT)
+                        except (OSError, ValueError):
+                            pass
+                        return
+            except (OSError, ValueError):
+                pass
+            keep(request)
 
 
         def request_for(arguments):

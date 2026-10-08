@@ -62,15 +62,23 @@ struct HostRelayServerTests {
         return try reply(on: fd)
     }
 
+    /// The reply, after the acknowledgement a request of the current version gets first.
     static func reply(on fd: Int32) throws -> RelayReply {
+        var lines = try self.lines(on: fd)
+        if lines.first == HostRelayServer.acknowledgement { lines.removeFirst() }
+        return try JSONDecoder().decode(RelayReply.self, from: try #require(lines.first))
+    }
+
+    /// Every line the server sends, each with its newline, until it hangs up.
+    static func lines(on fd: Int32) throws -> [Data] {
         let stream = SocketStream(fd: fd, deadline: .now + .seconds(60))
         var received = Data()
-        while !received.contains(0x0A) {
+        while true {
             let chunk = try stream.read()
             if chunk.isEmpty { break }
             received.append(chunk)
         }
-        return try JSONDecoder().decode(RelayReply.self, from: Data(received.prefix { $0 != 0x0A }))
+        return received.split(separator: 0x0A).map { Data($0) + Data([0x0A]) }
     }
 
     @Test func aCallRunsTheCLIInTheRowsStandInWithItsArgumentsAndInput() async throws {
@@ -131,6 +139,44 @@ struct HostRelayServerTests {
                 (try? String(contentsOfFile: versionFile, encoding: .utf8))?.trimmingCharacters(in: .newlines)
                     == HostFiles.version
             })
+        await setup.stop()
+    }
+
+    /// sshd on the host accepts connections while the Mac sleeps, so the relay needs to hear that the app has a request.
+    @Test func aRequestOfTheCurrentVersionIsAcknowledgedBeforeItsReplyAndOneOfAnotherVersionIsNot() async throws {
+        let setup = try await Setup()
+        let started = setup.dir.sub("started")
+        let release = setup.dir.sub("release")
+        let cli = try setup.script(
+            "cli",
+            #"touch "$1"; i=0; while [ ! -e "$2" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; echo ran"#)
+        let socket = setup.server.socketPath
+        let running = setup.request([cli, started, release])
+        let outdated = RelayRequest(
+            version: "0.0.1+old", args: ["row", "list"], cwd: "/", env: [:], stdin: nil, age: nil)
+
+        let fd = try await offPool { try Self.connect(socket, sending: running) }
+        defer { close(fd) }
+        // Acknowledged while the call is still running.
+        let acknowledgement = try await offPool {
+            try SocketStream(fd: fd, deadline: .now + .seconds(60)).read()
+        }
+        #expect(acknowledgement == HostRelayServer.acknowledgement)
+        #expect(await eventually { FileManager.default.fileExists(atPath: started) })
+        FileManager.default.createFile(atPath: release, contents: nil)
+        let current = try await offPool { try Self.lines(on: fd) }
+        let other = try await offPool {
+            let fd = try Self.connect(socket, sending: outdated)
+            defer { close(fd) }
+            return try Self.lines(on: fd)
+        }
+
+        #expect(current.count == 1)
+        #expect(try JSONDecoder().decode(RelayReply.self, from: current[0]).output == "ran\n")
+        #expect(other.count == 1)
+        #expect(try JSONDecoder().decode(RelayReply.self, from: other[0]).code == "relay_outdated")
+        #expect(setup.server.acknowledges(running))
+        #expect(!setup.server.acknowledges(outdated))
         await setup.stop()
     }
 
