@@ -69,6 +69,9 @@ final class FakeHostLauncher: HostProcessLauncher {
         /// Wakes wait here until `releaseWakes()`, as a host that takes its time to start.
         var holdWakes = false
         var heldWakes: [CheckedContinuation<Void, Never>] = []
+        /// `-O check` waits here until it is released.
+        var holdChecks = false
+        var heldChecks: [CheckedContinuation<Void, Never>] = []
     }
 
     let state = Mutex(State())
@@ -85,6 +88,26 @@ final class FakeHostLauncher: HostProcessLauncher {
         get { state.withLock { $0.execStatus } }
         set { state.withLock { $0.execStatus = newValue } }
     }
+    var holdChecks: Bool {
+        get { state.withLock { $0.holdChecks } }
+        set { state.withLock { $0.holdChecks = newValue } }
+    }
+    func heldCheckCount() -> Int { state.withLock { $0.heldChecks.count } }
+
+    func releaseFirstCheck() {
+        let first = state.withLock { state in state.heldChecks.isEmpty ? nil : state.heldChecks.removeFirst() }
+        first?.resume()
+    }
+
+    func releaseChecks() {
+        let held = state.withLock { state in
+            state.holdChecks = false
+            defer { state.heldChecks = [] }
+            return state.heldChecks
+        }
+        for check in held { check.resume() }
+    }
+
     var holdWakes: Bool {
         get { state.withLock { $0.holdWakes } }
         set { state.withLock { $0.holdWakes = newValue } }
@@ -109,8 +132,16 @@ final class FakeHostLauncher: HostProcessLauncher {
     func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
         state.withLock { $0.commands.append(argv) }
         if argv.containsSequence(["-O", "check"]) {
+            // ssh asks the socket as it is now, however long the answer takes to arrive.
             let last = masters.last
             let up = (last?.isRunning ?? false) && !state.withLock { $0.deadSockets.contains(ObjectIdentifier(last!)) }
+            await withCheckedContinuation { continuation in
+                let held = state.withLock { state in
+                    if state.holdChecks { state.heldChecks.append(continuation) }
+                    return state.holdChecks
+                }
+                if !held { continuation.resume() }
+            }
             return SubprocessResult(status: up ? 0 : 255, stdout: Data(), stderr: Data(), timedOut: false)
         }
         return SubprocessResult(status: execStatus, stdout: Data(), stderr: Data(), timedOut: false)

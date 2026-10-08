@@ -111,6 +111,29 @@ struct HostConnectionTests {
         #expect(await setup.connection.refusesSessions())
     }
 
+    /// Two callers find the master gone at once. The first to learn it starts a new one, which the second must not
+    /// stop, as the panes attaching through it would drop.
+    @Test func callersThatFindTheMasterGoneTogetherKeepTheNewOne() async throws {
+        let setup = try Setup()
+        try await setup.connection.connect()
+        let first = try #require(setup.launcher.masters.first)
+        setup.launcher.state.withLock { _ = $0.deadSockets.insert(ObjectIdentifier(first)) }
+        setup.launcher.holdChecks = true
+
+        async let a: Void = setup.connection.connect()
+        async let b: Void = setup.connection.connect()
+        #expect(await eventually { setup.launcher.heldCheckCount() == 2 })
+        // One learns first and starts a master, whose own check waits beside the other's.
+        setup.launcher.releaseFirstCheck()
+        #expect(await eventually { setup.launcher.masters.count == 2 && setup.launcher.heldCheckCount() == 2 })
+        setup.launcher.releaseChecks()
+        _ = try await (a, b)
+
+        #expect(setup.launcher.masters.count == 2)
+        #expect(setup.launcher.masters.last?.isRunning == true)
+        #expect(await setup.connection.state == .connected)
+    }
+
     @Test func aHostThatIsOffIsWokenOnceAndConnectsWhenItComesUp() async throws {
         let setup = try Setup()
         setup.launcher.masterUp = false

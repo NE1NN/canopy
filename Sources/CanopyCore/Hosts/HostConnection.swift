@@ -80,9 +80,14 @@ public actor HostConnection {
         lastUse = clock.now
         // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
         // that is not answering would connect on its own, around the master.
-        if state == .connected, master?.isRunning == true {
+        if state == .connected, let checked = master, checked.isRunning {
             if await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0 { return }
-            stopMaster(becoming: .idle)
+            // Another caller may have learned it first and started a new master meanwhile, which stays.
+            if master === checked {
+                stopMaster(becoming: .idle)
+            } else if state == .connected {
+                return
+            }
         }
         if let connecting {
             try await connecting.value
