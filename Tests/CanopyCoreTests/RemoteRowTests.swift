@@ -346,7 +346,7 @@ struct HostMonitorTests {
         try await setup.workspace.prepareHost(try await setup.workspace.connection(for: "box"))
         let terminals = Fixture.terminals(setup.dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).focused
+        let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
         let folder = try #require(created.row.remotePath)
         try RemoteSessionTests().startSession(try #require(pane.remoteSession), server: server, in: folder)
         let monitor = HostMonitor(workspace: setup.workspace, terminals: terminals)

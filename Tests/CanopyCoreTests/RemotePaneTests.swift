@@ -38,7 +38,7 @@ struct RemotePaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: try remoteContext(dir)).focused
+        let pane = terminals.openTab(for: try remoteContext(dir)).pane
 
         #expect(pane.context.remote == PaneRemote(host: "box", path: "/home/u/.canopy/worktrees/demo/feat-x"))
         #expect(pane.command == .remoteAttach)
@@ -51,7 +51,7 @@ struct RemotePaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = try remoteContext(dir)
-        let pane = terminals.openTab(for: context).focused
+        let pane = terminals.openTab(for: context).pane
         pane.remoteActivity = SessionActivity(busy: false, foreground: "bash", folder: "/home/u/elsewhere")
 
         let saved = try #require(terminals.saved()[context.rowPath])
@@ -60,7 +60,7 @@ struct RemotePaneTests {
         restored.continueNumbering(from: 50)
         restored.restore(saved, for: context)
 
-        #expect(saved.tabs[0].layout.leaves == [SavedPane(folder: "/home/u/elsewhere", session: pane.id.description)])
+        #expect(saved.tabs[0].layout?.leaves == [SavedPane(folder: "/home/u/elsewhere", session: pane.id.description)])
         let again = try #require(restored.tabs(inRow: context.rowPath).first?.focused)
         #expect(again.remoteSession == pane.id.description)
         #expect(again.remoteFolder == "/home/u/elsewhere")
@@ -71,7 +71,7 @@ struct RemotePaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: try remoteContext(dir)).focused
+        let pane = terminals.openTab(for: try remoteContext(dir)).pane
 
         pane.refreshTitle()
         #expect(pane.title == "box")
@@ -87,7 +87,7 @@ struct RemotePaneTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: try remoteContext(dir)).focused
+        let pane = terminals.openTab(for: try remoteContext(dir)).pane
 
         #expect(!pane.isBusy)
         pane.remoteActivity = SessionActivity(busy: true, foreground: "claude", folder: "/w")
@@ -104,8 +104,8 @@ struct RemotePaneTests {
         let hooks = RecordingRemoteHooks()
         terminals.remoteHooks = hooks
         let context = try remoteContext(dir)
-        let first = terminals.openTab(for: context).focused
-        let second = terminals.openTab(for: context).focused
+        let first = terminals.openTab(for: context).pane
+        let second = terminals.openTab(for: context).pane
 
         await first.run("claude --full")
         terminals.closePane(first.id)
@@ -123,8 +123,8 @@ struct RemotePaneTests {
         let hooks = RecordingRemoteHooks()
         terminals.remoteHooks = hooks
         let context = try remoteContext(dir)
-        let first = terminals.openTab(for: context).focused
-        let second = terminals.openTab(for: context).focused
+        let first = terminals.openTab(for: context).pane
+        let second = terminals.openTab(for: context).pane
 
         terminals.closeRow(path: context.rowPath)
 
