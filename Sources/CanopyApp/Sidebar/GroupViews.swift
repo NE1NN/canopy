@@ -229,10 +229,11 @@ struct RowMenuItems: View {
     private var repo: RepoSnapshot? { model.snapshot.repo(path: row.repoPath) }
 
     var body: some View {
-        if row.isMissing, let repo {
+        // git on this Mac never knew a remote row's worktree, so pruning cannot clear one.
+        if row.isMissing, row.rowClass != .remote, let repo {
             Button("Prune Missing Worktrees") { model.prune(repo) }
         }
-        if row.rowClass == .canopy || row.rowClass == .adopted {
+        if row.isMovable {
             Menu("Move to Group") {
                 ForEach(repo?.groups ?? []) { group in
                     // Picking the row's own group, the checked one, changes nothing.

@@ -501,14 +501,33 @@ if CANOPY_APP=/nonexistent CANOPY_HOME="$work/nobody" "$cli" row list --json > "
 fi
 grep -q '"app_unavailable"' "$work/err2.json" || fail "no JSON error when the app cannot be launched"
 
+# Waits for the process, not its socket: the app closes the socket first, and still holds the home while it quits.
 stop_app() {
-    kill "$(app_pid)"
-    for _ in $(seq 1 50); do
-        [[ -z "$(app_pid)" ]] && break
+    local pid
+    pid=$(app_pid)
+    [[ -n "$pid" ]] || fail "the app is not running, or did not say its pid"
+    kill "$pid"
+    for _ in $(seq 1 100); do
+        kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.1
     done
-    [[ -z "$(app_pid)" ]] || fail "the app did not quit"
+    fail "the app did not quit"
 }
+
+step "a second Canopy on a home in use quits at once"
+"$cli" status >/dev/null
+"$app/Contents/MacOS/Canopy" </dev/null >/dev/null 2>&1 &
+second=$!
+disown
+for _ in $(seq 1 100); do
+    kill -0 "$second" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "$second" 2>/dev/null; then
+    kill -9 "$second"
+    fail "a second Canopy on the same home did not quit"
+fi
+[[ -n "$(app_pid)" ]] || fail "the second Canopy took the first one down"
 
 step "groups, folds, and web pages come back after a relaunch"
 "$cli" group collapse Kept --repo demo >/dev/null

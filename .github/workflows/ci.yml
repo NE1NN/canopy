@@ -21,6 +21,8 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
       - run: swift --version
+      # Remote rows' tests and e2e play a host on this Mac, with Homebrew's tmux.
+      - run: brew install tmux
       - run: make lint
       - run: make build
       - run: scripts/ci-test.sh

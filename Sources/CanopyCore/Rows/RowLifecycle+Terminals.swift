@@ -25,6 +25,11 @@ extension RowLifecycle {
         }
     }
 
+    /// The panes open in these rows, in order.
+    public func paneIDs(inRows paths: [String]) -> [String] {
+        paths.flatMap { terminals.tabs(inRow: $0).flatMap(\.paneList).map(\.id.description) }
+    }
+
     public func newTerminal(_ context: PaneContext, _ params: TermNewParams) async -> TermNewResult {
         let name = params.tab.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         let (tab, pane) = terminals.openTerminal(for: context, tabNamed: name, newTab: params.newTab)

@@ -22,11 +22,12 @@ public enum ControlMethod {
     public static let readOnly: Set<String> = [
         status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
         PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items, WebMethod.list,
+        HostMethod.list,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
     /// which records its own `agent.*` events.
-    public static let notLogged = readOnly.union([TermMethod.state])
+    public static let notLogged = readOnly.union([TermMethod.state, HostAttachMethod.attach, HostAttachMethod.next])
 
     /// How long the CLI waits for a reply. Changes to a repo queue behind other git work in that repo, so they
     /// can take minutes. Creating and removing rows also wait for setup or teardown, which can run for as long as
@@ -37,7 +38,8 @@ public enum ControlMethod {
     /// A plugin's new row waits for its plugin to fill the folder, which may take the network, then for `run`. Listing a
     /// plugin's items and starting one may reach the network too.
     public static func replyTimeout(for method: String) -> TimeInterval? {
-        if [rowNew, rowRemove, repoClone, PluginMethod.new].contains(method) { return nil }
+        // Adding a host may wait for it to start, which can take minutes.
+        if [rowNew, rowRemove, repoClone, PluginMethod.new, HostMethod.add].contains(method) { return nil }
         if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
@@ -180,12 +182,15 @@ public struct RowNewParams: Codable, Sendable {
     public var group: String?
     /// A plugin's item to tie the row to, such as the ticket it fixes.
     public var link: RowLinkParams?
+    /// The host to make the row on, by its alias, for a remote row.
+    public var host: String?
 
     public init(
         target: TargetHint = TargetHint(), branch: String? = nil, pr: String? = nil, base: String? = nil,
         existing: Bool = false, select: Bool = false, setup: Bool = true, run: String? = nil, group: String? = nil,
-        link: RowLinkParams? = nil
+        link: RowLinkParams? = nil, host: String? = nil
     ) {
+        self.host = host
         self.target = target
         self.branch = branch
         self.pr = pr
@@ -214,6 +219,7 @@ public struct RowNewParams: Codable, Sendable {
         run = try container.decodeIfPresent(String.self, forKey: .run)
         group = try container.decodeIfPresent(String.self, forKey: .group)
         link = try container.decodeIfPresent(RowLinkParams.self, forKey: .link)
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 

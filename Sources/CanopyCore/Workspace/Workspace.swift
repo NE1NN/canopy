@@ -55,12 +55,20 @@ public actor Workspace {
     /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
     var prStopped = false
 
+    nonisolated let hostTooling: HostTooling
+    /// Names this home on hosts.
+    public nonisolated let homeID: String
+    var hostConnections: [String: HostConnection] = [:]
+    /// Each host's preparation, by the connection generation it was for. Callers at the same time share one.
+    var preparedHosts: [String: (generation: Int, task: Task<Void, any Error>)] = [:]
+
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()
 
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
-        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil
+        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil,
+        hostTooling: HostTooling = HostTooling()
     ) {
         self.home = home
         self.activity = activity ?? ActivityLog(folder: home.activityFolder)
@@ -68,6 +76,8 @@ public actor Workspace {
         self.fetchTimeout = fetchTimeout
         self.github = github
         self.prTiming = prTiming
+        self.hostTooling = hostTooling
+        self.homeID = HomeID.load(home: home)
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),
@@ -89,6 +99,11 @@ public actor Workspace {
             loadNotice =
                 "state.json could not be read. It was moved to \(backup.lastPathComponent) and Canopy started fresh."
         }
+        await stopStaleMasters()
+        // A stand-in deleted outside Canopy comes back, so the row's terminals have a folder to start in.
+        for remote in state.repos.flatMap(\.remote) {
+            try? remote.makeStandIn()
+        }
         startPullRequests()
         for entry in state.repos {
             await watch(repoPath: entry.path)
@@ -96,9 +111,10 @@ public actor Workspace {
         await refreshAll()
     }
 
-    /// Stops watching and releases the home for another instance.
-    public func stop() {
+    /// Stops watching, lets every host go, and releases the home for another instance.
+    public func stop() async {
         stopClones()
+        await stopHosts()
         watchers.removeAll()
         for task in pendingRefreshes.values {
             task.cancel()
@@ -393,14 +409,15 @@ public actor Workspace {
             publish()
             return
         }
-        let rows = classifier.rows(
+        let local = classifier.rows(
             for: worktrees,
             repoPath: current.path,
             adopted: Set(current.adopted),
             fileExists: { FileManager.default.fileExists(atPath: $0) }
         )
-        recordRowChanges(repoPath: current.path, rows: rows)
-        let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted }
+        recordRowChanges(repoPath: current.path, rows: local)
+        let rows = local + remoteRows(of: current)
+        let managed = rows.filter { $0.rowClass == .canopy || $0.rowClass == .adopted || $0.rowClass == .remote }
         var reconciled = current
         let joining = rowsJoiningGroups.filter { $0.value.repoPath == current.path }.mapValues(\.group)
         var changed = reconciled.reconcile(present: managed.map(\.path), joining: joining)

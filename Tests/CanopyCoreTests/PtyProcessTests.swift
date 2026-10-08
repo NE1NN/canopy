@@ -184,8 +184,8 @@ struct PtyProcessTests {
     @Test func terminateEndsTheWholeProcessGroup() async throws {
         let (process, _) = try start(["/bin/sh", "-c", "sleep 30 & sleep 30"])
         let group = process.pid
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(kill(-group, 0) == 0)
+        // The child makes its process group when it starts, which a loaded machine can put off.
+        #expect(await eventually { kill(-group, 0) == 0 })
 
         process.terminate()
 

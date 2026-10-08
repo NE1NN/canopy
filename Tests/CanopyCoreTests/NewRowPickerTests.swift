@@ -100,6 +100,23 @@ struct NewRowPickerTests {
         items.map(\.id)
     }
 
+    @Test func onAHostThePickerLeavesPullRequestsOut() async throws {
+        let lists = FakeLists()
+        lists.state.withLock {
+            $0.pullRequests = .success([pr(7, head: "feat/x")])
+            $0.local = listing([branch("feat/x")])
+        }
+        let picker = makePicker(lists)
+        await picker.load()
+        #expect(ids(picker.pullRequestItems).count == 1)
+
+        picker.onHost = true
+
+        #expect(picker.pullRequestItems.isEmpty)
+        #expect(picker.pullRequestNote == nil)
+        #expect(picker.items.map(\.id) == ids(picker.branchItems))
+    }
+
     @Test func showsLocalBranchesBeforeTheFetchFinishes() async throws {
         let lists = FakeLists()
         let gate = Gate()
@@ -521,5 +538,29 @@ struct NewRowPickerTests {
         #expect(picker.selectedAction == .selectRow(BranchHolder(row)))
         picker.text = "split"
         #expect(picker.selectedAction == .pullRequest(7))
+    }
+}
+
+struct NewRowOnHostTests {
+    let local = BranchHolder(path: "/w/feat-x", branch: "feat/x", rowClass: .canopy)
+
+    @Test func theCommandForARowOnAHostSaysOn() {
+        #expect(
+            NewRowAction.newBranch("feat/y", base: nil).command(repo: "demo", host: "box")
+                == "canopy row new feat/y --repo demo --on box")
+        #expect(
+            NewRowAction.branch("feat/x").command(repo: "demo", host: "box")
+                == "canopy row new feat/x --existing --repo demo --on box")
+        #expect(
+            NewRowAction.newBranch("feat/y", base: nil).command(repo: "demo", host: nil)
+                == "canopy row new feat/y --repo demo")
+    }
+
+    @Test func onAHostABranchWithALocalRowGetsARowThereAndPullRequestsWait() {
+        #expect(NewRowAction.selectRow(local).onHost() == .branch("feat/x"))
+        #expect(NewRowAction.adopt(local).onHost() == .branch("feat/x"))
+        #expect(NewRowAction.newBranch("n", base: "main").onHost() == .newBranch("n", base: "main"))
+        #expect(NewRowAction.pullRequest(12).onHost() == nil)
+        #expect(NewRowAction.selectRow(BranchHolder(path: "/w/d", branch: nil, rowClass: .canopy)).onHost() == nil)
     }
 }

@@ -139,6 +139,13 @@ public struct WorkspaceControlHandler: Sendable {
             }
             let created =
                 switch start {
+                case .branch(let branch) where params.host != nil:
+                    try await workspace.createRemoteRow(
+                        repoPath: repo.path, host: params.host ?? "", branch: branch, base: params.base,
+                        existing: params.existing, group: params.group, link: link)
+                case .pullRequest where params.host != nil:
+                    throw ControlError(
+                        code: "bad_params", message: "--pr cannot make a remote row yet. Pass the PR's branch instead.")
                 case .branch(let branch):
                     try await workspace.createRow(
                         repoPath: repo.path, branch: branch, base: params.base, existing: params.existing,
@@ -210,6 +217,45 @@ public struct WorkspaceControlHandler: Sendable {
                 }
             let moved = try await workspace.moveRow(path: row.path, to: placement)
             return try .from(RowMoveResult(row: .worktree(moved.row), moved: moved.moved, from: moved.from))
+
+        case HostMethod.add:
+            let params = try request.decodeParams(HostAddParams.self)
+            let info = try await workspace.addHost(
+                alias: params.alias, repos: params.repos, wake: params.wake,
+                idleDetachMinutes: params.idleDetachMinutes)
+            return try .from(await withPanes(info))
+
+        case HostAttachMethod.attach:
+            let params = try request.decodeParams(HostAttachParams.self)
+            guard let pane = await rows.remotePaneInfo(params.pane) else {
+                throw WorkspaceError.paneNotFound(params.pane)
+            }
+            return try .from(await attach(pane))
+
+        case HostAttachMethod.next:
+            let params = try request.decodeParams(HostNextParams.self)
+            guard let pane = await rows.remotePaneInfo(params.pane) else {
+                return try .from(HostNextResult(action: .end))
+            }
+            let connection = try await workspace.connection(for: pane.host)
+            let state = await connection.state
+            let refused = params.status == 255 && state == .connected ? await connection.refusesSessions() : false
+            return try .from(
+                RemoteAttach.next(status: params.status, state: state, host: pane.host, sessionRefused: refused))
+
+        case HostMethod.list:
+            var listing = await workspace.hostListing()
+            var infos: [HostInfo] = []
+            for info in listing.hosts {
+                infos.append(await withPanes(info))
+            }
+            listing.hosts = infos
+            return try .from(listing)
+
+        case HostMethod.remove:
+            let params = try request.decodeParams(HostRemoveParams.self)
+            try await workspace.removeHost(alias: params.alias)
+            return .object(["alias": .string(params.alias)])
 
         case GroupMethod.list:
             let params = try request.decodeParams(GroupListParams.self)
@@ -411,6 +457,34 @@ public struct WorkspaceControlHandler: Sendable {
         return RowMoveResult(row: .plugin(current), moved: moved, from: nil)
     }
 
+    /// Connects the pane's host, waiting at most 5 seconds, so the pane can say what it is waiting for. The attempt
+    /// goes on after that, and the pane's next call shares it.
+    private func attach(_ pane: RemotePaneInfo) async throws -> HostAttachResult {
+        let connection = try await workspace.connection(for: pane.host)
+        do {
+            guard try await connection.connect(waitingAtMost: .seconds(5)) else {
+                return HostAttachResult(waiting: RemoteAttach.waitingMessage(await connection.state, host: pane.host))
+            }
+        } catch {
+            return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
+        }
+        do {
+            try await workspace.prepareHost(connection)
+            return HostAttachResult(
+                ready: try await workspace.attachCommand(
+                    host: pane.host, repoPath: pane.repoPath, standIn: pane.rowPath, session: pane.session,
+                    folder: pane.folder, pane: pane.pane, rowName: pane.rowName))
+        } catch {
+            return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
+        }
+    }
+
+    private func withPanes(_ info: HostInfo) async -> HostInfo {
+        var info = info
+        info.panes = await rows.paneIDs(inRows: info.rows)
+        return info
+    }
+
     static func code(of error: any Error) -> String {
         (error as? WorkspaceError)?.code ?? "internal"
     }
@@ -449,9 +523,9 @@ public struct WorkspaceControlHandler: Sendable {
                 || snapshot.pluginRow(path: Paths.canonical(name)) != nil
             throw elsewhere ? WorkspaceError.invalidAnchor(name) : WorkspaceError.rowNotFound(name)
         }
-        guard found.repoPath == row.repoPath, found.path != row.path,
-            found.rowClass == .canopy || found.rowClass == .adopted
-        else { throw WorkspaceError.invalidAnchor(name) }
+        guard found.repoPath == row.repoPath, found.path != row.path, found.isMovable else {
+            throw WorkspaceError.invalidAnchor(name)
+        }
         return found.path
     }
 

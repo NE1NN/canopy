@@ -22,6 +22,8 @@ public struct RepoEntry: Codable, Sendable, Equatable {
     public var prBindings: [String: PRBinding]
     /// Whether the sidebar folds the repo under its header.
     public var collapsed: Bool
+    /// Rows whose worktree is on a host, as last seen, which git on this Mac never lists.
+    public var remote: [RemoteRowEntry] = []
 
     public init(
         path: String, dirName: String, adopted: [String] = [], rowOrder: [String] = [], groups: [RowGroup] = [],
@@ -47,6 +49,9 @@ public struct RepoEntry: Codable, Sendable, Equatable {
         // A fold that cannot be read leaves the repo expanded rather than failing to load it.
         collapsed = (try? container.decodeIfPresent(Bool.self, forKey: .collapsed)) ?? false
         // Groups that cannot be read are dropped on their own, so the repo, its rows, and its other groups still load.
+        // Remote rows that cannot be read are dropped on their own, like groups.
+        let remote = try? container.decodeIfPresent([Lenient<RemoteRowEntry>].self, forKey: .remote)
+        self.remote = remote?.compactMap(\.value) ?? []
         let decoded = try? container.decodeIfPresent([Lenient<RowGroup>].self, forKey: .groups)
         groups = decoded?.compactMap(\.value) ?? []
         cleanGroups()
@@ -84,6 +89,9 @@ public struct AppState: Codable, Sendable, Equatable {
     public var webPanelWidth: Double?
     /// The next web page number, so `canopy web close` never closes a different page after a relaunch.
     public var nextWebPage = 1
+    /// tmux sessions on hosts that panes closed while their host could not be reached, by host, ended at its next
+    /// connection.
+    public var pendingSessionKills: [String: [String]] = [:]
 
     public init(
         version: Int = AppState.currentVersion, repos: [RepoEntry] = [], selectedRowPath: String? = nil,
@@ -114,5 +122,7 @@ public struct AppState: Codable, Sendable, Equatable {
         webPlacement = (try? container.decodeIfPresent(WebPlacement.self, forKey: .webPlacement)) ?? .panel
         webPanelWidth = try? container.decodeIfPresent(Double.self, forKey: .webPanelWidth)
         nextWebPage = (try? container.decodeIfPresent(Int.self, forKey: .nextWebPage)) ?? 1
+        pendingSessionKills =
+            (try? container.decodeIfPresent([String: [String]].self, forKey: .pendingSessionKills)) ?? [:]
     }
 }

@@ -35,6 +35,7 @@ signing-cert:
 
 e2e: app
 	scripts/e2e.sh
+	scripts/e2e-hosts.sh
 
 clean:
 	rm -rf .build build

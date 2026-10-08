@@ -67,6 +67,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case trashFailed(String, reason: String)
     case folderFailed(String, reason: String)
     case pluginNotStarted(String, reason: String)
+    case hostUnreachable(String, reason: String)
+    case hostNotFound(String, known: [String])
+    case hostUnknown(String)
+    case hostUnfit(String, missing: [String])
+    case hostHasRows(String, rows: [String])
+    case hostCommandFailed(String, reason: String)
+    case cloneNotFound(String, path: String)
+    case hostHasNoRepo(String, repo: String, hosts: [String])
     case git(GitError)
 
     public var code: String {
@@ -131,6 +139,14 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .trashFailed: "trash_failed"
         case .folderFailed: "folder_failed"
         case .pluginNotStarted: "plugin_not_started"
+        case .hostUnreachable: "host_unreachable"
+        case .hostNotFound: "host_not_found"
+        case .hostUnknown: "host_unknown"
+        case .hostUnfit: "host_unfit"
+        case .hostHasRows: "host_has_rows"
+        case .hostCommandFailed: "host_command_failed"
+        case .cloneNotFound: "repo_not_found"
+        case .hostHasNoRepo: "host_has_no_repo"
         case .git: "git_failed"
         }
     }
@@ -157,6 +173,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
             case .external:
                 "Branch \(name) is checked out in another tool's worktree at \(row.path). "
                     + "Run `canopy row adopt \(row.path)` to show it as a row."
+            case .remote:
+                "Branch \(name) already has a row on \(row.host ?? "its host") at \(row.remotePath ?? row.path). "
+                    + "Run `canopy row select \(row.path)` to show it."
             }
         case .branchCheckedOut(let name, nil): "Branch \(name) is already checked out in another worktree."
         case .branchNotFound(let name, nil):
@@ -235,6 +254,26 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .trashFailed(let path, let reason): "Could not move \(path) to the Trash: \(reason)"
         case .folderFailed(let path, let reason): "Could not make \(path): \(reason)"
         case .pluginNotStarted(let name, let reason): "\(name) did not start. \(reason)"
+        case .hostUnreachable(let host, let reason): "Could not reach \(host): \(reason)"
+        case .hostNotFound(let host, let known):
+            "Canopy has no host named \(host). "
+                + (known.isEmpty
+                    ? "Add one with `canopy host add <alias> --repo <repo>=<path>`."
+                    : "Its hosts are \(Self.list(known)).")
+        case .hostUnknown(let host):
+            "ssh does not know a host named \(host). Add it to ~/.ssh/config, check that `ssh \(host)` logs in, "
+                + "then run `canopy host add` again."
+        case .hostUnfit(let host, let missing): "\(host) needs \(Self.list(missing)) before Canopy can use it."
+        case .hostHasRows(let host, let rows):
+            "\(host) still has rows: \(rows.joined(separator: ", ")). Remove them with `canopy row rm` first."
+        case .hostCommandFailed(let host, let reason): "A command on \(host) failed: \(reason)"
+        case .hostHasNoRepo(let host, let repo, let hosts):
+            "\(host) has no clone of \(repo). "
+                + (hosts.isEmpty
+                    ? "Add one with `canopy host add \(host) --repo \(repo)=<path>`."
+                    : "\(Self.list(hosts)) \(hosts.count == 1 ? "has" : "have") one.")
+        case .cloneNotFound(let host, let path):
+            "\(path) on \(host) is not a git checkout. Clone the repo there first, or pass the path of a clone."
         case .git(let error): error.description
         }
     }

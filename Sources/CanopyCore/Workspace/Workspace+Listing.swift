@@ -113,7 +113,8 @@ extension Workspace {
         }
 
         let search = SearchText(query)
-        let rows = snapshot.repo(path: repoPath)?.allRows.filter { !$0.isMissing } ?? []
+        // Remote rows hold branches in their host's clone, which this Mac's git does not know.
+        let rows = snapshot.repo(path: repoPath)?.allRows.filter { !$0.isMissing && $0.host == nil } ?? []
         var branches: [ListedBranch] = []
         for name in Set(local.keys).union(origin.keys) where search.matches([name]) {
             let here = local[name]

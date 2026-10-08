@@ -84,6 +84,15 @@ public final class TerminalTab: Identifiable {
     }
 }
 
+/// What remote panes need from their hosts.
+@MainActor
+public protocol RemotePaneHooks: AnyObject {
+    /// Types a command and Return into the pane's session, once the host has it.
+    func run(_ text: String, in pane: Pane) async
+    /// The user closed these panes, so their sessions on the host end too.
+    func closed(_ panes: [Pane])
+}
+
 /// Every row's tabs and terminals. Terminals keep running while their row or tab is out of view.
 @MainActor
 @Observable
@@ -127,6 +136,8 @@ public final class TerminalStore {
     /// Called when a page leaves its row, so the app can drop its web view.
     @ObservationIgnored public var onPageClosed: (WebPageID) -> Void = { _ in }
     @ObservationIgnored private var agentObservers: [UUID: (AgentEvent) -> Void] = [:]
+    /// Reaches remote panes' hosts. Set by whoever owns the workspace.
+    @ObservationIgnored public weak var remoteHooks: (any RemotePaneHooks)?
 
     public init(engine: any TerminalEngine, settings: ShellSettings, activity: ActivityLog? = nil) {
         self.engine = engine
@@ -239,6 +250,7 @@ public final class TerminalStore {
             pane.close()
         }
         removed.page.map(retire)
+        endSessions(of: removed.paneList)
         tabsByRow[path] = tabs.isEmpty ? nil : tabs
         if tabs.isEmpty {
             selectedTabByRow[path] = nil
@@ -299,7 +311,10 @@ public final class TerminalStore {
             let index = order.firstIndex(of: id) ?? 0
             grid.focusedPaneID = index > 0 ? order[index - 1] : order[index + 1]
         }
-        grid.panes.removeValue(forKey: id)?.close()
+        if let pane = grid.panes.removeValue(forKey: id) {
+            pane.close()
+            endSessions(of: [pane])
+        }
         grid.layout = layout
         onChange()
     }
@@ -354,6 +369,13 @@ public final class TerminalStore {
     /// Closes a row's terminals and drops its pages. The pages are not logged as closed, since a row's pages also close
     /// this way when Canopy quits, and come back when it starts.
     public func closeRow(path: String) {
+        let panes = tabs(inRow: path).flatMap(\.paneList)
+        closeRowQuietly(path: path)
+        endSessions(of: panes)
+    }
+
+    /// Closes the row's terminals here and leaves remote sessions running on their hosts.
+    private func closeRowQuietly(path: String) {
         for pane in tabs(inRow: path).flatMap(\.paneList) {
             pane.close()
         }
@@ -451,10 +473,16 @@ public final class TerminalStore {
         onChange()
     }
 
+    /// Closes every terminal, as Canopy quits. Sessions on hosts keep running, so relaunching joins them again.
     public func closeAll() {
         for path in rowPaths {
-            closeRow(path: path)
+            closeRowQuietly(path: path)
         }
+    }
+
+    private func endSessions(of panes: [Pane]) {
+        let remote = panes.filter { $0.remoteSession != nil }
+        if !remote.isEmpty { remoteHooks?.closed(remote) }
     }
 
     // MARK: Saving and restoring
@@ -482,6 +510,10 @@ public final class TerminalStore {
                 name: tab.name,
                 layout: grid.layout.map { id in
                     let pane = grid.panes[id]
+                    if let session = pane?.remoteSession {
+                        return SavedPane(
+                            folder: pane?.currentDirectory ?? pane?.remoteFolder ?? path, session: session)
+                    }
                     return SavedPane(folder: pane?.currentDirectory ?? pane?.startDirectory ?? path)
                 },
                 focused: grid.layout.leaves.firstIndex(of: grid.focusedPaneID))
@@ -520,7 +552,9 @@ public final class TerminalStore {
             return TerminalTab(id: TabID(nextTab), page: page)
         }
         guard let savedLayout = saved.layout else { return nil }
-        let panes = savedLayout.leaves.map { makePane(context, command: .shell, directory: $0.folder) }
+        let panes = savedLayout.leaves.map {
+            makePane(context, command: .shell, directory: $0.folder, session: $0.session)
+        }
         var index = 0
         let layout: Layout<PaneID> = savedLayout.map { _ in
             defer { index += 1 }
@@ -541,11 +575,17 @@ public final class TerminalStore {
             openedURL: saved.opened.flatMap(WebAddress.parse))
     }
 
-    private func makePane(_ context: PaneContext, command: PaneCommand, directory: String?) -> Pane {
+    /// A remote row's terminals attach to their host rather than start a shell here.
+    private func makePane(
+        _ context: PaneContext, command: PaneCommand, directory: String?, session: String? = nil
+    ) -> Pane {
         defer { nextPane += 1 }
+        let command = context.remote != nil && command == .shell ? .remoteAttach : command
         let pane = Pane(
             id: PaneID(nextPane), context: context, command: command, settings: settings,
-            emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory)
+            emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory,
+            session: session)
+        pane.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
         pane.onOpenLink = { [weak self] pane, link in

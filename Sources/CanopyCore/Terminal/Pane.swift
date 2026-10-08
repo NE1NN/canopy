@@ -51,14 +51,30 @@ public final class Pane: Identifiable {
 
     /// The folder the shell starts in, when restored into one other than the row's.
     public let startDirectory: String?
+    /// What the pane started with.
+    public private(set) var command: PaneCommand
+    /// A remote pane's tmux session on its host, named after the pane that first made it.
+    public let remoteSession: String?
+    /// Where a remote pane's session starts when the host has none: the folder it was last in, or the row's.
+    public let remoteFolder: String?
+    /// What the host last said the session is doing. Nil until it has, and while it has no such session.
+    public var remoteActivity: SessionActivity? {
+        didSet { if remoteActivity != oldValue { refreshTitle() } }
+    }
+    /// Types a command into a remote pane's session through its host.
+    @ObservationIgnored var runRemotely: ((Pane, String) async -> Void)?
 
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
-        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil
+        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil
     ) {
         self.id = id
         self.context = context
-        self.startDirectory = directory
+        self.command = command
+        let isRemote = context.remote != nil
+        self.remoteSession = isRemote ? session ?? id.description : nil
+        self.remoteFolder = isRemote ? directory ?? context.remote?.path : nil
+        self.startDirectory = isRemote ? nil : directory
         self.settings = settings
         self.activity = activity
         self.emulator = emulator
@@ -75,10 +91,19 @@ public final class Pane: Identifiable {
     /// The shell's pid while it runs.
     public var pid: pid_t? { process?.pid }
 
-    public var foreground: ForegroundProcess? { process?.foreground }
+    public var foreground: ForegroundProcess? {
+        guard context.remote == nil else {
+            return remoteActivity.flatMap { $0.busy ? ForegroundProcess(pid: 0, name: $0.foreground ?? "") : nil }
+        }
+        return process?.foreground
+    }
 
     /// True while something other than the shell holds the terminal, such as `claude` or `bun dev`.
     public var isBusy: Bool {
+        if context.remote != nil {
+            guard case .running = status else { return false }
+            return remoteActivity?.busy ?? false
+        }
         // A setup or teardown script is busy until it ends, even though zsh runs its last command in its own place.
         if isScript, case .running = status { return true }
         guard let process, let foreground = process.foreground else { return false }
@@ -124,9 +149,16 @@ public final class Pane: Identifiable {
 
     /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
     /// Shells without a line editor never report ready, so it types anyway after `timeout`.
+    /// The shell waits for a line, ready for typing.
+    var isAtPrompt: Bool { process?.isAtPrompt ?? false }
+
     public func run(_ command: String, timeout: Duration = .seconds(10)) async {
+        if context.remote != nil {
+            await runRemotely?(self, command)
+            return
+        }
         let deadline = ContinuousClock.now + timeout
-        while let process, !process.isAtPrompt, ContinuousClock.now < deadline {
+        while process != nil, !isAtPrompt, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
         process?.write(command + "\r")
@@ -160,7 +192,7 @@ public final class Pane: Identifiable {
         programTitle = nil
         // DECSTR undoes modes the last program left on, such as a hidden cursor, then start on a fresh line.
         emulator.feed(Data("\u{1b}[!p\r\n".utf8))
-        start(.shell)
+        start(context.remote == nil ? .shell : .remoteAttach)
     }
 
     /// Ends the process for good.
@@ -181,6 +213,13 @@ public final class Pane: Identifiable {
             title = fixedTitle
             return
         }
+        if let remote = context.remote {
+            // The host says what the session's program titled it, or else which program runs. Until it has, the title
+            // tmux passed on stands in.
+            let candidates = [remoteActivity?.title, remoteActivity?.foreground, programTitle?.text, remote.host]
+            title = candidates.lazy.compactMap { $0 }.first { !$0.isEmpty } ?? remote.host
+            return
+        }
         guard let process else { return }
         let resolved = PaneTitle.resolve(programTitle, foreground: process.foreground)
         if !resolved.isEmpty {
@@ -188,9 +227,10 @@ public final class Pane: Identifiable {
         }
     }
 
-    /// The shell's working folder now, so a `cd` is remembered across relaunches.
+    /// The shell's working folder now, so a `cd` is remembered across relaunches. A remote pane's is on its host.
     public var currentDirectory: String? {
-        process.flatMap { ProcessTable.folder(of: $0.pid) }
+        if context.remote != nil { return remoteActivity?.folder }
+        return process.flatMap { ProcessTable.folder(of: $0.pid) }
     }
 
     /// The folder it was restored into, or the row's folder, or the home folder if both are gone.
@@ -201,6 +241,7 @@ public final class Pane: Identifiable {
     }
 
     private func start(_ command: PaneCommand) {
+        self.command = command
         if case .script = command { isScript = true } else { isScript = false }
         let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
         // A new secret for each shell, so only reports this shell prints count.
@@ -210,6 +251,7 @@ public final class Pane: Identifiable {
             case .shell:
                 settings.interactiveShell(environment: environment, directory: directory, commandToken: token)
             case .script(let script): settings.script(script, environment: environment, directory: directory)
+            case .remoteAttach: settings.remoteAttach(environment: environment, directory: directory)
             }
         commandMarks = launch.environment["CANOPY_COMMAND_TOKEN"].map(CommandMarkScanner.init(token:))
         do {

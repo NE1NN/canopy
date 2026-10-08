@@ -24,15 +24,19 @@ struct SocketStreamTests {
 
     @Test func stopsWaitingAtTheDeadline() async throws {
         let pair = try Pair()
-        let clock = ContinuousClock()
-        let start = clock.now
 
-        await #expect(throws: ControlClientError.timedOut) {
-            try await offPool { try SocketStream(fd: pair.near, deadline: .now + .milliseconds(300)).read() }
+        // Timed on the reading thread: a test task waits for a thread of the busy concurrency pool before it can read
+        // a clock.
+        let (result, waited) = try await offPool {
+            let clock = ContinuousClock()
+            let start = clock.now
+            let result = Result { try SocketStream(fd: pair.near, deadline: .now + .milliseconds(300)).read() }
+            return (result.map { _ in () }, clock.now - start)
         }
 
-        #expect(clock.now - start >= .milliseconds(300))
-        #expect(clock.now - start < .seconds(10))
+        #expect(throws: ControlClientError.timedOut) { try result.get() }
+        #expect(waited >= .milliseconds(300))
+        #expect(waited < .seconds(10))
     }
 
     /// The CLI waits without a deadline for requests that take as long as they take, such as `canopy row new`.

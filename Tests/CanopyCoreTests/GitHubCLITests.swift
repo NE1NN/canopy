@@ -80,16 +80,14 @@ struct GitHubCLITests {
     @Test func stopsAHungGHOnTimeWhenDispatchHasNoThreadsLeft() async throws {
         let dir = try TempDir()
         let gh = try Fixture.gh(in: dir, "sleep 30", timeout: .milliseconds(300))
-        let clock = ContinuousClock()
 
-        let (lookup, elapsed) = try await withEveryDispatchThreadBusy {
-            let start = clock.now
+        let (lookup, onTime) = try await withEveryDispatchThreadBusy { isHolding in
             let lookup = await gh.pullRequests(repo: repo, branches: ["a"])
-            return (lookup, clock.now - start)
+            return (lookup, isHolding())
         }
 
         #expect(lookup == .failed("gh did not answer in time."))
-        #expect(elapsed < .seconds(5))
+        #expect(onTime, "the lookup waited for Dispatch to have a thread")
     }
 
     @Test func followsAnSSHAliasWhenDispatchHasNoThreadsLeft() async throws {
@@ -97,16 +95,14 @@ struct GitHubCLITests {
         try "Host github-work\n  HostName github.com\n".write(
             toFile: dir.sub("ssh_config"), atomically: true, encoding: .utf8)
         let gh = GitHubCLI(sshConfigFile: dir.sub("ssh_config"))
-        let clock = ContinuousClock()
 
-        let (found, elapsed) = try await withEveryDispatchThreadBusy {
-            let start = clock.now
+        let (found, onTime) = try await withEveryDispatchThreadBusy { isHolding in
             let found = await gh.repo(forRemote: "git@github-work:NE1NN/canopy.git")
-            return (found, clock.now - start)
+            return (found, isHolding())
         }
 
         #expect(found == repo)
-        #expect(elapsed < .seconds(5))
+        #expect(onTime, "the lookup waited for Dispatch to have a thread")
     }
 
     @Test func clonesWithGHAndHasGitReportProgress() async throws {

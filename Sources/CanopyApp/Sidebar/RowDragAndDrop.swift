@@ -34,10 +34,10 @@ extension View {
         }
     }
 
-    /// Lets a Canopy or adopted row be dragged within its repo. The main row and other tools' worktrees stay put.
+    /// Lets a Canopy, adopted, or remote row be dragged within its repo. The main row and other tools' worktrees stay put.
     @ViewBuilder
     func rowDragSource(_ row: Row, model: AppModel) -> some View {
-        if row.rowClass == .canopy || row.rowClass == .adopted {
+        if row.isMovable {
             onDrag {
                 model.draggedPluginRow = nil
                 model.draggedRow = row

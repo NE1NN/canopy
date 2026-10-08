@@ -36,7 +36,8 @@ struct RowCommand: AsyncParsableCommand {
                         Table.render(
                             ["BRANCH", "GROUP", "CLASS", "PATH"],
                             worktrees.map { row in
-                                let rowClass = row.externalTag.map { "\(row.rowClass.rawValue):\($0.rawValue)" }
+                                let tag = row.externalTag?.rawValue ?? row.host
+                                let rowClass = tag.map { "\(row.rowClass.rawValue):\($0)" }
                                 return [row.displayName, row.group ?? "-", rowClass ?? row.rowClass.rawValue, row.path]
                             }))
                 }
@@ -60,6 +61,9 @@ struct RowCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Create a row: a branch and a worktree under the Canopy folder.",
             discussion: """
+                With --on, the row's worktree is made on that host, in its clone of the repo, and its terminals \
+                open there in tmux. See `canopy host --help`.
+
                 An existing local branch is checked out, after a fast-forward if it is only behind origin. A branch \
                 that only exists on origin is tracked. Anything else is created from --from, which defaults to \
                 origin's default branch, unless --existing asks to fail instead. A branch with commits of its own \
@@ -100,9 +104,16 @@ struct RowCommand: AsyncParsableCommand {
         var noLink = false
         @Option(help: ArgumentHelp("Link the row to this ticket, such as 853.", valueName: "ticket"))
         var ticket: String?
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("Make the row on this host, from `canopy host list`.", valueName: "host"))
+        var host: String?
         @OptionGroup var output: OutputOptions
 
         func validate() throws {
+            if host != nil, pr != nil {
+                throw ValidationError("--pr cannot make a remote row yet. Pass the PR's branch instead.")
+            }
             if ticket != nil, noLink {
                 throw ValidationError("--ticket links the row and --no-link leaves the link out. Pass one of them.")
             }
@@ -131,7 +142,7 @@ struct RowCommand: AsyncParsableCommand {
                 RowNewParams(
                     target: Client.hint(repo: repo), branch: branch ?? localBranch, pr: pr, base: base,
                     existing: existing, select: select, setup: !noSetup, run: command, group: group,
-                    link: link)
+                    link: link, host: host)
             )
             let created = try result.decode(RowNewResult.self)
             for warning in created.warnings {
@@ -153,7 +164,8 @@ struct RowCommand: AsyncParsableCommand {
 
         private func summary(of created: RowNewResult) -> String {
             let name = created.row.displayName
-            let path = created.row.path
+            let path =
+                created.row.host.map { "\($0):\(created.row.remotePath ?? created.row.path)" } ?? created.row.path
             var lines: [String]
             if let pr = created.pr {
                 lines = ["Checked out PR #\(pr.number) as \(name) in \(path).", "\(pr.title): \(pr.url)"]

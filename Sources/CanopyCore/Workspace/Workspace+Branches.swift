@@ -8,6 +8,21 @@ struct BranchReport: Sendable, Equatable {
     var fastForward: FastForward?
 }
 
+/// A clone git runs in: this Mac's, or one on a host, through the host's master.
+struct RepoGit: Sendable {
+    var git: GitRunner
+    var path: String
+
+    @discardableResult
+    func run(_ arguments: [String], timeout: Duration? = nil) async throws -> String {
+        try await git.run(arguments, in: path, timeout: timeout)
+    }
+
+    func succeeds(_ arguments: [String]) async -> Bool {
+        await git.succeeds(arguments, in: path)
+    }
+}
+
 struct FastForward: Sendable, Equatable {
     var branch: String
     var commit: String
@@ -21,7 +36,17 @@ extension Workspace {
     /// only in case share one ref file on a case-insensitive file system, where a branch made with the other spelling
     /// would hide a packed one, so any case finds the branch.
     func existingBranch(_ name: String, under prefix: String, repoPath: String) async -> String? {
-        guard let listed = try? await git.run(["for-each-ref", "--format=%(refname)", prefix], in: repoPath) else {
+        try? await existingBranch(name, under: prefix, in: RepoGit(git: git, path: repoPath))
+    }
+
+    /// Fails only when the clone is on a host that did not answer, which says nothing about the branch.
+    func existingBranch(_ name: String, under prefix: String, in clone: RepoGit) async throws -> String? {
+        let listed: String
+        do {
+            listed = try await clone.run(["for-each-ref", "--format=%(refname)", prefix])
+        } catch let error as GitError where error.hostUnreachable {
+            throw error
+        } catch {
             return nil
         }
         let refs = listed.split(separator: "\n").map(String.init)
@@ -31,9 +56,10 @@ extension Workspace {
         return ref.map { String($0.dropFirst(prefix.count)) }
     }
 
-    /// The worktree that has `branch` checked out, as of the last refresh.
-    func holder(of branch: String, repoPath: String) -> Row? {
-        snapshot.repo(path: repoPath)?.allRows.first { $0.branch == branch }
+    /// The worktree on this Mac, or on `host`, that has `branch` checked out, as of the last refresh. Each machine's
+    /// git only knows its own worktrees, so a row elsewhere never holds the branch.
+    func holder(of branch: String, repoPath: String, host: String? = nil) -> Row? {
+        snapshot.repo(path: repoPath)?.allRows.first { $0.branch == branch && $0.host == host }
     }
 
     /// Fails unless `branch` is free to check out, naming where it is checked out. A worktree whose folder was deleted
@@ -61,13 +87,18 @@ extension Workspace {
     func compare(
         _ branch: String, with target: String, named name: String, resetTo: String, repoPath: String
     ) async -> BranchReport {
+        await compare(branch, with: target, named: name, resetTo: resetTo, in: RepoGit(git: git, path: repoPath))
+    }
+
+    func compare(
+        _ branch: String, with target: String, named name: String, resetTo: String, in clone: RepoGit
+    ) async -> BranchReport {
         func commit(_ ref: String) async -> String? {
-            try? await git.run(["rev-parse", "--verify", "--quiet", "\(ref)^{commit}"], in: repoPath)
+            try? await clone.run(["rev-parse", "--verify", "--quiet", "\(ref)^{commit}"])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard let local = await commit("refs/heads/\(branch)"), let other = await commit(target),
-            let counts = try? await git.run(
-                ["rev-list", "--left-right", "--count", "\(local)...\(other)"], in: repoPath),
+            let counts = try? await clone.run(["rev-list", "--left-right", "--count", "\(local)...\(other)"]),
             case let parts = counts.split(whereSeparator: \.isWhitespace).compactMap({ Int($0) }), parts.count == 2
         else { return BranchReport() }
         let (ahead, behind) = (parts[0], parts[1])
@@ -107,10 +138,13 @@ extension Workspace {
 
     /// A warning when `branch` tracks a remote branch that no longer exists, which usually means it was merged.
     func goneUpstreamWarning(_ branch: String, repoPath: String) async -> String? {
+        await goneUpstreamWarning(branch, in: RepoGit(git: git, path: repoPath))
+    }
+
+    func goneUpstreamWarning(_ branch: String, in clone: RepoGit) async -> String? {
         guard
-            let line = try? await git.run(
-                ["for-each-ref", "--format=%(upstream:short)%00%(upstream:track)", "refs/heads/\(branch)"],
-                in: repoPath)
+            let line = try? await clone.run(
+                ["for-each-ref", "--format=%(upstream:short)%00%(upstream:track)", "refs/heads/\(branch)"])
         else { return nil }
         let fields = line.trimmingCharacters(in: .newlines).split(separator: "\0", omittingEmptySubsequences: false)
         guard fields.count == 2, fields[1] == "[gone]" else { return nil }

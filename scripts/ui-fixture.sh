@@ -6,6 +6,7 @@
 # section with rows backed by a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of
 # message, and a closed ticket, with a fix row linked to one, a web panel and a web tab on local pages, and an artifact
 # link printed in a pane. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or Discord.
+# A remote row of web-app lives on build-box, a host this Mac plays through scripts/fake-ssh with Homebrew's tmux.
 # Links the window opens are written to $work/opened-urls instead of opening a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
@@ -47,6 +48,8 @@ if [[ "${1:-}" == stop ]]; then
         echo "not deleting $work: it does not look like a fixture folder" >&2
         exit 1
     fi
+    # The fake host's tmux server, found by its config's path, as it can outlive kill-server.
+    pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $work/host/" 2>/dev/null || true
     rm -rf "$work"
     rm -f "$state"
     exit 0
@@ -237,7 +240,10 @@ CONFIG
 if [[ "${1:-dark}" == light ]]; then args=(-NSRequiresAquaSystemAppearance YES); else args=(-AppleInterfaceStyle Dark); fi
 # git may only use local repos, so a clone that falls back to plain git fails instead of reaching the network.
 # The URL rewrite sends the app's git for https://github.com/ to the bare repos in $work/remotes.
-(ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 CANOPY_FIXTURE_PLUGIN=1 \
+# The build-box host is this Mac, played by scripts/fake-ssh with its home in $work/host and Homebrew's tmux.
+mkdir -p "$work/host"
+(CANOPY_SSH="$PWD/scripts/fake-ssh" FAKE_SSH_HOME="$work/host" FAKE_SSH_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    ZDOTDIR="$work/zdot" SHELL=/bin/zsh GIT_ALLOW_PROTOCOL=file GIT_CONFIG_COUNT=1 CANOPY_FIXTURE_PLUGIN=1 \
     CANOPY_TRASH_FOLDER="$work/trash" CANOPY_OPENED_URLS="$work/opened-urls" \
     GIT_CONFIG_KEY_0="url.$work/remotes/.insteadOf" GIT_CONFIG_VALUE_0=https://github.com/ \
     exec "$app/Contents/MacOS/Canopy" "${args[@]}" </dev/null >/dev/null 2>&1) &
@@ -348,6 +354,12 @@ printf 'ui-fixture-token' | "$cli" ticket connect "$tm_url" --web 'https://ticke
 for ticket in 853 855 851; do "$cli" ticket new "$ticket" --run "$plain" >/dev/null; done
 "$cli" row new fix/shadowban-check --repo web-app --ticket 853 >/dev/null
 "$cli" term new --row "$(fixture_row 0000000000000000000010011tickets)" --run "$plain; cat ticket.md | head -5" >/dev/null
+"$cli" row select feat/checkout-redesign --repo web-app >/dev/null
+
+# A remote row on the build-box host, in its clone of web-app's origin, with its tmux session running.
+git clone -q "$work/remotes/acme/web-app.git" "$work/host/web-app"
+"$cli" host add build-box --repo web-app='~/web-app' >/dev/null
+"$cli" row new feat/remote-agent --repo web-app --on build-box --run "$plain" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 # Agents in every state, reported the way agents without Claude Code's hooks report them.

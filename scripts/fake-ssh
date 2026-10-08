@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Plays ssh for tests and end-to-end runs: a "host" is this Mac, with HOME set to $FAKE_SSH_HOME.
+# It takes the options Canopy passes. A master (-M) writes its pid to the control path and waits to be stopped;
+# -O check and -O exit act on that pid. Anything else runs the remote command with bash in $FAKE_SSH_HOME.
+# -R remote:local links the remote socket path to the local one, which connect() follows like a forward.
+# FAKE_SSH_DOWN=1, or a file .fake-ssh-down in the host's home, makes every call fail as an unreachable host does,
+# with ssh's exit code 255. Calls from a Canopy terminal do not get the app's environment, so the master writes the
+# host's settings beside its control path, and later calls through that path read them.
+set -uo pipefail
+
+control=""
+operation=""
+master=0
+print_config=0
+forwards=()
+while (($#)); do
+    case "$1" in
+        -M) master=1 ;;
+        -G) print_config=1 ;;
+        -N | -t | -T | -f) ;;
+        -S) control="$2"; shift ;;
+        -O) operation="$2"; shift ;;
+        -R) forwards+=("$2"); shift ;;
+        -o | -L | -F | -i | -p | -l) shift ;;
+        --) shift; break ;;
+        -*) echo "fake-ssh: unknown option $1" >&2; exit 255 ;;
+        *) break ;;
+    esac
+    shift
+done
+alias="${1:-}"
+shift || true
+
+unreachable() {
+    echo "Connection closed by UNKNOWN port 65535" >&2
+    exit 255
+}
+
+# The master's pid, while that process is still this control path's master. A master killed outright leaves its file,
+# and its pid can belong to any process by then, which -O exit would kill.
+master_pid() {
+    [[ -n "$control" && -f "$control" ]] || return 1
+    local pid
+    pid=$(cat "$control")
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *fake-ssh*" -M "*"$control"* ]] || return 1
+    echo "$pid"
+}
+
+if [[ -n "$operation" ]]; then
+    pid=$(master_pid || true)
+    case "$operation" in
+        check)
+            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                echo "Master running (pid=$pid)" >&2
+                exit 0
+            fi
+            echo "Control socket connect($control): No such file or directory" >&2
+            exit 255
+            ;;
+        exit)
+            [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+            rm -f "$control" "$control.env"
+            echo "Exit request sent." >&2
+            exit 0
+            ;;
+        *) echo "fake-ssh: unknown -O $operation" >&2; exit 255 ;;
+    esac
+fi
+
+if [[ -z "${FAKE_SSH_HOME:-}" && -n "$control" && -f "$control.env" ]]; then
+    # shellcheck source=/dev/null
+    source "$control.env"
+fi
+[[ -n "${FAKE_SSH_HOME:-}" ]] || { echo "fake-ssh: FAKE_SSH_HOME is not set" >&2; exit 255; }
+# -G prints the settings ssh would use. The fake host is reached through a proxy, unless .fake-ssh-unknown in its home
+# makes the alias one ~/.ssh/config does not name.
+if ((print_config)); then
+    echo "hostname $alias"
+    [[ -e "$FAKE_SSH_HOME/.fake-ssh-unknown" ]] || echo "proxycommand fake-ssh"
+    exit 0
+fi
+[[ "${FAKE_SSH_DOWN:-}" == 1 || -e "$FAKE_SSH_HOME/.fake-ssh-down" ]] && unreachable
+
+if ((master)); then
+    mkdir -p "$(dirname "$control")"
+    echo $$ > "$control"
+    printf 'FAKE_SSH_HOME=%q\nFAKE_SSH_PATH=%q\n' "$FAKE_SSH_HOME" "${FAKE_SSH_PATH:-$PATH}" > "$control.env"
+    trap 'rm -f "$control" "$control.env"; exit 0' TERM INT HUP
+    # A real master outlives whoever started it; this one stops with it, so a test that fails early leaks nothing.
+    parent=$PPID
+    # Waited on in the background, so -O exit's signal runs the trap at once rather than after the sleep.
+    while kill -0 "$parent" 2>/dev/null; do
+        sleep 1 &
+        wait $!
+    done
+    rm -f "$control" "$control.env"
+    exit 0
+fi
+
+for forward in "${forwards[@]+"${forwards[@]}"}"; do
+    remote="${forward%%:*}"
+    local_path="${forward#*:}"
+    mkdir -p "$(dirname "$remote")"
+    rm -f "$remote"
+    ln -s "$local_path" "$remote"
+done
+
+# The host says it is Linux, as Canopy's hosts must be. Written once: macOS's security scanners can hold the first run
+# of every new file for seconds.
+if [[ ! -x "$FAKE_SSH_HOME/.fake-ssh-bin/uname" ]]; then
+    mkdir -p "$FAKE_SSH_HOME/.fake-ssh-bin"
+    printf '#!/bin/sh\n[ "$1" = "-s" ] && { echo Linux; exit 0; }\nexec /usr/bin/uname "$@"\n' > "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$"
+    chmod +x "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$"
+    mv -f "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$" "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
+fi
+
+cd "$FAKE_SSH_HOME" || exit 255
+export HOME="$FAKE_SSH_HOME"
+export PATH="$FAKE_SSH_HOME/.fake-ssh-bin:$FAKE_SSH_HOME/.local/bin:${FAKE_SSH_PATH:-$PATH}"
+master_pid=$(master_pid || true)
+if [[ -z "$master_pid" ]] || ! kill -0 "$master_pid" 2>/dev/null; then
+    exec /bin/bash -c "$*"
+fi
+# A command through a master ends with it, as ssh's do when the connection drops. It stays in the foreground, so a
+# terminal program such as tmux keeps the terminal. The watcher is stopped once the command ends, and acts only while
+# this script is still its parent: a pid it outlived can belong to another process by then, whose children it would
+# kill.
+(
+    while kill -0 "$master_pid" 2>/dev/null; do sleep 0.5; done
+    # bash -c execs its last command, so the child may be tmux by now, which waits on its server before it
+    # exits on a gentler signal.
+    me=$(exec /bin/sh -c 'echo $PPID')  # macOS's bash 3.2 has no BASHPID.
+    [[ "$(ps -o ppid= -p "$me" | tr -d ' ')" == "$$" ]] && pkill -KILL -P $$ 2>/dev/null
+) &
+watcher=$!
+/bin/bash -c "$*"
+status=$?
+kill "$watcher" 2>/dev/null
+kill -0 "$master_pid" 2>/dev/null || exit 255
+exit "$status"

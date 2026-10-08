@@ -39,12 +39,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let busy = model.terminals.busyPanes.compactMap(\.foreground?.name)
+        // Nothing to save, and a reply later could never come: `start()` quits from a main actor job, which keeps the
+        // reply's task from running.
+        guard model.ownsHome else { return .terminateNow }
+        // Quitting only detaches remote panes, whose programs keep running on their hosts.
+        let busy = model.terminals.busyPanes.filter { $0.context.remote == nil }.compactMap(\.foreground?.name)
         guard busy.isEmpty || confirmQuit(busy) else { return .terminateCancel }
         // Save layouts with every pane's current folder before the terminals close.
         Task {
             await model.saveTerminals()
             await model.plugins.stop()
+            await model.workspace.stopHosts()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

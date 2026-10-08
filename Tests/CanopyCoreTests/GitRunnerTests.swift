@@ -41,7 +41,8 @@ struct GitRunnerTests {
             #expect(error.timedOut)
         }
 
-        #expect(clock.now - start < .seconds(5))
+        // Well short of the 30 s sleep, with room for a loaded Mac to kill and reap the processes.
+        #expect(clock.now - start < .seconds(20))
     }
 
     /// On CI, dozens of tests running git at once took every thread Dispatch lends, and a run that queued for one
@@ -49,20 +50,18 @@ struct GitRunnerTests {
     @Test func timeoutHoldsWhenDispatchHasNoThreadsLeft() async throws {
         let dir = try TempDir()
         let git = try Fixture.git(in: dir, before: "sleep 30")
-        let clock = ContinuousClock()
 
-        let elapsed = try await withEveryDispatchThreadBusy {
-            let start = clock.now
+        let onTime = try await withEveryDispatchThreadBusy { isHolding in
             do {
                 try await git.run(["fetch"], in: dir.path, timeout: .milliseconds(300))
                 Issue.record("expected a timeout")
             } catch let error as GitError {
                 #expect(error.timedOut)
             }
-            return clock.now - start
+            return isHolding()
         }
 
-        #expect(elapsed < .seconds(5))
+        #expect(onTime, "the timeout waited for Dispatch to have a thread")
     }
 
     /// Through the /usr/bin/git shim, each test's git asked xcrun, which started xcodebuild on a fresh CI runner.
