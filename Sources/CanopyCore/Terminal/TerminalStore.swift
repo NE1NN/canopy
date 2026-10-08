@@ -456,51 +456,82 @@ public final class TerminalStore {
 
     // MARK: Saving and restoring
 
-    /// Every row's tabs as they would be restored: names, layouts, and each pane's current folder.
+    /// Every row's tabs and panel as they would be restored: names, layouts, each pane's current folder, and each
+    /// page's address and title.
     public func saved() -> [String: SavedRowTerminals] {
         var saved: [String: SavedRowTerminals] = [:]
-        for (path, tabs) in tabsByRow {
-            let terminalTabs = tabs.filter { $0.grid != nil }
-            guard !terminalTabs.isEmpty else { continue }
+        for path in rowPaths {
+            let tabs = tabs(inRow: path)
             saved[path] = SavedRowTerminals(
-                tabs: terminalTabs.compactMap { tab in
-                    tab.grid.map { grid in
-                        SavedTab(
-                            name: tab.name,
-                            layout: grid.layout.map { id in
-                                let pane = grid.panes[id]
-                                return SavedPane(folder: pane?.currentDirectory ?? pane?.startDirectory ?? path)
-                            },
-                            focused: grid.layout.leaves.firstIndex(of: grid.focusedPaneID)
-                        )
-                    }
-                },
-                selectedTab: terminalTabs.firstIndex { $0.id == selectedTabByRow[path] } ?? 0
-            )
+                tabs: tabs.map { savedTab($0, inRow: path) },
+                selectedTab: tabs.firstIndex { $0.id == selectedTabByRow[path] } ?? 0,
+                panel: panelsByRow[path].map { SavedWebPanel(page: savedPage($0.page), hidden: $0.isHidden) })
         }
         return saved
     }
 
-    /// Rebuilds a row's saved tabs with fresh shells in the saved folders. Folders that are gone fall back to the
-    /// row's own. Replaces nothing: a row that already has tabs keeps them.
-    public func restore(_ saved: SavedRowTerminals, for context: PaneContext) {
-        guard tabs(inRow: context.rowPath).isEmpty, !saved.tabs.isEmpty else { return }
-        let tabs = saved.tabs.map { savedTab in
-            let panes = savedTab.layout.leaves.map { makePane(context, command: .shell, directory: $0.folder) }
-            var index = 0
-            let layout: Layout<PaneID> = savedTab.layout.map { _ in
-                defer { index += 1 }
-                return panes[index].id
-            }
-            let focused = savedTab.focused.flatMap { panes.indices.contains($0) ? panes[$0].id : nil } ?? panes[0].id
-            let tab = TerminalTab(
-                id: TabID(nextTab), name: savedTab.name,
-                grid: TerminalGrid(layout: layout, panes: panes, focusedPaneID: focused))
-            nextTab += 1
-            return tab
+    private func savedTab(_ tab: TerminalTab, inRow path: String) -> SavedTab {
+        switch tab.content {
+        case .web(let page):
+            return SavedTab(name: tab.name, web: savedPage(page))
+        case .terminals(let grid):
+            return SavedTab(
+                name: tab.name,
+                layout: grid.layout.map { id in
+                    let pane = grid.panes[id]
+                    return SavedPane(folder: pane?.currentDirectory ?? pane?.startDirectory ?? path)
+                },
+                focused: grid.layout.leaves.firstIndex(of: grid.focusedPaneID))
         }
-        tabsByRow[context.rowPath] = tabs
-        selectedTabByRow[context.rowPath] = tabs[min(max(saved.selectedTab, 0), tabs.count - 1)].id
+    }
+
+    private func savedPage(_ page: WebPage) -> SavedWebPage {
+        SavedWebPage(url: page.url.absoluteString, title: page.title)
+    }
+
+    /// Rebuilds a row's saved tabs with fresh shells in the saved folders, and its pages, which load once they show.
+    /// Folders that are gone fall back to the row's own, and pages that are not web addresses are dropped. Replaces
+    /// nothing: a row that already has tabs keeps them, and one that has a panel keeps it.
+    public func restore(_ saved: SavedRowTerminals, for context: PaneContext) {
+        let path = context.rowPath
+        if tabs(inRow: path).isEmpty {
+            let restored = saved.tabs.enumerated().compactMap { index, savedTab in
+                restoredTab(savedTab, for: context).map { (index, $0) }
+            }
+            if let first = restored.first {
+                tabsByRow[path] = restored.map(\.1)
+                selectedTabByRow[path] = (restored.last { $0.0 <= saved.selectedTab } ?? first).1.id
+            }
+        }
+        if panelsByRow[path] == nil, let panel = saved.panel, let page = restoredPage(panel.page, for: context) {
+            panelsByRow[path] = WebPanel(page: page, isHidden: panel.hidden)
+        }
+    }
+
+    private func restoredTab(_ saved: SavedTab, for context: PaneContext) -> TerminalTab? {
+        if let web = saved.web {
+            guard let page = restoredPage(web, for: context) else { return nil }
+            defer { nextTab += 1 }
+            return TerminalTab(id: TabID(nextTab), page: page)
+        }
+        guard let savedLayout = saved.layout else { return nil }
+        let panes = savedLayout.leaves.map { makePane(context, command: .shell, directory: $0.folder) }
+        var index = 0
+        let layout: Layout<PaneID> = savedLayout.map { _ in
+            defer { index += 1 }
+            return panes[index].id
+        }
+        let focused = saved.focused.flatMap { panes.indices.contains($0) ? panes[$0].id : nil } ?? panes[0].id
+        defer { nextTab += 1 }
+        return TerminalTab(
+            id: TabID(nextTab), name: saved.name,
+            grid: TerminalGrid(layout: layout, panes: panes, focusedPaneID: focused))
+    }
+
+    private func restoredPage(_ saved: SavedWebPage, for context: PaneContext) -> WebPage? {
+        guard let url = WebAddress.parse(saved.url) else { return nil }
+        defer { nextWebPage += 1 }
+        return WebPage(id: WebPageID(nextWebPage), url: url, title: saved.title, context: context)
     }
 
     private func makePane(_ context: PaneContext, command: PaneCommand, directory: String?) -> Pane {

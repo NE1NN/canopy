@@ -100,6 +100,8 @@ final class AppModel {
         await plugins.start()
         let saved = await workspace.savedTerminals
         terminals.continueNumbering(from: await workspace.savedNextPane)
+        terminals.continueWebNumbering(from: await workspace.savedNextWebPage)
+        terminals.webPlacement = await workspace.savedWebPlacement
         snapshot = await workspace.snapshot
         restoreTerminals(saved)
         let updates = await workspace.updates()
@@ -875,7 +877,8 @@ final class AppModel {
         guard terminalsRestored else { return }
         do {
             try await workspace.setSavedTerminals(
-                terminals.saved().merging(deferredTerminals) { live, _ in live }, nextPane: terminals.nextPaneNumber)
+                terminals.saved().merging(deferredTerminals) { live, _ in live }, nextPane: terminals.nextPaneNumber,
+                nextWebPage: terminals.nextWebPageNumber, webPlacement: terminals.webPlacement)
         } catch {
             show(error)
         }
