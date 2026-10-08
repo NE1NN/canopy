@@ -9,8 +9,9 @@ public struct HostFacts: Sendable, Equatable {
     public var tmux: String
     public var python3: Bool
     public var uid: Int
-    /// sshd's MaxSessions as its config sets it: how many sessions one connection holds, each pane taking one.
-    public var maxSessions = 10
+    /// sshd's MaxSessions as its config sets it: how many sessions one connection holds, each pane taking one. Nil when
+    /// the config cannot be read.
+    public var maxSessions: Int? = 10
 }
 
 public enum HostChecks {
@@ -19,9 +20,12 @@ public enum HostChecks {
         "sh", "-c",
         #"echo "os=$(uname -s)"; echo "home=$HOME"; echo "git=$(command -v git)"; "#
             + #"echo "tmux=$(tmux -V 2>/dev/null)"; echo "python3=$(command -v python3)"; echo "uid=$(id -u)"; "#
-            // sshd takes a setting's first value, and Ubuntu's config includes sshd_config.d before its own lines.
-            + #"echo "maxsessions=$(cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null "#
-            + #"| grep -iE '^[[:space:]]*MaxSessions[[:space:]]+[0-9]+' | head -n 1 | awk '{print $2}')""#,
+            // sshd takes a setting's first value, Ubuntu's config includes sshd_config.d before its own lines, and
+            // lines after a Match apply only to some connections.
+            + #"echo "maxsessions=$(if [ -r /etc/ssh/sshd_config ]; then "#
+            + #"for f in /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config; do [ -r "$f" ] && "#
+            + #"awk 'tolower($1) == "match" { exit } tolower($1) == "maxsessions" { print $2; exit }' "$f"; "#
+            + #"done | head -n 1; else echo unknown; fi)""#,
     ]
 
     public static func parse(_ output: String) -> HostFacts {
@@ -30,18 +34,24 @@ public enum HostChecks {
             guard let equals = line.firstIndex(of: "=") else { continue }
             values[String(line[..<equals])] = String(line[line.index(after: equals)...])
         }
+        // Unset means sshd's default. A config that cannot be read says "unknown".
+        let maxSessions: Int? =
+            switch values["maxsessions"] {
+            case nil, "": 10
+            case let text?: Int(text)
+            }
         return HostFacts(
             os: values["os"] ?? "", home: values["home"] ?? "", git: !(values["git"] ?? "").isEmpty,
             tmux: values["tmux"] ?? "", python3: !(values["python3"] ?? "").isEmpty, uid: Int(values["uid"] ?? "") ?? 0,
-            maxSessions: Int(values["maxsessions"] ?? "") ?? 10)
+            maxSessions: maxSessions)
     }
 
     /// What may need the author, though the host can be used.
     public static func warnings(_ facts: HostFacts, alias: String) -> [String] {
-        guard facts.maxSessions < 20 else { return [] }
+        guard let maxSessions = facts.maxSessions, maxSessions < 20 else { return [] }
         return [
-            "\(alias) allows \(facts.maxSessions) ssh sessions per connection (sshd's MaxSessions), and each pane holds "
-                + "one, so only about \(max(facts.maxSessions - 2, 1)) panes can be open there at once. To open more, put "
+            "\(alias) allows \(maxSessions) ssh sessions per connection (sshd's MaxSessions), and each pane holds "
+                + "one, so only about \(max(maxSessions - 2, 1)) panes can be open there at once. To open more, put "
                 + "`MaxSessions 100` in /etc/ssh/sshd_config.d/canopy.conf on the host and restart ssh."
         ]
     }

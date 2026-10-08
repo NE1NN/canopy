@@ -21,6 +21,9 @@ struct HostChecksTests {
         #expect(HostChecks.warnings(facts, alias: "box").first?.contains("MaxSessions 100") == true)
         #expect(HostChecks.parse("maxsessions=64\n").maxSessions == 64)
         #expect(HostChecks.warnings(HostChecks.parse("maxsessions=64\n"), alias: "box").isEmpty)
+        // Some systems let only root read sshd's config.
+        #expect(HostChecks.parse("maxsessions=unknown\n").maxSessions == nil)
+        #expect(HostChecks.warnings(HostChecks.parse("maxsessions=unknown\n"), alias: "box").isEmpty)
     }
 
     @Test func eachMissingToolIsNamed() {
