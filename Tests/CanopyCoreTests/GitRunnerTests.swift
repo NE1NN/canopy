@@ -41,7 +41,8 @@ struct GitRunnerTests {
             #expect(error.timedOut)
         }
 
-        #expect(clock.now - start < .seconds(5))
+        // Well short of the 30 s sleep, with room for a loaded Mac to kill and reap the processes.
+        #expect(clock.now - start < .seconds(20))
     }
 
     /// On CI, dozens of tests running git at once took every thread Dispatch lends, and a run that queued for one

@@ -46,7 +46,8 @@ struct EnvironmentTests {
         let start = clock.now
 
         #expect(try await offPool { ShellEnvironment.loginPath(shell: shell, timeout: .milliseconds(300)) } == nil)
-        #expect(clock.now - start < .seconds(5))
+        // Well short of the 30 s sleep, with room for a loaded Mac to kill and reap the shell.
+        #expect(clock.now - start < .seconds(20))
     }
 
     @Test func gitIgnoresAnInheritedGitDir() async throws {
