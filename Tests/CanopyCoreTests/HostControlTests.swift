@@ -84,6 +84,29 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    @Test func aCloneReachedThroughALinkIsACheckout() async throws {
+        let setup = try await Setup()
+        try FileManager.default.createSymbolicLink(
+            atPath: setup.host.home + "/linked", withDestinationPath: setup.clone)
+
+        let info = try await setup.workspace.addHost(
+            alias: "box", repos: ["demo": "~/linked"], wake: nil, idleDetachMinutes: nil)
+
+        #expect(info.repos == ["demo": setup.host.home + "/linked"])
+        await setup.workspace.stop()
+    }
+
+    @Test func aFolderInsideACheckoutIsNotOne() async throws {
+        let setup = try await Setup()
+        try FileManager.default.createDirectory(atPath: setup.clone + "/sub", withIntermediateDirectories: true)
+
+        await #expect {
+            try await setup.workspace.addHost(
+                alias: "box", repos: ["demo": "~/Projects/demo/sub"], wake: nil, idleDetachMinutes: nil)
+        } throws: { ($0 as? WorkspaceError)?.code == "repo_not_found" }
+        await setup.workspace.stop()
+    }
+
     @Test func addingAgainUpdatesTheHost() async throws {
         let setup = try await Setup()
         try await setup.workspace.addHost(

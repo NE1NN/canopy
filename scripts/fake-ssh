@@ -3,7 +3,9 @@
 # It takes the options Canopy passes. A master (-M) writes its pid to the control path and waits to be stopped;
 # -O check and -O exit act on that pid. Anything else runs the remote command with bash in $FAKE_SSH_HOME.
 # -R remote:local links the remote socket path to the local one, which connect() follows like a forward.
-# FAKE_SSH_DOWN=1 makes every call fail as an unreachable host does, with ssh's exit code 255.
+# FAKE_SSH_DOWN=1, or a file .fake-ssh-down in the host's home, makes every call fail as an unreachable host does,
+# with ssh's exit code 255. Calls from a Canopy terminal do not get the app's environment, so the master writes the
+# host's settings beside its control path, and later calls through that path read them.
 set -uo pipefail
 
 control=""
@@ -49,7 +51,7 @@ if [[ -n "$operation" ]]; then
             ;;
         exit)
             [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
-            rm -f "$control"
+            rm -f "$control" "$control.env"
             echo "Exit request sent." >&2
             exit 0
             ;;
@@ -57,17 +59,22 @@ if [[ -n "$operation" ]]; then
     esac
 fi
 
-[[ "${FAKE_SSH_DOWN:-}" == 1 ]] && unreachable
+if [[ -z "${FAKE_SSH_HOME:-}" && -n "$control" && -f "$control.env" ]]; then
+    # shellcheck source=/dev/null
+    source "$control.env"
+fi
 [[ -n "${FAKE_SSH_HOME:-}" ]] || { echo "fake-ssh: FAKE_SSH_HOME is not set" >&2; exit 255; }
+[[ "${FAKE_SSH_DOWN:-}" == 1 || -e "$FAKE_SSH_HOME/.fake-ssh-down" ]] && unreachable
 
 if ((master)); then
     mkdir -p "$(dirname "$control")"
     echo $$ > "$control"
-    trap 'rm -f "$control"; exit 0' TERM INT HUP
+    printf 'FAKE_SSH_HOME=%q\nFAKE_SSH_PATH=%q\n' "$FAKE_SSH_HOME" "${FAKE_SSH_PATH:-$PATH}" > "$control.env"
+    trap 'rm -f "$control" "$control.env"; exit 0' TERM INT HUP
     # A real master outlives whoever started it; this one stops with it, so a test that fails early leaks nothing.
     parent=$PPID
     while kill -0 "$parent" 2>/dev/null; do sleep 1; done
-    rm -f "$control"
+    rm -f "$control" "$control.env"
     exit 0
 fi
 

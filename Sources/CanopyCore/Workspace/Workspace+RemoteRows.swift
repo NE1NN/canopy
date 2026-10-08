@@ -142,7 +142,10 @@ extension Workspace {
             {
                 throw WorkspaceError.branchCheckedOut(branch, row: nil)
             }
-            let worktree = RepoGit(git: clone.git, path: folder)
+            // git lists worktrees by their real path, which differs from one made under a home reached through a link.
+            let real = try await RepoGit(git: clone.git, path: folder).run(["rev-parse", "--show-toplevel"])
+                .trimmingCharacters(in: .newlines)
+            let worktree = RepoGit(git: clone.git, path: real.isEmpty ? folder : real)
             if let fastForward {
                 do {
                     try await worktree.run(["merge", "--ff-only", "--quiet", fastForward.commit])
@@ -163,7 +166,7 @@ extension Workspace {
             let head = try await worktree.run(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
             let leaf = (folder as NSString).lastPathComponent
             let entry = RemoteRowEntry(
-                host: alias, path: folder,
+                host: alias, path: worktree.path,
                 standIn: standInPath(alias: alias, dirName: target.dirName, leaf: leaf), branch: branch, head: head)
             if source != .local { try? forgetPullRequest(of: branch, repoPath: repoPath) }
             if let link {

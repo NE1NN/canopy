@@ -358,3 +358,16 @@ struct HostMonitorTests {
         await setup.workspace.stop()
     }
 }
+
+struct RemoteLinkedHomeTests {
+    @Test func aHostWhoseHomeIsALinkStillListsItsRows() async throws {
+        let setup = try await RemoteRowTests.Setup(host: { try FakeHost(in: $0, linkedHome: true) })
+        let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/l")
+
+        await setup.workspace.refreshRemote(repoPath: setup.repo, host: "box")
+
+        #expect(await setup.workspace.snapshot.row(path: created.row.path)?.isMissing == false)
+        #expect(await setup.workspace.snapshot.row(path: created.row.path)?.branch == "feat/l")
+        await setup.workspace.stop()
+    }
+}

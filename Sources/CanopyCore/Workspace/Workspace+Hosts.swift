@@ -91,8 +91,9 @@ extension Workspace {
         guard problems.isEmpty else { throw WorkspaceError.hostUnfit(alias, missing: problems) }
         for (name, path) in names {
             let clone = HostChecks.resolve(path, home: facts.home)
-            let top = try? await remoteGit(alias).run(["rev-parse", "--show-toplevel"], in: clone)
-            guard top?.trimmingCharacters(in: .newlines) == clone else {
+            // Empty at a checkout's top, however the path reaches it, and a path to its parent above anywhere inside.
+            let up = try? await remoteGit(alias).run(["rev-parse", "--show-cdup"], in: clone)
+            guard up?.trimmingCharacters(in: .newlines) == "" else {
                 throw WorkspaceError.cloneNotFound(alias, path: clone)
             }
             entry.repos[name] = clone
