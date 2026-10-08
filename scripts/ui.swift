@@ -7,7 +7,7 @@
 //   ui key <pid> <keycode> [cmd] [shift] [opt] [ctrl]
 //   ui type <pid> <text>
 //   ui move <pid> <x> <y>                   points from the window's top-left, as in a window shot divided by 2
-//   ui click <pid> <x> <y> [count]
+//   ui click <pid> <x> <y> [count] [cmd] [shift] [opt] [ctrl]
 //   ui rightclick <pid> <x> <y>             opens a context menu
 //   ui drag <pid> <x1> <y1> <x2> <y2>
 //   ui down <pid> <x> <y>                   press the button and keep it held, for a shot in the middle of a drag
@@ -81,9 +81,12 @@ func post(_ event: CGEvent) {
     usleep(15_000)
 }
 
-func mouse(_ type: CGEventType, at point: CGPoint, clickCount: Int64 = 1, button: CGMouseButton = .left) {
+func mouse(
+    _ type: CGEventType, at point: CGPoint, clickCount: Int64 = 1, button: CGMouseButton = .left, flags: CGEventFlags = []
+) {
     let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button)!
     event.setIntegerValueField(.mouseEventClickState, value: clickCount)
+    event.flags = flags
     event.post(tap: .cghidEventTap)
     usleep(20_000)
 }
@@ -145,11 +148,12 @@ case "move":
 case "click":
     requireFrontmost()
     let point = windowPoint(2)
-    let count = args.count > 4 ? Int(number(4)) : 1
-    mouse(.mouseMoved, at: point)
+    let count = args.count > 4 ? Int(args[4]) ?? 1 : 1
+    let flags = modifiers(args.dropFirst(4))
+    mouse(.mouseMoved, at: point, flags: flags)
     for click in 1...max(count, 1) {
-        mouse(.leftMouseDown, at: point, clickCount: Int64(click))
-        mouse(.leftMouseUp, at: point, clickCount: Int64(click))
+        mouse(.leftMouseDown, at: point, clickCount: Int64(click), flags: flags)
+        mouse(.leftMouseUp, at: point, clickCount: Int64(click), flags: flags)
     }
 case "rightclick":
     requireFrontmost()
