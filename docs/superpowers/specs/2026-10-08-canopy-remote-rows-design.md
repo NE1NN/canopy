@@ -88,19 +88,25 @@ Running it again for a host that exists updates its repos and options, and insta
 
 ### Files on the host
 
-Canopy keeps its files under `~/.canopy` on the host:
+Canopy keeps its files under `~/.canopy` on the host, each Mac's Canopy home in its own folder named by its id (below):
 
 | Path | What |
 |---|---|
-| `~/.canopy/bin/canopy-host` | one Python 3 script with four commands: `relay`, `probe`, `replay`, and `open` |
-| `~/.canopy/bin/canopy` | runs `canopy-host relay`, and is linked from `~/.local/bin/canopy` when nothing else is there, so login shells find it |
-| `~/.canopy/bin/xdg-open` | runs `canopy-host open`, first on remote panes' PATH |
+| `~/.canopy/<home id>/bin/canopy-host` | one Python 3 script with four commands: `relay`, `probe`, `replay`, and `open` |
+| `~/.canopy/<home id>/bin/canopy` | runs this home's `canopy-host relay` |
+| `~/.canopy/<home id>/bin/xdg-open` | runs this home's `canopy-host open`, first on its remote panes' PATH |
+| `~/.canopy/<home id>/tmux.conf` | Canopy's tmux settings |
+| `~/.canopy/<home id>/files-version` | the version of this home's files |
 | `~/.canopy/<home id>/app.sock` | the app's relay socket, forwarded from the Mac while the host is connected |
-| `~/.canopy/tmux.conf` | Canopy's tmux settings |
-| `~/.canopy/worktrees/<repo>/<slug>` | remote rows' worktrees, named as local rows' folders are |
 | `~/.canopy/<home id>/pending/` | agent reports the relay could not deliver |
+| `~/.canopy/bin/canopy` | the same for every home and version: runs `~/.canopy/$CANOPY_HOME_ID/bin/canopy`, and outside a Canopy pane fails with "Run canopy in a Canopy terminal on this host." |
+| `~/.local/bin/canopy` | a link to `~/.canopy/bin/canopy`, made when nothing else is there, so login shells and shells that reorder PATH find it |
+| `~/.canopy/worktrees/<repo>/<slug>` | remote rows' worktrees, named as local rows' folders are |
 
-The scripts and `tmux.conf` carry the app's version, and are installed again whenever the app connects and finds another version.
+A home's scripts and `tmux.conf` carry the app's version, and are installed again whenever the app connects and finds another version in `files-version`.
+So two homes with different builds on one host, such as the release app and a dev build, never replace each other's files.
+The shared `~/.canopy/bin/canopy` has no version, and is written only when it differs.
+Builds from before homes had their own folders kept their files in `~/.canopy/bin` and `~/.canopy/tmux.conf`, and those are left for any such build still using them.
 A Mac's Canopy home has an id, 8 random hex digits made the first time and kept in `CANOPY_HOME/home-id`.
 It is not derived from the Mac's host name, which macOS changes with the network: a new id would leave running sessions in a tmux server the panes no longer look for.
 The tmux server is `-L canopy-<home id>` and the forwarded sockets are named with it, so a dev build and the release app never share sessions on one host.
@@ -197,7 +203,7 @@ A host that cannot be reached fails the removal with `host_unreachable`, unless 
 A remote pane runs `canopy remote-attach` in its pty, in the stand-in folder, a hidden CLI command that:
 
 1. asks the app over the control socket to connect the pane's host, and prints the host's state while it waits, such as "Starting hindie-box…";
-2. runs `ssh -t` through the master, forwarding the pane's socket on the host (below) to the app, and runs on the host `tmux -L canopy-<home id> -f ~/.canopy/tmux.conf new-session -A -s <session> -c <folder>`, with the pane's variables set in the session;
+2. runs `ssh -t` through the master, forwarding the pane's socket on the host (below) to the app, and runs on the host `tmux -L canopy-<home id> -f ~/.canopy/<home id>/tmux.conf new-session -A -s <session> -c <folder>`, with the pane's variables set in the session;
 3. when ssh ends, asks the app what next.
 
 The session is `p<pane number>`, and is saved with the pane, so a relaunched Canopy reattaches to the same running program.
@@ -220,9 +226,9 @@ The pane's variables on the host are those a local pane gets, with these differe
 | `CANOPY_ROOT_PATH` | the host's clone |
 | `CANOPY_HOST` | the host's alias |
 | `CANOPY_SOCKET` | the host's forwarded socket, `~/.canopy/<home id>/app.sock` |
-| `CANOPY_CLI` | `~/.canopy/bin/canopy` |
-| `CANOPY_HOME_ID` | the home id, which names the host's folder for pending reports |
-| `PATH` | `~/.canopy/bin` first, so `xdg-open` is Canopy's |
+| `CANOPY_CLI` | `~/.canopy/<home id>/bin/canopy` |
+| `CANOPY_HOME_ID` | the home id, which names the home's folder on the host |
+| `PATH` | `~/.canopy/<home id>/bin` first, so `canopy` and `xdg-open` are this home's |
 | `CANOPY_HOME`, `ZDOTDIR` | not set |
 
 ### tmux
@@ -249,7 +255,7 @@ Quitting Canopy and stopping the master only detach.
 
 ### The relay
 
-`~/.canopy/bin/canopy` sends what it was run with to the app and prints the answer:
+`~/.canopy/<home id>/bin/canopy` sends what it was run with to the app and prints the answer:
 
 - It connects to `$CANOPY_SOCKET`, and outside a Canopy pane fails with "Run canopy in a Canopy terminal on this host."
 - It sends one JSON line holding its version, its arguments, its working folder, the `CANOPY_*` variables, and its standard input when that is not a terminal, base64-encoded.
@@ -269,9 +275,9 @@ The CLI's run ends when the connection closes, and has no terminal, so a command
 
 ### Opening links
 
-Claude Code on Linux opens links with `xdg-open`, and the remote panes' `~/.canopy/bin/xdg-open` runs `canopy-host open`.
+Claude Code on Linux opens links with `xdg-open`, and the remote panes' `~/.canopy/<home id>/bin/xdg-open` runs `canopy-host open`.
 A claude.ai artifact link, by the rule the app uses for ⌘-clicks, becomes `canopy web open <url>` through the relay, so the artifact opens in the remote row.
-Anything else goes to the next `xdg-open` on the PATH, and without one it fails as a missing `xdg-open` does.
+Anything else goes to the next `xdg-open` on the PATH that is not one of Canopy's, and without one it fails as a missing `xdg-open` does.
 
 ### Hooks
 

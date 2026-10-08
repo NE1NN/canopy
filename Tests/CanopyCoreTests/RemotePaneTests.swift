@@ -135,7 +135,7 @@ struct RemotePaneTests {
 struct RemoteAttachTests {
     @Test func tmuxStartsOrJoinsTheSessionInItsFolderWithThePanesVariables() throws {
         let command = RemoteAttach.tmuxCommand(
-            server: "canopy-abcd1234", session: "p7", folder: "/home/u/my work",
+            homeID: "abcd1234", session: "p7", folder: "/home/u/my work",
             environment: ["CANOPY_PANE": "p7", "CANOPY_ROW_PATH": "/home/u/my work"])
 
         let dir = try TempDir()
@@ -149,7 +149,8 @@ struct RemoteAttachTests {
         let words = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(
             words == [
-                "-u", "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/tmux.conf", "new-session", "-A", "-s", "p7", "-c",
+                "-u", "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/abcd1234/tmux.conf", "new-session", "-A", "-s",
+                "p7", "-c",
                 "/home/u/my work", "-e", "CANOPY_PANE=p7", "-e", "CANOPY_ROW_PATH=/home/u/my work",
             ])
     }

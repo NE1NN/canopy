@@ -142,9 +142,9 @@ extension Workspace {
 
     /// Writes Canopy's files on the host unless it has this version of them.
     func installFiles(on connection: HostConnection) async throws {
-        let installed = try await output(of: HostFiles.versionCommand, on: connection)
+        let installed = try await output(of: HostFiles.versionCommand(homeID: homeID), on: connection)
         guard installed.trimmingCharacters(in: .whitespacesAndNewlines) != HostFiles.version else { return }
-        _ = try await output(of: HostFiles.installCommand(server: HostPaths.tmuxServer(homeID: homeID)), on: connection)
+        _ = try await output(of: HostFiles.installCommand(homeID: homeID), on: connection)
     }
 
     /// What a command printed on the host, failing with its message when it fails.
@@ -290,8 +290,7 @@ extension Workspace {
         let environment = RemoteAttach.environment(
             pane: pane, rowName: rowName, repoName: target.repoName, host: alias, rowPath: row?.path ?? folder,
             clone: target.clone)
-        let tmux = RemoteAttach.tmuxCommand(
-            server: HostPaths.tmuxServer(homeID: homeID), session: session, folder: folder, environment: environment)
+        let tmux = RemoteAttach.tmuxCommand(homeID: homeID, session: session, folder: folder, environment: environment)
         return ssh(for: alias).attach(tmux)
     }
 }

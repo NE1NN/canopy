@@ -56,15 +56,15 @@ public struct HostNextResult: Codable, Sendable, Equatable {
 }
 
 public enum RemoteAttach {
-    /// Starts the pane's session on the host, or joins it when it runs already, with Canopy's tmux server and config.
-    /// The variables only apply to a session it starts.
-    public static func tmuxCommand(server: String, session: String, folder: String, environment: [String: String])
+    /// Starts the pane's session on the host, or joins it when it runs already, with this home's tmux server and
+    /// config. The variables only apply to a session it starts.
+    public static func tmuxCommand(homeID: String, session: String, folder: String, environment: [String: String])
         -> [String]
     {
         let script =
-            #"s=$0 n=$1 d=$2; shift 2; exec tmux -u -L "$s" -f "$HOME/.canopy/tmux.conf" new-session -A -s "$n" -c "$d" "$@""#
+            #"h=$0 s=$1 n=$2 d=$3; shift 3; exec tmux -u -L "$s" -f "$HOME/.canopy/$h/tmux.conf" new-session -A -s "$n" -c "$d" "$@""#
         let variables = environment.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
-        return ["sh", "-c", script, server, session, folder] + variables
+        return ["sh", "-c", script, homeID, HostPaths.tmuxServer(homeID: homeID), session, folder] + variables
     }
 
     /// What a remote pane's shell gets, as a local pane would, with the host's paths. No CANOPY_HOME or ZDOTDIR: those

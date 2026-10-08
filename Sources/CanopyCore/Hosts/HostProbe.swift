@@ -38,8 +38,11 @@ public enum HostProbe {
             }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// The command that probes this home's tmux server on a host.
-    public static func command(server: String) -> [String] {
-        ["sh", "-c", "exec python3 ~/.canopy/bin/canopy-host probe --server \"$0\"", server]
+    /// The command that probes this home's tmux server on a host, with this home's helper.
+    public static func command(homeID: String) -> [String] {
+        [
+            "sh", "-c", #"exec python3 "$HOME/.canopy/$0/bin/canopy-host" probe --server "$1""#, homeID,
+            HostPaths.tmuxServer(homeID: homeID),
+        ]
     }
 }

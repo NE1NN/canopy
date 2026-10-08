@@ -1,59 +1,100 @@
 import Foundation
 
-/// The files Canopy keeps under ~/.canopy on a host, and the command that writes them.
+/// The files Canopy keeps on a host, and the command that writes them.
+/// Each Canopy home keeps its own under `~/.canopy/<home id>`, so the release app and a dev build connected to one
+/// host at once never replace each other's.
 public enum HostFiles {
     /// Changes whenever any of the files does, so a host with older files gets them again.
+    /// The shared `canopy` stays out of it: it is the same for every version and must never ask for an install.
     public static let version =
-        "\(CanopyVersion.current)+\(HomeID.hash(scriptSource + canopyLauncher + xdgOpenLauncher + tmuxConf))"
+        "\(CanopyVersion.current)+\(HomeID.hash(scriptSource + canopyLauncherSource + xdgOpenLauncherSource + tmuxConf))"
 
-    /// The remote command that writes the files, each through a temporary file and a rename, then the version, and
-    /// has a tmux server already running read the new config. Contents travel in the command, base64-encoded.
-    /// `~/.local/bin/canopy` links to the relay so login shells find it, unless something else already has that name.
-    public static func installCommand(server: String) -> [String] {
+    /// The remote command that writes this home's files, each through a temporary file and a rename, then the version,
+    /// and has this home's tmux server, when it runs, read the new config. Contents travel in the command,
+    /// base64-encoded. `~/.local/bin/canopy` links to the shared `canopy` so login shells find it, unless something
+    /// else already has that name.
+    /// Builds before each home had its own folder kept theirs in `~/.canopy/bin`, `~/.canopy/tmux.conf`, and
+    /// `~/.canopy/files-version`. Those stay, since an older build on another home may still use them.
+    public static func installCommand(homeID: String) -> [String] {
         let program = """
             import base64, os, subprocess, sys
-            home = os.path.expanduser("~/.canopy")
+            canopy = os.path.expanduser("~/.canopy")
+            home = os.path.join(canopy, sys.argv[1])
             def put(path, text, mode):
-                path = os.path.join(home, path)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 temporary = path + ".canopy-new-" + str(os.getpid())
                 with open(temporary, "wb") as file:
-                    file.write(base64.b64decode(text))
+                    file.write(text)
                 os.chmod(temporary, mode)
                 os.replace(temporary, path)
-            put("bin/canopy-host", sys.argv[1], 0o755)
-            put("bin/canopy", sys.argv[2], 0o755)
-            put("bin/xdg-open", sys.argv[3], 0o755)
-            put("tmux.conf", sys.argv[4], 0o644)
-            relay = os.path.join(home, "bin/canopy")
+            def own(path, text, mode):
+                put(os.path.join(home, path), base64.b64decode(text), mode)
+            own("bin/canopy-host", sys.argv[3], 0o755)
+            own("bin/canopy", sys.argv[4], 0o755)
+            own("bin/xdg-open", sys.argv[5], 0o755)
+            own("tmux.conf", sys.argv[6], 0o644)
+            shared = os.path.join(canopy, "bin/canopy")
+            content = base64.b64decode(sys.argv[7])
+            try:
+                with open(shared, "rb") as file:
+                    current = file.read()
+            except OSError:
+                current = None
+            if current != content or not os.access(shared, os.X_OK):
+                put(shared, content, 0o755)
             link = os.path.expanduser("~/.local/bin/canopy")
             try:
                 if not os.path.lexists(link):
                     os.makedirs(os.path.dirname(link), exist_ok=True)
-                    os.symlink(relay, link)
+                    os.symlink(shared, link)
             except OSError:
-                pass  # Panes find the relay on their own PATH anyway.
-            put("files-version", sys.argv[5], 0o644)
+                pass  # Panes find this home's canopy on their own PATH anyway.
+            own("files-version", sys.argv[8], 0o644)
             try:
-                subprocess.run(["tmux", "-u", "-L", sys.argv[6], "source-file", os.path.join(home, "tmux.conf")],
+                subprocess.run(["tmux", "-u", "-L", sys.argv[2], "source-file", os.path.join(home, "tmux.conf")],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
                 pass  # Without tmux there is no server to tell.
             """
-        let files = [script, canopyLauncher, xdgOpenLauncher, tmuxConf, version].map {
-            Data($0.utf8).base64EncodedString()
-        }
-        return ["python3", "-c", program] + files + [server]
+        let files = [
+            script, canopyLauncher(homeID: homeID), xdgOpenLauncher(homeID: homeID), tmuxConf, sharedCanopy, version,
+        ].map { Data($0.utf8).base64EncodedString() }
+        return ["python3", "-c", program, homeID, HostPaths.tmuxServer(homeID: homeID)] + files
     }
 
-    /// `~/.canopy/bin/canopy`, which panes on the host find first on their PATH.
-    public static let canopyLauncher = "#!/bin/sh\nexec python3 \"$HOME/.canopy/bin/canopy-host\" relay \"$@\"\n"
+    /// `~/.canopy/<home id>/bin/canopy`, which this home's panes on the host find first on their PATH.
+    public static func canopyLauncher(homeID: String) -> String {
+        canopyLauncherSource.replacingOccurrences(of: "@CANOPY_HOME_ID@", with: homeID)
+    }
 
-    /// `~/.canopy/bin/xdg-open`, which programs in panes on the host open links with.
-    public static let xdgOpenLauncher = "#!/bin/sh\nexec python3 \"$HOME/.canopy/bin/canopy-host\" open \"$@\"\n"
+    /// `~/.canopy/<home id>/bin/xdg-open`, which programs in this home's panes on the host open links with.
+    public static func xdgOpenLauncher(homeID: String) -> String {
+        xdgOpenLauncherSource.replacingOccurrences(of: "@CANOPY_HOME_ID@", with: homeID)
+    }
 
-    /// Reads the installed version, or prints nothing when there is none.
-    public static let versionCommand = ["sh", "-c", "cat ~/.canopy/files-version 2>/dev/null; true"]
+    private static let canopyLauncherSource =
+        "#!/bin/sh\nexec python3 \"$HOME/.canopy/@CANOPY_HOME_ID@/bin/canopy-host\" relay \"$@\"\n"
+
+    private static let xdgOpenLauncherSource =
+        "#!/bin/sh\nexec python3 \"$HOME/.canopy/@CANOPY_HOME_ID@/bin/canopy-host\" open \"$@\"\n"
+
+    /// `~/.canopy/bin/canopy`, the same for every home and every build, which `~/.local/bin/canopy` links to.
+    /// A pane whose shell's startup files put other folders before its home's own still reaches its home's `canopy`.
+    public static let sharedCanopy = """
+        #!/bin/sh
+        # Written by Canopy. Runs the canopy of the Canopy terminal it is in.
+        if [ -n "$CANOPY_HOME_ID" ] && [ -x "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" ]; then
+            exec "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" "$@"
+        fi
+        echo "Run canopy in a Canopy terminal on this host." >&2
+        exit 1
+
+        """
+
+    /// Reads this home's installed version, or prints nothing when there is none.
+    public static func versionCommand(homeID: String) -> [String] {
+        ["sh", "-c", #"cat "$HOME/.canopy/$0/files-version" 2>/dev/null; true"#, homeID]
+    }
 
     /// tmux settings for Canopy's own server. Lines scrolled off a session's one window go into Canopy's scrollback,
     /// so scrolling and selecting work as in a local pane, and titles and copies reach Canopy.
@@ -285,20 +326,24 @@ public enum HostFiles {
             return False
 
 
+        def is_canopys(folder, own):
+            """Whether a folder is one of Canopy's on this host: this script's, the shared one, or another home's."""
+            folder = os.path.realpath(folder)
+            root = os.path.realpath(os.path.expanduser("~/.canopy"))
+            return folder == own or (os.path.basename(folder) == "bin"
+                                     and root in (os.path.dirname(folder), os.path.dirname(os.path.dirname(folder))))
+
+
         def next_opener():
             """The host's own xdg-open: the first on PATH that is not Canopy's, however it is reached."""
-            canopy = os.path.realpath(os.path.expanduser("~/.canopy/bin"))
-            own = os.path.join(canopy, "xdg-open")
+            own = os.path.dirname(os.path.realpath(__file__))
             for entry in os.environ.get("PATH", "").split(os.pathsep):
-                if not entry or os.path.realpath(entry) == canopy:
+                if not entry or is_canopys(entry, own):
                     continue
                 candidate = os.path.join(entry, "xdg-open")
                 if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
                     continue
-                try:
-                    if os.path.exists(own) and os.path.samefile(candidate, own):
-                        continue
-                except OSError:
+                if is_canopys(os.path.dirname(os.path.realpath(candidate)), own):
                     continue
                 return candidate
             return None

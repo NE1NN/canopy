@@ -55,10 +55,10 @@ public final class HostMonitor {
     /// One round: every connected host's sessions, onto its panes.
     public func probe() async {
         probes += 1
-        let server = HostPaths.tmuxServer(homeID: workspace.homeID)
+        let command = HostProbe.command(homeID: workspace.homeID)
         for connection in await workspace.connectedHosts() {
             let alias = connection.alias
-            guard let result = await connection.probe(HostProbe.command(server: server), timeout: .seconds(10)),
+            guard let result = await connection.probe(command, timeout: .seconds(10)),
                 result.status == 0, let sessions = try? HostProbe.decode(result.stdout)
             else { continue }
             let panes = terminals.panes.filter { $0.context.remote?.host == alias }

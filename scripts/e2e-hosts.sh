@@ -7,8 +7,8 @@
 # It adds the host, makes a remote row with --run, types into it, checks the host's report of its folder, checks a
 # second home on the same host keeps to its own tmux server, rejoins the session after the app quits and after the
 # connection drops, keeps keys typed while reconnecting, detaches the idle host and reconnects on Return, and removes
-# the row and the host. The real host's throwaway folder and this home's tmux server there are removed at the
-# end, and nothing else on the host is touched.
+# the row and the host. The real host's throwaway folder, and the throwaway homes' tmux servers and own files there,
+# are removed at the end, and nothing else on the host is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -70,6 +70,8 @@ cleanup() {
     for name in "$server" "${server2:-}"; do
         [[ -n "$name" ]] || continue
         on_host "tmux -u -L $name kill-server; rm -f \"\${TMUX_TMPDIR:-/tmp}/tmux-\$(id -u)/$name\"" >/dev/null 2>&1 || true
+        # The throwaway home's own files on the host, which no other home uses.
+        [[ "$name" =~ ^canopy-[0-9a-f]{8}$ ]] && on_host "rm -rf ~/.canopy/${name#canopy-}" >/dev/null 2>&1 || true
     done
     # A run that failed before row rm leaves its worktrees, whose clone goes with the throwaway folder below.
     on_host 'cd ~/.canopy/worktrees/demo 2>/dev/null && rm -rf e2e-remote e2e-other && cd .. && rmdir demo' \
@@ -135,7 +137,7 @@ launch
 "$cli" host add "$alias" --repo "demo=$host_dir/demo" >/dev/null
 server=$("$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
 [[ "$(host_state)" == connected ]] || fail "the host is $(host_state), not connected"
-on_host 'test -x ~/.canopy/bin/canopy-host' || fail "canopy-host is not on the host"
+on_host "test -x ~/.canopy/${server#canopy-}/bin/canopy-host" || fail "canopy-host is not on the host"
 if "$cli" host add "$alias" --repo "demo=$host_dir/nowhere" 2>/dev/null; then fail "a missing clone was accepted"; fi
 
 step "row new --on makes the worktree on the host and runs --run in its tmux session"
@@ -157,13 +159,15 @@ wait_for 30 screen_has sent-2 || fail "term send did not reach the host"
 folder_is_tmp() { "$cli" term list --json | json '[t["folder"] for t in d if t["pane"] == "'"$pane"'"][0]' | grep -Eqx '(/private)?/tmp'; }
 wait_for 20 folder_is_tmp || fail "term list does not show the host's folder"
 
-step "a second home on the same host has its own tmux server and sessions"
+step "a second home on the same host has its own tmux server, sessions, and files"
 home2() { CANOPY_HOME="$work/home2" "$@"; }
 CANOPY_HOME="$work/home2" launch
 home2 "$cli" repo add "$work/demo" >/dev/null
 home2 "$cli" host add "$alias" --repo "demo=$host_dir/demo" >/dev/null 2>&1
 server2=$(home2 "$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
 [[ "$server2" != "$server" ]] || fail "both homes use the tmux server $server"
+on_host "test -x ~/.canopy/${server2#canopy-}/bin/canopy-host && test -x ~/.canopy/${server#canopy-}/bin/canopy-host" ||
+    fail "the homes do not each have their own canopy-host"
 home2 "$cli" row new "e2e/other" --repo demo --on "$alias" --run 'echo other-$((1 + 1))' >/dev/null
 pane2=$(home2 "$cli" term list --json | json '[t["pane"] for t in d if t["row"] == "e2e/other"][0]')
 other_has() { home2 "$cli" term read "$pane2" --lines 200 | grep -q "$1"; }

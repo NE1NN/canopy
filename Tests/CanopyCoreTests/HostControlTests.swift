@@ -190,7 +190,9 @@ struct HostControlTests {
         #expect(info.tmuxServer == HostPaths.tmuxServer(homeID: setup.workspace.homeID))
         let saved = HostsConfig.load(from: setup.workspace.home.configFile).hosts["box"]
         #expect(saved == HostEntry(repos: ["demo": setup.clone], wake: "start it", idleDetachMinutes: 10))
-        #expect(FileManager.default.fileExists(atPath: setup.host.home + "/.canopy/bin/canopy-host"))
+        #expect(
+            FileManager.default.fileExists(
+                atPath: setup.host.home + "/.canopy/\(setup.workspace.homeID)/bin/canopy-host"))
         setup.workspace.activity.flushNow()
         let events = ActivityReader.events(in: setup.workspace.home.activityFolder, since: .distantPast, until: nil)
         #expect(events.contains { $0.type == "host.added" && $0.data["host"] == .string("box") })

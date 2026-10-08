@@ -106,6 +106,16 @@ Modified:
 
 **Commit:** `feat: the app serves its CLI to hosts`
 
+### Fix between Tasks 3 and 4: each home's own files on a host
+
+Two homes with different builds on one host, such as the release app and a dev build running `scripts/e2e-hosts.sh --host`, replaced each other's files in `~/.canopy/bin`, and since Task 3 each answered the other's relays with `relay_outdated` and installed again.
+Each home's `canopy-host`, `canopy`, `xdg-open`, `tmux.conf`, and `files-version` now live in `~/.canopy/<home id>/`, as the spec's files table says.
+A shared `~/.canopy/bin/canopy`, the same for every home and version and outside `HostFiles.version`, runs `~/.canopy/$CANOPY_HOME_ID/bin/canopy`, and `~/.local/bin/canopy` links to it.
+`HostFiles.installCommand(homeID:)`, `HostFiles.versionCommand(homeID:)`, `HostProbe.command(homeID:)`, and `RemoteAttach.tmuxCommand(homeID:session:folder:environment:)` take the home id.
+`canopy-host open` skips its own folder, `~/.canopy/bin`, and any other home's `bin` when it looks for the host's `xdg-open`.
+
+**Commit:** `fix: each Canopy home keeps its own files on a host`
+
 ### Task 4: The forward, the pane's variables, and replay on attach
 
 **Files:** modify `Hosts/SSHCommand.swift`, `Hosts/RemoteAttach.swift`, `Workspace/Workspace+Hosts.swift`, `Control/WorkspaceControlHandler.swift`, `scripts/fake-ssh`, `CanopyApp/AppModel.swift` (pass `relayCLI`); tests in `RemoteRowTests.swift`, `SSHCommandTests.swift`.
@@ -114,7 +124,7 @@ Modified:
 - `SSHCommand.forward(remote:local:) -> [String]`: `-S <control> -O forward -R <remote>:<local> <alias>`.
 - `HostPaths.relaySocket(home:homeID:)` on the host: `<host home>/.canopy/<home id>/app.sock`.
 - `prepare` (each new connection): starts the host's relay server if not running, runs `mkdir -p` with mode 0700 and `rm -f` for the socket, then the forward; a failed forward is logged and leaves panes working without the CLI.
-- The pane's session gets `CANOPY_SOCKET`, `CANOPY_CLI` (absolute), `CANOPY_HOME_ID`, and the tmux command sets `PATH="$HOME/.canopy/bin:$PATH"` for the session.
+- The pane's session gets `CANOPY_SOCKET`, `CANOPY_CLI` (absolute, `<host home>/.canopy/<home id>/bin/canopy`), `CANOPY_HOME_ID`, and the tmux command sets `PATH="$HOME/.canopy/<home id>/bin:$PATH"` for the session.
 - `host.attach`, after preparing and before answering ready, runs `canopy-host replay` for the pane and relays a saved request.
 - `fake-ssh -O forward -R remote:local` links remote to local; `stopHosts` stops the relay servers.
 

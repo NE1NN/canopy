@@ -114,9 +114,9 @@ struct HostRelayServerTests {
     @Test func aRelayOfAnotherVersionIsToldToRunAgainAndTheHostGetsTheseFiles() async throws {
         let setup = try await Setup()
         try await setup.remote.workspace.connection(for: "box").connect()
-        let versionFile = setup.remote.host.home + "/.canopy/files-version"
-        try FileManager.default.createDirectory(
-            atPath: setup.remote.host.home + "/.canopy", withIntermediateDirectories: true)
+        let own = setup.remote.host.home + "/.canopy/\(setup.remote.workspace.homeID)"
+        let versionFile = own + "/files-version"
+        try FileManager.default.createDirectory(atPath: own, withIntermediateDirectories: true)
         try Data("0.0.1+old\n".utf8).write(to: URL(fileURLWithPath: versionFile))
         var request = setup.request(["row", "list"])
         request.version = "0.0.1+old"

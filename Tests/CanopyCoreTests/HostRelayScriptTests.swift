@@ -14,12 +14,15 @@ struct HostRelayScriptTests {
         init() throws {
             dir = try TempDir()
             home = dir.sub("home")
-            try FileManager.default.createDirectory(atPath: home + "/.canopy/bin", withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
             try HostFiles.script.write(toFile: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
         }
 
-        var script: String { home + "/.canopy/bin/canopy-host" }
+        let homeID = "abcd1234"
+        /// This home's own folder of programs on the host.
+        var bin: String { home + "/.canopy/\(homeID)/bin" }
+        var script: String { bin + "/canopy-host" }
         var socket: String { dir.sub("app.sock") }
 
         /// Only what the test gives, so a test run inside a Canopy pane passes none of that pane's variables on.
@@ -153,8 +156,8 @@ struct HostRelayScriptTests {
             #expect(result.status == 0)
             #expect(result.stdout.isEmpty && result.stderr.isEmpty)
         }
-        let canopy = try FileManager.default.contentsOfDirectory(atPath: setup.home + "/.canopy")
-        #expect(canopy == ["bin"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: setup.home + "/.canopy") == [setup.homeID])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: setup.home + "/.canopy/\(setup.homeID)") == ["bin"])
     }
 
     /// A hook must never disturb Claude, whatever the app answers.
@@ -217,20 +220,29 @@ struct HostRelayScriptTests {
         #expect(app.request?.args == ["web", "open", link])
     }
 
-    /// Links that are not artifacts go to the host's own xdg-open, never back to Canopy's, however it is reached.
+    /// Links that are not artifacts go to the host's own xdg-open, never back to Canopy's or another home's, however
+    /// it is reached.
     @Test func openHandsOtherLinksToTheNextXdgOpen() async throws {
         let setup = try Setup()
-        let standIn = setup.home + "/.canopy/bin/xdg-open"
-        try HostFiles.xdgOpenLauncher.write(toFile: standIn, atomically: true, encoding: .utf8)
+        let standIn = setup.bin + "/xdg-open"
+        try HostFiles.xdgOpenLauncher(homeID: setup.homeID).write(toFile: standIn, atomically: true, encoding: .utf8)
+        let shared = setup.home + "/.canopy/bin"
+        let otherHome = setup.home + "/.canopy/ffff0000/bin"
         let shadow = setup.dir.sub("shadow")
         let real = setup.dir.sub("real")
-        for folder in [shadow, real] {
+        for folder in [shared, otherHome, shadow, real] {
             try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         }
+        // Programs that were already there, so nothing new runs. Reaching any of Canopy's would fail the open.
+        for folder in [shared, otherHome] {
+            try FileManager.default.createSymbolicLink(
+                atPath: folder + "/xdg-open", withDestinationPath: "/usr/bin/false")
+        }
+        try FileManager.default.createSymbolicLink(atPath: shadow + "/other-home", withDestinationPath: otherHome)
         try FileManager.default.createSymbolicLink(atPath: shadow + "/xdg-open", withDestinationPath: standIn)
-        // A program that was already there, so nothing new runs.
         try FileManager.default.createSymbolicLink(atPath: real + "/xdg-open", withDestinationPath: "/bin/echo")
-        let path = [setup.home + "/.canopy/bin", shadow, real, "/usr/bin", "/bin"].joined(separator: ":")
+        let path = [setup.bin, shared, otherHome, shadow + "/other-home", shadow, real, "/usr/bin", "/bin"]
+            .joined(separator: ":")
 
         let other = try await setup.run(
             ["open", "https://example.com/a"], environment: setup.environment(path: path))
@@ -244,7 +256,7 @@ struct HostRelayScriptTests {
 
     @Test func withoutAnotherXdgOpenOpenFailsAsAMissingOneWould() async throws {
         let setup = try Setup()
-        let path = setup.home + "/.canopy/bin:/usr/bin:/bin"
+        let path = setup.bin + ":/usr/bin:/bin"
 
         let result = try await setup.run(["open", "https://example.com"], environment: setup.environment(path: path))
 
