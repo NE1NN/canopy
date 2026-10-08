@@ -260,16 +260,22 @@ public enum HostFiles {
                 self.connection = connection
                 self.data = bytearray()
 
-            def next(self, deadline):
+            def next(self, deadline, silence=None):
+                """The next line, by `deadline`, or with `silence`, by that many seconds after anything last arrived.
+                Past the deadline what already arrived still counts: a relay stopped with Ctrl-Z, or on a paused
+                machine, wakes late with the app's lines waiting for it."""
                 while b"\n" not in self.data:
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    self.connection.settimeout(max(0.0, remaining))
+                    try:
+                        chunk = self.connection.recv(65536)
+                    except BlockingIOError:
                         raise socket.timeout("no line in time")
-                    self.connection.settimeout(remaining)
-                    chunk = self.connection.recv(65536)
                     if not chunk:
                         raise ConnectionError("the connection ended")
                     self.data += chunk
+                    if silence is not None:
+                        deadline = max(deadline, time.monotonic() + silence)
                 line, _, rest = bytes(self.data).partition(b"\n")
                 self.data = bytearray(rest)
                 return json.loads(line)
@@ -349,10 +355,10 @@ public enum HostFiles {
 
 
         def reply_after(lines):
-            """The reply after the acknowledgement, passing over the app's heartbeats, each of which must come within
-            REPLY_SILENCE of the last line. A relayed command may run as long as it likes, such as `term wait`."""
+            """The reply after the acknowledgement, passing over the app's heartbeats, giving up when nothing arrives for
+            REPLY_SILENCE. A relayed command may run as long as it likes, such as `term wait`."""
             while True:
-                line = lines.next(time.monotonic() + REPLY_SILENCE)
+                line = lines.next(time.monotonic() + REPLY_SILENCE, REPLY_SILENCE)
                 if not (isinstance(line, dict) and line.get("alive") is True):
                     return line
 

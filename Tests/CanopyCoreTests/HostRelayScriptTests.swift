@@ -441,6 +441,56 @@ struct HostRelayScriptTests {
         #expect(app.request?.args == ["term", "wait", "p1"])
     }
 
+    /// A relay stopped with Ctrl-Z and brought back with `fg`, or on a machine that was paused, wakes long past its
+    /// silence with the app's heartbeats and reply waiting for it, and reads them rather than giving up.
+    @Test func aRelayThatWakesPastItsSilenceReadsTheLinesWaitingForIt() async throws {
+        let setup = try Setup()
+        let module = setup.dir.sub("canopy_host.py")
+        try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
+        let reply = RelayReply(stdout: Data("made\n".utf8), stderr: Data(), status: 0)
+        let line = String(decoding: try JSONEncoder().encode(reply), as: UTF8.self)
+        let program = """
+            import json, socket, sys, time, types
+            sys.path.insert(0, sys.argv[1])
+            import canopy_host
+            app, relay = socket.socketpair()
+            app.sendall(b'{"alive": true}\\n' + sys.argv[2].encode() + b"\\n")
+            # Each reading of the clock is a minute after the last, as for a relay stopped between any two steps.
+            readings = [time.monotonic()]
+            def monotonic():
+                readings.append(readings[-1] + 60)
+                return readings[-1]
+            canopy_host.time = types.SimpleNamespace(monotonic=monotonic, time=time.time)
+            print(json.dumps(canopy_host.reply_after(canopy_host.Lines(relay))))
+            """
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/usr/bin/python3", ["-I", "-c", program, setup.dir.path, line], environment: setup.environment(),
+                directory: nil, timeout: .seconds(30))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(try JSONDecoder().decode(RelayReply.self, from: result.stdout) == reply)
+    }
+
+    /// A reply long enough to arrive in pieces over a slow link keeps arriving past the silence a relay gives up
+    /// after, and each piece shows the app is there.
+    @Test func aReplyStillArrivingIsNotGivenUpOn() async throws {
+        let setup = try Setup()
+        let reply = RelayReply(stdout: Data(String(repeating: "x", count: 4000).utf8), stderr: Data(), status: 0)
+        let app = try RelayStub(
+            path: setup.socket, answer: .trickling(reply, pieces: 12, every: .milliseconds(250)))
+
+        let result = try await setup.runRelay(
+            ["row", "list"], setting: ["REPLY_SILENCE": 2],
+            environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(result.stdout == Data(String(repeating: "x", count: 4000).utf8))
+        #expect(app.request?.args == ["row", "list"])
+    }
+
     /// An app that ran nothing, as for a relay of another version, answers without acknowledging.
     @Test func aCommandPrintsAReplyThatCameWithoutAnAcknowledgement() async throws {
         let setup = try Setup()
@@ -649,6 +699,8 @@ final class RelayStub: Sendable {
         case acknowledgingThenSilent
         /// As the app while a long call runs: acknowledges, sends heartbeats, then the reply.
         case heartbeating(beats: Int, every: Duration, then: RelayReply)
+        /// As the app over a slow link: acknowledges, then sends the reply's line in pieces.
+        case trickling(RelayReply, pieces: Int, every: Duration)
         case hangingUp
         /// As the host's sshd while the Mac sleeps: holds the connection and sends nothing.
         case silent
@@ -670,6 +722,9 @@ final class RelayStub: Sendable {
                 guard poll(&ready, 1, 30_000) == 1 else { return }
                 let client = accept(fd, nil, nil)
                 guard client >= 0 else { return }
+                // A relay that gave up hangs up while the stub still writes, which must not kill the tests.
+                var on: Int32 = 1
+                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
                 Self.answer(client, answer, into: received)
             }
         }.start()
@@ -697,11 +752,18 @@ final class RelayStub: Sendable {
         case .heartbeating(let beats, let every, let reply):
             try? stream.write(HostRelayServer.acknowledgement)
             for _ in 0..<beats {
-                Thread.sleep(
-                    forTimeInterval: Double(every.components.seconds) + Double(every.components.attoseconds) / 1e18)
+                pause(every)
                 try? stream.write(HostRelayServer.heartbeat)
             }
             try? stream.write(line(reply))
+        case .trickling(let reply, let pieces, let every):
+            try? stream.write(HostRelayServer.acknowledgement)
+            let whole = line(reply)
+            let size = (whole.count + pieces - 1) / pieces
+            for start in stride(from: 0, to: whole.count, by: size) {
+                pause(every)
+                try? stream.write(whole.subdata(in: start..<min(start + size, whole.count)))
+            }
         case .hangingUp:
             break
         case .silent:
@@ -718,6 +780,11 @@ final class RelayStub: Sendable {
     /// Every request so far, nil for one that could not be read.
     var requests: [RelayRequest?] {
         received.requests.withLock { $0 }
+    }
+
+    private static func pause(_ duration: Duration) {
+        Thread.sleep(
+            forTimeInterval: Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18)
     }
 
     private static func line(_ reply: RelayReply) -> Data {
