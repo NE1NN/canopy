@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Plays ssh for tests and end-to-end runs: a "host" is this Mac, with HOME set to $FAKE_SSH_HOME.
+# It takes the options Canopy passes. A master (-M) writes its pid to the control path and waits to be stopped;
+# -O check and -O exit act on that pid. Anything else runs the remote command with bash in $FAKE_SSH_HOME.
+# -R remote:local links the remote socket path to the local one, which connect() follows like a forward.
+# FAKE_SSH_DOWN=1 makes every call fail as an unreachable host does, with ssh's exit code 255.
+set -uo pipefail
+
+control=""
+operation=""
+master=0
+forwards=()
+while (($#)); do
+    case "$1" in
+        -M) master=1 ;;
+        -N | -t | -T | -f) ;;
+        -S) control="$2"; shift ;;
+        -O) operation="$2"; shift ;;
+        -R) forwards+=("$2"); shift ;;
+        -o | -L | -F | -i | -p | -l) shift ;;
+        --) shift; break ;;
+        -*) echo "fake-ssh: unknown option $1" >&2; exit 255 ;;
+        *) break ;;
+    esac
+    shift
+done
+alias="${1:-}"
+shift || true
+
+unreachable() {
+    echo "Connection closed by UNKNOWN port 65535" >&2
+    exit 255
+}
+
+master_pid() {
+    [[ -n "$control" && -f "$control" ]] && cat "$control"
+}
+
+if [[ -n "$operation" ]]; then
+    pid=$(master_pid)
+    case "$operation" in
+        check)
+            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                echo "Master running (pid=$pid)" >&2
+                exit 0
+            fi
+            echo "Control socket connect($control): No such file or directory" >&2
+            exit 255
+            ;;
+        exit)
+            [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+            rm -f "$control"
+            echo "Exit request sent." >&2
+            exit 0
+            ;;
+        *) echo "fake-ssh: unknown -O $operation" >&2; exit 255 ;;
+    esac
+fi
+
+[[ "${FAKE_SSH_DOWN:-}" == 1 ]] && unreachable
+[[ -n "${FAKE_SSH_HOME:-}" ]] || { echo "fake-ssh: FAKE_SSH_HOME is not set" >&2; exit 255; }
+
+if ((master)); then
+    mkdir -p "$(dirname "$control")"
+    echo $$ > "$control"
+    trap 'rm -f "$control"; exit 0' TERM INT HUP
+    while :; do sleep 1; done
+fi
+
+for forward in "${forwards[@]+"${forwards[@]}"}"; do
+    remote="${forward%%:*}"
+    local_path="${forward#*:}"
+    mkdir -p "$(dirname "$remote")"
+    rm -f "$remote"
+    ln -s "$local_path" "$remote"
+done
+
+# The host says it is Linux, as Canopy's hosts must be.
+mkdir -p "$FAKE_SSH_HOME/.fake-ssh-bin"
+printf '#!/bin/sh\n[ "$1" = "-s" ] && { echo Linux; exit 0; }\nexec /usr/bin/uname "$@"\n' > "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
+chmod +x "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
+
+cd "$FAKE_SSH_HOME" || exit 255
+export HOME="$FAKE_SSH_HOME"
+export PATH="$FAKE_SSH_HOME/.fake-ssh-bin:$FAKE_SSH_HOME/.local/bin:${FAKE_SSH_PATH:-$PATH}"
+exec /bin/bash -c "$*"
