@@ -80,7 +80,8 @@ extension Workspace {
         return try await hostErrors(alias) {
             try await requireValidBranchName(requested, in: clone)
             if holder(of: requested, repoPath: repoPath, host: alias) != nil {
-                await refreshRemote(repoPath: repoPath, host: alias)
+                // Already in the clone's queue.
+                await refreshRemoteNow(repoPath: repoPath, host: alias, clone: target.clone)
                 if let holder = holder(of: requested, repoPath: repoPath, host: alias), !holder.isMissing {
                     throw WorkspaceError.branchCheckedOut(requested, row: holder)
                 }
@@ -228,8 +229,17 @@ extension Workspace {
     public func refreshRemote(repoPath: String, host alias: String) async {
         guard let entry = hosts.hosts[alias], let index = try? entryIndex(repoPath: repoPath),
             state.repos[index].remote.contains(where: { $0.host == alias }),
-            let clone = entry.clonePath(repoName: snapshot.repo(path: repoPath)?.name ?? "", repoPath: repoPath),
-            let connection = hostConnections[alias], await connection.state == .connected,
+            let clone = entry.clonePath(repoName: snapshot.repo(path: repoPath)?.name ?? "", repoPath: repoPath)
+        else { return }
+        // In line with making and removing rows in the clone, so a listing from before a row was made never marks it
+        // missing.
+        _ = try? await gitQueues.enqueue("\(alias):\(clone)") {
+            await self.refreshRemoteNow(repoPath: repoPath, host: alias, clone: clone)
+        }.value
+    }
+
+    private func refreshRemoteNow(repoPath: String, host alias: String, clone: String) async {
+        guard let connection = hostConnections[alias], await connection.state == .connected,
             let output = try? await remoteGit(alias).run(["worktree", "list", "--porcelain", "-z"], in: clone)
         else { return }
         let worktrees = Dictionary(

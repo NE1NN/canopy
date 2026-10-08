@@ -178,6 +178,44 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
+    @Test func aRowMadeWhileTheHostIsListedIsNotMissing() async throws {
+        let setup = try await Setup()
+        let listing = setup.dir.sub("listing")
+        let slow = setup.dir.sub("slow")
+        let script = setup.dir.sub("slow-ssh")
+        // The next listing answers late enough for a row to be made meanwhile.
+        try """
+        #!/bin/bash
+        if [[ "$*" == *"'worktree' 'list'"* ]] && rm '\(slow)' 2>/dev/null; then
+            '\(FakeHost.script)' "$@" > '\(listing).out'
+            status=$?
+            touch '\(listing)'
+            sleep 8
+            cat '\(listing).out'
+            exit $status
+        fi
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try await workspace.addRepo(path: setup.repo)
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        _ = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/first")
+        FileManager.default.createFile(atPath: slow, contents: nil)
+
+        let refresh = Task { await workspace.refreshRemote(repoPath: setup.repo, host: "box") }
+        #expect(await eventually { FileManager.default.fileExists(atPath: listing) })
+        let created = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/second")
+        await refresh.value
+
+        #expect(await workspace.snapshot.row(path: created.row.path)?.isMissing == false)
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func aHostThatDropsWhileListingBranchesMakesNoBranch() async throws {
         let setup = try await Setup()
         let script = setup.dir.sub("dropping-ssh")
