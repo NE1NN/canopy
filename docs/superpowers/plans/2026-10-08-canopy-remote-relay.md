@@ -1,6 +1,7 @@
 # Remote Rows, Milestone 2, Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Agents in remote panes get the whole `canopy` CLI through a relay to the app, so Claude Code's hooks on the host drive the row's agent dots, and claude.ai artifact links opened on the host show in Canopy.
 
@@ -25,8 +26,10 @@ A What was built section at the end says where the build differs.
 - Unix socket paths under 104 bytes on the Mac.
 - Nothing in tests or `make e2e` reaches `hindie-box`; only `scripts/e2e-hosts.sh --host hindie-box` does.
 - Test helpers never signal a pid they did not just confirm is theirs, and timing checks measure on the thread doing the work or wait for a condition (milestone 1's CI lessons).
-- Never quit or kill the release Canopy; dev builds by pid only. Never touch solis-v1, ticket-manager, or usefastlane-landing.
-- Markdown: one sentence per line, no em dashes. Commits: conventional prefixes, no Co-Authored-By trailers.
+- Never quit or kill the release Canopy; dev builds by pid only.
+  Never touch solis-v1, ticket-manager, or usefastlane-landing.
+- Markdown: one sentence per line, no em dashes.
+  Commits: conventional prefixes, no Co-Authored-By trailers.
 - The relay and everything on the host is Python 3 and POSIX sh only, as Ubuntu 24.04 ships them.
 
 ## Review Focus
@@ -84,7 +87,10 @@ Modified:
 **Files:** modify `Hosts/HostFiles.swift`, test `HostRelayScriptTests.swift` (and `HostFilesTests`).
 
 **Interfaces:**
-- `canopy-host relay <args>`: reads `CANOPY_SOCKET`; outside a pane prints "Run canopy in a Canopy terminal on this host." and exits 1. Sends one `RelayRequest` line (version = `HostFiles.version`), reads one `RelayReply` line, writes stdout and stderr, exits with status. When the first argument is `agent-hook` and the socket cannot be reached, it writes the request to `~/.canopy/$CANOPY_HOME_ID/pending/$CANOPY_PANE.json` through a temporary file and a rename, and exits 0. Any other failure to reach the app prints "Canopy is not reachable from this host right now." and exits 1.
+- `canopy-host relay <args>`: reads `CANOPY_SOCKET`; outside a pane prints "Run canopy in a Canopy terminal on this host." and exits 1.
+  Sends one `RelayRequest` line (version = `HostFiles.version`), reads one `RelayReply` line, writes stdout and stderr, exits with status.
+  When the first argument is `agent-hook` and the socket cannot be reached, it writes the request to `~/.canopy/$CANOPY_HOME_ID/pending/$CANOPY_PANE.json` through a temporary file and a rename, and exits 0.
+  Any other failure to reach the app prints "Canopy is not reachable from this host right now." and exits 1.
 - `canopy-host replay --pane <pane> --home-id <id>`: prints the saved request and deletes it, or prints nothing.
 - `canopy-host open <url>`: a claude.ai artifact link (the app's `ArtifactLink` rule, mirrored in Python) runs `canopy web open <url>` through the relay; anything else execs the next `xdg-open` on PATH after `~/.canopy/bin`, or prints "xdg-open: no handler for <url>" and exits 3.
 - Install also writes `~/.canopy/bin/canopy` (`exec python3 ~/.canopy/bin/canopy-host relay "$@"`) and `~/.canopy/bin/xdg-open` (`exec python3 ~/.canopy/bin/canopy-host open "$@"`), mode 0755, and links `~/.local/bin/canopy` to `~/.canopy/bin/canopy` only when that path is missing or already such a link.
@@ -207,3 +213,36 @@ Replay at attach stays.
 - [ ] An independent opus review of `git diff main...HEAD` with the spec and this plan; findings fixed test-first, listed under After Review.
 - [ ] CI `check` green.
 - [ ] PR with click checks and Decisions to review; print `READY: PR #<n> <url>`.
+
+## After Review
+
+An independent review of `git diff main...HEAD` found these, each fixed test-first.
+
+1. The host's `canopy` read all of its caller's standard input for every command, so `while read` loops lost their lines, an idle open pipe held each command 10 seconds, and `tail -f log | canopy ...` never ended.
+   Now only `agent-hook` and `ticket connect` get input, from `RelayInput.commands` in `Relay.swift`, which the host's script is rendered from.
+   `ticket connect` sends its first line alone, read a byte at a time within 10 seconds and 64 KiB, as `TokenInput` reads it on the Mac.
+   `RelayInputTests` reads the CLI's sources and fails when a command that reads standard input is missing from the list, and an e2e step runs `canopy` in a `while read` loop in the remote pane.
+   The CLI accepts no option before a subcommand, so options among a command's words are passed over without taking values.
+2. After the acknowledgement a relayed command waited for its reply forever, so a `term wait` hung when the Mac slept or changed network.
+   `HostRelayServer` now writes `{"alive": true}` every 15 seconds while an acknowledged call runs, and the relay passes over it and says Canopy is not reachable after 45 seconds with no line.
+   Both intervals are injectable, `heartbeatInterval` on the server and `REPLY_SILENCE` in the script, and the hook's budget is as it was.
+3. `mkdir -p -m 700` left the home's folder on the host as the install made it, readable by anyone, and the relay's socket is in it.
+   Each forward now runs `chmod 700` on it too.
+4. Every `CANOPY_*` variable from the host reached the Mac's CLI, including `CANOPY_APP`, `CANOPY_SSH`, and `CANOPY_SOCKET`.
+   Now only `RelayRun.paneVariables` cross over: `CANOPY_PANE`, `CANOPY_REPO`, `CANOPY_ROW_PATH`, `CANOPY_PLUGIN`, and `CANOPY_ITEM`, which are what the CLI reads.
+   `CANOPY_ROW`, which the reviewer listed, stays behind, since the CLI never reads it.
+5. The relay named its folder with `os.getcwd()`, which resolves links, so on a host whose HOME is a link a folder in a remote row became the Canopy home.
+   It now sends `$PWD` when that names the same folder as `.`.
+6. A hook's relay hangs up 4 seconds after it starts, which cancelled an acknowledged `agent-hook` the app was still running.
+   Such a run now goes on to its end, and other calls whose relay hangs up still stop.
+7. `stop()` said a call it cancels answers nothing, but the killed CLI's output went back as the reply.
+   The comment stated the better behavior, since a killed CLI's partial output and status 137 read as the command itself failing, so the server now answers nothing and the relay says Canopy is not reachable.
+8. A remote pane's session from milestone 1 has no `CANOPY_HOME_ID`, so the shared `~/.canopy/bin/canopy` told it to run canopy in a Canopy terminal, which it was.
+   It now says the terminal started before Canopy's CLI reached the host and a new Canopy terminal has it.
+   Inside tmux `TERM_PROGRAM` is `tmux`, whatever the session was given, so the shim knows such a session by `CANOPY_HOST` and `CANOPY_PANE` instead.
+   Hooks on hosts added before milestone 2 are not installed on their own; `canopy host add` installs them when run again.
+9. `aHookWhoseInputNeverClosesKeepsItsReportWhenTheAppIsSilent` passed however long the hook took.
+   It now checks the age the relay gave the report as it kept it, on the relay's own clock, is under 4 seconds.
+10. Task 2's interface bullets, and a few lines above them, held several sentences each, and are now one sentence per line.
+
+`HostClaudeSettings` reading `CLAUDE_CONFIG_DIR` from the non-interactive ssh environment stays as it is.
