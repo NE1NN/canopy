@@ -42,7 +42,7 @@ A What was built section at the end says where the build differs.
 |---|---|---|
 | Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per round, and the session list it needs for attribution comes in the same answer. |
 | How often | Every 5 seconds per host, by time since the last ports probe, inside the 2-second probe loop | The spec's 5 seconds, without a second loop. |
-| Forward target on the host | The address the server listens on: `127.0.0.1` for a wildcard or IPv4 loopback, `[::1]` for IPv6 loopback only, else the address itself | A Vite server on `::1` alone refuses `127.0.0.1`. |
+| Forward target on the host | `127.0.0.1` for `0.0.0.0` or `127.0.0.1`, `[::1]` for `::` or `::1`, any other IPv4 address as it is, and any other IPv6 address in brackets | A Vite server on `::1` alone refuses `127.0.0.1`, and the probe keeps `::` for an IPv6-only wildcard, as `ss` prints sshd's `[::]`. |
 | Mac port | The same port when nothing listens there on `127.0.0.1` or `::1`, else the next free one up to 65535, skipping ports other forwards hold | A local server on `::1` would otherwise catch `localhost:5173`. |
 | A Mac port that frees later | The forward keeps its port | Moving a forward under an open browser tab breaks it. |
 | Ports in the host's ephemeral range | Left out, read from `/proc/sys/net/ipv4/ip_local_port_range` | The same rule as local ports. |
@@ -114,10 +114,11 @@ Modified:
 
 **Interfaces:**
 - `RemotePortAttribution.assign(_ ports: [RemoteListeningPort], rows: [RemoteRowEntry], sessions: [String: String] /* session to stand-in */, shells: [String: Int32]) -> [String: [RemoteListeningPort]]` by stand-in: the row of the nearest session shell among a process's ancestors, else the row whose remote path holds its folder (deepest), else none.
-  A port with processes in two rows goes to the first process's row.
+  A port with processes in two rows goes to the row of the first process that has one.
+  Folders are compared by path components, as `RelayPaths` maps them, so `/h/app-web` is not inside `/h/app`; a folder with `..` matches no row.
 - `LocalPortChooser.port(for remote: UInt16, taken: Set<UInt16>, isFree: (UInt16) -> Bool) -> UInt16?`: `remote` when free and not taken, else the next above, nil past 65535.
 - `LocalPortChooser.isFree(_:)`: binds `127.0.0.1` and `::1` (SO_REUSEADDR off) and closes; free only when both bind, or when `::1` is unavailable on the Mac.
-- `RemoteListeningPort.target` (`127.0.0.1`, `[::1]`, or the address).
+- `RemoteListeningPort.target` (`127.0.0.1`, `[::1]`, the IPv4 address, or the IPv6 address in brackets, by the rule in Decisions).
 - `SSHCommand.forwardLocal(local: UInt16, target: String, port: UInt16)` -> `-S <control> -O forward -L <local>:<target>:<port> <alias>`, and `cancelLocal` with `-O cancel`.
 
 **Tests:** ancestry wins over folder; folder fallback picks the deepest row and ignores a sibling with a shared prefix; a port in no row is left out; the chooser skips taken and busy ports and returns nil at the top; `isFree` is false for a port a test listener holds on `::1` only and on `127.0.0.1` only; the argv for both commands, IPv6 target included.

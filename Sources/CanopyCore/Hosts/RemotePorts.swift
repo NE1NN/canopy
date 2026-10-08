@@ -29,3 +29,89 @@ public struct RemoteProcess: Sendable, Equatable, Hashable, Codable {
         self.folder = folder
     }
 }
+
+extension RemoteListeningPort {
+    /// Where the master connects on the host: loopback of the family the server listens on, since a server on `::1`
+    /// alone refuses `127.0.0.1`. An IPv6 address is in brackets, as `-L` needs it.
+    public var target: String {
+        switch address {
+        case "0.0.0.0", "127.0.0.1": "127.0.0.1"
+        case "::", "::1": "[::1]"
+        default: address.contains(":") ? "[\(address)]" : address
+        }
+    }
+}
+
+public enum RemotePortAttribution {
+    /// Each port's row, by stand-in: the row of the nearest session shell among a process and its ancestors, else
+    /// the deepest row whose remote path holds its folder. `sessions` maps a tmux session to its row's stand-in and
+    /// `shells` to its shell's pid. A port of two rows goes to its first process's row, and one of none is left out.
+    public static func assign(
+        _ ports: [RemoteListeningPort], rows: [RemoteRowEntry], sessions: [String: String], shells: [String: Int32]
+    ) -> [String: [RemoteListeningPort]] {
+        let standIns = Set(rows.map(\.standIn))
+        var rowOfShell: [Int32: String] = [:]
+        for (session, pid) in shells {
+            if let standIn = sessions[session], standIns.contains(standIn) { rowOfShell[pid] = standIn }
+        }
+        let roots = rows.compactMap { row in RelayPaths.components(row.path).map { (row.standIn, $0) } }
+        var byRow: [String: [RemoteListeningPort]] = [:]
+        for port in ports {
+            let row = port.processes.lazy.compactMap { process in
+                ([process.pid] + process.ancestors).lazy.compactMap { rowOfShell[$0] }.first
+                    ?? process.folder.flatMap { deepestRow(holding: $0, roots: roots) }
+            }.first
+            if let row { byRow[row, default: []].append(port) }
+        }
+        return byRow.mapValues { $0.sorted { $0.port < $1.port } }
+    }
+
+    private static func deepestRow(holding folder: String, roots: [(standIn: String, components: [Substring])])
+        -> String?
+    {
+        guard let components = RelayPaths.components(folder) else { return nil }
+        return
+            roots
+            .filter { !$0.components.isEmpty && components.starts(with: $0.components) }
+            .max { $0.components.count < $1.components.count }?.standIn
+    }
+}
+
+public enum LocalPortChooser {
+    /// `remote` itself when it is free and no other forward holds it, else the next such port above it.
+    public static func port(for remote: UInt16, taken: Set<UInt16>, isFree: (UInt16) -> Bool) -> UInt16? {
+        (remote...UInt16.max).first { !taken.contains($0) && isFree($0) }
+    }
+
+    /// Nothing holds the port on `127.0.0.1` or `::1`. ssh's forward succeeds on one family alone, which would leave a
+    /// local server on the other answering some of `localhost`. A Mac without IPv6 loopback needs only the first.
+    public static func isFree(_ port: UInt16) -> Bool {
+        var v4 = sockaddr_in()
+        v4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        v4.sin_family = sa_family_t(AF_INET)
+        v4.sin_port = port.bigEndian
+        v4.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+        var v6 = sockaddr_in6()
+        v6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        v6.sin6_family = sa_family_t(AF_INET6)
+        v6.sin6_port = port.bigEndian
+        v6.sin6_addr = in6addr_loopback
+        let ipv4 = canBind(AF_INET, &v4)
+        guard ipv4 == 0 else { return false }
+        let ipv6 = canBind(AF_INET6, &v6)
+        return ipv6 == 0 || ipv6 == EADDRNOTAVAIL || ipv6 == EAFNOSUPPORT
+    }
+
+    /// 0 when a socket of `family` binds `address`, else the error. The socket closes at once.
+    private static func canBind<Address>(_ family: Int32, _ address: inout Address) -> Int32 {
+        let fd = socket(family, SOCK_STREAM, 0)
+        guard fd >= 0 else { return errno }
+        defer { close(fd) }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<Address>.size))
+            }
+        }
+        return bound == 0 ? 0 : errno
+    }
+}
