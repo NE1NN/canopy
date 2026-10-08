@@ -73,6 +73,25 @@ struct HostRelayScriptTests {
             }
         }
 
+        /// Runs the relay as the host's `canopy` would, with some of its constants set first, such as a short wait.
+        func runRelay(_ arguments: [String], setting constants: [String: Double], environment: [String: String])
+            async throws -> SubprocessResult
+        {
+            let module = dir.sub("canopy_host.py")
+            try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
+            let assignments = constants.sorted { $0.key < $1.key }.map { "canopy_host.\($0.key) = \($0.value)" }
+            let program =
+                (["import sys", "sys.path.insert(0, sys.argv[1])", "import canopy_host"] + assignments + [
+                    "sys.exit(canopy_host.main(['relay'] + sys.argv[2:]))"
+                ]).joined(separator: "\n")
+            let directory = dir.path
+            return try await offPool {
+                try Subprocess.run(
+                    "/usr/bin/python3", ["-I", "-c", program, directory] + arguments, environment: environment,
+                    directory: nil, timeout: .seconds(30))
+            }
+        }
+
         func pending(homeID: String, pane: String) -> String {
             home + "/.canopy/\(homeID)/pending/\(pane).json"
         }
@@ -359,6 +378,39 @@ struct HostRelayScriptTests {
         #expect(await eventually { app.request?.args == ["row", "list"] })
     }
 
+    /// A Mac that sleeps or changes network while a call runs can leave the host's sshd holding the connection for
+    /// hours, so a relay that hears nothing for a while after the acknowledgement gives up.
+    @Test func aCommandWhoseAppFallsSilentAfterTheAcknowledgementIsNotReachable() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(path: setup.socket, answer: .acknowledgingThenSilent)
+
+        let result = try await setup.runRelay(
+            ["term", "wait", "p1"], setting: ["REPLY_SILENCE": 0.5],
+            environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(!result.timedOut)
+        #expect(result.status == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == Self.unreachable)
+        #expect(app.request?.args == ["term", "wait", "p1"])
+    }
+
+    /// The app's heartbeats keep a long call going past the silence a relay gives up after, and never print.
+    @Test func aCommandWaitsThroughTheAppsHeartbeatsForItsReply() async throws {
+        let setup = try Setup()
+        let reply = RelayReply(stdout: Data("done\n".utf8), stderr: Data(), status: 0)
+        let app = try RelayStub(
+            path: setup.socket, answer: .heartbeating(beats: 12, every: .milliseconds(250), then: reply))
+
+        let result = try await setup.runRelay(
+            ["term", "wait", "p1"], setting: ["REPLY_SILENCE": 2],
+            environment: setup.environment(["CANOPY_SOCKET": setup.socket]))
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "done\n")
+        #expect(result.stderr.isEmpty)
+        #expect(app.request?.args == ["term", "wait", "p1"])
+    }
+
     /// An app that ran nothing, as for a relay of another version, answers without acknowledging.
     @Test func aCommandPrintsAReplyThatCameWithoutAnAcknowledgement() async throws {
         let setup = try Setup()
@@ -563,6 +615,10 @@ final class RelayStub: Sendable {
         /// As the app answers a request it runs nothing for.
         case replying(RelayReply)
         case acknowledgingThenHangingUp
+        /// As an app whose Mac slept or lost its network while a call ran: acknowledges, then sends nothing more.
+        case acknowledgingThenSilent
+        /// As the app while a long call runs: acknowledges, sends heartbeats, then the reply.
+        case heartbeating(beats: Int, every: Duration, then: RelayReply)
         case hangingUp
         /// As the host's sshd while the Mac sleeps: holds the connection and sends nothing.
         case silent
@@ -605,6 +661,17 @@ final class RelayStub: Sendable {
             try? stream.write(line(reply))
         case .acknowledgingThenHangingUp:
             try? stream.write(HostRelayServer.acknowledgement)
+        case .acknowledgingThenSilent:
+            try? stream.write(HostRelayServer.acknowledgement)
+            while let chunk = try? stream.read(), !chunk.isEmpty {}
+        case .heartbeating(let beats, let every, let reply):
+            try? stream.write(HostRelayServer.acknowledgement)
+            for _ in 0..<beats {
+                Thread.sleep(
+                    forTimeInterval: Double(every.components.seconds) + Double(every.components.attoseconds) / 1e18)
+                try? stream.write(HostRelayServer.heartbeat)
+            }
+            try? stream.write(line(reply))
         case .hangingUp:
             break
         case .silent:

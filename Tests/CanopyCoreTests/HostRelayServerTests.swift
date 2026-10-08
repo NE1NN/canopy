@@ -10,12 +10,12 @@ struct HostRelayServerTests {
         let remote: RemoteRowTests.Setup
         let server: HostRelayServer
 
-        init(relayCLI: String? = "/bin/sh") async throws {
+        init(relayCLI: String? = "/bin/sh", heartbeat: Duration = .seconds(15)) async throws {
             remote = try await RemoteRowTests.Setup(relayCLI: relayCLI)
             let workspace = remote.workspace
             server = HostRelayServer(
                 socketPath: HostPaths.hostSocket(home: workspace.home, homeID: workspace.homeID, alias: "box"),
-                host: "box", handler: { await workspace.relay($0, host: $1) })
+                host: "box", heartbeatInterval: heartbeat, handler: { await workspace.relay($0, host: $1) })
             try server.start()
         }
 
@@ -62,23 +62,29 @@ struct HostRelayServerTests {
         return try reply(on: fd)
     }
 
-    /// The reply, after the acknowledgement a request of the current version gets first.
+    /// The reply, after the acknowledgement a request of the current version gets first, and any heartbeats.
     static func reply(on fd: Int32) throws -> RelayReply {
-        var lines = try self.lines(on: fd)
+        var lines = try self.lines(on: fd).filter { $0 != HostRelayServer.heartbeat }
         if lines.first == HostRelayServer.acknowledgement { lines.removeFirst() }
         return try JSONDecoder().decode(RelayReply.self, from: try #require(lines.first))
     }
 
-    /// Every line the server sends, each with its newline, until it hangs up.
-    static func lines(on fd: Int32) throws -> [Data] {
+    /// Every line the server sends, each with its newline, until it hangs up, or until `enough` holds for the lines
+    /// so far.
+    static func lines(on fd: Int32, until enough: ([Data]) -> Bool = { _ in false }) throws -> [Data] {
         let stream = SocketStream(fd: fd, deadline: .now + .seconds(60))
         var received = Data()
-        while true {
+        var lines: [Data] = []
+        while !enough(lines) {
             let chunk = try stream.read()
             if chunk.isEmpty { break }
             received.append(chunk)
+            while let newline = received.firstIndex(of: 0x0A) {
+                lines.append(Data(received[received.startIndex...newline]))
+                received = Data(received[received.index(after: newline)...])
+            }
         }
-        return received.split(separator: 0x0A).map { Data($0) + Data([0x0A]) }
+        return lines
     }
 
     @Test func aCallRunsTheCLIInTheRowsStandInWithItsArgumentsAndInput() async throws {
@@ -177,6 +183,30 @@ struct HostRelayServerTests {
         #expect(try JSONDecoder().decode(RelayReply.self, from: other[0]).code == "relay_outdated")
         #expect(setup.server.acknowledges(running))
         #expect(!setup.server.acknowledges(outdated))
+        await setup.stop()
+    }
+
+    /// While a call runs the relay hears from the app, so it can tell a long call from a Mac that went away.
+    @Test func aRunningCallSendsHeartbeatsUntilItsReply() async throws {
+        let setup = try await Setup(heartbeat: .milliseconds(50))
+        let release = setup.dir.sub("release")
+        let cli = try setup.script(
+            "cli", #"i=0; while [ ! -e "$1" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; echo ran"#)
+        let socket = setup.server.socketPath
+        let request = setup.request([cli, release])
+        let heartbeat = HostRelayServer.heartbeat
+
+        let fd = try await offPool { try Self.connect(socket, sending: request) }
+        defer { close(fd) }
+        let first = try await offPool { try Self.lines(on: fd) { $0.filter { $0 == heartbeat }.count >= 2 } }
+        FileManager.default.createFile(atPath: release, contents: nil)
+        let rest = try await offPool { try Self.lines(on: fd) }
+        let lines = first + rest
+
+        #expect(lines.first == HostRelayServer.acknowledgement)
+        let between = lines.dropFirst().dropLast()
+        #expect(between.count >= 2 && between.allSatisfy { $0 == heartbeat })
+        #expect(try JSONDecoder().decode(RelayReply.self, from: try #require(lines.last)).output == "ran\n")
         await setup.stop()
     }
 

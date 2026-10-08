@@ -159,6 +159,9 @@ public enum HostFiles {
         # The app acknowledges a request as soon as it reads it. sshd here accepts connections on the forwarded socket
         # even while the Mac sleeps, so silence for this long means the request never reached the app.
         ACKNOWLEDGEMENT_WAIT = 10
+        # While a call runs the app sends a heartbeat every 15 seconds. A Mac that slept or changed network can leave
+        # sshd here holding the connection for hours, so a call that hears nothing for this long gives up.
+        REPLY_SILENCE = 45
         # Claude kills a hook 5 seconds after starting it, so a hook has its input by the first of these, from when it
         # started, has the app's acknowledgement or keeps its report by the second, and waits for the reply until the
         # third.
@@ -237,7 +240,7 @@ public enum HostFiles {
 
 
         class Lines:
-            """A connection's JSON lines, one at a time, each by a deadline on this host's clock, or none."""
+            """A connection's JSON lines, one at a time, each by a deadline on this host's clock."""
 
             def __init__(self, connection):
                 self.connection = connection
@@ -245,13 +248,10 @@ public enum HostFiles {
 
             def next(self, deadline):
                 while b"\n" not in self.data:
-                    if deadline is None:
-                        self.connection.settimeout(None)
-                    else:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise socket.timeout("no line in time")
-                        self.connection.settimeout(remaining)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise socket.timeout("no line in time")
+                    self.connection.settimeout(remaining)
                     chunk = self.connection.recv(65536)
                     if not chunk:
                         raise ConnectionError("the connection ended")
@@ -334,6 +334,15 @@ public enum HostFiles {
             return isinstance(line, dict) and line.get("ack") is True
 
 
+        def reply_after(lines):
+            """The reply after the acknowledgement, passing over the app's heartbeats, each of which must come within
+            REPLY_SILENCE of the last line. A relayed command may run as long as it likes, such as `term wait`."""
+            while True:
+                line = lines.next(time.monotonic() + REPLY_SILENCE)
+                if not (isinstance(line, dict) and line.get("alive") is True):
+                    return line
+
+
         def decoded(reply):
             return (base64.b64decode(reply["stdout"], validate=True),
                     base64.b64decode(reply["stderr"], validate=True), int(reply["status"]))
@@ -358,8 +367,7 @@ public enum HostFiles {
             try:
                 with connect(path, ACKNOWLEDGEMENT_WAIT) as connection:
                     lines, first = send(connection, request, ACKNOWLEDGEMENT_WAIT)
-                    # A relayed command may run as long as it likes, such as `term wait`.
-                    output, errors, status = decoded(lines.next(None) if acknowledged(first) else first)
+                    output, errors, status = decoded(reply_after(lines) if acknowledged(first) else first)
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 print(UNREACHABLE, file=sys.stderr)
                 return 1

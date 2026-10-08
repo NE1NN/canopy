@@ -30,11 +30,17 @@ public final class HostRelayServer: Sendable {
     /// The line a request of the current version gets before its reply. A relay of another version gets the reply
     /// alone, so an older relay never reads a line it does not expect.
     static let acknowledgement = Data("{\"ack\": true}\n".utf8)
+    /// The line an acknowledged call gets every `heartbeatInterval` while it runs, which the relay passes over. A relay
+    /// that hears nothing for longer gives up, since a Mac that slept or changed network can leave the host's sshd
+    /// holding a dead connection for hours.
+    static let heartbeat = Data("{\"alive\": true}\n".utf8)
 
     public let socketPath: String
     public let host: String
     /// The relay version this server acknowledges, which is the one the handler runs.
     let version: String
+    /// How often a running call that was acknowledged gets a heartbeat. The relay gives up after 45 seconds of silence.
+    let heartbeatInterval: Duration
     private let handler: Handler
 
     private struct State {
@@ -50,11 +56,13 @@ public final class HostRelayServer: Sendable {
     private let state = Mutex(State())
 
     public init(
-        socketPath: String, host: String, version: String = HostFiles.version, handler: @escaping Handler
+        socketPath: String, host: String, version: String = HostFiles.version,
+        heartbeatInterval: Duration = .seconds(15), handler: @escaping Handler
     ) {
         self.socketPath = socketPath
         self.host = host
         self.version = version
+        self.heartbeatInterval = heartbeatInterval
         self.handler = handler
     }
 
@@ -202,12 +210,13 @@ public final class HostRelayServer: Sendable {
         case .invalid(let message):
             reply = .failure(message, code: "bad_request")
         case .request(let request):
-            if acknowledges(request) {
+            let acknowledged = acknowledges(request)
+            if acknowledged {
                 let stream = SocketStream(fd: connection, deadline: .now + Self.transferWait)
                 // A relay that missed the acknowledgement keeps a hook's report, so the call must not run either.
                 guard (try? stream.write(Self.acknowledgement)) != nil else { return }
             }
-            guard let answered = run(request, on: connection) else { return }
+            guard let answered = run(request, on: connection, heartbeats: acknowledged) else { return }
             reply = answered
         }
         guard var line = try? JSONEncoder().encode(reply) else { return }
@@ -219,8 +228,9 @@ public final class HostRelayServer: Sendable {
         request.version == version
     }
 
-    /// Runs the call until it answers, or cancels it once the relay hangs up and returns nil.
-    private func run(_ request: RelayRequest, on connection: Int32) -> RelayReply? {
+    /// Runs the call until it answers, or cancels it once the relay hangs up and returns nil. With `heartbeats`, the
+    /// relay hears from this server while the call runs.
+    private func run(_ request: RelayRequest, on connection: Int32, heartbeats: Bool) -> RelayReply? {
         var pipe: [Int32] = [-1, -1]
         guard Darwin.pipe(&pipe) == 0 else { return .failure("Canopy is out of resources.", code: "relay_failed") }
         for fd in pipe { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
@@ -242,7 +252,9 @@ public final class HostRelayServer: Sendable {
             return true
         }
         if !running { task.cancel() }
-        let hungUp = !running || Self.waitForAnswer(done, whileConnected: connection)
+        let hungUp =
+            !running
+            || Self.waitForAnswer(done, whileConnected: connection, heartbeat: heartbeats ? heartbeatInterval : nil)
         if hungUp { task.cancel() }
         // The task holds the pipe until it has written to it, and a cancelled one still finishes.
         Self.wait(for: done)
@@ -250,20 +262,27 @@ public final class HostRelayServer: Sendable {
         return hungUp ? nil : answer.reply.withLock { $0 }
     }
 
-    /// Waits until `done` is readable, returning true if `connection` hung up first.
-    private static func waitForAnswer(_ done: Int32, whileConnected connection: Int32) -> Bool {
+    /// Waits until `done` is readable, returning true if `connection` hung up first, and writes a heartbeat to it
+    /// every `heartbeat` meanwhile.
+    private static func waitForAnswer(_ done: Int32, whileConnected connection: Int32, heartbeat: Duration?) -> Bool {
         var watched = [
             pollfd(fd: done, events: Int16(POLLIN), revents: 0),
             pollfd(fd: connection, events: Int16(POLLIN), revents: 0),
         ]
         var discard = [UInt8](repeating: 0, count: 4096)
+        var nextBeat = heartbeat.map { ContinuousClock.now + $0 }
         while true {
-            let ready = poll(&watched, 2, -1)
+            let ready = poll(&watched, 2, nextBeat.map(milliseconds(until:)) ?? -1)
             if ready < 0 {
                 guard errno == EINTR || errno == EAGAIN else { return true }
                 continue
             }
             if watched[0].revents != 0 { return false }
+            if let beat = nextBeat, let heartbeat, ContinuousClock.now >= beat {
+                let stream = SocketStream(fd: connection, deadline: .now + transferWait)
+                guard (try? stream.write(Self.heartbeat)) != nil else { return true }
+                nextBeat = .now + heartbeat
+            }
             let events = Int32(watched[1].revents)
             if events & (POLLHUP | POLLERR | POLLNVAL) != 0 { return true }
             guard events & POLLIN != 0 else { continue }
@@ -271,6 +290,11 @@ public final class HostRelayServer: Sendable {
             let count = recv(connection, &discard, discard.count, MSG_DONTWAIT)
             if count == 0 || (count < 0 && errno != EAGAIN && errno != EINTR) { return true }
         }
+    }
+
+    private static func milliseconds(until deadline: ContinuousClock.Instant) -> Int32 {
+        let left = max(deadline - .now, .zero).components
+        return Int32(clamping: left.seconds * 1000 + left.attoseconds / 1_000_000_000_000_000)
     }
 
     private static func wait(for done: Int32) {

@@ -269,6 +269,8 @@ Quitting Canopy and stopping the master only detach.
   With no acknowledgement within 10 seconds, or with the connection ending first, it prints "Canopy is not reachable from this host right now." and exits 1.
 - It reads one JSON line back holding stdout, stderr, and the exit status, writes them out, and exits with that status.
   It waits for that line as long as the command runs, since a command such as `term wait` may run long.
+  While the command runs, the app writes a heartbeat, `{"alive": true}`, every 15 seconds, which the relay passes over.
+  A Mac that sleeps or changes network can leave the host's sshd holding the connection for hours, so after 45 seconds with no line the relay prints that Canopy is not reachable and exits 1.
   A request of another version gets only that line, `relay_outdated`, so an older relay never reads a line it does not expect.
 
 Each new connection to a host forwards `~/.canopy/<home id>/app.sock` on the host to the host's socket in the app, `CANOPY_HOME/hosts/<host hash>.sock`, through the master with `ssh -O forward -R`, removing a stale file at that path first.
