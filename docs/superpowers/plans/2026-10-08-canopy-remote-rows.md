@@ -24,7 +24,7 @@ Each task's code blocks are filled in from its commit once it lands, so the plan
 - `make test`, never bare `swift test`.
 - Unix socket paths must be under 104 bytes, including the terminator.
 - Remote paths never go through `Paths.canonical`: this Mac's `/home` is a symlink.
-- Nothing in tests or e2e reaches `hindie-box`. Only `scripts/e2e-remote.sh` does.
+- Nothing in tests or e2e reaches `hindie-box`. Only `scripts/e2e-hosts.sh` does.
 - Never quit or kill the release Canopy. Dev builds are killed by pid only.
 - Markdown: one sentence per line, no em dashes.
 - Commits: conventional prefixes, no Co-Authored-By trailers.
@@ -69,7 +69,7 @@ New elsewhere:
 | `Sources/CanopyCLI/RemoteAttachCommand.swift` | the hidden `canopy remote-attach` loop |
 | `Sources/CanopyApp/Sidebar/RemoteMark.swift` | the server mark and host name after a remote row |
 | `scripts/fake-ssh` | stand-in ssh for e2e and tests: runs commands locally under a fake host home |
-| `scripts/e2e-remote.sh` | the same steps against a real host |
+| `scripts/e2e-hosts.sh` | the host steps on a fake host, or with `--host` on a real one |
 
 Modified:
 
@@ -364,7 +364,7 @@ Modified:
 
 **Files:**
 - Modify: `scripts/e2e.sh`, `scripts/ui-fixture.sh`, `Makefile`
-- Create: `scripts/e2e-remote.sh`
+- Create: `scripts/e2e-hosts.sh`
 
 **Interfaces:**
 - Consumes: everything above.
@@ -381,11 +381,11 @@ Modified:
     - a release home and a second home on the same fake host not seeing each other's sessions;
     - `row rm` killing the session and moving the stand-in to the run's trash folder.
   - `scripts/ui-fixture.sh` adds a fake host with one remote row.
-  - `scripts/e2e-remote.sh <alias>`: the same steps against a real host on a throwaway dev home and a throwaway branch `canopy-e2e/<timestamp>`, plus `claude --version` run in a remote pane, a pushed branch's PR badge when `--with-pr <repo>` is given, and waking with the host stopped when `--stop-first` is given. It removes its row and branch at the end.
+  - `scripts/e2e-hosts.sh --host <alias>`: the same steps against a real host on a throwaway dev home and a throwaway branch `canopy-e2e/<timestamp>`, plus `claude --version` run in a remote pane, a pushed branch's PR badge when `--with-pr <repo>` is given, and waking with the host stopped when `--stop-first` is given. It removes its row and branch at the end.
 
 - [x] **Step 1: Write the e2e steps**
 - [x] **Step 2: `make e2e` passes**
-- [x] **Step 3: `scripts/e2e-remote.sh hindie-box` passes**
+- [x] **Step 3: `scripts/e2e-hosts.sh --host hindie-box` passes**
 - [x] **Step 4: Commit** `test: remote rows end to end`
 
 ### Task 11: Merge bar for the milestone
@@ -455,6 +455,16 @@ From the second review:
 5. Two apps starting on a new home at once could disagree on its id. The id is written whole and linked into place.
 6. The MaxSessions check read values inside Match blocks, and warned on hosts where only root can read sshd's config.
 7. A host added back kept its old preparation, and sessions closed while pending ones ended were forgotten.
+
+From the first CI run and CodeRabbit:
+
+1. CI had no tmux, so every test that adds a host failed with `host_unfit`. CI now runs `brew install tmux`.
+2. The helper's install raised and its probe printed no JSON on a host without tmux. Both now carry on: the install skips telling a server that is not there, and the probe reports no sessions.
+3. `postingWaitsAtMostASecondForTheApp` timed the post with the test task, which waits for a thread of the busy concurrency pool before it reads the clock; it is timed on the posting thread now. `aRowCanopyIsStillCreatingIsLoggedOnceItIsDone` gave creating's git calls 20 seconds to reach the add; it now waits for the add or for creating to end. Both failed on `main`'s CI too.
+4. Two callers that found the master gone at once could stop the master the first one started, dropping panes attached through it. A caller now stops only the master it checked. The fake launcher answers `-O check` for the socket as it was asked, as ssh does, so the test can hold one caller's answer.
+5. `host add` called an alias with a wake command unknown before waking it. Such a host is woken and retried first.
+6. A remote row's branch that `--delete-branch` could not delete was dropped silently. It is a warning now, as for a local row, and a deleted branch forgets its PR.
+7. The e2e scripts: `--host` without an alias, `stop_app` with no pid, a failure before the cleanup trap, the fixture's `pkill` before its folder check, and the fake master sleeping through `-O exit`. The plan named the e2e script by its old name.
 
 Not changed:
 
