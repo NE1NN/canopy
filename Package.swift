@@ -34,6 +34,11 @@ let package = Package(
         ),
         .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"]),
         .testTarget(
+            name: "CanopyCLITests",
+            dependencies: [
+                "CanopyCLI", "CanopyCore", .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]),
+        .testTarget(
             name: "CanopyTicketsTests", dependencies: ["CanopyCore", "CanopyTickets"], resources: [.copy("Fixtures")]),
     ]
 )
