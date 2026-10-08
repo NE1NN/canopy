@@ -464,7 +464,8 @@ From the first CI run and CodeRabbit:
 4. Two callers that found the master gone at once could stop the master the first one started, dropping panes attached through it. A caller now stops only the master it checked. The fake launcher answers `-O check` for the socket as it was asked, as ssh does, so the test can hold one caller's answer.
 5. `host add` called an alias with a wake command unknown before waking it. Such a host is woken and retried first.
 6. A remote row's branch that `--delete-branch` could not delete was dropped silently. It is a warning now, as for a local row, and a deleted branch forgets its PR.
-7. The e2e scripts: `--host` without an alias, `stop_app` with no pid, a failure before the cleanup trap, the fixture's `pkill` before its folder check, and the fake master sleeping through `-O exit`. The plan named the e2e script by its old name.
+7. The second CI run, with tmux, passed every host test but took 186 seconds against `main`'s 109, and four of `main`'s timing tests failed under the added load. Each now checks what it claims: the Dispatch tests ask whether every held thread was still held when the work finished, instead of whether it took under 5 seconds; `stopsWaitingAtTheDeadline` is timed on the reading thread; `terminateEndsTheWholeProcessGroup` waits for the child's process group rather than assuming it within 200 ms; and `titleAndBusyFollowTheForegroundProgram` waits for the shell's prompt before typing, which `run` gives up on after 10 seconds.
+8. The e2e scripts: `--host` without an alias, `stop_app` with no pid, a failure before the cleanup trap, the fixture's `pkill` before its folder check, and the fake master sleeping through `-O exit`. The plan named the e2e script by its old name.
 
 Not changed:
 
