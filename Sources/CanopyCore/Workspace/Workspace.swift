@@ -99,6 +99,7 @@ public actor Workspace {
             loadNotice =
                 "state.json could not be read. It was moved to \(backup.lastPathComponent) and Canopy started fresh."
         }
+        await stopStaleMasters()
         // A stand-in deleted outside Canopy comes back, so the row's terminals have a folder to start in.
         for remote in state.repos.flatMap(\.remote) {
             try? remote.makeStandIn()

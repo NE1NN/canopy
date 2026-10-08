@@ -326,7 +326,8 @@ struct RemoteStandInPathTests {
 
         #expect(created.row.path == Paths.canonical(created.row.path))
         #expect(created.row.path.hasPrefix(setup.workspace.home.root.path))
-        let found = try TargetResolver.row(for: TargetHint(row: link + "/remote/box/demo/feat-linked"), in: await linked.snapshot)
+        let found = try TargetResolver.row(
+            for: TargetHint(row: link + "/remote/box/demo/feat-linked"), in: await linked.snapshot)
         #expect(found.path == created.row.path)
         await linked.stop()
     }

@@ -50,6 +50,7 @@ final class AppModel {
         self.workspace = workspace
         self.terminals = terminals
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals)
+        self.hostMonitor = HostMonitor(workspace: workspace, terminals: terminals)
         let environment = ProcessInfo.processInfo.environment
         let builtInPlugins = BuiltInPlugins.make(environment: environment)
         self.builtInPlugins = builtInPlugins
@@ -118,6 +119,7 @@ final class AppModel {
         }
         await startControlServer()
         startRefreshingWhileVisible()
+        startWatchingHosts()
         startWatchingAgents()
         await offerHooksIfNeeded()
     }
@@ -126,6 +128,7 @@ final class AppModel {
         workspace.stopClones()
         portsTask?.cancel()
         activityTask?.cancel()
+        hostTask?.cancel()
         server?.stop()
         server = nil
         terminals.closeAll()
@@ -590,6 +593,20 @@ final class AppModel {
     }
 
     @ObservationIgnored private var activityTask: Task<Void, Never>?
+    @ObservationIgnored let hostMonitor: HostMonitor
+    @ObservationIgnored private var hostTask: Task<Void, Never>?
+
+    /// Hosts are probed every 2 seconds whether or not the window can be seen, so their panes' agents and idle detach
+    /// keep going while Canopy is in the background.
+    private func startWatchingHosts() {
+        hostTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.hostMonitor.probe()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
 
     /// Ports scan every 2 seconds and running dots refresh every second while any part of the window can be seen,
     /// and both at once when it comes back into view.

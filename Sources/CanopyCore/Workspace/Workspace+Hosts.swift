@@ -241,3 +241,34 @@ extension Workspace {
         return ssh(for: alias).attach(tmux)
     }
 }
+
+extension Workspace {
+    /// The hosts whose master is up.
+    public func connectedHosts() async -> [HostConnection] {
+        var connected: [HostConnection] = []
+        for connection in hostConnections.values where await connection.state == .connected {
+            connected.append(connection)
+        }
+        return connected
+    }
+
+    /// Lists the host's worktrees again for every repo with rows there.
+    public func refreshRemote(host alias: String) async {
+        let repos = state.repos.filter { $0.remote.contains { $0.host == alias } }.map(\.path)
+        for repo in repos {
+            await refreshRemote(repoPath: repo, host: alias)
+        }
+    }
+}
+
+extension Workspace {
+    /// Stops masters a Canopy that crashed on this home left running, which would keep their hosts awake for good.
+    func stopStaleMasters() async {
+        let launcher = SubprocessHostLauncher(environment: hostTooling.environment)
+        for alias in hosts.hosts.keys {
+            let ssh = ssh(for: alias)
+            guard FileManager.default.fileExists(atPath: ssh.controlPath) else { continue }
+            _ = await launcher.run(ssh.control("exit"), timeout: .seconds(5))
+        }
+    }
+}

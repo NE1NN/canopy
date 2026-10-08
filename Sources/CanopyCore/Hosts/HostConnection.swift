@@ -95,6 +95,12 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(remote), timeout: timeout)
     }
 
+    /// Runs `remote` only while the master is up, without counting as use, so watching an idle host never keeps it.
+    public func probe(_ remote: [String], timeout: Duration) async -> SubprocessResult? {
+        guard state == .connected, master?.isRunning == true else { return nil }
+        return await launcher.run(ssh.exec(remote), timeout: timeout)
+    }
+
     /// The host user's home folder, asked once per connection.
     public func home() async throws -> String {
         if let home = cachedHome { return home }

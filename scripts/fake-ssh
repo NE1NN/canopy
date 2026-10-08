@@ -64,7 +64,11 @@ if ((master)); then
     mkdir -p "$(dirname "$control")"
     echo $$ > "$control"
     trap 'rm -f "$control"; exit 0' TERM INT HUP
-    while :; do sleep 1; done
+    # A real master outlives whoever started it; this one stops with it, so a test that fails early leaks nothing.
+    parent=$PPID
+    while kill -0 "$parent" 2>/dev/null; do sleep 1; done
+    rm -f "$control"
+    exit 0
 fi
 
 for forward in "${forwards[@]+"${forwards[@]}"}"; do

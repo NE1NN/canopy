@@ -160,3 +160,32 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 }
+
+struct StaleMasterTests {
+    @Test func aMasterLeftByACrashedCanopyStopsAtLaunch() async throws {
+        let setup = try await HostControlTests.Setup()
+        try HostsConfigFile(url: setup.workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        await setup.workspace.stop()
+        let control = setup.workspace.ssh(for: "box").controlPath
+        try FileManager.default.createDirectory(
+            atPath: (control as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        // A crash leaves a master running with nobody to stop it.
+        let stray = Process()
+        stray.executableURL = URL(fileURLWithPath: FakeHost.script)
+        stray.arguments = ["-M", "-N", "-S", control, "--", "box"]
+        stray.environment = setup.host.environment
+        stray.standardOutput = FileHandle.nullDevice
+        stray.standardError = FileHandle.nullDevice
+        try stray.run()
+        defer { stray.terminate() }
+        #expect(await eventually { FileManager.default.fileExists(atPath: control) })
+
+        let relaunched = Workspace(
+            home: setup.workspace.home, git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { setup.host.environment }))
+        try await relaunched.start()
+
+        #expect(await eventually { !stray.isRunning })
+        await relaunched.stop()
+    }
+}
