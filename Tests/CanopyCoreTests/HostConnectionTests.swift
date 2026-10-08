@@ -41,6 +41,25 @@ struct HostConnectionTests {
         #expect(setup.events() == ["host.connected"])
     }
 
+    /// A pane asks every few seconds, so it can say what the host is doing while it comes up.
+    @Test func waitingAtMostAWhileLeavesTheAttemptForTheNextCaller() async throws {
+        let setup = try Setup()
+        setup.launcher.masterUp = false
+        setup.launcher.holdWakes = true
+        let asked = ContinuousClock.now
+
+        let first = try await setup.connection.connect(waitingAtMost: .milliseconds(300))
+
+        #expect(!first)
+        #expect(ContinuousClock.now - asked < .seconds(5))
+        #expect(await setup.connection.state == .waking)
+        setup.launcher.masterUp = true
+        setup.launcher.releaseWakes()
+        #expect(try await setup.connection.connect(waitingAtMost: .seconds(20)))
+        #expect(setup.launcher.wakes == ["start-box"])
+        #expect(setup.events() == ["host.woken", "host.connected"])
+    }
+
     @Test func aHostThatIsOffIsWokenOnceAndConnectsWhenItComesUp() async throws {
         let setup = try Setup()
         setup.launcher.masterUp = false

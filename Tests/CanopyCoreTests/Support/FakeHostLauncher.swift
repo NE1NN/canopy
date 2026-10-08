@@ -58,6 +58,9 @@ final class FakeHostLauncher: HostProcessLauncher {
         var socketThereAtStart: [Bool] = []
         /// Masters whose socket is gone while their process lingers, as after a dropped connection.
         var deadSockets: Set<ObjectIdentifier> = []
+        /// Wakes wait here until `releaseWakes()`, as a host that takes its time to start.
+        var holdWakes = false
+        var heldWakes: [CheckedContinuation<Void, Never>] = []
     }
 
     let state = Mutex(State())
@@ -65,6 +68,10 @@ final class FakeHostLauncher: HostProcessLauncher {
     var masterUp: Bool {
         get { state.withLock { $0.masterUp } }
         set { state.withLock { $0.masterUp = newValue } }
+    }
+    var holdWakes: Bool {
+        get { state.withLock { $0.holdWakes } }
+        set { state.withLock { $0.holdWakes = newValue } }
     }
     var masters: [Master] { state.withLock { $0.masters } }
     var wakes: [String] { state.withLock { $0.wakes } }
@@ -94,7 +101,28 @@ final class FakeHostLauncher: HostProcessLauncher {
     }
 
     func runWake(_ command: String) async -> SubprocessResult {
-        state.withLock { $0.wakes.append(command) }
+        let hold = state.withLock { state in
+            state.wakes.append(command)
+            return state.holdWakes
+        }
+        if hold {
+            await withCheckedContinuation { continuation in
+                let held = state.withLock { state in
+                    if state.holdWakes { state.heldWakes.append(continuation) }
+                    return state.holdWakes
+                }
+                if !held { continuation.resume() }
+            }
+        }
         return SubprocessResult(status: 0, stdout: Data(), stderr: Data(), timedOut: false)
+    }
+
+    func releaseWakes() {
+        let held = state.withLock { state in
+            state.holdWakes = false
+            defer { state.heldWakes = [] }
+            return state.heldWakes
+        }
+        for wake in held { wake.resume() }
     }
 }

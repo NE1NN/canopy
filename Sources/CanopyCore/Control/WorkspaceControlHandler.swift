@@ -457,38 +457,21 @@ public struct WorkspaceControlHandler: Sendable {
     /// goes on after that, and the pane's next call shares it.
     private func attach(_ pane: RemotePaneInfo) async throws -> HostAttachResult {
         let connection = try await workspace.connection(for: pane.host)
-        let outcome = await withTaskGroup(of: Result<Void, any Error>?.self) { group in
-            group.addTask {
-                do {
-                    try await connection.connect()
-                    return .success(())
-                } catch {
-                    return .failure(error)
-                }
+        do {
+            guard try await connection.connect(waitingAtMost: .seconds(5)) else {
+                return HostAttachResult(waiting: RemoteAttach.waitingMessage(await connection.state, host: pane.host))
             }
-            group.addTask {
-                try? await Task.sleep(for: .seconds(5))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
-        switch outcome {
-        case nil:
-            return HostAttachResult(waiting: RemoteAttach.waitingMessage(await connection.state, host: pane.host))
-        case .failure(let error):
+        } catch {
             return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
-        case .success:
-            do {
-                try await workspace.prepareHost(connection)
-                return HostAttachResult(
-                    ready: try await workspace.attachCommand(
-                        host: pane.host, repoPath: pane.repoPath, session: pane.session, folder: pane.folder,
-                        pane: pane.pane, rowName: pane.rowName))
-            } catch {
-                return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
-            }
+        }
+        do {
+            try await workspace.prepareHost(connection)
+            return HostAttachResult(
+                ready: try await workspace.attachCommand(
+                    host: pane.host, repoPath: pane.repoPath, session: pane.session, folder: pane.folder,
+                    pane: pane.pane, rowName: pane.rowName))
+        } catch {
+            return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
         }
     }
 

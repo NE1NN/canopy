@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum HostState: String, Codable, Sendable {
     /// Not connected, and nothing needs the host.
@@ -91,6 +92,13 @@ public actor HostConnection {
         connecting = attempt
         defer { connecting = nil }
         try await attempt.value
+    }
+
+    /// Like `connect()`, but returns false once `limit` passes with the master not up yet. The attempt goes on, and the
+    /// next caller joins it.
+    public func connect(waitingAtMost limit: Duration) async throws -> Bool {
+        let attempt = Task { try await self.connect() }
+        return try await FirstOf.finished(attempt, within: limit)
     }
 
     /// Runs `remote` on the host through the master, connecting first.
@@ -241,5 +249,32 @@ public actor HostConnection {
 
     private func forget(_ id: UUID) {
         observers[id] = nil
+    }
+}
+
+/// Waits for a task without waiting for it to end, which a task group cannot do: it waits for every child.
+private enum FirstOf {
+    final class Reply: Sendable {
+        private let continuation: Mutex<CheckedContinuation<Bool, any Error>?>
+
+        init(_ continuation: CheckedContinuation<Bool, any Error>) {
+            self.continuation = Mutex(continuation)
+        }
+
+        func send(_ result: Result<Bool, any Error>) {
+            continuation.withLock { $0.take() }?.resume(with: result)
+        }
+    }
+
+    /// Whether `task` finished within `limit`, with its error if it failed. A task still running is left to go on.
+    static func finished(_ task: Task<Void, any Error>, within limit: Duration) async throws -> Bool {
+        try await withCheckedThrowingContinuation { continuation in
+            let reply = Reply(continuation)
+            Task { reply.send(await task.result.map { true }) }
+            Task {
+                try? await Task.sleep(for: limit)
+                reply.send(.success(false))
+            }
+        }
     }
 }
