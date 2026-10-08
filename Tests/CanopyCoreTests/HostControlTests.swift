@@ -75,6 +75,35 @@ struct HostControlTests {
         }
     }
 
+    /// Restored panes attach together, and each prepares the host first.
+    @Test func panesPreparingAHostAtOnceInstallItsFilesOnce() async throws {
+        let setup = try await Setup()
+        let installs = setup.dir.sub("installs")
+        let script = setup.dir.sub("counting-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *b64decode* ]] && echo x >> '\(installs)'
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: [:]))
+        let connection = try await workspace.connection(for: "box")
+        try await connection.connect()
+
+        async let first: Void = workspace.prepareHost(connection)
+        async let second: Void = workspace.prepareHost(connection)
+        async let third: Void = workspace.prepareHost(connection)
+        _ = try await (first, second, third)
+
+        #expect(try String(contentsOfFile: installs, encoding: .utf8) == "x\n")
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func listingSaysWhichHostsConfigJSONCouldNotRead() async throws {
         let setup = try await Setup()
         try #"{"hosts": {"bad": {"repos": "nope"}, "good": {"repos": {"demo": "/x"}}}}"#.write(

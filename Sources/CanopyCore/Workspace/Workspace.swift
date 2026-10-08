@@ -56,11 +56,11 @@ public actor Workspace {
     var prStopped = false
 
     nonisolated let hostTooling: HostTooling
-    /// Names this home on hosts. Computed once, since the machine's name can change while Canopy runs.
+    /// Names this home on hosts.
     public nonisolated let homeID: String
     var hostConnections: [String: HostConnection] = [:]
-    /// The connection generation each host was last prepared for, by alias.
-    var preparedHosts: [String: Int] = [:]
+    /// Each host's preparation, by the connection generation it was for. Callers at the same time share one.
+    var preparedHosts: [String: (generation: Int, task: Task<Void, any Error>)] = [:]
 
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()

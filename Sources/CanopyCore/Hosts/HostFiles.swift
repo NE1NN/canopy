@@ -14,7 +14,7 @@ public enum HostFiles {
             def put(path, text, mode):
                 path = os.path.join(home, path)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                temporary = path + ".canopy-new"
+                temporary = path + ".canopy-new-" + str(os.getpid())
                 with open(temporary, "wb") as file:
                     file.write(base64.b64decode(text))
                 os.chmod(temporary, mode)

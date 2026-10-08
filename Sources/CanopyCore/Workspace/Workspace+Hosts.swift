@@ -179,14 +179,28 @@ extension Workspace {
     public func prepareHost(_ connection: HostConnection) async throws {
         let alias = connection.alias
         let generation = await connection.generation
-        guard preparedHosts[alias] != generation else { return }
+        if let prepared = preparedHosts[alias], prepared.generation == generation {
+            return try await prepared.task.value
+        }
+        let task = Task { try await self.prepare(connection) }
+        preparedHosts[alias] = (generation, task)
+        do {
+            try await task.value
+        } catch {
+            // A failed preparation is tried again by the next caller.
+            if preparedHosts[alias]?.generation == generation { preparedHosts[alias] = nil }
+            throw error
+        }
+    }
+
+    private func prepare(_ connection: HostConnection) async throws {
         try await installFiles(on: connection)
+        let alias = connection.alias
         if let pending = state.pendingSessionKills[alias], !pending.isEmpty {
             _ = try await output(of: killCommand(pending), on: connection)
             state.pendingSessionKills[alias] = nil
             try? save()
         }
-        preparedHosts[alias] = generation
     }
 
     /// Ends tmux sessions on a host. One that is not connected keeps them for its next connection, rather than being
