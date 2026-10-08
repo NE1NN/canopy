@@ -46,12 +46,17 @@ struct HostConnectionTests {
         let setup = try Setup()
         setup.launcher.masterUp = false
         setup.launcher.holdWakes = true
-        let asked = ContinuousClock.now
+        // Only this lets a connect that waits for the attempt to end come back, and then with the host up.
+        let safety = Task {
+            try await Task.sleep(for: .seconds(30))
+            setup.launcher.masterUp = true
+            setup.launcher.releaseWakes()
+        }
+        defer { safety.cancel() }
 
         let first = try await setup.connection.connect(waitingAtMost: .milliseconds(300))
 
         #expect(!first)
-        #expect(ContinuousClock.now - asked < .seconds(5))
         #expect(await setup.connection.state == .waking)
         setup.launcher.masterUp = true
         setup.launcher.releaseWakes()
