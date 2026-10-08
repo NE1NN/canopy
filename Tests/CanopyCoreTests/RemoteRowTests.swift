@@ -277,6 +277,32 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
+    @Test func aBranchTheHostCannotDeleteIsAWarningOnceTheRowIsGone() async throws {
+        let setup = try await Setup()
+        let script = setup.dir.sub("refusing-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *"'branch' '-D'"* ]] && { echo "error: branch is protected" >&2; exit 1; }
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try await workspace.addRepo(path: setup.repo)
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        let created = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/kept")
+
+        let warnings = try await workspace.removeRemoteRow(standIn: created.row.path, force: false, deleteBranch: true)
+
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("feat/kept") == true)
+        #expect(await workspace.snapshot.row(path: created.row.path) == nil)
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func removingADirtyRowNeedsForceAndThenGoesWithItsStandIn() async throws {
         let setup = try await Setup()
         let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/d")

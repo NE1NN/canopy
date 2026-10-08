@@ -301,8 +301,9 @@ extension Workspace {
         var warnings: [String] = []
         do {
             let target = try await remoteTarget(repoPath: repoPath, host: entry.host)
-            try await gitQueues.enqueue("\(entry.host):\(target.clone)") {
-                try await self.removeRemoteWorktree(entry, target: target, force: force, deleteBranch: deleteBranch)
+            warnings += try await gitQueues.enqueue("\(entry.host):\(target.clone)") {
+                try await self.removeRemoteWorktree(
+                    entry, target: target, repoPath: repoPath, force: force, deleteBranch: deleteBranch)
             }.value
         } catch let error as WorkspaceError where force && error.code == "host_unreachable" {
             warnings.append(
@@ -328,9 +329,10 @@ extension Workspace {
         return warnings
     }
 
+    /// Returns a warning when the branch could not be deleted, after the worktree was.
     private func removeRemoteWorktree(
-        _ entry: RemoteRowEntry, target: RemoteTarget, force: Bool, deleteBranch: Bool
-    ) async throws {
+        _ entry: RemoteRowEntry, target: RemoteTarget, repoPath: String, force: Bool, deleteBranch: Bool
+    ) async throws -> [String] {
         try await target.connection.connect()
         let clone = RepoGit(git: remoteGit(entry.host), path: target.clone)
         try await hostErrors(entry.host) {
@@ -343,10 +345,16 @@ extension Workspace {
                     throw WorkspaceError.worktreeDirty(entry.standIn)
                 }
             }
-            if deleteBranch, let branch = entry.branch {
-                _ = try? await clone.run(["branch", "-D", branch])
-            }
         }
+        // Last, so a branch that cannot be deleted still leaves the row removed.
+        guard deleteBranch, let branch = entry.branch else { return [] }
+        do {
+            try await clone.run(["branch", "-D", branch])
+        } catch {
+            return ["Removed the row, but could not delete branch \(branch) on \(entry.host): \(error)"]
+        }
+        try? forgetPullRequest(of: branch, repoPath: repoPath)
+        return []
     }
 }
 
