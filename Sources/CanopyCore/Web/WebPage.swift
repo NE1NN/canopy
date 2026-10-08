@@ -34,12 +34,20 @@ public final class WebPage: Identifiable {
     public internal(set) var title: String
     /// The row it belongs to, for the activity log.
     public internal(set) var context: PaneContext
+    /// The address it opened with, which still finds it after it moves on, as to claude.ai's sign-in.
+    public let openedURL: URL
 
     init(id: WebPageID, url: URL, title: String, context: PaneContext) {
         self.id = id
         self.url = url
         self.title = title
         self.context = context
+        self.openedURL = url
+    }
+
+    /// Whether the page is at `url`, or opened with it.
+    func shows(_ url: URL) -> Bool {
+        self.url == url || openedURL == url
     }
 
     /// The title, or the host until the page has one.

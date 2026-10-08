@@ -24,11 +24,11 @@ extension TerminalStore {
     @discardableResult
     public func openPage(_ url: URL, for context: PaneContext, placement: WebPlacement? = nil) -> OpenedPage {
         let path = context.rowPath
-        if let panel = panelsByRow[path], panel.page.url == url {
+        if let panel = panelsByRow[path], panel.page.shows(url) {
             setPanelHidden(false, inRow: path)
             return OpenedPage(page: panel.page, placement: .panel, isNew: false)
         }
-        if let tab = tabs(inRow: path).first(where: { $0.page?.url == url }), let page = tab.page {
+        if let tab = tabs(inRow: path).first(where: { $0.page?.shows(url) == true }), let page = tab.page {
             selectTab(tab.id, inRow: path)
             return OpenedPage(page: page, placement: .tab, isNew: false)
         }
@@ -46,6 +46,90 @@ extension TerminalStore {
         record(ActivityType.webOpened, page, ["placement": .string(placement.rawValue)])
         onChange()
         return OpenedPage(page: page, placement: placement, isNew: true)
+    }
+
+    /// The panel's page, into a new tab after the selected one. New pages open in tabs from now on.
+    public func movePanelPageToTab(inRow path: String) {
+        guard let page = panelsByRow.removeValue(forKey: path)?.page else { return }
+        insertTab(for: page, inRow: path)
+        webPlacement = .tab
+        onChange()
+    }
+
+    /// A web tab's page, into the row's panel. A page the panel held already takes the tab's place, so nothing is lost.
+    /// New pages open in the panel from now on.
+    public func moveTabToPanel(_ id: TabID, inRow path: String) {
+        var tabs = tabs(inRow: path)
+        guard let index = tabs.firstIndex(where: { $0.id == id }), let page = tabs[index].page else { return }
+        let wasSelected = selectedTab(inRow: path)?.id == id
+        tabs.remove(at: index)
+        tabsByRow[path] = tabs.isEmpty ? nil : tabs
+        if tabs.isEmpty {
+            selectedTabByRow[path] = nil
+        } else if wasSelected {
+            selectedTabByRow[path] = tabs[min(index, tabs.count - 1)].id
+        }
+        let selected = selectedTabByRow[path]
+        if let replaced = panelsByRow[path]?.page {
+            insertTab(for: replaced, inRow: path, at: index)
+            if let selected { selectedTabByRow[path] = selected }
+        }
+        panelsByRow[path] = WebPanel(page: page, isHidden: false)
+        webPlacement = .panel
+        markSeenOnScreen()
+        onChange()
+    }
+
+    /// The panel's close button: the page closes, and the panel with it.
+    public func closePanel(inRow path: String) {
+        guard let page = panelsByRow.removeValue(forKey: path)?.page else { return }
+        retire(page)
+        onChange()
+    }
+
+    /// Closes a page wherever it is. Returns false when no row has it.
+    @discardableResult
+    public func closePage(_ id: WebPageID) -> Bool {
+        guard let found = page(id) else { return false }
+        switch found.placement {
+        case .panel: closePanel(inRow: found.path)
+        case .tab:
+            if let tab = tabs(inRow: found.path).first(where: { $0.page?.id == id }) {
+                closeTab(tab.id, inRow: found.path)
+            }
+        }
+        return true
+    }
+
+    /// The page with this ID, the row it is in, and where.
+    public func page(_ id: WebPageID) -> (page: WebPage, path: String, placement: WebPlacement)? {
+        for path in rowPaths {
+            if let found = pages(inRow: path).first(where: { $0.page.id == id }) {
+                return (found.page, path, found.placement)
+            }
+        }
+        return nil
+    }
+
+    /// The row's panel page, then its web tabs in tab bar order.
+    public func pages(inRow path: String) -> [(page: WebPage, placement: WebPlacement)] {
+        let panel = panelsByRow[path].map { [($0.page, WebPlacement.panel)] } ?? []
+        return panel + tabs(inRow: path).compactMap { tab in tab.page.map { ($0, .tab) } }
+    }
+
+    /// Where the page's web view went and what it is called now.
+    public func pageNavigated(_ id: WebPageID, url: URL?, title: String?) {
+        guard let page = page(id)?.page else { return }
+        var changed = false
+        if let url, page.url != url {
+            page.url = url
+            changed = true
+        }
+        if let title, page.title != title {
+            page.title = title
+            changed = true
+        }
+        if changed { onChange() }
     }
 
     public func setPanelHidden(_ hidden: Bool, inRow path: String) {

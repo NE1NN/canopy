@@ -231,9 +231,11 @@ public final class TerminalStore {
         var tabs = tabs(inRow: path)
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedTab(inRow: path)?.id == id
-        for pane in tabs.remove(at: index).paneList {
+        let removed = tabs.remove(at: index)
+        for pane in removed.paneList {
             pane.close()
         }
+        removed.page.map(retire)
         tabsByRow[path] = tabs.isEmpty ? nil : tabs
         if tabs.isEmpty {
             selectedTabByRow[path] = nil
@@ -346,9 +348,14 @@ public final class TerminalStore {
 
     // MARK: Rows
 
+    /// Closes a row's terminals and drops its pages. The pages are not logged as closed, since a row's pages also close
+    /// this way when Canopy quits, and come back when it starts.
     public func closeRow(path: String) {
         for pane in tabs(inRow: path).flatMap(\.paneList) {
             pane.close()
+        }
+        for page in pages(inRow: path).map(\.page) {
+            onPageClosed(page.id)
         }
         tabsByRow[path] = nil
         selectedTabByRow[path] = nil
@@ -361,8 +368,8 @@ public final class TerminalStore {
     /// plain git, so they neither keep running out of reach nor come back when a new row reuses the folder.
     /// Repos that are missing or failed to refresh keep their terminals.
     public func closeRowsGone(from snapshot: WorkspaceSnapshot) {
-        for (path, tabs) in tabsByRow {
-            guard let repoPath = tabs.first?.repoPath,
+        for path in rowPaths {
+            guard let repoPath = repoPath(ofRow: path),
                 let repo = snapshot.repo(path: repoPath), !repo.isMissing, repo.error == nil
             else { continue }
             if repo.allRows.contains(where: { $0.path == path }) {
@@ -384,27 +391,53 @@ public final class TerminalStore {
             if pane.context.rowName != row.displayName { pane.context.rowName = row.displayName }
             if name != repo.name { pane.context.owner = .repo(name: repo.name, path: path) }
         }
+        for page in rowPaths.flatMap({ pages(inRow: $0).map(\.page) }) {
+            guard case .repo(let name, let path) = page.context.owner,
+                let row = snapshot.row(path: page.context.rowPath),
+                let repo = snapshot.repo(path: row.repoPath)
+            else { continue }
+            if page.context.rowName != row.displayName { page.context.rowName = row.displayName }
+            if name != repo.name { page.context.owner = .repo(name: repo.name, path: path) }
+        }
     }
 
-    /// Closes every terminal in a repo's rows, for when the repo is unregistered.
+    /// Closes every terminal and page in a repo's rows, for when the repo is unregistered.
     public func closeRows(ofRepo repoPath: String) {
-        for (path, tabs) in tabsByRow where tabs.first?.repoPath == repoPath {
+        for path in rowPaths where self.repoPath(ofRow: path) == repoPath {
             closeRow(path: path)
         }
     }
 
+    /// Rows with tabs or a panel.
+    var rowPaths: Set<String> {
+        Set(tabsByRow.keys).union(panelsByRow.keys)
+    }
+
+    /// Nil for a plugin's row.
+    func repoPath(ofRow path: String) -> String? {
+        tabs(inRow: path).lazy.compactMap(\.repoPath).first ?? panelsByRow[path]?.page.context.repoPath
+    }
+
     /// Follows a repo that moved: rows inside its old folder move with it, and every pane learns its new paths.
     public func moveRows(ofRepo oldRepoPath: String, to newRepoPath: String) {
-        for (path, tabs) in tabsByRow where tabs.first?.repoPath == oldRepoPath {
+        for path in rowPaths where repoPath(ofRow: path) == oldRepoPath {
             let newPath = Paths.isInside(path, oldRepoPath) ? newRepoPath + path.dropFirst(oldRepoPath.count) : path
-            for pane in tabs.flatMap(\.paneList) {
+            for pane in tabs(inRow: path).flatMap(\.paneList) {
                 if case .repo(let name, _) = pane.context.owner {
                     pane.context.owner = .repo(name: name, path: newRepoPath)
                 }
                 pane.context.rowPath = newPath
             }
-            tabsByRow[path] = nil
+            for page in pages(inRow: path).map(\.page) {
+                if case .repo(let name, _) = page.context.owner {
+                    page.context.owner = .repo(name: name, path: newRepoPath)
+                }
+                page.context.rowPath = newPath
+            }
+            let tabs = tabsByRow.removeValue(forKey: path)
             tabsByRow[newPath] = tabs
+            let panel = panelsByRow.removeValue(forKey: path)
+            panelsByRow[newPath] = panel
             if let selected = selectedTabByRow.removeValue(forKey: path) {
                 selectedTabByRow[newPath] = selected
             }
