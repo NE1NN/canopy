@@ -166,6 +166,18 @@ struct RemoteRowTests {
 
     /// A host that drops while its branches are listed must not look like one without the branch, which would make
     /// a new branch on the wrong base.
+    /// Each machine's git only knows its own worktrees, so a branch a remote row holds is still free on this Mac.
+    @Test func aBranchARemoteRowHoldsIsFreeOnThisMac() async throws {
+        let setup = try await Setup()
+        _ = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/both")
+        try await Fixture.git.run(["branch", "feat/both"], in: setup.repo)
+
+        let listed = try await setup.workspace.listBranches(repoPath: setup.repo, fetch: false).branches
+
+        #expect(listed.first { $0.name == "feat/both" }?.row == nil)
+        await setup.workspace.stop()
+    }
+
     @Test func aHostThatDropsWhileListingBranchesMakesNoBranch() async throws {
         let setup = try await Setup()
         let script = setup.dir.sub("dropping-ssh")
