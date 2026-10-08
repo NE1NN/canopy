@@ -27,17 +27,22 @@ public struct SSHCommand: Sendable, Equatable {
         ]
     }
 
+    /// Options for everything that goes through the master. ssh connects on its own when the master is gone or
+    /// refuses a session, as past sshd's MaxSessions, and such a connection would hold the host awake out of
+    /// Canopy's reach. A proxy that fails at once stops that, and is only used when the master is not.
+    var throughMaster: [String] {
+        ["-S", controlPath, "-o", "ControlMaster=no", "-o", "ProxyCommand=/usr/bin/false", "-o", "BatchMode=yes"]
+    }
+
     /// Runs `remote` on the host through the master, with each word quoted for the remote shell.
     public func exec(_ remote: [String]) -> [String] {
-        [executable, "-S", controlPath, "-o", "ControlMaster=no", "-o", "BatchMode=yes", "--", alias] + [
-            Self.shellQuoted(remote)
-        ]
+        [executable] + throughMaster + ["--", alias, Self.shellQuoted(remote)]
     }
 
     /// Runs `remote` on the host in a terminal, through the master, forwarding each remote socket to a local one.
     /// ssh's notes, such as "Shared connection to … closed", stay out of the pane, which says what happened itself.
     public func attach(_ remote: [String], forwards: [(remote: String, local: String)] = []) -> [String] {
-        var argv = [executable, "-t", "-S", controlPath, "-o", "ControlMaster=no", "-o", "LogLevel=ERROR"]
+        var argv = [executable, "-t"] + throughMaster + ["-o", "LogLevel=ERROR"]
         for forward in forwards {
             argv += ["-R", "\(forward.remote):\(forward.local)"]
         }

@@ -102,7 +102,9 @@ extension Workspace {
         try HostsConfigFile(url: home.configFile).save(alias, entry)
         await connection.update(entry)
         activity.record(ActivityType.hostAdded, data: ["host": .string(alias)])
-        return await info(alias, entry)
+        var added = await info(alias, entry)
+        added.warnings = HostChecks.warnings(facts, alias: alias)
+        return added
     }
 
     /// Writes Canopy's files on the host unless it has this version of them.
@@ -140,12 +142,13 @@ extension Workspace {
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 
-    public func hostInfos() async -> [HostInfo] {
+    public func hostListing() async -> HostListing {
+        let config = hosts
         var infos: [HostInfo] = []
-        for (alias, entry) in hosts.hosts.sorted(by: { $0.key < $1.key }) {
+        for (alias, entry) in config.hosts.sorted(by: { $0.key < $1.key }) {
             infos.append(await info(alias, entry))
         }
-        return infos
+        return HostListing(hosts: infos, warnings: config.warnings)
     }
 
     func info(_ alias: String, _ entry: HostEntry) async -> HostInfo {

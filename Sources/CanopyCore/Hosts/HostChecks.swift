@@ -9,6 +9,8 @@ public struct HostFacts: Sendable, Equatable {
     public var tmux: String
     public var python3: Bool
     public var uid: Int
+    /// sshd's MaxSessions as its config sets it: how many sessions one connection holds, each pane taking one.
+    public var maxSessions = 10
 }
 
 public enum HostChecks {
@@ -16,7 +18,10 @@ public enum HostChecks {
     public static let factsCommand = [
         "sh", "-c",
         #"echo "os=$(uname -s)"; echo "home=$HOME"; echo "git=$(command -v git)"; "#
-            + #"echo "tmux=$(tmux -V 2>/dev/null)"; echo "python3=$(command -v python3)"; echo "uid=$(id -u)""#,
+            + #"echo "tmux=$(tmux -V 2>/dev/null)"; echo "python3=$(command -v python3)"; echo "uid=$(id -u)"; "#
+            // sshd takes a setting's first value, and Ubuntu's config includes sshd_config.d before its own lines.
+            + #"echo "maxsessions=$(cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null "#
+            + #"| grep -iE '^[[:space:]]*MaxSessions[[:space:]]+[0-9]+' | head -n 1 | awk '{print $2}')""#,
     ]
 
     public static func parse(_ output: String) -> HostFacts {
@@ -27,7 +32,18 @@ public enum HostChecks {
         }
         return HostFacts(
             os: values["os"] ?? "", home: values["home"] ?? "", git: !(values["git"] ?? "").isEmpty,
-            tmux: values["tmux"] ?? "", python3: !(values["python3"] ?? "").isEmpty, uid: Int(values["uid"] ?? "") ?? 0)
+            tmux: values["tmux"] ?? "", python3: !(values["python3"] ?? "").isEmpty, uid: Int(values["uid"] ?? "") ?? 0,
+            maxSessions: Int(values["maxsessions"] ?? "") ?? 10)
+    }
+
+    /// What may need the author, though the host can be used.
+    public static func warnings(_ facts: HostFacts, alias: String) -> [String] {
+        guard facts.maxSessions < 20 else { return [] }
+        return [
+            "\(alias) allows \(facts.maxSessions) ssh sessions per connection (sshd's MaxSessions), and each pane holds "
+                + "one, so only about \(max(facts.maxSessions - 2, 1)) panes can be open there at once. To open more, put "
+                + "`MaxSessions 100` in /etc/ssh/sshd_config.d/canopy.conf on the host and restart ssh."
+        ]
     }
 
     /// What the host lacks, each as a phrase for "the host needs …".

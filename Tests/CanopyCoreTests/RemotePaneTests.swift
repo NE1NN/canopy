@@ -178,6 +178,11 @@ struct RemoteAttachTests {
             RemoteAttach.next(status: 255, state: .idle, host: "box")
                 == HostNextResult(action: .reconnect, message: "Lost box, reconnecting…"))
         #expect(RemoteAttach.next(status: 1, state: .connected, host: "box").action == .waitForReturn)
+        let refused = RemoteAttach.next(status: 255, state: .connected, host: "box", masterAnswers: true)
+        #expect(refused.action == .waitForReturn)
+        #expect(refused.message?.contains("MaxSessions") == true)
+        #expect(
+            RemoteAttach.next(status: 255, state: .connected, host: "box", masterAnswers: false).action == .reconnect)
     }
 }
 

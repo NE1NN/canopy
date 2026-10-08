@@ -1,5 +1,6 @@
 import ArgumentParser
 import CanopyCore
+import Foundation
 
 struct HostCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -49,6 +50,11 @@ struct HostCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let params = HostAddParams(alias: alias, repos: repos, wake: wake, idleDetachMinutes: idleDetach)
             let result = client.call(HostMethod.add, params)
+            if let host = try? result.decode(HostInfo.self) {
+                for warning in host.warnings {
+                    FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+                }
+            }
             try client.print(result) {
                 let host = try result.decode(HostInfo.self)
                 let clones = host.repos.sorted { $0.key < $1.key }.map { "\($0.key) at \($0.value)" }
@@ -65,9 +71,12 @@ struct HostCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(HostMethod.list, JSONValue.null)
-            try client.print(result) {
-                let hosts = try result.decode([HostInfo].self)
+            let listing = try client.call(HostMethod.list, JSONValue.null).decode(HostListing.self)
+            for warning in listing.warnings {
+                FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+            }
+            try client.print(try .from(listing.hosts)) {
+                let hosts = listing.hosts
                 guard !hosts.isEmpty else {
                     return "No hosts. Add one with `canopy host add <alias> --repo <repo>=<path>`."
                 }

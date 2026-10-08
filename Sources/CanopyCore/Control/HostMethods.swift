@@ -43,12 +43,15 @@ public struct HostInfo: Codable, Sendable, Equatable {
     public var error: String?
     /// This home's tmux server on the host, as `tmux -L` names it.
     public var tmuxServer: String
+    /// What `host add` found that may need the author, such as a low MaxSessions.
+    public var warnings: [String]
 
     public init(
         alias: String, state: HostState, repos: [String: String], wake: String?, idleDetachMinutes: Int,
-        rows: [String], tmuxServer: String, panes: [String] = [], error: String? = nil
+        rows: [String], tmuxServer: String, panes: [String] = [], error: String? = nil, warnings: [String] = []
     ) {
         self.tmuxServer = tmuxServer
+        self.warnings = warnings
         self.alias = alias
         self.state = state
         self.repos = repos
@@ -57,5 +60,16 @@ public struct HostInfo: Codable, Sendable, Equatable {
         self.rows = rows
         self.panes = panes
         self.error = error
+    }
+}
+
+/// `host.list`: every host config.json names, and why any it names could not be read.
+public struct HostListing: Codable, Sendable, Equatable {
+    public var hosts: [HostInfo]
+    public var warnings: [String]
+
+    public init(hosts: [HostInfo], warnings: [String]) {
+        self.hosts = hosts
+        self.warnings = warnings
     }
 }

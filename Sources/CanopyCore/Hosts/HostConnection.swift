@@ -108,6 +108,12 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(remote), timeout: timeout)
     }
 
+    /// Whether the master is up and answering, without starting one.
+    public func answers() async -> Bool {
+        guard state == .connected, master?.isRunning == true else { return false }
+        return await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0
+    }
+
     /// Runs `remote` only while the master is up, without counting as use, so watching an idle host never keeps it.
     public func probe(_ remote: [String], timeout: Duration) async -> SubprocessResult? {
         guard state == .connected, master?.isRunning == true else { return nil }

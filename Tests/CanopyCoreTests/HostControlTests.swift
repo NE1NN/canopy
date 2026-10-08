@@ -14,6 +14,15 @@ struct HostChecksTests {
         #expect(HostChecks.problems(facts).isEmpty)
     }
 
+    @Test func aHostThatAllowsFewSessionsPerConnectionIsWarnedAbout() {
+        let facts = HostChecks.parse("os=Linux\nhome=/h\ngit=/g\ntmux=tmux 3.4\npython3=/p\nuid=1\nmaxsessions=\n")
+
+        #expect(facts.maxSessions == 10)
+        #expect(HostChecks.warnings(facts, alias: "box").first?.contains("MaxSessions 100") == true)
+        #expect(HostChecks.parse("maxsessions=64\n").maxSessions == 64)
+        #expect(HostChecks.warnings(HostChecks.parse("maxsessions=64\n"), alias: "box").isEmpty)
+    }
+
     @Test func eachMissingToolIsNamed() {
         let facts = HostFacts(os: "Darwin", home: "/Users/x", git: false, tmux: "tmux 2.9a", python3: false, uid: 501)
 
@@ -64,6 +73,19 @@ struct HostControlTests {
             try await workspace.start()
             try await workspace.addRepo(path: repo)
         }
+    }
+
+    @Test func listingSaysWhichHostsConfigJSONCouldNotRead() async throws {
+        let setup = try await Setup()
+        try #"{"hosts": {"bad": {"repos": "nope"}, "good": {"repos": {"demo": "/x"}}}}"#.write(
+            toFile: setup.workspace.home.configFile.path, atomically: true, encoding: .utf8)
+
+        let listing = await setup.workspace.hostListing()
+
+        #expect(listing.hosts.map(\.alias) == ["good"])
+        #expect(listing.warnings.count == 1)
+        #expect(listing.warnings.first?.contains("bad") == true)
+        await setup.workspace.stop()
     }
 
     @Test func addingAHostChecksItInstallsCanopysFilesAndSavesIt() async throws {
@@ -172,7 +194,7 @@ struct HostControlTests {
         try await setup.workspace.removeHost(alias: "box")
 
         #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts.isEmpty)
-        #expect(await setup.workspace.hostInfos().isEmpty)
+        #expect(await setup.workspace.hostListing().hosts.isEmpty)
         await setup.workspace.stop()
     }
 
@@ -180,7 +202,7 @@ struct HostControlTests {
         let setup = try await Setup()
         try HostsConfigFile(url: setup.workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
 
-        #expect(await setup.workspace.hostInfos().map(\.state) == [.idle])
+        #expect(await setup.workspace.hostListing().hosts.map(\.state) == [.idle])
         await setup.workspace.stop()
     }
 }

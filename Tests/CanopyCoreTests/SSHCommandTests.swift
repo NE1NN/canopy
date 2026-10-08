@@ -72,6 +72,11 @@ struct SSHCommandTests {
             #expect(argv.containsSequence(["-o", "ControlMaster=no"]))
             #expect(argv.containsSequence(["--", "box"]))
         }
+        for argv in [exec, attach] {
+            // A session the master refuses, as past sshd's MaxSessions, must not reach the host around it.
+            #expect(argv.containsSequence(["-o", "ProxyCommand=/usr/bin/false"]))
+            #expect(argv.containsSequence(["-o", "BatchMode=yes"]))
+        }
         #expect(exec.last == "'git' '-C' '/a b' 'status'")
         #expect(!exec.contains("-t"))
         #expect(attach.contains("-t"))

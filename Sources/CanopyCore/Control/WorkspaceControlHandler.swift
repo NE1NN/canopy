@@ -239,14 +239,18 @@ public struct WorkspaceControlHandler: Sendable {
             }
             let connection = try await workspace.connection(for: pane.host)
             let state = await connection.state
-            return try .from(RemoteAttach.next(status: params.status, state: state, host: pane.host))
+            let answers = params.status == 255 && state == .connected ? await connection.answers() : false
+            return try .from(
+                RemoteAttach.next(status: params.status, state: state, host: pane.host, masterAnswers: answers))
 
         case HostMethod.list:
+            var listing = await workspace.hostListing()
             var infos: [HostInfo] = []
-            for info in await workspace.hostInfos() {
+            for info in listing.hosts {
                 infos.append(await withPanes(info))
             }
-            return try .from(infos)
+            listing.hosts = infos
+            return try .from(listing)
 
         case HostMethod.remove:
             let params = try request.decodeParams(HostRemoveParams.self)
