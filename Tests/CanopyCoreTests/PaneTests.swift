@@ -58,7 +58,8 @@ struct PaneTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
-        #expect(await eventually { pane.foreground?.name == "bash" })
+        // Ready for typing, which a loaded machine can take longer to be than `run` waits.
+        #expect(await eventually { pane.foreground?.name == "bash" && pane.isAtPrompt })
 
         pane.screen.onTitle?("my title")
         #expect(pane.title == "my title")

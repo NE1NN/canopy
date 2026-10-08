@@ -149,13 +149,16 @@ public final class Pane: Identifiable {
 
     /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
     /// Shells without a line editor never report ready, so it types anyway after `timeout`.
+    /// The shell waits for a line, ready for typing.
+    var isAtPrompt: Bool { process?.isAtPrompt ?? false }
+
     public func run(_ command: String, timeout: Duration = .seconds(10)) async {
         if context.remote != nil {
             await runRemotely?(self, command)
             return
         }
         let deadline = ContinuousClock.now + timeout
-        while let process, !process.isAtPrompt, ContinuousClock.now < deadline {
+        while process != nil, !isAtPrompt, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
         process?.write(command + "\r")

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CanopyCore
@@ -144,8 +145,11 @@ private let everyDispatchThreadGate = DispatchSemaphore(value: 1)
 /// Runs `body` while blocks hold every thread Dispatch lends its global queues, as dozens of tests running git at once
 /// did on a 3-CPU CI runner. `body` starts only once they all hold one: while Dispatch is still adding threads, it gives
 /// the next to the most urgent work waiting, so work at a higher priority would slip through. Work queued meanwhile at
-/// any priority waits until `body` returns, or ten seconds at most.
-func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -> T {
+/// any priority waits until `body` returns, or a minute at most. `body` gets whether every block still holds its
+/// thread, which is false once work that needed one could have run, however slow the machine.
+func withEveryDispatchThreadBusy<T>(_ body: (_ isHolding: @escaping @Sendable () -> Bool) async throws -> T)
+    async throws -> T
+{
     var threads: UInt32 = 0
     var size = MemoryLayout<UInt32>.size
     try #require(sysctlbyname("kern.wq_max_constrained_threads", &threads, &size, nil, 0) == 0)
@@ -154,11 +158,13 @@ func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -
     defer { everyDispatchThreadGate.signal() }
     let started = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
-    let deadline = DispatchTime.now() + 10
+    let deadline = DispatchTime.now() + 60
+    let letGo = Mutex(0)
     for _ in 0..<limit {
         DispatchQueue.global().async {
             started.signal()
             _ = release.wait(timeout: deadline)
+            letGo.withLock { $0 += 1 }
         }
     }
     defer {
@@ -166,7 +172,7 @@ func withEveryDispatchThreadBusy<T>(_ body: () async throws -> T) async throws -
     }
     let allStarted = try await offPool { (0..<limit).allSatisfy { _ in started.wait(timeout: deadline) == .success } }
     try #require(allStarted, "Dispatch never lent every thread, so the pool was never full")
-    return try await body()
+    return try await body { letGo.withLock { $0 } == 0 }
 }
 
 /// Polls until `condition` holds or the timeout passes. Returns whether it held. The timeout is long because a loaded CI
