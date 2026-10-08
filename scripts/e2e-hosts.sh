@@ -4,9 +4,10 @@
 #   scripts/e2e-hosts.sh                  a host this Mac plays through scripts/fake-ssh, with Homebrew's tmux
 #   scripts/e2e-hosts.sh --host <alias>   a real host from ~/.ssh/config, in a throwaway ~/canopy-e2e/<id> there
 #
-# It adds the host, makes a remote row with --run, types into it, checks the host's report of its folder, rejoins the
-# session after the app quits and after the connection drops, detaches the idle host and reconnects on Return, and
-# removes the row and the host. The real host's throwaway folder and this home's tmux server there are removed at the
+# It adds the host, makes a remote row with --run, types into it, checks the host's report of its folder, checks a
+# second home on the same host keeps to its own tmux server, rejoins the session after the app quits and after the
+# connection drops, drops keys typed while reconnecting, detaches the idle host and reconnects on Return, and removes
+# the row and the host. The real host's throwaway folder and this home's tmux server there are removed at the
 # end, and nothing else on the host is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -51,10 +52,14 @@ fi
 
 server=""
 cleanup() {
-    local pid
-    pid=$(app_pid)
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-    if [[ -n "$server" ]]; then on_host "tmux -u -L $server kill-server" >/dev/null 2>&1 || true; fi
+    local pid home name
+    for home in "$CANOPY_HOME" "$work/home2"; do
+        pid=$(CANOPY_HOME="$home" app_pid)
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    done
+    for name in "$server" "${server2:-}"; do
+        if [[ -n "$name" ]]; then on_host "tmux -u -L $name kill-server" >/dev/null 2>&1 || true; fi
+    done
     # The fake host's tmux server can outlive kill-server once its folder goes, so it is stopped by its config's path.
     if [[ -n "${host_home:-}" ]]; then pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $host_home/" 2>/dev/null || true; fi
     on_host "rm -rf '$host_dir'" >/dev/null 2>&1 || true
@@ -125,12 +130,39 @@ wait_for 60 screen_has remote-42 || fail "--run did not reach the host"
 remote=$("$cli" row list --json | json '[r["remotePath"] for r in d if r.get("branch") == "e2e/remote"][0]')
 on_host "test \"\$(git -C '$remote' rev-parse --abbrev-ref HEAD)\" = e2e/remote" || fail "no worktree at $remote"
 on_host "tmux -u -L $server has-session -t =$pane" || fail "no tmux session named $pane"
+# The session keeps its name when relaunching gives the pane a new one.
+session=$pane
+created_at() { on_host "tmux -u -L $server display-message -p -t '=$session:' '#{session_created}'"; }
+session_count() { on_host "tmux -u -L $server list-sessions" | wc -l | tr -d ' '; }
+started=$(created_at)
 
 step "term send types into it, and the host reports its folder"
 "$cli" term send "$pane" "cd /tmp && echo sent-\$((1 + 1))" --enter >/dev/null
 wait_for 30 screen_has sent-2 || fail "term send did not reach the host"
 folder_is_tmp() { "$cli" term list --json | json '[t["folder"] for t in d if t["pane"] == "'"$pane"'"][0]' | grep -Eqx '(/private)?/tmp'; }
 wait_for 20 folder_is_tmp || fail "term list does not show the host's folder"
+
+step "a second home on the same host has its own tmux server and sessions"
+home2() { CANOPY_HOME="$work/home2" "$@"; }
+CANOPY_HOME="$work/home2" launch
+home2 "$cli" repo add "$work/demo" >/dev/null
+home2 "$cli" host add "$alias" --repo "demo=$host_dir/demo" >/dev/null 2>&1
+server2=$(home2 "$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
+[[ "$server2" != "$server" ]] || fail "both homes use the tmux server $server"
+home2 "$cli" row new "e2e/other" --repo demo --on "$alias" --run 'echo other-$((1 + 1))' >/dev/null
+pane2=$(home2 "$cli" term list --json | json '[t["pane"] for t in d if t["row"] == "e2e/other"][0]')
+other_has() { home2 "$cli" term read "$pane2" --lines 200 | grep -q "$1"; }
+wait_for 60 other_has other-2 || fail "--run did not reach the host from the second home"
+[[ "$(on_host "tmux -u -L $server list-sessions -F '#{session_name}'")" == "$session" ]] ||
+    fail "the first home's server has sessions it did not make"
+[[ "$(on_host "tmux -u -L $server2 list-sessions -F '#{session_name}'")" == "$pane2" ]] ||
+    fail "the second home's server has sessions it did not make"
+"$cli" term list --json | json '[t["row"] for t in d]' | grep -q "e2e/other" && fail "the first home lists the other's pane"
+stand_in2=$(home2 "$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/other"][0]')
+home2 "$cli" row rm "$stand_in2" --force --delete-branch >/dev/null
+home2 "$cli" host rm "$alias" >/dev/null
+CANOPY_HOME="$work/home2" stop_app
+on_host "tmux -u -L $server2 kill-server" >/dev/null 2>&1 || true
 
 step "quitting and relaunching joins the same session"
 "$cli" term send "$pane" "echo before-quit-\$((2 + 2))" --enter >/dev/null
@@ -140,6 +172,7 @@ launch
 "$cli" row select e2e/remote --repo demo >/dev/null
 pane=$("$cli" term list --json | json '[t["pane"] for t in d if t["row"] == "e2e/remote"][0]')
 wait_for 90 screen_has before-quit-4 || fail "the relaunched pane did not rejoin its session"
+[[ "$(created_at)" == "$started" && "$(session_count)" == 1 ]] || fail "relaunching started another session"
 
 step "a dropped connection reconnects to the same session"
 # The master's control socket is named after this home's id, in the home or, when that is too long, in /tmp.
@@ -155,7 +188,7 @@ wait_for 90 connected_again || fail "the host did not reconnect"
 sleep 2
 "$cli" term send "$pane" "echo after-drop-\$((3 + 3))" --enter >/dev/null
 wait_for 60 screen_has after-drop-6 || fail "the pane did not come back after the drop"
-screen_has before-quit-4 || fail "the session after the drop is not the same one"
+[[ "$(created_at)" == "$started" && "$(session_count)" == 1 ]] || fail "the session after the drop is not the same one"
 ! screen_has leaked-10 || fail "keys typed while reconnecting reached the session"
 
 step "an idle host detaches, and Return reconnects"
@@ -171,7 +204,7 @@ wait_for 60 screen_has back-8 || fail "the pane did not rejoin after Return"
 step "row rm ends the session, removes the worktree, and forgets the row"
 stand_in=$("$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/remote"][0]')
 "$cli" row rm "$stand_in" --force --delete-branch >/dev/null
-gone() { ! on_host "tmux -u -L $server has-session -t =$pane" 2>/dev/null; }
+gone() { ! on_host "tmux -u -L $server has-session -t =$session" 2>/dev/null; }
 wait_for 20 gone || fail "the session is still on the host"
 on_host "test ! -e '$remote'" || fail "the worktree is still on the host"
 [[ ! -e "$stand_in" ]] || fail "the stand-in is still here"
