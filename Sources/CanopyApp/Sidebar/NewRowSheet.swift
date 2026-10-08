@@ -11,12 +11,28 @@ struct NewRowSheet: View {
     let picker: NewRowPicker
     @State private var isWorking = false
     @State private var error: String?
+    /// The host the row is made on, or nil for this Mac.
+    @State private var host: String?
     @FocusState private var isFieldFocused: Bool
+    /// Hosts with a clone of the repo, which the Where pop-up offers.
+    private let hosts: [String]
 
-    init(repo: RepoSnapshot, group: String?, picker: NewRowPicker) {
+    init(repo: RepoSnapshot, group: String?, picker: NewRowPicker, hosts: HostsConfig) {
         self.repo = repo
         _group = State(initialValue: group)
         self.picker = picker
+        self.hosts = hosts.hosts.filter { $0.value.clonePath(repoName: repo.name, repoPath: repo.path) != nil }.keys
+            .sorted()
+        let remembered = UserDefaults.standard.string(forKey: Self.whereKey(repo.path))
+        _host = State(initialValue: remembered.flatMap { self.hosts.contains($0) ? $0 : nil })
+    }
+
+    static func whereKey(_ repoPath: String) -> String { "newRow.where.\(repoPath)" }
+
+    /// What picking the selected item does where the row goes.
+    private var action: NewRowAction? {
+        guard let selected = picker.selectedAction else { return nil }
+        return host == nil ? selected : selected.onHost()
     }
 
     var body: some View {
@@ -49,6 +65,20 @@ struct NewRowSheet: View {
                     .textSelection(.enabled)
             }
             HStack(spacing: 8) {
+                if !hosts.isEmpty {
+                    Picker("Where", selection: $host) {
+                        Text("This Mac").tag(String?.none)
+                        Divider()
+                        ForEach(hosts, id: \.self) { host in
+                            Text(host).tag(Optional(host))
+                        }
+                    }
+                    .fixedSize()
+                    .help("Where the row's worktree and terminals live")
+                    .onChange(of: host) {
+                        UserDefaults.standard.set(host, forKey: Self.whereKey(repo.path))
+                    }
+                }
                 if !repo.groups.isEmpty {
                     Picker("Group", selection: $group) {
                         Text("No Group").tag(String?.none)
@@ -59,7 +89,7 @@ struct NewRowSheet: View {
                     }
                     .fixedSize()
                     // Opening or adopting a row leaves it where it is.
-                    .disabled(picker.selectedAction.map { !$0.createsRow } ?? false)
+                    .disabled(action.map { !$0.createsRow } ?? false)
                 }
                 if isWorking {
                     ProgressView().controlSize(.small)
@@ -69,8 +99,10 @@ struct NewRowSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button(primaryTitle, action: runSelected)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(picker.selectedAction == nil || isWorking)
-                    .help(picker.selectedAction?.command(repo: repo.name) ?? "")
+                    .disabled(action == nil || isWorking)
+                    .help(
+                        action?.command(repo: repo.name, host: host)
+                            ?? (host.map { "A pull request opens as a row on this Mac for now, not on \($0)." } ?? ""))
             }
         }
         .padding(20)
@@ -80,7 +112,7 @@ struct NewRowSheet: View {
     }
 
     private var primaryTitle: String {
-        switch picker.selectedAction {
+        switch action {
         case .selectRow?: "Open Row"
         case .adopt?: "Adopt"
         default: "Create Row"
@@ -88,11 +120,11 @@ struct NewRowSheet: View {
     }
 
     private func runSelected() {
-        guard !isWorking, let action = picker.selectedAction else { return }
+        guard !isWorking, let action = picker.selectedAction, self.action != nil else { return }
         isWorking = true
         error = nil
         Task {
-            error = await model.run(action, in: repo, group: action.createsRow ? group : nil)
+            error = await model.run(action, in: repo, group: action.createsRow || host != nil ? group : nil, host: host)
             isWorking = false
             if error == nil {
                 dismiss()

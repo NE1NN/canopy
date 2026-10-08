@@ -27,7 +27,7 @@ struct SidebarView: View {
             }
         }
         .sheet(item: $newRow) { request in
-            NewRowSheet(repo: request.repo, group: request.group, picker: request.picker)
+            NewRowSheet(repo: request.repo, group: request.group, picker: request.picker, hosts: model.workspace.hosts)
         }
         .sheet(item: $pluginPicker) { request in
             PluginPickerSheet(section: request.section, picker: request.picker)
@@ -395,6 +395,9 @@ struct RowLineView: View {
                 .foregroundStyle(row.isMissing ? .secondary : .primary)
             if let tag = row.externalTag {
                 TagView(text: tag.label)
+            }
+            if let host = row.host {
+                RemoteMark(host: host, path: row.remotePath)
             }
             if row.isMissing {
                 TagView(text: "missing")

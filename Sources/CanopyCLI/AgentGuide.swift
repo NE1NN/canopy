@@ -103,6 +103,20 @@ struct AgentGuide: ParsableCommand {
         `row new` run in a plugin row links the new worktree row to the row's item, so the item's panel lists it, and
         `row list --json` carries it as "link". Pass --no-link to leave it out.
 
+        ## Remote rows
+
+            canopy host add <alias> --repo <repo>=<path>... [--wake <cmd>] [--idle-detach <min>]
+            canopy host list | rm <alias>
+            canopy row new <branch> --on <host> [--run <cmd>]   a row whose worktree is on the host
+
+        A host is an ssh alias from ~/.ssh/config with a clone of the repo. A remote row's worktree is in
+        ~/.canopy/worktrees/<repo>/ on the host, and its terminals open there inside tmux, so programs such as
+        claude keep running while this Mac sleeps or Canopy quits, and the terminal joins them again when it
+        reconnects. `row list` shows its class as remote:<host>, and its path is a stand-in folder on this Mac, which
+        `row select` and `row rm` take. Agents on the host use the host's own git and gh. Panes detach after the
+        host's idle minutes with nothing running and nothing typed, so it can power itself off; Return reconnects.
+        A host that cannot be reached runs its --wake command, such as one that starts it.
+
         ## Terminals
 
             canopy term list [--all]                      ID, row, tab, process, title, and folder

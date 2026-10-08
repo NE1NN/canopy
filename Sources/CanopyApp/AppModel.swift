@@ -232,25 +232,40 @@ final class AppModel {
     }
 
     /// Does what the New Row sheet picked, as `action.command` would, and selects the row. A row it creates goes into
-    /// `group` and starts its setup. Returns an error message for the sheet to show, or nil.
-    func run(_ action: NewRowAction, in repo: RepoSnapshot, group: String?) async -> String? {
+    /// `group` and starts its setup, and with `host`, it is made on that host. Returns an error message for the sheet
+    /// to show, or nil.
+    func run(_ action: NewRowAction, in repo: RepoSnapshot, group: String?, host: String? = nil) async -> String? {
         let created: CreatedRow
         do {
-            switch action {
-            case .selectRow(let row):
-                reveal(row.path)
-                return nil
-            case .adopt(let worktree):
-                let row = try await workspace.adopt(path: worktree.path)
-                await select(row.path)
-                return nil
-            case .pullRequest(let number):
-                created = try await workspace.createRow(
-                    repoPath: repo.path, pullRequest: PRReference(number: number), group: group)
-            case .branch(let name):
-                created = try await workspace.createRow(repoPath: repo.path, branch: name, existing: true, group: group)
-            case .newBranch(let name, let base):
-                created = try await workspace.createRow(repoPath: repo.path, branch: name, base: base, group: group)
+            if let host {
+                switch action.onHost() {
+                case .branch(let name)?:
+                    created = try await workspace.createRemoteRow(
+                        repoPath: repo.path, host: host, branch: name, existing: true, group: group)
+                case .newBranch(let name, let base)?:
+                    created = try await workspace.createRemoteRow(
+                        repoPath: repo.path, host: host, branch: name, base: base, group: group)
+                default:
+                    return "A pull request opens as a row on this Mac for now. Pick its branch to open it on \(host)."
+                }
+            } else {
+                switch action {
+                case .selectRow(let row):
+                    reveal(row.path)
+                    return nil
+                case .adopt(let worktree):
+                    let row = try await workspace.adopt(path: worktree.path)
+                    await select(row.path)
+                    return nil
+                case .pullRequest(let number):
+                    created = try await workspace.createRow(
+                        repoPath: repo.path, pullRequest: PRReference(number: number), group: group)
+                case .branch(let name):
+                    created = try await workspace.createRow(
+                        repoPath: repo.path, branch: name, existing: true, group: group)
+                case .newBranch(let name, let base):
+                    created = try await workspace.createRow(repoPath: repo.path, branch: name, base: base, group: group)
+                }
             }
         } catch WorkspaceError.branchCheckedOut(_, let row?) where row.rowClass != .external {
             // The branch got a row after the list was made, and the list would have opened it.

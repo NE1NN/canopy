@@ -21,6 +21,22 @@ public enum NewRowAction: Equatable, Sendable {
         }
     }
 
+    /// The same on a host, where each machine's git only knows its own worktrees: a branch with a row on this Mac gets
+    /// a row there too. Nil for what a host cannot do yet, starting from a pull request, and for a detached checkout.
+    public func onHost() -> NewRowAction? {
+        switch self {
+        case .pullRequest: nil
+        case .branch, .newBranch: self
+        case .selectRow(let holder), .adopt(let holder): holder.branch.map(NewRowAction.branch)
+        }
+    }
+
+    /// The command that makes the row on `host`, or does the same here when it is nil.
+    public func command(repo: String, host: String?) -> String {
+        guard let host, createsRow else { return command(repo: repo) }
+        return command(repo: repo) + " --on " + Self.quoted(host)
+    }
+
     /// The command that does the same in `repo`, quoted for a shell. Adopting names the worktree by its path, which
     /// needs no repo.
     public func command(repo: String) -> String {
