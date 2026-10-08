@@ -96,6 +96,14 @@ public enum HostFiles {
         ["sh", "-c", #"cat "$HOME/.canopy/$0/files-version" 2>/dev/null; true"#, homeID]
     }
 
+    /// Prints the pane's hook report the host kept while the app was away, removing it, or prints nothing.
+    public static func replayCommand(homeID: String, pane: String) -> [String] {
+        [
+            "sh", "-c", #"exec python3 "$HOME/.canopy/$0/bin/canopy-host" replay --pane "$1" --home-id "$0""#, homeID,
+            pane,
+        ]
+    }
+
     /// tmux settings for Canopy's own server. Lines scrolled off a session's one window go into Canopy's scrollback,
     /// so scrolling and selecting work as in a local pane, and titles and copies reach Canopy.
     public static let tmuxConf = """

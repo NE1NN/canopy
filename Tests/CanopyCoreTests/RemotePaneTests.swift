@@ -151,13 +151,15 @@ struct RemoteAttachTests {
             words == [
                 "-u", "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/abcd1234/tmux.conf", "new-session", "-A", "-s",
                 "p7", "-c",
-                "/home/u/my work", "-e", "CANOPY_PANE=p7", "-e", "CANOPY_ROW_PATH=/home/u/my work",
+                "/home/u/my work", "-e", "PATH=/home/u/.canopy/abcd1234/bin:\(dir.path):/usr/bin:/bin", "-e",
+                "CANOPY_PANE=p7", "-e", "CANOPY_ROW_PATH=/home/u/my work",
             ])
     }
 
     @Test func aRemotePanesVariablesNameTheHostAndItsPaths() {
         let environment = RemoteAttach.environment(
-            pane: "p7", rowName: "feat/x", repoName: "demo", host: "box", rowPath: "/home/u/wt", clone: "/home/u/demo")
+            pane: "p7", rowName: "feat/x", repoName: "demo", host: "box", rowPath: "/home/u/wt", clone: "/home/u/demo",
+            hostHome: "/home/u", homeID: "abcd1234")
 
         #expect(environment["CANOPY_ROW_PATH"] == "/home/u/wt")
         #expect(environment["CANOPY_ROOT_PATH"] == "/home/u/demo")
@@ -166,6 +168,9 @@ struct RemoteAttachTests {
         #expect(environment["CANOPY_REPO"] == "demo")
         #expect(environment["CANOPY_ROW"] == "feat/x")
         #expect(environment["TERM_PROGRAM"] == "Canopy")
+        #expect(environment["CANOPY_SOCKET"] == "/home/u/.canopy/abcd1234/app.sock")
+        #expect(environment["CANOPY_CLI"] == "/home/u/.canopy/abcd1234/bin/canopy")
+        #expect(environment["CANOPY_HOME_ID"] == "abcd1234")
         #expect(environment["CANOPY_HOME"] == nil)
         #expect(environment["ZDOTDIR"] == nil)
     }

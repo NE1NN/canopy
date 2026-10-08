@@ -61,6 +61,8 @@ public actor Workspace {
     var hostConnections: [String: HostConnection] = [:]
     /// Each host's preparation, by the connection generation it was for. Callers at the same time share one.
     var preparedHosts: [String: (generation: Int, task: Task<Void, any Error>)] = [:]
+    /// Each host's socket for its relayed `canopy` calls, which its connections forward here.
+    var relayServers: [String: HostRelayServer] = [:]
 
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()

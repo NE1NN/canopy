@@ -627,3 +627,197 @@ struct RemoteLinkedHomeTests {
         await setup.workspace.stop()
     }
 }
+
+struct RemoteRelayTests {
+    /// The fake host with a stand-in CLI that names itself and its arguments, run through /bin/sh as the relayed
+    /// call's first argument, so no freshly written file is exec'd.
+    struct Setup {
+        let remote: RemoteRowTests.Setup
+        let cli: String
+
+        init() async throws {
+            remote = try await RemoteRowTests.Setup(relayCLI: "/bin/sh")
+            cli = remote.dir.sub("cli")
+            let record = remote.dir.sub("runs")
+            let body = #"echo "$CANOPY_PANE $*" >> '\#(record)'; echo "canopy 9.9 $*""#
+            try Data(("#!/bin/sh\n" + body + "\n").utf8).write(to: URL(fileURLWithPath: cli), options: .atomic)
+            chmod(cli, 0o755)
+        }
+
+        var workspace: Workspace { remote.workspace }
+        var folder: String { remote.host.home + "/.canopy/\(workspace.homeID)" }
+        var hostSocket: String { folder + "/app.sock" }
+        var runs: [String] {
+            ((try? String(contentsOfFile: remote.dir.sub("runs"), encoding: .utf8)) ?? "")
+                .split(separator: "\n").map(String.init)
+        }
+
+        func prepare() async throws {
+            try await workspace.prepareHost(try await workspace.connection(for: "box"))
+        }
+
+        /// The host's own `canopy` relay, run as a pane there runs it. It reaches the socket from its folder, since
+        /// the test folder's full path is too long for a socket on macOS.
+        func relay(_ arguments: [String]) async throws -> SubprocessResult {
+            var environment = Fixture.environment.filter { !$0.key.hasPrefix("CANOPY_") }
+            environment["HOME"] = remote.host.home
+            environment["CANOPY_SOCKET"] = "app.sock"
+            environment["CANOPY_HOME_ID"] = workspace.homeID
+            environment["CANOPY_PANE"] = "p1"
+            let (script, folder, variables) = (folder + "/bin/canopy-host", folder, environment)
+            return try await offPool {
+                try Subprocess.run(
+                    "/usr/bin/python3", [script, "relay"] + arguments, environment: variables, directory: folder,
+                    timeout: .seconds(60))
+            }
+        }
+    }
+
+    @Test func afterPreparingAHostItsCanopyReachesTheApp() async throws {
+        let setup = try await Setup()
+
+        try await setup.prepare()
+
+        let local = HostPaths.hostSocket(home: setup.workspace.home, homeID: setup.workspace.homeID, alias: "box")
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: setup.hostSocket) == local)
+        let result = try await setup.relay([setup.cli, "--version"])
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "canopy 9.9 --version\n")
+        #expect(result.status == 0)
+        await setup.workspace.stop()
+        #expect(!FileManager.default.fileExists(atPath: local))
+    }
+
+    /// sshd leaves a forwarded socket's file behind when the connection drops, and refuses to forward over it.
+    @Test func aReconnectForwardsAgainOverTheFileTheDroppedOneLeft() async throws {
+        let setup = try await Setup()
+        try await setup.prepare()
+        let connection = try await setup.workspace.connection(for: "box")
+        let exit = connection.ssh.control("exit")
+        let environment = setup.remote.host.environment
+
+        _ = try await offPool {
+            try Subprocess.run(
+                exit[0], Array(exit.dropFirst()), environment: environment, directory: nil,
+                timeout: .seconds(10))
+        }
+        #expect(await eventually { await connection.state != .connected })
+        var info = stat()
+        #expect(lstat(setup.hostSocket, &info) == 0 && info.st_mode & S_IFMT != S_IFLNK)
+        #expect(try await setup.relay([setup.cli, "--version"]).status == 1)
+        try await connection.connect()
+        try await setup.prepare()
+
+        let result = try await setup.relay([setup.cli, "--version"])
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "canopy 9.9 --version\n")
+        await setup.workspace.stop()
+    }
+
+    @Test func removingAHostStopsItsSocket() async throws {
+        let setup = try await Setup()
+        try await setup.prepare()
+        let local = HostPaths.hostSocket(home: setup.workspace.home, homeID: setup.workspace.homeID, alias: "box")
+        #expect(FileManager.default.fileExists(atPath: local))
+
+        try await setup.workspace.removeHost(alias: "box")
+
+        #expect(!FileManager.default.fileExists(atPath: local))
+        await setup.workspace.stop()
+    }
+
+    @Test func aPanesVariablesNameTheHostsCanopyAndItsSocket() async throws {
+        let setup = try await Setup()
+        let created = try await setup.workspace.createRemoteRow(
+            repoPath: setup.remote.repo, host: "box", branch: "feat/v")
+
+        let argv = try await setup.workspace.attachCommand(
+            host: "box", repoPath: setup.remote.repo, standIn: created.row.path, session: "p1", folder: "/tmp",
+            pane: "p1", rowName: "feat/v")
+
+        let remote = try #require(argv.last)
+        let id = setup.workspace.homeID
+        #expect(remote.contains("'CANOPY_SOCKET=\(setup.hostSocket)'"))
+        #expect(remote.contains("'CANOPY_CLI=\(setup.folder)/bin/canopy'"))
+        #expect(remote.contains("'CANOPY_HOME_ID=\(id)'"))
+        #expect(remote.contains(#""PATH=$HOME/.canopy/$h/bin:$PATH""#))
+        await setup.workspace.stop()
+    }
+}
+
+/// Reports a hook on the host kept while the app was away reach the app when a pane attaches.
+struct RemoteReplayTests {
+    struct Setup {
+        let relay: RemoteRelayTests.Setup
+        let handler: WorkspaceControlHandler
+        let terminals: TerminalStore
+        let pane: String
+
+        init() async throws {
+            relay = try await RemoteRelayTests.Setup()
+            let workspace = relay.workspace
+            let dir = relay.remote.dir
+            let created = try await workspace.createRemoteRow(
+                repoPath: relay.remote.repo, host: "box", branch: "feat/r")
+            (handler, terminals, pane) = await MainActor.run {
+                let terminals = Fixture.terminals(dir)
+                let rows = RowLifecycle(workspace: workspace, terminals: terminals)
+                let plugins = PluginHost(
+                    workspace: workspace, terminals: terminals, plugins: [], secrets: MemorySecretStore(),
+                    bundleID: "test", trash: FolderMovingTrash(into: dir.sub("trash")))
+                let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
+                return (
+                    WorkspaceControlHandler(rows: rows, plugins: plugins, ui: RecordingUI()), terminals,
+                    pane.id.description
+                )
+            }
+        }
+
+        var pending: String { relay.folder + "/pending/\(pane).json" }
+
+        /// A report as the host's relay keeps it.
+        func keep(version: String = HostFiles.version) throws {
+            let request: [String: Any] = [
+                "version": version, "args": [relay.cli, "agent-hook"], "cwd": "/", "env": ["CANOPY_PANE": pane],
+                "stdin": NSNull(), "age": 1.5, "kept": Date().timeIntervalSince1970,
+            ]
+            try FileManager.default.createDirectory(
+                atPath: relay.folder + "/pending", withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: request).write(to: URL(fileURLWithPath: pending))
+        }
+
+        func attach() async throws -> HostAttachResult {
+            let response = await handler.handle(
+                ControlRequest(method: HostAttachMethod.attach, params: try .from(HostAttachParams(pane: pane))))
+            return try #require(response.result).decode(HostAttachResult.self)
+        }
+
+        func stop() async {
+            await MainActor.run { terminals.closeAll() }
+            await relay.workspace.stop()
+        }
+    }
+
+    @Test func aKeptReportIsRelayedOnceAtAttach() async throws {
+        let setup = try await Setup()
+        try setup.keep()
+
+        let first = try await setup.attach()
+        let second = try await setup.attach()
+
+        #expect(first.ready != nil && second.ready != nil)
+        #expect(setup.relay.runs == ["\(setup.pane) agent-hook"])
+        #expect(!FileManager.default.fileExists(atPath: setup.pending))
+        await setup.stop()
+    }
+
+    /// The app may have updated the host's files since the hook kept its report, which a live relay is asked to run
+    /// again for. A kept report cannot be, so it runs as it is.
+    @Test func aReportKeptByOlderFilesStillRuns() async throws {
+        let setup = try await Setup()
+        try setup.keep(version: "0.0.1+old")
+
+        _ = try await setup.attach()
+
+        #expect(setup.relay.runs == ["\(setup.pane) agent-hook"])
+        await setup.stop()
+    }
+}

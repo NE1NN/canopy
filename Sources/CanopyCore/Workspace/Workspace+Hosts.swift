@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// How the workspace reaches hosts: which ssh, with what environment, on what clock, and which `canopy` runs their
 /// relayed calls. Tests pass a stand-in ssh and CLI.
@@ -173,6 +174,7 @@ extension Workspace {
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
+        relayServers.removeValue(forKey: alias)?.stop()
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 
@@ -200,6 +202,10 @@ extension Workspace {
             await connection.stop()
         }
         hostConnections.removeAll()
+        for server in relayServers.values {
+            server.stop()
+        }
+        relayServers.removeAll()
     }
 }
 
@@ -208,8 +214,8 @@ extension Workspace {
         state.pendingSessionKills
     }
 
-    /// Readies a connected host once per connection: Canopy's files at this version, and sessions closed while it was
-    /// away ended.
+    /// Readies a connected host once per connection: Canopy's files at this version, the host's `canopy` forwarded to
+    /// this app, and sessions closed while it was away ended.
     public func prepareHost(_ connection: HostConnection) async throws {
         let alias = connection.alias
         let generation = await connection.generation
@@ -229,6 +235,7 @@ extension Workspace {
 
     private func prepare(_ connection: HostConnection) async throws {
         try await installFiles(on: connection)
+        await forwardRelay(on: connection)
         let alias = connection.alias
         if let pending = state.pendingSessionKills[alias], !pending.isEmpty {
             _ = try await output(of: killCommand(pending), on: connection)
@@ -236,6 +243,65 @@ extension Workspace {
             let left = (state.pendingSessionKills[alias] ?? []).filter { !pending.contains($0) }
             state.pendingSessionKills[alias] = left.isEmpty ? nil : left
             try? save()
+        }
+    }
+
+    static let hostLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy", category: "hosts")
+
+    /// Forwards the host's relay socket to the host's socket here, through the master, for as long as it runs. sshd
+    /// leaves the socket's file behind when a connection drops, and will not forward over it, so it goes first.
+    /// Panes work without the forward, only without `canopy`, so a failure is logged rather than failing the attach.
+    private func forwardRelay(on connection: HostConnection) async {
+        let alias = connection.alias
+        do {
+            let local = try relayServer(for: alias).socketPath
+            let remote = HostPaths.relaySocket(home: try await connection.home(), homeID: homeID)
+            _ = try await output(
+                of: ["sh", "-c", #"mkdir -p -m 700 "${0%/*}" && rm -f "$0""#, remote], on: connection,
+                timeout: .seconds(30))
+            guard let result = await connection.forward(remote: remote, local: local) else {
+                throw WorkspaceError.hostUnreachable(alias, reason: "The connection ended.")
+            }
+            guard result.status == 0 else {
+                let errors = String(decoding: result.stderr, as: UTF8.self)
+                throw WorkspaceError.hostCommandFailed(
+                    alias, reason: errors.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        } catch {
+            Self.hostLog.error(
+                "No canopy on \(alias, privacy: .public): \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// The host's socket here, served from the first connection on until the host is removed or Canopy quits.
+    private func relayServer(for alias: String) throws -> HostRelayServer {
+        if let running = relayServers[alias] { return running }
+        let server = HostRelayServer(
+            socketPath: HostPaths.hostSocket(home: home, homeID: homeID, alias: alias), host: alias
+        ) { [weak self] request, host in
+            await self?.relay(request, host: host) ?? .failure("Canopy is quitting.", code: "relay_unavailable")
+        }
+        try server.start()
+        relayServers[alias] = server
+        return server
+    }
+
+    /// Runs the report a hook on the host kept for the pane while it could not reach this app, so the pane's agent
+    /// shows what it did meanwhile. The pane waits for it, so neither step waits long, and a failure is let go.
+    public func replayKeptReport(pane: String, on connection: HostConnection) async {
+        let command = HostFiles.replayCommand(homeID: homeID, pane: pane)
+        guard let result = try? await connection.run(command, timeout: .seconds(10)), result.status == 0,
+            !result.stdout.isEmpty,
+            let request = try? JSONDecoder().decode(RelayRequest.self, from: result.stdout)
+        else { return }
+        let alias = connection.alias
+        // Kept by the files of the time, which may be older than these: a live relay is asked to run again for that,
+        // but a kept report cannot be.
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { _ = await self.runRelayed(request, host: alias) }
+            group.addTask { try? await Task.sleep(for: .seconds(10)) }
+            await group.next()
+            group.cancelAll()
         }
     }
 
@@ -289,7 +355,7 @@ extension Workspace {
         let row = remoteRow(standIn: standIn)
         let environment = RemoteAttach.environment(
             pane: pane, rowName: rowName, repoName: target.repoName, host: alias, rowPath: row?.path ?? folder,
-            clone: target.clone)
+            clone: target.clone, hostHome: try await target.connection.home(), homeID: homeID)
         let tmux = RemoteAttach.tmuxCommand(homeID: homeID, session: session, folder: folder, environment: environment)
         return ssh(for: alias).attach(tmux)
     }
@@ -318,13 +384,18 @@ extension Workspace {
     /// Runs a call a host's relay sent, as its `canopy` would have run on this Mac. It runs as long as the CLI does,
     /// and a cancelled task, as when the relay hangs up, stops the CLI and everything it started.
     public func relay(_ request: RelayRequest, host alias: String) async -> RelayReply {
-        let receivedAt = Date()
         guard request.version == HostFiles.version else {
             if let connection = hostConnections[alias] {
                 Task { try? await self.installFiles(on: connection) }
             }
             return .failure("Canopy updated its files on \(alias); run it again.", code: "relay_outdated")
         }
+        return await runRelayed(request, host: alias)
+    }
+
+    /// Runs a relayed call whatever version of the host's files sent it.
+    func runRelayed(_ request: RelayRequest, host alias: String) async -> RelayReply {
+        let receivedAt = Date()
         guard let cli = hostTooling.relayCLI else {
             return .failure("This Canopy has no canopy CLI to run for \(alias).", code: "relay_unavailable")
         }

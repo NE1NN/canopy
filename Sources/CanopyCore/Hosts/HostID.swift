@@ -55,9 +55,14 @@ public enum HostPaths {
         return fitting(home.root.appending(path: "hosts/\(hash).sock").path, else: "\(homeID)-\(hash).sock", uid: uid)
     }
 
-    /// A pane's end of the forwarded socket, on the host.
-    public static func remotePaneSocket(uid: Int, homeID: String, pane: String) -> String {
-        "/tmp/canopy-\(uid)/\(homeID)-\(pane).sock"
+    /// The host's end of the forwarded relay socket, in the folder of this home's files under the host's `home`.
+    public static func relaySocket(home: String, homeID: String) -> String {
+        "\(home)/.canopy/\(homeID)/app.sock"
+    }
+
+    /// This home's `canopy` on the host.
+    public static func relayCLI(home: String, homeID: String) -> String {
+        "\(home)/.canopy/\(homeID)/bin/canopy"
     }
 
     /// The tmux server, as `tmux -L` names it.

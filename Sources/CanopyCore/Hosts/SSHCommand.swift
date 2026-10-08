@@ -39,14 +39,15 @@ public struct SSHCommand: Sendable, Equatable {
         [executable] + throughMaster + ["--", alias, Self.shellQuoted(remote)]
     }
 
-    /// Runs `remote` on the host in a terminal, through the master, forwarding each remote socket to a local one.
+    /// Runs `remote` on the host in a terminal, through the master.
     /// ssh's notes, such as "Shared connection to … closed", stay out of the pane, which says what happened itself.
-    public func attach(_ remote: [String], forwards: [(remote: String, local: String)] = []) -> [String] {
-        var argv = [executable, "-t"] + throughMaster + ["-o", "LogLevel=ERROR"]
-        for forward in forwards {
-            argv += ["-R", "\(forward.remote):\(forward.local)"]
-        }
-        return argv + ["--", alias, Self.shellQuoted(remote)]
+    public func attach(_ remote: [String]) -> [String] {
+        [executable, "-t"] + throughMaster + ["-o", "LogLevel=ERROR", "--", alias, Self.shellQuoted(remote)]
+    }
+
+    /// Asks the master to forward the Unix socket `remote` on the host to `local` here, for as long as it runs.
+    public func forward(remote: String, local: String) -> [String] {
+        control("forward", ["-R", "\(remote):\(local)"])
     }
 
     /// Prints the settings ssh would use for the host, from ~/.ssh/config, without connecting.
