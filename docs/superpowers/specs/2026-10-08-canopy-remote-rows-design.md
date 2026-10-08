@@ -120,6 +120,7 @@ Its control socket is `CANOPY_HOME/ssh/<home id>-<host hash>` when that is under
 Every pane, git call, probe, and forward runs through it, and never around it: each has `-o ProxyCommand=/usr/bin/false`, which ssh only uses when the master is gone or refuses a session.
 sshd allows a few sessions per connection (`MaxSessions`, 10 unless set), and each attached pane holds one, so `host add` warns when the host allows fewer than 20.
 The master starts when something needs the host, and stops once the host has no attached panes and nothing has used it for 10 minutes, or when its panes detach for idleness, or when the app quits.
+A remote row with a listening port counts as use, so the master stays up while it holds that port's forward.
 
 A host is in one of these states, which `canopy host list` shows:
 
@@ -141,6 +142,7 @@ A name that does not resolve is retried, as the Mac may be offline for now; `hos
 **Idle detach.** The app tracks, for each host, when a key was last typed into any of its panes and whether any of them runs a program.
 Once none has run a program or been typed into for `idleDetachMinutes`, the app detaches the host's panes and stops the master.
 A claude waiting at its prompt runs a program, which matches the box's own rule that a running claude keeps it on.
+A remote row with a listening port counts as running a program too, since someone may be browsing it through its forward with no pane in sight.
 
 ## Remote rows
 
@@ -332,6 +334,7 @@ A host without `ss` lists no ports, and when `ss` fails or takes too long the ho
 
 Each port found is forwarded through the master, `ssh -O forward -L`, to the same port on the Mac when that is free, and otherwise to the next free port above it.
 The forward goes when the port stops listening on the host or the master stops.
+While a remote row has a listening port, its host's panes do not detach for idleness and its master stays up, as "Idle detach" says.
 The ports panel lists a remote row's ports under it with the server mark and the host's name after the row's, and shows `5173 → 5174` when the Mac's port differs.
 Clicking one opens the Mac's port in the browser.
 A port without a forward is dimmed, with ssh's message on hover.

@@ -190,19 +190,22 @@ public actor HostConnection {
         return home
     }
 
-    /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, and how
-    /// long since anything was typed into one. Stops a master nothing needs, and detaches quiet panes.
-    public func panesActive(attached: Int, busy: Bool, quietFor: Duration) {
+    /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, whether
+    /// a remote row has a port listening, and how long since anything was typed into one. Stops a master nothing
+    /// needs, and detaches quiet panes. A listening port counts as use and as running, since someone may be browsing
+    /// it through its forward with no pane in sight.
+    public func panesActive(attached: Int, busy: Bool, serving: Bool, quietFor: Duration) {
         guard state == .connected else { return }
         let now = clock.now
-        if busy { lastBusy = now }
+        if busy || serving { lastBusy = now }
+        if serving { lastUse = now }
         if attached == 0 {
             if now - lastUse >= Self.unusedFor { stopMaster(becoming: .idle) }
             return
         }
         lastUse = now
         let limit = Duration.seconds(entry.idleDetachMinutes * 60)
-        guard entry.idleDetachMinutes > 0, !busy, quietFor >= limit, now - lastBusy >= limit else { return }
+        guard entry.idleDetachMinutes > 0, !busy, !serving, quietFor >= limit, now - lastBusy >= limit else { return }
         stopMaster(becoming: .detached)
         activity.record(ActivityType.hostDetached, data: ["host": .string(alias)])
     }

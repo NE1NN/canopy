@@ -14,6 +14,7 @@ struct HostMonitorRoundTests {
         let launchers: [String: FakeHostLauncher]
         let workspace: Workspace
         let terminals: TerminalStore
+        let clock = TestHostClock()
 
         /// With `rows`, each host has a remote row of the repo `demo`, at `/h/<alias>/feat` there.
         init(_ aliases: [String], rows: Bool = false) async throws {
@@ -27,7 +28,7 @@ struct HostMonitorRoundTests {
             workspace = Workspace(
                 home: CanopyHome(path: dir.sub("home")), git: Fixture.git,
                 hostTooling: HostTooling(
-                    sshExecutable: "/usr/bin/false", clock: TestHostClock(),
+                    sshExecutable: "/usr/bin/false", clock: clock,
                     launcher: { launchers[$0] ?? FakeHostLauncher() }))
             try await workspace.start()
             let repo = rows ? try await Fixture.repo(in: dir) : nil
@@ -152,6 +153,34 @@ struct HostMonitorRoundTests {
             })
         #expect(!ports().isEmpty)
         #expect(ports().allSatisfy { $0.remote?.local != nil || $0.remote?.error != nil })
+        await hosts.stop()
+    }
+
+    /// A host whose remote row serves a port keeps its master with no pane attached, as someone may be browsing it.
+    @Test func aHostServingARemoteRowsPortStaysConnected() async throws {
+        let hosts = try await Hosts(["serving", "quiet"], rows: true)
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        let port = FakeSSHForwardTests.freePort()
+        hosts.serve(on: "serving", [port])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return monitor.remotePorts["serving"]?.isEmpty == false
+            })
+
+        let serving = try await hosts.workspace.connection(for: "serving")
+        let quiet = try await hosts.workspace.connection(for: "quiet")
+        let probed = hosts["serving"].probes(.sessions)
+
+        hosts.clock.advance(by: .seconds(11 * 60))
+
+        // A round skips a host whose ports probe still runs, so rounds go on until each host had one.
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return await quiet.state == .idle && hosts["serving"].probes(.sessions) > probed
+            })
+        #expect(await serving.state == .connected)
         await hosts.stop()
     }
 }

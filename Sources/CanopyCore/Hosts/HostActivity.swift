@@ -120,7 +120,9 @@ public final class HostMonitor {
             samples.append(HostPaneSample(session: session, isRunning: running, lastInput: pane.lastInput))
         }
         let summary = HostActivity.summary(panes: samples, sessions: sessions, now: Date())
-        await connection.panesActive(attached: summary.attached, busy: summary.busy, quietFor: summary.quietFor)
+        await connection.panesActive(
+            attached: summary.attached, busy: summary.busy, serving: remotePorts[alias]?.isEmpty == false,
+            quietFor: summary.quietFor)
         let probed = probes[alias, default: 0] + 1
         probes[alias] = probed
         if probed % Self.listEvery == 0, listing[alias] == nil {
