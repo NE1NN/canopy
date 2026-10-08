@@ -49,6 +49,11 @@ public struct SSHCommand: Sendable, Equatable {
         return argv + ["--", alias, Self.shellQuoted(remote)]
     }
 
+    /// Prints the settings ssh would use for the host, from ~/.ssh/config, without connecting.
+    public func config() -> [String] {
+        [executable, "-G", alias]
+    }
+
     /// Asks the master to do something, such as `check` or `exit`.
     public func control(_ operation: String, _ arguments: [String] = []) -> [String] {
         [executable, "-S", controlPath, "-O", operation] + arguments + [alias]

@@ -178,7 +178,7 @@ public actor HostConnection {
                 activity.record(ActivityType.hostConnected, data: ["host": .string(alias)])
                 return
             }
-            if clock.now >= deadline {
+            if await noRetryCanFix(lastError ?? "") || clock.now >= deadline {
                 set(.unreachable)
                 activity.record(
                     ActivityType.hostUnreachable,
@@ -193,6 +193,23 @@ public actor HostConnection {
             }
             try await clock.sleep(for: Self.retryEvery)
         }
+    }
+
+    /// ssh's failures that waiting and waking cannot change. A name that does not resolve may be a Mac that is offline
+    /// for now, unless ~/.ssh/config does not know the alias at all.
+    private func noRetryCanFix(_ message: String) async -> Bool {
+        let permanent = [
+            "Permission denied", "Host key verification failed", "Bad configuration option", "Bad owner or permissions",
+            "Too many authentication failures",
+        ]
+        if permanent.contains(where: message.contains) { return true }
+        guard message.contains("Could not resolve hostname") else { return false }
+        let config = await launcher.run(ssh.config(), timeout: .seconds(5))
+        guard config.status == 0 else { return false }
+        let lines = String(decoding: config.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
+        let hostname = lines.first { $0.hasPrefix("hostname ") }.map { String($0.dropFirst("hostname ".count)) }
+        let proxied = lines.contains { $0.hasPrefix("proxycommand ") || $0.hasPrefix("proxyjump ") }
+        return hostname?.lowercased() == alias.lowercased() && !proxied
     }
 
     /// Starts a master and waits until ssh says it is up, or it exits. Returns whether it is up.

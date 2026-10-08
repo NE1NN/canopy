@@ -65,6 +65,45 @@ struct HostConnectionTests {
         #expect(setup.events() == ["host.woken", "host.connected"])
     }
 
+    @Test(arguments: [
+        "ubuntu@10.0.0.1: Permission denied (publickey).",
+        "Host key verification failed.",
+        "/Users/me/.ssh/config: line 3: Bad configuration option: hostnme",
+    ])
+    func anErrorNoRetryCanFixFailsAtOnceWithoutWaking(_ error: String) async throws {
+        let setup = try Setup()
+        setup.launcher.masterUp = false
+        setup.launcher.masterError = error
+
+        await #expect {
+            try await setup.connection.connect()
+        } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
+
+        #expect(setup.launcher.masters.count == 1)
+        #expect(setup.launcher.wakes.isEmpty)
+        #expect(await setup.connection.state == .unreachable)
+        #expect(await setup.connection.lastError == error)
+    }
+
+    /// An alias ~/.ssh/config does not name is a typo. A name it maps to may only fail while the Mac is offline.
+    @Test(arguments: [
+        ("hostname box\n", true), ("hostname box.example.com\n", false),
+        ("hostname box\nproxycommand aws ssm\n", false),
+    ])
+    func aNameThatDoesNotResolveFailsAtOnceOnlyWhenSSHConfigLacksIt(_ config: String, _ fails: Bool) async throws {
+        let setup = try Setup()
+        setup.launcher.masterUp = false
+        setup.launcher.masterError = "ssh: Could not resolve hostname box: nodename nor servname provided, or not known"
+        setup.launcher.config = config
+
+        await #expect {
+            try await setup.connection.connect()
+        } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
+
+        #expect(setup.launcher.wakes.isEmpty == fails)
+        #expect((setup.launcher.masters.count == 1) == fails)
+    }
+
     @Test func aHostThatIsOffIsWokenOnceAndConnectsWhenItComesUp() async throws {
         let setup = try Setup()
         setup.launcher.masterUp = false

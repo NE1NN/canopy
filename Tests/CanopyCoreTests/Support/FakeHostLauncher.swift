@@ -25,9 +25,13 @@ final class FakeHostLauncher: HostProcessLauncher {
     final class Master: HostMasterProcess {
         let exited = Mutex(false)
         let waiters = Mutex<[CheckedContinuation<Void, Never>]>([])
+        let errorOutput: String
+
+        init(errorOutput: String) {
+            self.errorOutput = errorOutput
+        }
 
         var isRunning: Bool { !exited.withLock { $0 } }
-        var errorOutput: String { "Connection closed by UNKNOWN port 65535" }
 
         func stop() { end() }
 
@@ -51,6 +55,10 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     struct State {
         var masterUp: Bool = true
+        /// What a master that does not come up says.
+        var masterError = "Connection closed by UNKNOWN port 65535"
+        /// What `ssh -G` prints.
+        var config = "hostname box.example.com\n"
         var masters: [Master] = []
         var wakes: [String] = []
         var commands: [[String]] = []
@@ -69,6 +77,14 @@ final class FakeHostLauncher: HostProcessLauncher {
         get { state.withLock { $0.masterUp } }
         set { state.withLock { $0.masterUp = newValue } }
     }
+    var masterError: String {
+        get { state.withLock { $0.masterError } }
+        set { state.withLock { $0.masterError = newValue } }
+    }
+    var config: String {
+        get { state.withLock { $0.config } }
+        set { state.withLock { $0.config = newValue } }
+    }
     var holdWakes: Bool {
         get { state.withLock { $0.holdWakes } }
         set { state.withLock { $0.holdWakes = newValue } }
@@ -78,7 +94,7 @@ final class FakeHostLauncher: HostProcessLauncher {
     var commands: [[String]] { state.withLock { $0.commands } }
 
     func startMaster(_ argv: [String]) -> any HostMasterProcess {
-        let master = Master()
+        let master = Master(errorOutput: state.withLock { $0.masterError })
         let control = argv.firstIndex(of: "-S").map { argv[$0 + 1] } ?? ""
         let there = FileManager.default.fileExists(atPath: control)
         let up = state.withLock { state in
@@ -92,6 +108,9 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
         state.withLock { $0.commands.append(argv) }
+        if argv.contains("-G") {
+            return SubprocessResult(status: 0, stdout: Data(config.utf8), stderr: Data(), timedOut: false)
+        }
         if argv.containsSequence(["-O", "check"]) {
             let last = masters.last
             let up = (last?.isRunning ?? false) && !state.withLock { $0.deadSockets.contains(ObjectIdentifier(last!)) }
