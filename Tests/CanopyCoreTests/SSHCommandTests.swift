@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CanopyCore
@@ -19,6 +20,21 @@ struct HostPathTests {
         #expect(HomeID.load(home: CanopyHome(path: dir.sub("release"))) == id)
         #expect(HomeID.load(home: dev) != id)
         #expect(try String(contentsOf: release.homeIDFile, encoding: .utf8).trimmingCharacters(in: .newlines) == id)
+    }
+
+    @Test func appsStartingOnANewHomeAtOnceAgreeOnItsID() throws {
+        for _ in 0..<20 {
+            let dir = try TempDir()
+            let home = CanopyHome(path: dir.sub("home"))
+            let ids = Mutex<Set<String>>([])
+
+            DispatchQueue.concurrentPerform(iterations: 8) { _ in
+                let id = HomeID.load(home: home)
+                ids.withLock { _ = $0.insert(id) }
+            }
+
+            #expect(ids.withLock { $0 } == [HomeID.load(home: home)])
+        }
     }
 
     @Test func aHomeIDFileThatIsNotOneIsReplaced() throws {

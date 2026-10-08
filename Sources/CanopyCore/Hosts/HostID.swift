@@ -9,15 +9,15 @@ public enum HomeID {
         if let saved = read(home), isValid(saved) { return saved }
         let made = String((0..<8).map { _ in "0123456789abcdef".randomElement()! })
         try? FileManager.default.createDirectory(at: home.root, withIntermediateDirectories: true)
-        // A second app starting on the same home at once keeps whichever id was written first.
-        let file = open(home.homeIDFile.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-        if file >= 0 {
-            _ = Data((made + "\n").utf8).withUnsafeBytes { write(file, $0.baseAddress, $0.count) }
-            close(file)
-            return made
-        }
+        // Written whole beside it, then linked into place, which fails when another app starting on the same home at
+        // once got there first. Its id then wins, so both use one.
+        let written = home.homeIDFile.path + ".\(UUID().uuidString)"
+        defer { unlink(written) }
+        guard (try? Data((made + "\n").utf8).write(to: URL(fileURLWithPath: written))) != nil else { return made }
+        if link(written, home.homeIDFile.path) == 0 { return made }
         if let saved = read(home), isValid(saved) { return saved }
-        try? Data((made + "\n").utf8).write(to: home.homeIDFile, options: .atomic)
+        // Not an id, so nothing could have used it.
+        rename(written, home.homeIDFile.path)
         return made
     }
 
