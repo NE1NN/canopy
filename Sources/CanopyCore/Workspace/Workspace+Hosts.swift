@@ -54,7 +54,7 @@ extension Workspace {
         let connection = HostConnection(
             alias: alias, entry: entry, ssh: ssh,
             launcher: hostTooling.launcher?(alias) ?? SubprocessHostLauncher(environment: hostTooling.environment),
-            clock: hostTooling.clock, activity: activity)
+            clock: hostTooling.clock, activity: activity, macPorts: macPorts)
         hostConnections[alias] = connection
         return connection
     }
@@ -208,7 +208,6 @@ extension Workspace {
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
-        portForwarders[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
@@ -237,7 +236,6 @@ extension Workspace {
             await connection.stop()
         }
         hostConnections.removeAll()
-        portForwarders.removeAll()
         for server in relayServers.values {
             server.stop()
         }
@@ -437,23 +435,13 @@ extension Workspace {
         state.repos.flatMap(\.remote).filter { $0.host == alias }
     }
 
-    /// Forwards a host's listening ports to Mac ports, one host at a time, so two hosts never pick the same Mac port.
-    /// Nil when the round said nothing of the host's forwards, as when its master stopped meanwhile.
-    public func forwardPorts(_ wanted: [RemoteListeningPort], on connection: HostConnection) async
+    /// Forwards a host's listening ports to Mac ports. Hosts forward at the same time, and `macPorts`, which every
+    /// connection here shares, keeps two from picking the same Mac port. Nil when the round said nothing of the host's
+    /// forwards, as when its master stopped meanwhile or the host was removed.
+    public nonisolated func forwardPorts(_ wanted: [RemoteListeningPort], on connection: HostConnection) async
         -> [UInt16: PortForward]?
     {
-        portForwarders[connection.alias] = connection
-        let previous = forwardingPorts
-        let round = Task {
-            await previous?.value
-            var taken = Set<UInt16>()
-            for (alias, other) in portForwarders where alias != connection.alias {
-                taken.formUnion(await other.forwardedPorts)
-            }
-            return await connection.forwardPorts(wanted, taken: taken)
-        }
-        forwardingPorts = Task { _ = await round.value }
-        return await round.value
+        await connection.forwardPorts(wanted)
     }
 
     /// Lists the host's worktrees again for every repo with rows there.

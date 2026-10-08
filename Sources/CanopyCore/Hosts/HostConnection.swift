@@ -51,11 +51,13 @@ public actor HostConnection {
     /// The round of forwards under way, which the next waits for.
     private var forwarding: Task<Void, Never>?
 
-    /// `isPortFree` says whether nothing on this Mac holds a port; tests pass a stand-in.
+    /// `isPortFree` says whether nothing on this Mac holds a port; tests pass a stand-in. `macPorts` holds the Mac
+    /// ports of every host's forwards, which the workspace shares between its hosts.
     public init(
         alias: String, entry: HostEntry, ssh: SSHCommand, launcher: any HostProcessLauncher = SubprocessHostLauncher(),
         clock: any HostClock = SystemHostClock(), activity: ActivityLog,
-        isPortFree: @escaping @Sendable (UInt16) -> Bool = LocalPortChooser.isFree
+        isPortFree: @escaping @Sendable (UInt16) -> Bool = LocalPortChooser.isFree,
+        macPorts: MacPortReservations = MacPortReservations()
     ) {
         self.alias = alias
         self.entry = entry
@@ -64,7 +66,7 @@ public actor HostConnection {
         self.clock = clock
         self.activity = activity
         self.isPortFree = isPortFree
-        forwards = HostForwards(ssh: ssh)
+        forwards = HostForwards(ssh: ssh, macPorts: macPorts)
         lastUse = clock.now
         lastBusy = clock.now
     }
@@ -155,22 +157,21 @@ public actor HostConnection {
         state == .connected ? forwards.localPorts : []
     }
 
-    /// Forwards each of `wanted` from a Mac port through the master, and cancels the forwards no longer wanted.
-    /// `taken` holds the Mac ports other hosts' forwards hold. By remote port; nil while the master is not up, or when
-    /// it stopped during the round.
-    public func forwardPorts(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward]? {
+    /// Forwards each of `wanted` from a Mac port through the master, and cancels the forwards no longer wanted, one
+    /// round at a time. By remote port; nil while the master is not up, or when it stopped during the round.
+    public func forwardPorts(_ wanted: [RemoteListeningPort]) async -> [UInt16: PortForward]? {
         let previous = forwarding
         let round = Task {
             await previous?.value
-            return await self.applyForwards(wanted, taken: taken)
+            return await self.applyForwards(wanted)
         }
         forwarding = Task { _ = await round.value }
         return await round.value
     }
 
-    private func applyForwards(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward]? {
+    private func applyForwards(_ wanted: [RemoteListeningPort]) async -> [UInt16: PortForward]? {
         guard state == .connected, let running = master, running.isRunning else { return nil }
-        return await forwards.apply(wanted, taken: taken, isFree: isPortFree) { argv in
+        return await forwards.apply(wanted, isFree: isPortFree) { argv in
             guard state == .connected, master === running, running.isRunning else { return nil }
             return await launcher.run(argv, timeout: .seconds(15))
         }

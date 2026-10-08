@@ -9,13 +9,13 @@ struct HostForwardsTests {
         let launcher = FakeHostLauncher()
         let connection: HostConnection
 
-        init(_ alias: String, in dir: TempDir) {
+        init(_ alias: String, in dir: TempDir, macPorts: MacPortReservations = MacPortReservations()) {
             connection = HostConnection(
                 alias: alias, entry: HostEntry(repos: [:]),
                 ssh: SSHCommand(executable: "/usr/bin/ssh", controlPath: dir.sub("cm-\(alias)"), alias: alias),
                 launcher: launcher, clock: TestHostClock(),
                 activity: ActivityLog(folder: URL(fileURLWithPath: dir.sub("activity-\(alias)"))),
-                isPortFree: { _ in true })
+                isPortFree: { _ in true }, macPorts: macPorts)
         }
     }
 
@@ -26,8 +26,8 @@ struct HostForwardsTests {
     @Test func twoHostsWantingTheSameMacPortGetTwoPorts() async throws {
         let dir = try TempDir()
         let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
-        let first = Host("box", in: dir)
-        let second = Host("other", in: dir)
+        let first = Host("box", in: dir, macPorts: workspace.macPorts)
+        let second = Host("other", in: dir, macPorts: workspace.macPorts)
         try await first.connection.connect()
         try await second.connection.connect()
 
@@ -42,19 +42,66 @@ struct HostForwardsTests {
         #expect(await second.connection.forwardedPorts == [5174])
     }
 
+    /// Hosts forward at the same time, so a slow host holds up no other's forwards, and the Mac port a host is still
+    /// forwarding stays its own.
+    @Test @MainActor func aSlowHostHoldsUpNoOtherHostsForwards() async throws {
+        let hosts = try await HostMonitorRoundTests.Hosts(["slow", "quick"])
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        let slow = try await hosts.workspace.connection(for: "slow")
+        let quick = try await hosts.workspace.connection(for: "quick")
+        hosts["slow"].holdForwards = true
+        let first = Task { await hosts.workspace.forwardPorts([Self.port(port)], on: slow) }
+        #expect(await eventually { hosts["slow"].heldForwardCount() == 1 })
+
+        let second = Task { await hosts.workspace.forwardPorts([Self.port(port)], on: quick) }
+
+        #expect(await eventually { !hosts["quick"].localForwards("forward").isEmpty })
+        hosts["slow"].releaseForwards()
+        #expect(await second.value == [port: PortForward(local: port + 1, error: nil)])
+        #expect(await first.value == [port: PortForward(local: port, error: nil)])
+        await hosts.stop()
+    }
+
+    /// Removing a host wins over a round of its forwards under way, which keeps nothing of the host afterwards.
+    @Test @MainActor func aHostRemovedDuringARoundOfItsForwardsLeavesNothingBehind() async throws {
+        let hosts = try await HostMonitorRoundTests.Hosts(["box", "other"])
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        var box: HostConnection? = try await hosts.workspace.connection(for: "box")
+        weak let removed = box
+        hosts["box"].holdForwards = true
+        var round: Task<[UInt16: PortForward]?, Never>? = Task { [box] in
+            await hosts.workspace.forwardPorts([Self.port(port)], on: box!)
+        }
+        #expect(await eventually { hosts["box"].heldForwardCount() == 1 })
+
+        try await hosts.workspace.removeHost(alias: "box")
+        hosts["box"].releaseForwards()
+
+        #expect(await round?.value == nil)
+        // As the monitor's round for the host can still be on its way.
+        #expect(await hosts.workspace.forwardPorts([Self.port(port)], on: box!) == nil)
+        round = nil
+        box = nil
+        #expect(removed == nil)
+        let other = try await hosts.workspace.connection(for: "other")
+        #expect(
+            await hosts.workspace.forwardPorts([Self.port(port)], on: other) == [port: .init(local: port, error: nil)])
+        await hosts.stop()
+    }
+
     @Test func aFailedForwardMovesToTheNextPortAndKeepsSshsMessageOnceItGivesUp() async throws {
         let dir = try TempDir()
         let host = Host("box", in: dir)
         try await host.connection.connect()
         host.launcher.refuse([5173])
 
-        let moved = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        let moved = await host.connection.forwardPorts([Self.port(5173)])
 
         #expect(moved == [5173: PortForward(local: 5174, error: nil)])
         #expect(host.launcher.localForwards("forward") == ["5173:127.0.0.1:5173", "5174:127.0.0.1:5173"])
 
         host.launcher.refuseEveryPort(true)
-        let refused = await host.connection.forwardPorts([Self.port(8080)], taken: [])
+        let refused = await host.connection.forwardPorts([Self.port(8080)])
 
         #expect(refused?[8080] == PortForward(local: nil, error: FakeHostLauncher.refusal))
         #expect(refused?[5173] == nil)
@@ -64,16 +111,20 @@ struct HostForwardsTests {
         #expect(tries.last == "8099:127.0.0.1:8080")
         // The next round tries again.
         host.launcher.refuseEveryPort(false)
-        let later = await host.connection.forwardPorts([Self.port(8080)], taken: [])
+        let later = await host.connection.forwardPorts([Self.port(8080)])
         #expect(later == [8080: PortForward(local: 8080, error: nil)])
     }
 
     @Test func theChooserSkipsPortsTakenOrBusyAndGivesUpPastTheTop() async throws {
         let dir = try TempDir()
-        let host = Host("box", in: dir)
+        let macPorts = MacPortReservations()
+        let host = Host("box", in: dir, macPorts: macPorts)
+        let other = Host("other", in: dir, macPorts: macPorts)
         try await host.connection.connect()
+        try await other.connection.connect()
+        _ = await other.connection.forwardPorts([Self.port(65535)])
 
-        let forwards = await host.connection.forwardPorts([Self.port(65534), Self.port(65535)], taken: [65535])
+        let forwards = await host.connection.forwardPorts([Self.port(65534), Self.port(65535)])
 
         #expect(forwards?[65534] == PortForward(local: 65534, error: nil))
         #expect(forwards?[65535]?.local == nil)
@@ -85,9 +136,9 @@ struct HostForwardsTests {
         let host = Host("box", in: dir)
         try await host.connection.connect()
 
-        _ = await host.connection.forwardPorts([Self.port(5173), Self.port(3000, on: "::1")], taken: [])
-        _ = await host.connection.forwardPorts([Self.port(5173), Self.port(3000, on: "::1")], taken: [])
-        let left = await host.connection.forwardPorts([Self.port(3000, on: "::1")], taken: [])
+        _ = await host.connection.forwardPorts([Self.port(5173), Self.port(3000, on: "::1")])
+        _ = await host.connection.forwardPorts([Self.port(5173), Self.port(3000, on: "::1")])
+        let left = await host.connection.forwardPorts([Self.port(3000, on: "::1")])
 
         #expect(left == [3000: PortForward(local: 3000, error: nil)])
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000", "5173:127.0.0.1:5173"])
@@ -100,9 +151,9 @@ struct HostForwardsTests {
         let dir = try TempDir()
         let host = Host("box", in: dir)
         try await host.connection.connect()
-        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")], taken: [])
+        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")])
 
-        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")], taken: [])
+        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
 
         #expect(moved == [3000: PortForward(local: 3000, error: nil)])
         #expect(host.launcher.localForwards("cancel") == ["3000:[::1]:3000"])
@@ -114,14 +165,14 @@ struct HostForwardsTests {
         let dir = try TempDir()
         let host = Host("box", in: dir)
         try await host.connection.connect()
-        _ = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        _ = await host.connection.forwardPorts([Self.port(5173)])
         host.launcher.failCancels = true
 
-        _ = await host.connection.forwardPorts([], taken: [])
+        _ = await host.connection.forwardPorts([])
 
         #expect(await host.connection.forwardedPorts == [5173])
         host.launcher.failCancels = false
-        _ = await host.connection.forwardPorts([], taken: [])
+        _ = await host.connection.forwardPorts([])
         #expect(host.launcher.localForwards("cancel") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
         #expect(await host.connection.forwardedPorts.isEmpty)
     }
@@ -132,15 +183,15 @@ struct HostForwardsTests {
         let dir = try TempDir()
         let host = Host("box", in: dir)
         try await host.connection.connect()
-        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")], taken: [])
+        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")])
         host.launcher.failCancels = true
 
-        let kept = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")], taken: [])
+        let kept = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
 
         #expect(kept == [3000: PortForward(local: 3000, error: nil)])
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000"])
         host.launcher.failCancels = false
-        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")], taken: [])
+        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
         #expect(moved == [3000: PortForward(local: 3000, error: nil)])
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000", "3000:127.0.0.1:3000"])
         #expect(await host.connection.forwardedPorts == [3000])
@@ -153,7 +204,7 @@ struct HostForwardsTests {
         try await host.connection.connect()
         host.launcher.timeOut([5173])
 
-        let moved = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        let moved = await host.connection.forwardPorts([Self.port(5173)])
 
         #expect(moved == [5173: PortForward(local: 5174, error: nil)])
         let order = host.launcher.commands.compactMap { argv -> String? in
@@ -174,7 +225,7 @@ struct HostForwardsTests {
         host.launcher.timeOut([5173])
         host.launcher.failCancels = true
 
-        let unsure = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        let unsure = await host.connection.forwardPorts([Self.port(5173)])
 
         #expect(unsure?[5173]?.local == nil)
         #expect(unsure?[5173]?.error != nil)
@@ -182,7 +233,7 @@ struct HostForwardsTests {
         #expect(await host.connection.forwardedPorts == [5173])
         host.launcher.failCancels = false
         host.launcher.timeOut([])
-        let later = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        let later = await host.connection.forwardPorts([Self.port(5173)])
         #expect(later == [5173: PortForward(local: 5173, error: nil)])
         #expect(host.launcher.localForwards("cancel") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
     }
@@ -191,14 +242,14 @@ struct HostForwardsTests {
         let dir = try TempDir()
         let host = Host("box", in: dir)
         try await host.connection.connect()
-        _ = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        _ = await host.connection.forwardPorts([Self.port(5173)])
 
         await host.connection.detach()
 
         #expect(await host.connection.forwardedPorts.isEmpty)
-        #expect(await host.connection.forwardPorts([Self.port(5173)], taken: []) == nil)
+        #expect(await host.connection.forwardPorts([Self.port(5173)]) == nil)
         try await host.connection.connect()
-        let again = await host.connection.forwardPorts([Self.port(5173)], taken: [])
+        let again = await host.connection.forwardPorts([Self.port(5173)])
         #expect(again == [5173: PortForward(local: 5173, error: nil)])
         #expect(host.launcher.localForwards("forward") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
         #expect(host.launcher.localForwards("cancel").isEmpty)
@@ -209,8 +260,8 @@ struct HostForwardsTests {
         let host = Host("box", in: dir)
         try await host.connection.connect()
 
-        async let first = host.connection.forwardPorts([Self.port(5173)], taken: [])
-        async let second = host.connection.forwardPorts([Self.port(5173)], taken: [])
+        async let first = host.connection.forwardPorts([Self.port(5173)])
+        async let second = host.connection.forwardPorts([Self.port(5173)])
         let (a, b) = await (first, second)
 
         #expect(a == b)

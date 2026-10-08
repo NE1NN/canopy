@@ -63,10 +63,8 @@ public actor Workspace {
     var preparedHosts: [String: (generation: Int, task: Task<Void, any Error>)] = [:]
     /// Each host's socket for its relayed `canopy` calls, which its connections forward here.
     var relayServers: [String: HostRelayServer] = [:]
-    /// The hosts that forwarded ports, whose Mac ports another host's forwards must not take.
-    var portForwarders: [String: HostConnection] = [:]
-    /// The round of forwards under way, on any host, which the next waits for.
-    var forwardingPorts: Task<Void, Never>?
+    /// The Mac ports every host's forwards hold, so one host's never take another's.
+    nonisolated let macPorts = MacPortReservations()
 
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()
