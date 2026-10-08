@@ -3,6 +3,7 @@
 //   swift scripts/window-shot.swift <pid> <out.png>         the main window alone
 //   swift scripts/window-shot.swift <pid> <out.png> --all   the main window with the app's own menus and popovers,
 //                                                          drawn over it, and nothing of any other app
+// Exits 75 when the capture fails because the screen is locked.
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -51,7 +52,23 @@ else {
     FileHandle.standardError.write(Data("no window for pid \(pid)\n".utf8))
     exit(1)
 }
-guard withMenus else { exit(capture(mainNumber, to: output)) }
+/// macOS draws no windows while the screen is locked, so a capture then fails whatever the app shows.
+func screenIsLocked() -> Bool {
+    let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+    return session?["CGSSessionScreenIsLocked"] as? Bool ?? false
+}
+
+/// EX_TEMPFAIL: callers that only want a picture when one can be taken, such as the e2e scripts, go on without it.
+func failedWhileLocked() -> Never {
+    FileHandle.standardError.write(Data("the screen is locked, so macOS draws no window to capture\n".utf8))
+    exit(75)
+}
+
+guard withMenus else {
+    let status = capture(mainNumber, to: output)
+    if status != 0, screenIsLocked() { failedWhileLocked() }
+    exit(status)
+}
 
 // Menus and popovers are windows of their own that `screencapture -l` cannot take. ScreenCaptureKit draws the app's
 // on-screen windows alone, over the main window's rectangle, so no other app's window can appear.
@@ -69,7 +86,13 @@ configuration.sourceRect = frame.offsetBy(dx: -display.frame.minX, dy: -display.
 configuration.width = Int(frame.width * CGFloat(filter.pointPixelScale))
 configuration.height = Int(frame.height * CGFloat(filter.pointPixelScale))
 configuration.showsCursor = false
-let image: CGImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+let image: CGImage
+do {
+    image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+} catch {
+    if screenIsLocked() { failedWhileLocked() }
+    throw error
+}
 guard
     let destination = CGImageDestinationCreateWithURL(
         URL(fileURLWithPath: output) as CFURL, UTType.png.identifier as CFString, 1, nil)
