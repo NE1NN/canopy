@@ -5196,3 +5196,9 @@ The test moves its manual clock 30 seconds at a time and calls `settle()` betwee
 Counting in the test confirmed the moment comes at 3 of the 23 moves in every run: the three where a refresh falls due.
 When `settle()` checked in that moment, the test moved the clock again before the due refresh ran, the refresh started 30 seconds late, the backoff shifted, and one refresh fell outside the window.
 `settle()` now also waits until a connected plugin's loop is waiting on the clock, and it records an issue when the plugin never settles, where it went on silently before.
+
+The run after that failed `aGroupDeletedWhileItsRowIsCreatedLeavesTheRowUngrouped`, also untouched by this PR, waiting for its stalled `git worktree add` to start.
+A log of the wrapper's git calls showed the create runs about five git commands one after another before it, each a bash wrapper and then git, behind any git work the repo already has queued.
+The wait was the shared 20 seconds, which `eventually` sizes for a single process start on a loaded runner.
+The four tests that stall a create this way now wait through `reachedGit`, which allows 90 seconds for the whole chain and says why.
+This one widens a wait, since the chain itself is what the tests exercise; the other two CI failures were fixed at their cause.
