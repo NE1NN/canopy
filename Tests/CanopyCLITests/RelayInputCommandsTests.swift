@@ -120,7 +120,7 @@ enum StandardInputScan {
     /// `<top level>` for code outside any type.
     static func readers(in folder: URL, commands: Set<String>) throws -> Set<String> {
         let sources = try swiftFiles(in: folder).map { try String(contentsOf: $0, encoding: .utf8) }
-        var patterns = try direct.map { try Regex(NSRegularExpression.escapedPattern(for: $0)) }
+        var patterns = direct.map { Pattern(text: $0, use: nil) }
         var helpers: Set<String> = []
         while true {
             var found: Set<String> = []
@@ -137,11 +137,24 @@ enum StandardInputScan {
             guard !added.isEmpty else { return found }
             helpers.formUnion(added)
             // A use of the type or of one of its members, such as `Prompt(` or `Prompt.read`.
-            patterns += try added.sorted().map { try Regex(#"(?:^|\W)"# + $0 + #"[.(]"#) }
+            patterns += try added.sorted().map { Pattern(text: $0, use: try Regex(#"(?:^|\W)"# + $0 + #"[.(]"#)) }
         }
     }
 
     static let topLevel = "<top level>"
+
+    /// Text a line holds, and when given, how it must be used there. Lines are searched for the text first, since
+    /// matching a regex on every line is slow.
+    struct Pattern {
+        let text: String
+        let use: Regex<AnyRegexOutput>?
+
+        func matches(_ line: Substring) -> Bool {
+            line.contains(text) && (use.map { line.contains($0) } ?? true)
+        }
+    }
+
+    private static let declarationKinds = ["struct ", "enum ", "class ", "actor ", "extension "]
 
     private static func swiftFiles(in folder: URL) throws -> [URL] {
         let paths = try FileManager.default.subpathsOfDirectory(atPath: folder.path)
@@ -154,7 +167,7 @@ enum StandardInputScan {
     }
 
     /// The type paths, such as `TicketCommand.Connect`, of the code in `source` that matches a pattern.
-    private static func readingTypes(in source: String, matching patterns: [Regex<AnyRegexOutput>]) -> [String] {
+    private static func readingTypes(in source: String, matching patterns: [Pattern]) -> [String] {
         var stack: [(indent: Int, path: [String])] = []
         var opening: (indent: Int, path: [String])?
         var found: [String] = []
@@ -172,13 +185,13 @@ enum StandardInputScan {
                 while let last = stack.last, last.indent >= indent { stack.removeLast() }
                 continue
             }
-            if let match = line.firstMatch(of: declaration) {
+            if declarationKinds.contains(where: { text.contains($0) }), let match = line.firstMatch(of: declaration) {
                 while let last = stack.last, last.indent >= indent { stack.removeLast() }
                 let declared = (indent, (stack.last?.path ?? []) + match.1.split(separator: ".").map(String.init))
                 if text.contains("{") { stack.append(declared) } else { opening = declared }
                 continue
             }
-            guard !text.hasPrefix("//"), patterns.contains(where: { text.contains($0) }) else { continue }
+            guard !text.hasPrefix("//"), patterns.contains(where: { $0.matches(text) }) else { continue }
             found.append(stack.last.map { $0.path.joined(separator: ".") } ?? topLevel)
         }
         return found
