@@ -5189,3 +5189,10 @@ So three cycles needed 25 to 50 seconds, against a 20-second wait that started w
 The test now counts only the timer's lookups, from when the lookups already queued are done, and asks for two, which is enough to show the timer repeats.
 It also allows 60 seconds, about three cycles at the slowest measured.
 With that change it passed three full-suite runs under the same load.
+
+The next CI run passed `refreshesOnATimer` but failed `aSelectedMalformedTicketNeitherWakesTheLoopNorResetsBackoff`, another test this PR does not touch, with fewer row refreshes than the backoff allows.
+The test moves its manual clock 30 seconds at a time and calls `settle()` between moves.
+`settle()` took the plugin as idle while its loop read as asleep, but the loop keeps reading as asleep for a moment after the clock wakes it, until it runs again.
+Counting in the test confirmed the moment comes at 3 of the 23 moves in every run: the three where a refresh falls due.
+When `settle()` checked in that moment, the test moved the clock again before the due refresh ran, the refresh started 30 seconds late, the backoff shifted, and one refresh fell outside the window.
+`settle()` now also waits until a connected plugin's loop is waiting on the clock, and it records an issue when the plugin never settles, where it went on silently before.
