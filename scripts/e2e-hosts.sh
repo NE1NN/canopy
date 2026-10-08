@@ -12,12 +12,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+usage() {
+    echo "usage: scripts/e2e-hosts.sh [--host <alias>]" >&2
+    exit 2
+}
 alias=""
-if [[ "${1:-}" == --host ]]; then alias="$2"; fi
+case "${1:-}" in
+    "") ;;
+    --host) [[ -n "${2:-}" && $# == 2 ]] || usage; alias="$2" ;;
+    *) usage ;;
+esac
 app="$PWD/build/Canopy Dev.app"
 cli="$app/Contents/Resources/bin/canopy"
 [[ -x "$cli" ]] || { echo "build it first: make app" >&2; exit 1; }
 work=$(mktemp -d -t cnp-hosts)
+# Until the full cleanup below is ready.
+trap 'rm -rf "$work"' EXIT
 export CANOPY_HOME="$work/home"
 export CANOPY_TRASH_FOLDER="$work/trash"
 unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST
@@ -86,6 +96,7 @@ launch() {
 stop_app() {
     local pid
     pid=$(app_pid)
+    [[ -n "$pid" ]] || fail "the app is not running, or did not say its pid"
     kill "$pid"
     for _ in $(seq 1 100); do
         kill -0 "$pid" 2>/dev/null || return 0

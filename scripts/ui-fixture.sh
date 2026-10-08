@@ -43,13 +43,13 @@ if [[ "${1:-}" == stop ]]; then
     if [[ -n "${site_pid:-}" && "$(ps -p "$site_pid" -o command= 2>/dev/null)" == *fixture-site* ]]; then
         kill "$site_pid" 2>/dev/null || true
     fi
-    # The fake host's tmux server, found by its config's path, as it can outlive kill-server.
-    pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $work/host/" 2>/dev/null || true
     # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
     if [[ "$(basename "$work")" != cnp.* || ! -x "$work/bin/gh" || ! -d "$work/zdot" ]]; then
         echo "not deleting $work: it does not look like a fixture folder" >&2
         exit 1
     fi
+    # The fake host's tmux server, found by its config's path, as it can outlive kill-server.
+    pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $work/host/" 2>/dev/null || true
     rm -rf "$work"
     rm -f "$state"
     exit 0

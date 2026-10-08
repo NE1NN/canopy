@@ -505,6 +505,7 @@ grep -q '"app_unavailable"' "$work/err2.json" || fail "no JSON error when the ap
 stop_app() {
     local pid
     pid=$(app_pid)
+    [[ -n "$pid" ]] || fail "the app is not running, or did not say its pid"
     kill "$pid"
     for _ in $(seq 1 100); do
         kill -0 "$pid" 2>/dev/null || return 0
