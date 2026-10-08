@@ -438,8 +438,9 @@ extension Workspace {
     }
 
     /// Forwards a host's listening ports to Mac ports, one host at a time, so two hosts never pick the same Mac port.
+    /// Nil when the round said nothing of the host's forwards, as when its master stopped meanwhile.
     public func forwardPorts(_ wanted: [RemoteListeningPort], on connection: HostConnection) async
-        -> [UInt16: PortForward]
+        -> [UInt16: PortForward]?
     {
         portForwarders[connection.alias] = connection
         let previous = forwardingPorts

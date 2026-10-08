@@ -56,8 +56,8 @@ struct HostForwardsTests {
         host.launcher.refuseEveryPort(true)
         let refused = await host.connection.forwardPorts([Self.port(8080)], taken: [])
 
-        #expect(refused[8080] == PortForward(local: nil, error: FakeHostLauncher.refusal))
-        #expect(refused[5173] == nil)
+        #expect(refused?[8080] == PortForward(local: nil, error: FakeHostLauncher.refusal))
+        #expect(refused?[5173] == nil)
         let tries = host.launcher.localForwards("forward").dropFirst(2)
         #expect(tries.count == HostForwards.tries)
         #expect(tries.first == "8080:127.0.0.1:8080")
@@ -75,9 +75,9 @@ struct HostForwardsTests {
 
         let forwards = await host.connection.forwardPorts([Self.port(65534), Self.port(65535)], taken: [65535])
 
-        #expect(forwards[65534] == PortForward(local: 65534, error: nil))
-        #expect(forwards[65535]?.local == nil)
-        #expect(forwards[65535]?.error?.contains("65535") == true)
+        #expect(forwards?[65534] == PortForward(local: 65534, error: nil))
+        #expect(forwards?[65535]?.local == nil)
+        #expect(forwards?[65535]?.error?.contains("65535") == true)
     }
 
     @Test func aForwardIsMadeOnceAndCancelledWhenItsPortGoes() async throws {
@@ -176,8 +176,8 @@ struct HostForwardsTests {
 
         let unsure = await host.connection.forwardPorts([Self.port(5173)], taken: [])
 
-        #expect(unsure[5173]?.local == nil)
-        #expect(unsure[5173]?.error != nil)
+        #expect(unsure?[5173]?.local == nil)
+        #expect(unsure?[5173]?.error != nil)
         #expect(host.launcher.localForwards("forward") == ["5173:127.0.0.1:5173"])
         #expect(await host.connection.forwardedPorts == [5173])
         host.launcher.failCancels = false
@@ -196,7 +196,7 @@ struct HostForwardsTests {
         await host.connection.detach()
 
         #expect(await host.connection.forwardedPorts.isEmpty)
-        #expect(await host.connection.forwardPorts([Self.port(5173)], taken: []).isEmpty)
+        #expect(await host.connection.forwardPorts([Self.port(5173)], taken: []) == nil)
         try await host.connection.connect()
         let again = await host.connection.forwardPorts([Self.port(5173)], taken: [])
         #expect(again == [5173: PortForward(local: 5173, error: nil)])

@@ -187,6 +187,11 @@ public final class HostMonitor {
             remotePorts[alias] = nil
             return
         }
+        // A master that stopped during the round leaves the ports as they showed until the next round, read soon.
+        guard let forwards else {
+            lastPorts[alias] = nil
+            return
+        }
         remotePorts[alias] = rows.compactMap { row in
             byRow[row.standIn].map { ports in
                 PortGroup(

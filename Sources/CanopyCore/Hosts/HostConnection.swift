@@ -156,8 +156,9 @@ public actor HostConnection {
     }
 
     /// Forwards each of `wanted` from a Mac port through the master, and cancels the forwards no longer wanted.
-    /// `taken` holds the Mac ports other hosts' forwards hold. By remote port; empty while the master is not up.
-    public func forwardPorts(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward] {
+    /// `taken` holds the Mac ports other hosts' forwards hold. By remote port; nil while the master is not up, or when
+    /// it stopped during the round.
+    public func forwardPorts(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward]? {
         let previous = forwarding
         let round = Task {
             await previous?.value
@@ -167,8 +168,8 @@ public actor HostConnection {
         return await round.value
     }
 
-    private func applyForwards(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward] {
-        guard state == .connected, let running = master, running.isRunning else { return [:] }
+    private func applyForwards(_ wanted: [RemoteListeningPort], taken: Set<UInt16>) async -> [UInt16: PortForward]? {
+        guard state == .connected, let running = master, running.isRunning else { return nil }
         return await forwards.apply(wanted, taken: taken, isFree: isPortFree) { argv in
             guard state == .connected, master === running, running.isRunning else { return nil }
             return await launcher.run(argv, timeout: .seconds(15))

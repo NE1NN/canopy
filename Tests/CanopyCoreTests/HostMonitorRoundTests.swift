@@ -15,7 +15,8 @@ struct HostMonitorRoundTests {
         let workspace: Workspace
         let terminals: TerminalStore
 
-        init(_ aliases: [String]) async throws {
+        /// With `rows`, each host has a remote row of the repo `demo`, at `/h/<alias>/feat` there.
+        init(_ aliases: [String], rows: Bool = false) async throws {
             dir = try TempDir()
             let launchers = Dictionary(uniqueKeysWithValues: aliases.map { ($0, FakeHostLauncher()) })
             for launcher in launchers.values {
@@ -29,11 +30,30 @@ struct HostMonitorRoundTests {
                     sshExecutable: "/usr/bin/false", clock: TestHostClock(),
                     launcher: { launchers[$0] ?? FakeHostLauncher() }))
             try await workspace.start()
+            let repo = rows ? try await Fixture.repo(in: dir) : nil
+            if let repo { try await workspace.addRepo(path: repo) }
             for alias in aliases {
                 try HostsConfigFile(url: workspace.home.configFile).save(alias, HostEntry(repos: [:]))
                 try await workspace.connection(for: alias).connect()
+                if let repo {
+                    let entry = RemoteRowEntry(
+                        host: alias, path: Self.rowPath(alias),
+                        standIn: workspace.home.remoteRoot.path + "/\(alias)/demo/feat", branch: "feat", head: nil)
+                    try await workspace.addRemoteRow(entry, repoPath: repo)
+                }
             }
             terminals = Fixture.terminals(dir)
+        }
+
+        static func rowPath(_ alias: String) -> String { "/h/\(alias)/feat" }
+
+        /// The host's ports probe finds servers on `ports`, working in its remote row.
+        func serve(on alias: String, _ ports: [UInt16]) {
+            let listed = ports.map { port in
+                #"{"port": \#(port), "address": "127.0.0.1", "processes": [{"pid": \#(port), "name": "node", "ancestors": [1], "folder": "\#(Self.rowPath(alias))"}]}"#
+            }
+            self[alias].answer(
+                .ports, with: #"{"sessions": [], "pending": [], "ports": [\#(listed.joined(separator: ", "))]}"#)
         }
 
         subscript(alias: String) -> FakeHostLauncher { launchers[alias]! }
@@ -42,6 +62,7 @@ struct HostMonitorRoundTests {
             for launcher in launchers.values {
                 launcher.release(.sessions)
                 launcher.release(.ports)
+                launcher.releaseForwards()
             }
             terminals.closeAll()
             await workspace.stop()
@@ -93,6 +114,44 @@ struct HostMonitorRoundTests {
         #expect(await eventually { hosts["slow"].probes(.sessions) >= 2 })
         watching.cancel()
         await watching.value
+        await hosts.stop()
+    }
+
+    /// A round the master stopped under says nothing of the forwards, so the ports keep what they showed rather than
+    /// showing as not forwarded with no reason.
+    @Test func aRoundTheMasterStoppedUnderShowsNoFalseError() async throws {
+        let hosts = try await Hosts(["box"], rows: true)
+        let box = hosts["box"]
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        hosts.serve(on: "box", [port])
+        let ports = { monitor.remotePorts["box"]?.flatMap(\.ports) ?? [] }
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return ports().first?.remote?.local == port
+            })
+        box.holdForwards = true
+        hosts.serve(on: "box", [port, port + 1])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return box.heldForwardCount() == 1
+            })
+        let connection = try await hosts.workspace.connection(for: "box")
+        await connection.detach()
+        try await connection.connect()
+
+        box.releaseFirstForward()
+
+        // The next round waits for this one, so once it holds its first forward, this one has shown what it found.
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return box.heldForwardCount() == 1
+            })
+        #expect(!ports().isEmpty)
+        #expect(ports().allSatisfy { $0.remote?.local != nil || $0.remote?.error != nil })
         await hosts.stop()
     }
 }

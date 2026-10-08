@@ -47,17 +47,17 @@ final class HostForwards {
 
     /// Cancels the forwards no longer wanted and makes the missing ones, each on its own port when that is free and
     /// no forward of this or another host (`taken`) holds it, else the next such port. A forward whose cancel fails is
-    /// kept, and cancelled again next round. `run` returns nil once the master is gone, which ends the round with no
-    /// forwards.
+    /// kept, and cancelled again next round. `run` returns nil once the master is gone, and the round then ends with
+    /// nil, as it does when the master stopped meanwhile, since it says nothing of the forwards there are now.
     nonisolated(nonsending) func apply(
         _ wanted: [RemoteListeningPort], taken: Set<UInt16>, isFree: (UInt16) -> Bool,
         run: ([String]) async -> SubprocessResult?
-    ) async -> [UInt16: PortForward] {
+    ) async -> [UInt16: PortForward]? {
         let start = epoch
         var stillUnsure: [(port: UInt16, forward: Held)] = []
         for entry in unsure {
             guard let cancelled = await cancel(entry.forward, port: entry.port, run: run), epoch == start else {
-                return [:]
+                return nil
             }
             if !cancelled { stillUnsure.append(entry) }
         }
@@ -65,7 +65,7 @@ final class HostForwards {
         let wantedTargets = Dictionary(wanted.map { ($0.port, $0.target) }, uniquingKeysWith: { first, _ in first })
         var moved: [UInt16: UInt16] = [:]
         for (port, forward) in held.sorted(by: { $0.key < $1.key }) where wantedTargets[port] != forward.target {
-            guard let cancelled = await cancel(forward, port: port, run: run), epoch == start else { return [:] }
+            guard let cancelled = await cancel(forward, port: port, run: run), epoch == start else { return nil }
             guard cancelled else { continue }
             held[port] = nil
             if wantedTargets[port] != nil { moved[port] = forward.local }
@@ -80,7 +80,7 @@ final class HostForwards {
                 let made = await forward(
                     port, from: moved[port.port] ?? port.port, taken: taken, isFree: isFree, run: run),
                 epoch == start
-            else { return [:] }
+            else { return nil }
             forwards[port.port] = made
         }
         return forwards
