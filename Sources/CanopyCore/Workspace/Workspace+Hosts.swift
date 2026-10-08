@@ -94,6 +94,7 @@ extension Workspace {
             } else {
                 await connection.stop()
                 hostConnections[alias] = nil
+                preparedHosts[alias] = nil
             }
             throw error
         }
@@ -165,6 +166,7 @@ extension Workspace {
         guard rows.isEmpty else { throw WorkspaceError.hostHasRows(alias, rows: rows) }
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
+        preparedHosts[alias] = nil
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 
@@ -224,7 +226,9 @@ extension Workspace {
         let alias = connection.alias
         if let pending = state.pendingSessionKills[alias], !pending.isEmpty {
             _ = try await output(of: killCommand(pending), on: connection)
-            state.pendingSessionKills[alias] = nil
+            // Sessions closed meanwhile wait for the next connection.
+            let left = (state.pendingSessionKills[alias] ?? []).filter { !pending.contains($0) }
+            state.pendingSessionKills[alias] = left.isEmpty ? nil : left
             try? save()
         }
     }

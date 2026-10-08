@@ -146,6 +146,18 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    /// A host added again gets a new connection, whose generations start over, so it must be prepared again.
+    @Test func aRemovedHostIsPreparedAgainOnceAddedBack() async throws {
+        let setup = try await Setup()
+        _ = try await setup.workspace.addHost(alias: "box", repos: [:], wake: nil, idleDetachMinutes: nil)
+        try await setup.workspace.prepareHost(try await setup.workspace.connection(for: "box"))
+
+        try await setup.workspace.removeHost(alias: "box")
+
+        #expect(await setup.workspace.preparedHosts["box"] == nil)
+        await setup.workspace.stop()
+    }
+
     @Test func listingSaysWhichHostsConfigJSONCouldNotRead() async throws {
         let setup = try await Setup()
         try #"{"hosts": {"bad": {"repos": "nope"}, "good": {"repos": {"demo": "/x"}}}}"#.write(
