@@ -43,7 +43,20 @@ public struct SubprocessHostLauncher: HostProcessLauncher {
     }
 
     public func startMaster(_ argv: [String]) -> any HostMasterProcess {
-        SubprocessMaster(argv, environment: environment())
+        SubprocessMaster(Self.watched(argv), environment: environment())
+    }
+
+    /// Runs `argv` under a shell that stops it once the process that started it is gone. A Canopy that crashes, or is
+    /// killed without quitting, would otherwise leave its masters holding their hosts awake.
+    public static func watched(_ argv: [String]) -> [String] {
+        let watchdog = #"""
+            "$@" & child=$!
+            parent=$PPID
+            while kill -0 "$parent" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 2; done
+            kill "$child" 2>/dev/null
+            wait "$child"
+            """#
+        return ["/bin/sh", "-c", watchdog, "canopy-ssh-master"] + argv
     }
 
     public func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
