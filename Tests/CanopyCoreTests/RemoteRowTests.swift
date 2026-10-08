@@ -367,6 +367,65 @@ struct RemoteSessionTests {
         await up.stop()
     }
 
+    /// The host drops after the changes check, so the row stays, and with it the agent running in it.
+    @Test(.enabled(if: tmux != nil, "needs tmux: brew install tmux"))
+    func aRemovalTheHostRefusesLeavesTheRowsSessionsRunning() async throws {
+        let setup = try await RemoteRowTests.Setup(host: {
+            try FakeHost(in: $0, path: "/opt/homebrew/bin:/usr/bin:/bin")
+        })
+        let script = setup.dir.sub("dropping-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *"'worktree' 'remove'"* ]] && { echo "Connection closed" >&2; exit 255; }
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try await workspace.addRepo(path: setup.repo)
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        let server = HostPaths.tmuxServer(homeID: workspace.homeID)
+        defer { killServer(server) }
+        let created = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/kept")
+        let (terminals, rows) = await MainActor.run {
+            let terminals = Fixture.terminals(setup.dir)
+            return (terminals, RowLifecycle(workspace: workspace, terminals: terminals))
+        }
+        let session = try await MainActor.run {
+            try #require(terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane.remoteSession)
+        }
+        try startSession(session, server: server, in: try #require(created.row.remotePath))
+
+        await #expect {
+            try await rows.remove(created.row, repoName: "demo", force: false, deleteBranch: false)
+        } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
+
+        #expect(try sessions(server: server) == [session])
+        #expect(await workspace.pendingSessionKills.isEmpty)
+        #expect(await MainActor.run { terminals.tabs(inRow: created.row.path).count } == 1)
+        await MainActor.run { terminals.closeAll() }
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
+    @Test func aRowWhoseHostIsGoneFromConfigCanBeForcedOut() async throws {
+        let setup = try await RemoteRowTests.Setup()
+        let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/gone")
+        try HostsConfigFile(url: setup.workspace.home.configFile).remove("box")
+
+        await #expect {
+            try await setup.workspace.removeRemoteRow(standIn: created.row.path, force: false, deleteBranch: false)
+        } throws: { ($0 as? WorkspaceError)?.code == "host_not_found" }
+        let warnings = try await setup.workspace.removeRemoteRow(
+            standIn: created.row.path, force: true, deleteBranch: false)
+
+        #expect(warnings.first?.contains("box") == true)
+        #expect(await setup.workspace.snapshot.row(path: created.row.path) == nil)
+        await setup.workspace.stop()
+    }
+
     @Test(.enabled(if: tmux != nil, "needs tmux: brew install tmux"))
     func keysReachTheSessionOnceItExists() async throws {
         let setup = try await RemoteRowTests.Setup(host: {

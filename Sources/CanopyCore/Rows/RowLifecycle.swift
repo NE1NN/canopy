@@ -110,12 +110,15 @@ public final class RowLifecycle {
         case .external:
             throw WorkspaceError.notManaged(row.path)
         case .remote:
-            // Checked first, so a refused removal leaves the row's sessions running.
             if !force, try await workspace.remoteHasUncommittedChanges(standIn: row.path) {
                 throw WorkspaceError.worktreeDirty(row.path)
             }
+            // The host removes a worktree its sessions are in, so they end only once the row is gone, and a removal
+            // that fails leaves them running.
+            let warnings = try await workspace.removeRemoteRow(
+                standIn: row.path, force: force, deleteBranch: deleteBranch)
             terminals.closeRow(path: row.path)
-            return try await workspace.removeRemoteRow(standIn: row.path, force: force, deleteBranch: deleteBranch)
+            return warnings
         case .adopted:
             break
         case .canopy:

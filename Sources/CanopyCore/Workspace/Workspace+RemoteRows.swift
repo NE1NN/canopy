@@ -298,6 +298,12 @@ extension Workspace {
             warnings.append(
                 "\(entry.host) could not be reached, so its worktree at \(entry.path) stays there. "
                     + "Remove it on the host with `git worktree remove`.")
+        } catch let error as WorkspaceError
+            where force && (error.code == "host_not_found" || error.code == "host_has_no_repo")
+        {
+            warnings.append(
+                "config.json no longer names \(entry.host) for this repo, so its worktree at \(entry.path) stays there. "
+                    + "Remove it on the host with `git worktree remove`.")
         }
         if let index = state.repos.firstIndex(where: { $0.path == repoPath }) {
             state.repos[index].remote.removeAll { $0.standIn == standIn }
