@@ -58,8 +58,12 @@ cleanup() {
         [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     done
     for name in "$server" "${server2:-}"; do
-        if [[ -n "$name" ]]; then on_host "tmux -u -L $name kill-server" >/dev/null 2>&1 || true; fi
+        [[ -n "$name" ]] || continue
+        on_host "tmux -u -L $name kill-server; rm -f \"\${TMUX_TMPDIR:-/tmp}/tmux-\$(id -u)/$name\"" >/dev/null 2>&1 || true
     done
+    # A run that failed before row rm leaves its worktrees, whose clone goes with the throwaway folder below.
+    on_host 'cd ~/.canopy/worktrees/demo 2>/dev/null && rm -rf e2e-remote e2e-other && cd .. && rmdir demo' \
+        >/dev/null 2>&1 || true
     # The fake host's tmux server can outlive kill-server once its folder goes, so it is stopped by its config's path.
     if [[ -n "${host_home:-}" ]]; then pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $host_home/" 2>/dev/null || true; fi
     on_host "rm -rf '$host_dir'" >/dev/null 2>&1 || true
