@@ -148,11 +148,15 @@ control=$({ ls "$CANOPY_HOME"/ssh/"${server#canopy-}"-* /tmp/canopy-"$(id -u)"/"
 [[ -n "$control" ]] || fail "no control socket for this home"
 before=$(connections)
 "${CANOPY_SSH:-/usr/bin/ssh}" -S "$control" -O exit "$alias" >/dev/null 2>&1 || true
+# Keys typed while the pane says it is reconnecting were meant for that message, not for the session.
+wait_for 30 screen_has "reconnecting" || fail "the pane did not say it was reconnecting"
+"$cli" term send "$pane" "echo leaked-\$((5 + 5))" --enter >/dev/null
 wait_for 90 connected_again || fail "the host did not reconnect"
 sleep 2
 "$cli" term send "$pane" "echo after-drop-\$((3 + 3))" --enter >/dev/null
 wait_for 60 screen_has after-drop-6 || fail "the pane did not come back after the drop"
 screen_has before-quit-4 || fail "the session after the drop is not the same one"
+! screen_has leaked-10 || fail "keys typed while reconnecting reached the session"
 
 step "an idle host detaches, and Return reconnects"
 "$cli" host add "$alias" --idle-detach 1 >/dev/null
