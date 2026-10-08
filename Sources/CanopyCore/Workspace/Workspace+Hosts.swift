@@ -77,10 +77,39 @@ extension Workspace {
             }
             names[repo.name] = path
         }
-        var entry = hosts.hosts[alias] ?? HostEntry()
+        let saved = hosts.hosts[alias]
+        var entry = saved ?? HostEntry()
         if let wake { entry.wake = wake }
         if let idleDetachMinutes { entry.idleDetachMinutes = max(idleDetachMinutes, 0) }
+        // Connecting already uses the new settings, so a new wake command can start the host.
         let connection = await connection(alias, entry)
+        let facts: HostFacts
+        do {
+            facts = try await check(alias, &entry, names: names, on: connection)
+            try HostsConfigFile(url: home.configFile).save(alias, entry)
+        } catch {
+            // A host add that fails leaves the host as config.json has it.
+            if let saved {
+                await connection.update(saved)
+            } else {
+                await connection.stop()
+                hostConnections[alias] = nil
+            }
+            throw error
+        }
+        await connection.update(entry)
+        activity.record(ActivityType.hostAdded, data: ["host": .string(alias)])
+        var added = await info(alias, entry)
+        added.warnings = HostChecks.warnings(facts, alias: alias)
+        return added
+    }
+
+    /// Checks the host has what Canopy needs and each repo's clone, then installs Canopy's files there.
+    private func check(
+        _ alias: String, _ entry: inout HostEntry, names: [String: String], on connection: HostConnection
+    )
+        async throws -> HostFacts
+    {
         do {
             try await connection.connect()
         } catch WorkspaceError.hostUnreachable(_, let reason) where reason.contains("Could not resolve hostname") {
@@ -99,12 +128,7 @@ extension Workspace {
             entry.repos[name] = clone
         }
         try await installFiles(on: connection)
-        try HostsConfigFile(url: home.configFile).save(alias, entry)
-        await connection.update(entry)
-        activity.record(ActivityType.hostAdded, data: ["host": .string(alias)])
-        var added = await info(alias, entry)
-        added.warnings = HostChecks.warnings(facts, alias: alias)
-        return added
+        return facts
     }
 
     /// Writes Canopy's files on the host unless it has this version of them.

@@ -104,6 +104,27 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    @Test func aHostAddThatFailsChangesNothing() async throws {
+        let setup = try await Setup()
+        _ = try await setup.workspace.addHost(
+            alias: "box", repos: ["demo": "~/Projects/demo"], wake: nil, idleDetachMinutes: 10)
+
+        await #expect {
+            try await setup.workspace.addHost(
+                alias: "box", repos: ["demo": "~/nowhere"], wake: "start it", idleDetachMinutes: 1)
+        } throws: { ($0 as? WorkspaceError)?.code == "repo_not_found" }
+        await #expect {
+            try await setup.workspace.addHost(
+                alias: "other", repos: ["demo": "~/nowhere"], wake: nil, idleDetachMinutes: nil)
+        } throws: { ($0 as? WorkspaceError)?.code == "repo_not_found" }
+
+        let entry = await setup.workspace.hostConnections["box"]?.entry
+        #expect(entry?.idleDetachMinutes == 10)
+        #expect(entry?.wake == nil)
+        #expect(await setup.workspace.hostConnections["other"] == nil)
+        await setup.workspace.stop()
+    }
+
     @Test func listingSaysWhichHostsConfigJSONCouldNotRead() async throws {
         let setup = try await Setup()
         try #"{"hosts": {"bad": {"repos": "nope"}, "good": {"repos": {"demo": "/x"}}}}"#.write(
