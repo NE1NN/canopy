@@ -380,6 +380,42 @@ struct FakeSSHForwardTests {
         await setup.connection.stop()
     }
 
+    /// Each connection through a forward is closed once either end is done, so a forward a browser uses for hours
+    /// does not run out of descriptors.
+    @Test func aForwardClosesItsConnectionsOnceTheyAreDone() async throws {
+        let setup = try await Setup()
+        let port = Self.freePort(count: 2)
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        server.arguments = ["-m", "http.server", "\(port)", "--bind", "127.0.0.1"]
+        server.currentDirectoryURL = URL(fileURLWithPath: setup.dir.path)
+        server.standardOutput = FileHandle.nullDevice
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { server.terminate() }
+        #expect(await eventually { !LocalPortChooser.isFree(port) })
+        #expect(try await setup.forward(port + 1, to: port).status == 0)
+        let record = try String(contentsOfFile: setup.host.ssh.controlPath + ".L/\(port + 1)", encoding: .utf8)
+        let proxy = try #require(record.split(separator: "\t").first.flatMap { Int32($0) })
+
+        for _ in 0..<10 {
+            #expect(try await RemotePortForwardingTests.get(port + 1) == "200")
+        }
+
+        // Its two listeners, and nothing of the connections.
+        #expect(
+            await eventually { (try? Self.sockets(of: proxy)) == 2 }, "\((try? Self.sockets(of: proxy)) ?? -1) sockets")
+        await setup.connection.stop()
+    }
+
+    /// How many TCP sockets a process of the test's own holds.
+    static func sockets(of pid: Int32) throws -> Int {
+        let listed = try Subprocess.run(
+            "/usr/sbin/lsof", ["-w", "-a", "-p", "\(pid)", "-iTCP", "-F", "f"], environment: Fixture.environment,
+            directory: nil, timeout: .seconds(10))
+        return String(decoding: listed.stdout, as: UTF8.self).split(separator: "\n").filter { $0.hasPrefix("f") }.count
+    }
+
     /// The app stops a master by killing it, which runs none of its clean-up.
     @Test func aMasterKilledOutrightTakesItsForwards() async throws {
         let setup = try await Setup()

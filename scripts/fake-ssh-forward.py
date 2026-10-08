@@ -37,6 +37,7 @@ def master_runs(control, master):
 
 
 def pump(source, sink):
+    """Copies one way until either end is done, then shuts both, which ends the other way too."""
     try:
         while True:
             data = source.recv(65536)
@@ -54,14 +55,20 @@ def pump(source, sink):
 
 
 def join(client, target, port):
+    """Joins one connection to the target, in a thread of its own, so a slow target holds up no other connection,
+    and closes both ends once neither way has more."""
     try:
         upstream = socket.create_connection((target, port), timeout=10)
         upstream.settimeout(None)
     except OSError:
         client.close()
         return
-    threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
-    threading.Thread(target=pump, args=(upstream, client), daemon=True).start()
+    back = threading.Thread(target=pump, args=(upstream, client), daemon=True)
+    back.start()
+    pump(client, upstream)
+    back.join()
+    upstream.close()
+    client.close()
 
 
 def main(arguments):
@@ -82,7 +89,7 @@ def main(arguments):
                 client, _ = listener.accept()
             except OSError:
                 continue
-            join(client, target, int(port))
+            threading.Thread(target=join, args=(client, target, int(port)), daemon=True).start()
     return 0
 
 
