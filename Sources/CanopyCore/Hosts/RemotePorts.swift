@@ -83,23 +83,30 @@ public enum LocalPortChooser {
         (remote...UInt16.max).first { !taken.contains($0) && isFree($0) }
     }
 
-    /// Nothing holds the port on `127.0.0.1` or `::1`. ssh's forward succeeds on one family alone, which would leave a
-    /// local server on the other answering some of `localhost`. A Mac without IPv6 loopback needs only the first.
+    /// Nothing listens on the port on either loopback or either wildcard. ssh's forward succeeds on one family alone,
+    /// which would leave a local server on the other answering some of `localhost`. Each bind sets SO_REUSEADDR, as ssh
+    /// does, so connections a closed forward left in TIME_WAIT do not count, while a listener on that address still
+    /// does; a specific address then binds beside a wildcard listener, hence the wildcards too. A Mac without IPv6
+    /// needs only the IPv4 ones.
     public static func isFree(_ port: UInt16) -> Bool {
         var v4 = sockaddr_in()
         v4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         v4.sin_family = sa_family_t(AF_INET)
         v4.sin_port = port.bigEndian
-        v4.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
         var v6 = sockaddr_in6()
         v6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         v6.sin6_family = sa_family_t(AF_INET6)
         v6.sin6_port = port.bigEndian
-        v6.sin6_addr = in6addr_loopback
-        let ipv4 = canBind(AF_INET, &v4)
-        guard ipv4 == 0 else { return false }
-        let ipv6 = canBind(AF_INET6, &v6)
-        return ipv6 == 0 || ipv6 == EADDRNOTAVAIL || ipv6 == EAFNOSUPPORT
+        for address in [INADDR_LOOPBACK, INADDR_ANY] {
+            v4.sin_addr.s_addr = address.bigEndian
+            guard canBind(AF_INET, &v4) == 0 else { return false }
+        }
+        for address in [in6addr_loopback, in6addr_any] {
+            v6.sin6_addr = address
+            let bound = canBind(AF_INET6, &v6)
+            guard bound == 0 || bound == EADDRNOTAVAIL || bound == EAFNOSUPPORT else { return false }
+        }
+        return true
     }
 
     /// 0 when a socket of `family` binds `address`, else the error. The socket closes at once.
@@ -107,6 +114,10 @@ public enum LocalPortChooser {
         let fd = socket(family, SOCK_STREAM, 0)
         guard fd >= 0 else { return errno }
         defer { close(fd) }
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        // Otherwise `::` would take IPv4 too, and fail beside any IPv4 listener rather than only beside an IPv6 one.
+        if family == AF_INET6 { setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, socklen_t(MemoryLayout<Int32>.size)) }
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 bind(fd, $0, socklen_t(MemoryLayout<Address>.size))

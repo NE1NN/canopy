@@ -106,6 +106,48 @@ struct LocalPortChooserTests {
         #expect(!LocalPortChooser.isFree(v6.port))
     }
 
+    /// A server on every address answers `localhost` too, whether it is IPv4's, IPv6's, or both families' at once.
+    @Test func aPortHeldOnAWildcardIsNotFree() throws {
+        let v4 = try Listener(family: AF_INET, wildcard: true)
+        let v6 = try Listener(family: AF_INET6, wildcard: true)
+        let both = try Listener(family: AF_INET6, wildcard: true, dualStack: true)
+
+        #expect(!LocalPortChooser.isFree(v4.port))
+        #expect(!LocalPortChooser.isFree(v6.port))
+        #expect(!LocalPortChooser.isFree(both.port))
+    }
+
+    /// ssh closing a browser's connections through a forward leaves the Mac port in TIME_WAIT, which holds nothing.
+    @Test func aPortInTimeWaitIsFree() async throws {
+        let port = FakeSSHForwardTests.freePort()
+        // The side that closes first keeps TIME_WAIT, here the server's accepted socket on the port.
+        let program = """
+            import socket, time
+            listener = socket.socket(); listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", \(port))); listener.listen()
+            client = socket.create_connection(("127.0.0.1", \(port))); accepted, _ = listener.accept()
+            accepted.close(); client.recv(1); client.close(); listener.close()
+            """
+        let result = try await offPool {
+            try Subprocess.run(
+                "/usr/bin/python3", ["-c", program], environment: Fixture.environment, directory: nil,
+                timeout: .seconds(10))
+        }
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(try Self.timeWait(on: port))
+
+        #expect(LocalPortChooser.isFree(port))
+    }
+
+    static func timeWait(on port: UInt16) throws -> Bool {
+        let listed = try Subprocess.run(
+            "/usr/sbin/netstat", ["-an", "-p", "tcp"], environment: Fixture.environment, directory: nil,
+            timeout: .seconds(10))
+        return String(decoding: listed.stdout, as: UTF8.self).split(separator: "\n").contains {
+            $0.contains("127.0.0.1.\(port) ") && $0.contains("TIME_WAIT")
+        }
+    }
+
     @Test func aPortNobodyHoldsIsFree() throws {
         var listener: Listener? = try Listener(family: AF_INET)
         let port = try #require(listener?.port)

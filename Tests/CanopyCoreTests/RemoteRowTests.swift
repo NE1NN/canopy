@@ -1047,6 +1047,27 @@ struct RemotePortForwardingTests {
         await setup.stop()
     }
 
+    /// A browser's connections through the forward leave its Mac port in TIME_WAIT once ssh closes them, which must
+    /// not move the server to another port when it comes back.
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aServerThatComesBackGetsTheMacPortItHad() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 3)
+        try setup.serve(port)
+        let local = try #require(await setup.forwarded(port)?.remote?.local)
+        #expect(try await Self.get(local) == "200")
+        try setup.keys(["C-c"])
+        #expect(await setup.noPorts())
+
+        try setup.serve(port)
+
+        let again = try #require(await setup.forwarded(port)?.remote?.local)
+        #expect(again == local)
+        #expect(try await Self.get(again) == "200")
+        await setup.stop()
+    }
+
     @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
     func droppingTheMasterClearsTheForwardsAndAReconnectForwardsAgain() async throws {
         let setup = try await Setup()

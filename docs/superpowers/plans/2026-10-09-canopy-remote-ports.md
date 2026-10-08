@@ -32,7 +32,7 @@ A What was built section at the end says where the build differs.
 
 1. A remote pid never reaches `kill` on the Mac, and `stop-port` on the host signals a pid only while it still listens on the port it was asked about.
 2. Forwards follow the host: one per remote port, gone when the port stops listening or the master stops, made again on a new connection, never two for one remote port.
-3. The Mac port is free in both IPv4 and IPv6 loopback before it is used, and a forward that fails tries the next port rather than giving up or looping.
+3. The Mac port is free in both IPv4 and IPv6, loopback and wildcard, before it is used, and a forward that fails tries the next port rather than giving up or looping.
 4. The master's own listening sockets on the Mac never show as a local row's ports.
 5. Probing ports never slows the 2-second session probe, and a host whose `ss` is missing or fails shows no ports rather than an error.
 
@@ -43,7 +43,7 @@ A What was built section at the end says where the build differs.
 | Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per ports round, and the session list it needs for attribution comes in the same answer. |
 | How often | Every 5 seconds per host, by time since the last ports probe, as its own ssh call right after that host's session probe, with a 10-second timeout; attribution and forwards then run in a task of their own | A host's probes hold one ssh session at most, which `host add`'s MaxSessions warning counts on, a stuck `ss` delays the next session probe by its timeout at most, and forwards (control commands, no session) never hold probes up. |
 | Forward target on the host | `127.0.0.1` for `0.0.0.0` or `127.0.0.1`, `[::1]` for `::` or `::1`, any other IPv4 address as it is, and any other IPv6 address in brackets | A Vite server on `::1` alone refuses `127.0.0.1`, and the probe keeps `::` for an IPv6-only wildcard, as `ss` prints sshd's `[::]`. |
-| Mac port | The same port when nothing listens there on `127.0.0.1` or `::1`, else the next free one up to 65535, skipping ports other forwards hold | A local server on `::1` would otherwise catch `localhost:5173`. |
+| Mac port | The same port when nothing listens there on `127.0.0.1`, `::1`, `0.0.0.0`, or `::`, else the next free one up to 65535, skipping ports other forwards hold; each check binds with SO_REUSEADDR, as ssh does | A local server on `::1` or a wildcard would otherwise catch `localhost:5173`, and without SO_REUSEADDR the TIME_WAIT a closed browser connection leaves would move a forward that comes back to the next port. |
 | A Mac port that frees later | The forward keeps its port | Moving a forward under an open browser tab breaks it. |
 | Ports in the host's ephemeral range | Left out, read from `/proc/sys/net/ipv4/ip_local_port_range` | The same rule as local ports. |
 | `ports stop <n>` | Matches a remote port by its host port or its Mac port | An agent on the host knows the first, one on the Mac may know either. |
@@ -117,7 +117,7 @@ Modified:
   A port with processes in two rows goes to the row of the first process that has one.
   Folders are compared by path components, as `RelayPaths` maps them, so `/h/app-web` is not inside `/h/app`; a folder with `..` matches no row.
 - `LocalPortChooser.port(for remote: UInt16, taken: Set<UInt16>, isFree: (UInt16) -> Bool) -> UInt16?`: `remote` when free and not taken, else the next above, nil past 65535.
-- `LocalPortChooser.isFree(_:)`: binds `127.0.0.1` and `::1` (SO_REUSEADDR off) and closes; free only when both bind, or when `::1` is unavailable on the Mac.
+- `LocalPortChooser.isFree(_:)`: binds `127.0.0.1`, `::1`, `0.0.0.0`, and `::` (IPv6 only), each with SO_REUSEADDR, and closes; free only when all four bind, or when IPv6 is unavailable on the Mac and the IPv4 two bind.
 - `RemoteListeningPort.target` (`127.0.0.1`, `[::1]`, the IPv4 address, or the IPv6 address in brackets, by the rule in Decisions).
 - `SSHCommand.forwardLocal(local: UInt16, target: String, port: UInt16)` -> `-S <control> -O forward -L <local>:<target>:<port> <alias>`, and `cancelLocal` with `-O cancel`.
 
