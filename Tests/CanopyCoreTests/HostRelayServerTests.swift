@@ -306,6 +306,33 @@ struct HostRelayServerTests {
         #expect(lines == [HostRelayServer.acknowledgement])
     }
 
+    /// The server can stop just as a call's CLI finishes, as when the app quits. A call that finished gets its reply,
+    /// so a `row new` that made its row says so rather than that Canopy is not reachable.
+    @Test func aCallThatFinishedAsTheServerStopsStillGetsItsReply() async throws {
+        let dir = try TempDir()
+        let stopping = Stopping()
+        let server = HostRelayServer(
+            socketPath: dir.sub("hosts/box.sock"), host: "box", whenAnswered: { stopping.stop() },
+            handler: { _, _ in RelayReply(stdout: Data("made\n".utf8), stderr: Data(), status: 0) })
+        stopping.server.withLock { $0 = server }
+        try server.start()
+        let socket = server.socketPath
+        let request = RelayRequest(
+            version: HostFiles.version, args: ["row", "new"], cwd: "/", env: [:], stdin: nil, age: nil)
+
+        let lines = try await offPool {
+            let fd = try Self.connect(socket, sending: request)
+            defer { close(fd) }
+            return try Self.lines(on: fd)
+        }
+
+        #expect(stopping.stopped)
+        #expect(lines.count == 2 && lines.first == HostRelayServer.acknowledgement)
+        let reply = try JSONDecoder().decode(RelayReply.self, from: try #require(lines.last))
+        #expect(reply.status == 0)
+        #expect(reply.output == "made\n")
+    }
+
     @Test func twoCallsAtOnceBothAnswer() async throws {
         let setup = try await Setup()
         // Each waits for the other to have started, so calls served one at a time would each print "alone".
@@ -402,6 +429,19 @@ final class Calls: Sendable {
             state.withLock { $0.ended[name] = end }
             return .failure("ended")
         }
+    }
+}
+
+/// Stops a server from inside one of its calls.
+final class Stopping: Sendable {
+    let server = Mutex<HostRelayServer?>(nil)
+    private let done = Mutex(false)
+
+    var stopped: Bool { done.withLock { $0 } }
+
+    func stop() {
+        server.withLock { $0 }?.stop()
+        done.withLock { $0 = true }
     }
 }
 

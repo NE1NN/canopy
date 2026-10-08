@@ -42,6 +42,9 @@ public final class HostRelayServer: Sendable {
     let version: String
     /// How often a running call that was acknowledged gets a heartbeat. The relay gives up after 45 seconds of silence.
     let heartbeatInterval: Duration
+    /// Called on a call's thread once its handler has answered, before the server decides what to send. Tests stop
+    /// the server there.
+    let whenAnswered: (@Sendable () -> Void)?
     private let handler: Handler
 
     private struct State {
@@ -58,12 +61,14 @@ public final class HostRelayServer: Sendable {
 
     public init(
         socketPath: String, host: String, version: String = HostFiles.version,
-        heartbeatInterval: Duration = .seconds(15), handler: @escaping Handler
+        heartbeatInterval: Duration = .seconds(15), whenAnswered: (@Sendable () -> Void)? = nil,
+        handler: @escaping Handler
     ) {
         self.socketPath = socketPath
         self.host = host
         self.version = version
         self.heartbeatInterval = heartbeatInterval
+        self.whenAnswered = whenAnswered
         self.handler = handler
     }
 
@@ -242,28 +247,29 @@ public final class HostRelayServer: Sendable {
         let id = UUID()
         let handler = self.handler
         let host = self.host
-        let task = Task {
-            let reply = await handler(request, host)
-            answer.reply.withLock { $0 = reply }
-            var byte: UInt8 = 0
-            _ = write(finished, &byte, 1)
-        }
-        let running = state.withLock { state in
-            guard !state.stopped else { return false }
+        // Registered as it is made, so a call is in `calls` from its start until its handler returns.
+        let task = state.withLock { state -> Task<Void, Never>? in
+            guard !state.stopped else { return nil }
+            let task = Task {
+                let reply = await handler(request, host)
+                // A call stop() took before its handler returned was cancelled, and answers nothing.
+                let ran = self.state.withLock { $0.calls.removeValue(forKey: id) != nil }
+                answer.reply.withLock { $0 = ran ? reply : nil }
+                var byte: UInt8 = 0
+                _ = write(finished, &byte, 1)
+            }
             state.calls[id] = task
-            return true
+            return task
         }
-        if !running { task.cancel() }
-        let hungUp =
-            !running
-            || Self.waitForAnswer(done, whileConnected: connection, heartbeat: acknowledged ? heartbeatInterval : nil)
+        guard let task else { return nil }
+        let hungUp = Self.waitForAnswer(
+            done, whileConnected: connection, heartbeat: acknowledged ? heartbeatInterval : nil)
         let isAppsReport = acknowledged && RelayInput.reading(request.args) == .hookReport
         if hungUp && !isAppsReport { task.cancel() }
         // The task holds the pipe until it has written to it, and a cancelled one still finishes.
         Self.wait(for: done)
-        // A call stop() took was cancelled, whether or not it hung up.
-        let stopped = state.withLock { $0.calls.removeValue(forKey: id) == nil }
-        return hungUp || stopped ? nil : answer.reply.withLock { $0 }
+        whenAnswered?()
+        return hungUp ? nil : answer.reply.withLock { $0 }
     }
 
     /// Waits until `done` is readable, returning true if `connection` hung up first, and writes a heartbeat to it
