@@ -36,11 +36,17 @@ extension Workspace {
     /// only in case share one ref file on a case-insensitive file system, where a branch made with the other spelling
     /// would hide a packed one, so any case finds the branch.
     func existingBranch(_ name: String, under prefix: String, repoPath: String) async -> String? {
-        await existingBranch(name, under: prefix, in: RepoGit(git: git, path: repoPath))
+        try? await existingBranch(name, under: prefix, in: RepoGit(git: git, path: repoPath))
     }
 
-    func existingBranch(_ name: String, under prefix: String, in clone: RepoGit) async -> String? {
-        guard let listed = try? await clone.run(["for-each-ref", "--format=%(refname)", prefix]) else {
+    /// Fails only when the clone is on a host that did not answer, which says nothing about the branch.
+    func existingBranch(_ name: String, under prefix: String, in clone: RepoGit) async throws -> String? {
+        let listed: String
+        do {
+            listed = try await clone.run(["for-each-ref", "--format=%(refname)", prefix])
+        } catch let error as GitError where error.hostUnreachable {
+            throw error
+        } catch {
             return nil
         }
         let refs = listed.split(separator: "\n").map(String.init)

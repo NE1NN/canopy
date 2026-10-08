@@ -164,6 +164,34 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
+    /// A host that drops while its branches are listed must not look like one without the branch, which would make
+    /// a new branch on the wrong base.
+    @Test func aHostThatDropsWhileListingBranchesMakesNoBranch() async throws {
+        let setup = try await Setup()
+        let script = setup.dir.sub("dropping-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *for-each-ref* ]] && { echo "Connection closed" >&2; exit 255; }
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let dropping = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await dropping.start()
+        try await dropping.addRepo(path: setup.repo)
+        try HostsConfigFile(url: dropping.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+
+        await #expect {
+            try await dropping.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/listed")
+        } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
+
+        let branches = try await Fixture.git.run(["branch", "--list", "feat/listed"], in: setup.clone)
+        #expect(branches.isEmpty)
+        await dropping.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func aHostThatDropsOnceTheWorktreeIsMadeStillGetsItsRow() async throws {
         let setup = try await Setup()
         try await setup.workspace.connection(for: "box").connect()

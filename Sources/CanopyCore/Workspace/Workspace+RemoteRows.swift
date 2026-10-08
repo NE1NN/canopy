@@ -97,9 +97,10 @@ extension Workspace {
             let branch: String
             let source: BranchSource
             var start: String?
-            if let local = await existingBranch(requested, under: "refs/heads/", in: clone) {
+            if let local = try await existingBranch(requested, under: "refs/heads/", in: clone) {
                 (branch, source) = (local, .local)
-            } else if hasOrigin, let remote = await existingBranch(requested, under: "refs/remotes/origin/", in: clone)
+            } else if hasOrigin,
+                let remote = try await existingBranch(requested, under: "refs/remotes/origin/", in: clone)
             {
                 (branch, source) = (remote, .origin)
             } else {
