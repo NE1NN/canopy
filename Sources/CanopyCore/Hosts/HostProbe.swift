@@ -25,8 +25,9 @@ public enum HostProbe {
         public var pending: [String]
         /// Each session's shell's pid on the host, by session name.
         public var shells: [String: Int32] = [:]
-        /// Only when the probe asked for them.
-        public var ports: [RemoteListeningPort] = []
+        /// Only when the probe asked for them, and nil when the host could not list them, which says nothing about
+        /// what listens there.
+        public var ports: [RemoteListeningPort]? = nil
     }
 
     struct Output: Decodable {
@@ -55,7 +56,7 @@ public enum HostProbe {
         let shells = Dictionary(
             output.sessions.compactMap { session in session.pid.map { (session.name, $0) } },
             uniquingKeysWith: { first, _ in first })
-        return Report(sessions: sessions, pending: output.pending ?? [], shells: shells, ports: output.ports ?? [])
+        return Report(sessions: sessions, pending: output.pending ?? [], shells: shells, ports: output.ports)
     }
 
     /// The command that probes this home's tmux server and kept reports on a host, with this home's helper, and with

@@ -57,14 +57,16 @@ struct HostPortsScriptTests {
                 guard let result = try? await probe(), result.status == 0,
                     let report = try? HostProbe.decode(result.stdout)
                 else { return false }
-                ports = report.ports
+                ports = report.ports ?? []
                 return !ports.isEmpty && ports.allSatisfy { $0.processes.allSatisfy { $0.folder != nil } }
             }
             return ports
         }
 
         /// `canopy-host` with some of its constants set first, such as a short wait.
-        func run(_ arguments: [String], setting constants: [String: String] = [:]) async throws -> SubprocessResult {
+        func run(
+            _ arguments: [String], setting constants: [String: String] = [:], environment extra: [String: String] = [:]
+        ) async throws -> SubprocessResult {
             let module = dir.sub("canopy_host.py")
             try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
             let assignments = constants.sorted { $0.key < $1.key }.map { "canopy_host.\($0.key) = \($0.value)" }
@@ -72,7 +74,7 @@ struct HostPortsScriptTests {
                 (["import sys", "sys.path.insert(0, sys.argv[1])", "import canopy_host"] + assignments + [
                     "sys.exit(canopy_host.main(sys.argv[2:]))"
                 ]).joined(separator: "\n")
-            var environment = environment
+            var environment = environment.merging(extra) { $1 }
             environment["HOME"] = host.home
             environment["PATH"] = path
             let directory = dir.path
@@ -172,26 +174,44 @@ struct HostPortsScriptTests {
             setting: ["PORT_RANGE_FILE": "'\(range)'"])
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(try HostProbe.decode(result.stdout).ports.map(\.port) == [32767, 61000])
+        #expect(try HostProbe.decode(result.stdout).ports?.map(\.port) == [32767, 61000])
     }
 
-    /// The probe runs every 2 seconds, and a host whose `ss` is missing or broken still shows its sessions.
-    @Test func withoutSSOrWhenItFailsThereAreNoPorts() async throws {
-        let missing = try Setup(ss: false)
+    /// The probe runs every 2 seconds, and a host whose `ss` is missing still shows its sessions.
+    @Test func withoutSSThereAreNoPorts() async throws {
+        let setup = try Setup(ss: false)
+
+        let result = try await setup.probe()
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        let output = try #require(try JSONSerialization.jsonObject(with: result.stdout) as? [String: Any])
+        #expect((output["ports"] as? [Any])?.isEmpty == true)
+        #expect(try HostProbe.decode(result.stdout) == HostProbe.Report(sessions: [:], pending: [], ports: []))
+        let withoutPorts = try await setup.probe(ports: false)
+        let unasked = try #require(try JSONSerialization.jsonObject(with: withoutPorts.stdout) as? [String: Any])
+        #expect(unasked["ports"] == nil)
+    }
+
+    /// A busy host's `ss` can fail or take too long, which says nothing about its ports, so the app keeps what it had.
+    @Test func whenSSFailsOrTakesTooLongThePortsAreUnknown() async throws {
         let failing = try Setup()
-
-        for setup in [missing, failing] {
-            let result = try await setup.probe()
-
-            #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-            let output = try #require(
-                try JSONSerialization.jsonObject(with: result.stdout) as? [String: Any])
-            #expect((output["ports"] as? [Any])?.isEmpty == true)
-            #expect(try HostProbe.decode(result.stdout) == HostProbe.Report(sessions: [:], pending: []))
+        let slow = try Setup()
+        try slow.write([])
+        let arguments = { (setup: Setup) in
+            ["probe", "--server", "none-\(setup.homeID)", "--home-id", setup.homeID, "--ports"]
         }
-        let withoutPorts = try await failing.probe(ports: false)
-        let output = try #require(try JSONSerialization.jsonObject(with: withoutPorts.stdout) as? [String: Any])
-        #expect(output["ports"] == nil)
+
+        let failed = try await failing.run(arguments(failing))
+        let late = try await slow.run(
+            arguments(slow), setting: ["TOOL_WAIT": "0.3"], environment: ["FAKE_SS_SLEEP": "5"])
+
+        for result in [failed, late] {
+            #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+            let output = try #require(try JSONSerialization.jsonObject(with: result.stdout) as? [String: Any])
+            #expect(output.keys.contains("ports"))
+            #expect(output["ports"] is NSNull)
+            #expect(try HostProbe.decode(result.stdout).ports == nil)
+        }
     }
 
     @Test(.enabled(if: HostFilesTests.tmux != nil, "needs tmux: brew install tmux"))

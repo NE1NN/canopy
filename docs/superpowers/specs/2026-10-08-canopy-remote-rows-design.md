@@ -327,6 +327,7 @@ A remote row's head or branch changing in the 30-second listing looks the row's 
 While a host is connected, `canopy-host probe` also lists its listening TCP ports every 5 seconds, from `ss -ltnpH`, with each process's id, its ancestors' ids, and its folder.
 A port belongs to the remote row one of whose tmux sessions the process descends from, or else to the remote row whose worktree holds the process's folder.
 Ports that belong to no remote row are left out.
+A host without `ss` lists no ports, and when `ss` fails or takes too long the host's ports are unknown for that round, so the app keeps the ports and forwards it had.
 
 Each port found is forwarded through the master, `ssh -O forward -L`, to the same port on the Mac when that is free, and otherwise to the next free port above it.
 The forward goes when the port stops listening on the host or the master stops.

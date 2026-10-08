@@ -128,7 +128,8 @@ public final class HostMonitor {
 
     /// The host's listening ports, once `portsEvery` has passed, read right after its session probe so the two never
     /// hold a session each. Its own short timeout keeps a stuck `ss` from holding up the next session probe for long.
-    /// A probe that fails keeps what the last one found, and a host without `ss` lists none.
+    /// A probe that fails, or whose `ss` failed, keeps what the last one found and its forwards, and a host without
+    /// `ss` lists none.
     private func probePorts(on connection: HostConnection) async {
         let alias = connection.alias
         let now = ContinuousClock.now
@@ -137,23 +138,23 @@ public final class HostMonitor {
         guard
             let result = await connection.probe(
                 HostProbe.command(homeID: workspace.homeID, ports: true), timeout: .seconds(10)),
-            result.status == 0, let report = try? HostProbe.decode(result.stdout)
+            result.status == 0, let report = try? HostProbe.decode(result.stdout), let ports = report.ports
         else { return }
         forwarding[alias] = Task {
-            await self.forward(report, on: connection)
+            await self.forward(ports, shells: report.shells, on: connection)
             self.forwarding[alias] = nil
         }
     }
 
     /// Gives the host's ports to its remote rows and forwards the rows' ports to the Mac.
-    private func forward(_ report: HostProbe.Report, on connection: HostConnection) async {
+    private func forward(_ ports: [RemoteListeningPort], shells: [String: Int32], on connection: HostConnection) async {
         let alias = connection.alias
         let rows = await workspace.remoteRows(on: alias)
         var sessions: [String: String] = [:]
         for pane in terminals.panes where pane.context.remote?.host == alias {
             if let session = pane.remoteSession { sessions[session] = pane.context.rowPath }
         }
-        let byRow = RemotePortAttribution.assign(report.ports, rows: rows, sessions: sessions, shells: report.shells)
+        let byRow = RemotePortAttribution.assign(ports, rows: rows, sessions: sessions, shells: shells)
         let forwards = await workspace.forwardPorts(byRow.values.flatMap { $0 }, on: connection)
         guard await connection.state == .connected else {
             remotePorts[alias] = nil

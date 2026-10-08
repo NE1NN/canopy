@@ -3,11 +3,14 @@
 that have exited, as a socket goes with its last process, and fails when that file is missing, as `ss` can on a host.
 Without $FAKE_SS_LINES it prints this Mac's listening sockets of this user, read with `lsof`, as `ss` prints a host's
 without root. A file .fake-ss-home-only in $HOME, the fake host's home, keeps only the processes working in that home,
-so the rest of this Mac's servers stay off the host, as they would on another machine."""
+so the rest of this Mac's servers stay off the host, as they would on another machine. $FAKE_SS_SLEEP makes it take that
+many seconds first, and a file .fake-ss-fails in $HOME makes it fail, noting each failure in .fake-ss-failed there, as
+`ss` on a busy host can."""
 import os
 import re
 import subprocess
 import sys
+import time
 
 USER = re.compile(r'\("[^"]*",pid=(\d+),fd=\d+\)')
 
@@ -87,6 +90,13 @@ def from_lsof():
 def main(arguments):
     if arguments != ["-ltnpH"]:
         print("fake-ss: only -ltnpH", file=sys.stderr)
+        return 1
+    time.sleep(float(os.environ.get("FAKE_SS_SLEEP", "0")))
+    home = os.environ.get("HOME", "/")
+    if os.path.exists(os.path.join(home, ".fake-ss-fails")):
+        with open(os.path.join(home, ".fake-ss-failed"), "a", encoding="ascii") as failures:
+            failures.write("failed\n")
+        print("Cannot open netlink socket: Device or resource busy", file=sys.stderr)
         return 1
     if "FAKE_SS_LINES" not in os.environ:
         lines = from_lsof()

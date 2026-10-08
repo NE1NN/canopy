@@ -600,12 +600,28 @@ public enum HostFiles {
         USERS = re.compile(r'\("((?:[^"\\]|\\.)*)",pid=(\d+),')
 
 
+        class Unlisted(Exception):
+            """`ss` could not list the host's sockets: it is missing, or it failed or took too long, which says nothing
+            about what listens."""
+
+            def __init__(self, missing):
+                super().__init__("missing" if missing else "failed")
+                self.missing = missing
+
+
         def listeners():
             """`ss -ltnpH`'s sockets as (address, port, [(name, pid)]), leaving out other users' sockets, which it shows
-            without their processes. None when `ss` is missing or fails."""
-            listed = tool(["ss"], ["-ltnpH"])
-            if listed is None:
-                return None
+            without their processes. Raises Unlisted when it cannot tell."""
+            try:
+                ran = subprocess.run(["ss", "-ltnpH"], stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
+                                     errors="replace", timeout=TOOL_WAIT)
+            except FileNotFoundError:
+                raise Unlisted(missing=True)
+            except (OSError, subprocess.SubprocessError):
+                raise Unlisted(missing=False)
+            if ran.returncode != 0:
+                raise Unlisted(missing=False)
+            listed = ran.stdout
             found = []
             for line in listed.splitlines():
                 parts = line.split(None, 5)
@@ -679,8 +695,12 @@ public enum HostFiles {
 
 
         def listening_ports(table):
-            """The host's listening TCP ports outside its ephemeral range, one entry for each, with their processes."""
-            found = listeners() or []
+            """The host's listening TCP ports outside its ephemeral range, one entry for each, with their processes. None
+            when `ss` fails, and none at all without `ss`."""
+            try:
+                found = listeners()
+            except Unlisted as unlisted:
+                return [] if unlisted.missing else None
             ephemeral = ephemeral_ports()
             ports = {}
             for address, port, holders in found:
@@ -765,8 +785,9 @@ public enum HostFiles {
 
         def listening_pids(port):
             """The pids `ss` shows listening on this port now, or None when `ss` cannot tell."""
-            found = listeners()
-            if found is None:
+            try:
+                found = listeners()
+            except Unlisted:
                 return None
             return {pid for _, number, holders in found if number == port for _, pid in holders}
 

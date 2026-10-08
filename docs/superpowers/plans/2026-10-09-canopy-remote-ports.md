@@ -34,7 +34,7 @@ A What was built section at the end says where the build differs.
 2. Forwards follow the host: one per remote port, gone when the port stops listening or the master stops, made again on a new connection, never two for one remote port.
 3. The Mac port is free in both IPv4 and IPv6, loopback and wildcard, before it is used, and a forward that fails tries the next port rather than giving up or looping.
 4. The master's own listening sockets on the Mac never show as a local row's ports.
-5. Probing ports never slows the 2-second session probe, and a host whose `ss` is missing or fails shows no ports rather than an error.
+5. Probing ports never slows the 2-second session probe, a host whose `ss` is missing shows no ports rather than an error, and one whose `ss` fails or times out keeps the ports and forwards it had.
 
 ## Decisions
 
@@ -97,7 +97,7 @@ Modified:
 **Interfaces:**
 - `canopy-host probe --server <name> --home-id <id> --ports` adds `"ports": [{"port": 5173, "address": "127.0.0.1", "processes": [{"pid": 812, "name": "node", "ancestors": [800, 1], "folder": "/home/u/x"}]}]`, from `ss -ltnpH`; lines without `users:` (other users' sockets) are skipped; the same port on several addresses is one entry, with the loopback-friendly address by the rule in Decisions; ports in the ephemeral range are left out.
   Ancestors come from the `ps -A -o pid=,ppid=,tpgid=,comm=` table the probe already reads; folders from `/proc/<pid>/cwd`, else `lsof -a -p <pid> -d cwd -Fn` when there is no `/proc` (the fake host is the Mac).
-  Without `ss`, or when it fails, `ports` is `[]`.
+  Without `ss`, `ports` is `[]`; when `ss` fails or takes longer than 5 seconds, `ports` is `null`.
 - Each session in the probe also carries `pid` (the pane's shell), which it already prints.
 - `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"killed": [pids]}`. Pids not listening on the port are left alone.
 - `HostProbe.Report` (which already has `sessions` and `pending`) gains `shells: [String: Int32]` (session to shell pid) and `ports: [RemoteListeningPort]`, and `HostProbe.command(homeID:ports:)` adds `--ports` when asked.

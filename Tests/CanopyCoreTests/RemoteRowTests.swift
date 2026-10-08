@@ -1068,6 +1068,51 @@ struct RemotePortForwardingTests {
         await setup.stop()
     }
 
+    /// `ss` failing says nothing about the host's ports, so their forwards stay rather than going and coming back.
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aHostWhoseSSFailsKeepsItsPortsAndTheirForwards() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        try setup.serve(port)
+        let found = try #require(await setup.forwarded(port))
+        let local = try #require(found.remote?.local)
+        let home = setup.remote.host.home
+        FileManager.default.createFile(atPath: home + "/.fake-ss-fails", contents: nil)
+        let failures = {
+            ((try? String(contentsOfFile: home + "/.fake-ss-failed", encoding: .utf8)) ?? "").split(separator: "\n")
+        }
+
+        #expect(
+            await eventually {
+                await setup.monitor.probe()
+                return failures().count >= 3
+            })
+
+        #expect(setup.monitor.remotePorts["box"]?.flatMap(\.ports) == [found])
+        #expect(await setup.connection.forwardedPorts == [local])
+        #expect(try await Self.get(local) == "200")
+        try FileManager.default.removeItem(atPath: home + "/.fake-ss-fails")
+        await setup.stop()
+    }
+
+    /// A host without `ss` lists no ports, so its forwards go.
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aHostWithoutSSShowsNoPortsAndDropsTheirForwards() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        try setup.serve(port)
+        let local = try #require(await setup.forwarded(port)?.remote?.local)
+
+        try FileManager.default.removeItem(atPath: setup.remote.dir.sub("ss-bin-box/ss"))
+
+        #expect(await setup.noPorts())
+        #expect(await setup.connection.forwardedPorts.isEmpty)
+        #expect(await eventually { LocalPortChooser.isFree(local) })
+        await setup.stop()
+    }
+
     @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
     func droppingTheMasterClearsTheForwardsAndAReconnectForwardsAgain() async throws {
         let setup = try await Setup()
