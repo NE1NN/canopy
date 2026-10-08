@@ -173,7 +173,7 @@ struct HostFilesTests {
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(try HostProbe.decode(result.stdout).isEmpty)
+        #expect(try HostProbe.decode(result.stdout) == HostProbe.Report(sessions: [:], pending: []))
     }
 
     @Test func theScriptIsValidPython() throws {
@@ -219,7 +219,7 @@ struct HostFilesTests {
             environment["LC_ALL"] = "C"
             let result = try Subprocess.run(
                 argv[0], Array(argv.dropFirst()), environment: environment, directory: nil, timeout: .seconds(30))
-            return try HostProbe.decode(result.stdout)
+            return try HostProbe.decode(result.stdout).sessions
         }
 
         let idle = await eventually { (try? probe())?["p1"]?.busy == false }
@@ -252,17 +252,48 @@ struct HostFilesTests {
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(try HostProbe.decode(result.stdout).isEmpty)
+        #expect(try HostProbe.decode(result.stdout) == HostProbe.Report(sessions: [:], pending: []))
     }
 
     @Test func probeOutputDecodesAndAServerWithNoSessionsHasNone() throws {
         let output = Data(
-            #"{"sessions": [{"name": "p3", "pid": 41, "busy": true, "foreground": "claude", "folder": "/w", "title": "✳ Fix"}]}"#
+            #"{"sessions": [{"name": "p3", "pid": 41, "busy": true, "foreground": "claude", "folder": "/w", "title": "✳ Fix"}], "pending": ["p3", "p9"]}"#
                 .utf8)
 
-        let sessions = try HostProbe.decode(output)
+        let report = try HostProbe.decode(output)
 
-        #expect(sessions == ["p3": SessionActivity(busy: true, foreground: "claude", folder: "/w", title: "✳ Fix")])
-        #expect(try HostProbe.decode(Data(#"{"sessions": []}"#.utf8)).isEmpty)
+        #expect(
+            report.sessions == ["p3": SessionActivity(busy: true, foreground: "claude", folder: "/w", title: "✳ Fix")])
+        #expect(report.pending == ["p3", "p9"])
+        // As a helper from before kept reports were listed prints it.
+        #expect(try HostProbe.decode(Data(#"{"sessions": []}"#.utf8)) == HostProbe.Report(sessions: [:], pending: []))
+    }
+
+    /// Kept reports are replayed from the probe, so one waits on the host no longer than a probe takes to see it.
+    @Test func probeListsThePanesWithAKeptReportAndNothingElseInTheirFolder() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir, path: "/usr/bin:/bin")
+        let homeID = "test-\(UUID().uuidString.prefix(6))"
+        try install(host, homeID: homeID)
+        let pending = host.home + "/.canopy/\(homeID)/pending"
+        let other = host.home + "/.canopy/other-home/pending"
+        for folder in [pending, other] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        let files = [
+            "p3.json", "p12.json", "p4.json.canopy-new-123", "p5.json.canopy-replay-456", "p6.json~", "bad name.json",
+            ".json", "notes.txt",
+        ]
+        for name in files {
+            try Data("{}".utf8).write(to: URL(fileURLWithPath: pending + "/" + name))
+        }
+        try Data("{}".utf8).write(to: URL(fileURLWithPath: other + "/p7.json"))
+        let argv = host.ssh.exec(HostProbe.command(homeID: homeID))
+
+        let result = try Subprocess.run(
+            argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(try HostProbe.decode(result.stdout).pending == ["p12", "p3"])
     }
 }

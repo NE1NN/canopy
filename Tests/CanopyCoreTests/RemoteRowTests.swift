@@ -809,6 +809,22 @@ struct RemoteReplayTests {
         await setup.stop()
     }
 
+    /// After a short sleep the master can survive and no pane attaches again, so the probe replays what it sees kept.
+    @Test @MainActor func aKeptReportAProbeSeesIsRelayedOnce() async throws {
+        let setup = try await Setup()
+        try await setup.relay.prepare()
+        try setup.keep()
+        let monitor = HostMonitor(workspace: setup.relay.workspace, terminals: setup.terminals)
+
+        await monitor.probe()
+
+        #expect(await eventually { setup.relay.runs == ["\(setup.pane) agent-hook"] })
+        #expect(!FileManager.default.fileExists(atPath: setup.pending))
+        await monitor.probe()
+        #expect(setup.relay.runs == ["\(setup.pane) agent-hook"])
+        await setup.stop()
+    }
+
     /// The app may have updated the host's files since the hook kept its report, which a live relay is asked to run
     /// again for. A kept report cannot be, so it runs as it is.
     @Test func aReportKeptByOlderFilesStillRuns() async throws {

@@ -35,7 +35,8 @@ public enum HostActivity {
     }
 }
 
-/// Probes connected hosts for what their sessions do, and tells each host what its panes are up to.
+/// Probes connected hosts for what their sessions do, tells each host what its panes are up to, and replays the hook
+/// reports a host kept, so an agent that finished while the app was away shows it without its pane attaching again.
 @MainActor
 public final class HostMonitor {
     /// How often the hosts' worktrees are listed again, in probes.
@@ -46,6 +47,8 @@ public final class HostMonitor {
     private var probes = 0
     /// Each host's worktree listing under way. It can wait behind a row being made, so probes go on without it.
     private var listing: [String: Task<Void, Never>] = [:]
+    /// Each host's kept reports being replayed, which can each take seconds.
+    private var replaying: [String: Task<Void, Never>] = [:]
 
     public init(workspace: Workspace, terminals: TerminalStore) {
         self.workspace = workspace
@@ -59,8 +62,9 @@ public final class HostMonitor {
         for connection in await workspace.connectedHosts() {
             let alias = connection.alias
             guard let result = await connection.probe(command, timeout: .seconds(10)),
-                result.status == 0, let sessions = try? HostProbe.decode(result.stdout)
+                result.status == 0, let report = try? HostProbe.decode(result.stdout)
             else { continue }
+            let sessions = report.sessions
             let panes = terminals.panes.filter { $0.context.remote?.host == alias }
             var samples: [HostPaneSample] = []
             for pane in panes {
@@ -77,6 +81,15 @@ public final class HostMonitor {
                 listing[alias] = Task {
                     await workspace.refreshRemote(host: alias)
                     self.listing[alias] = nil
+                }
+            }
+            if !report.pending.isEmpty, replaying[alias] == nil {
+                let workspace = workspace
+                replaying[alias] = Task {
+                    for pane in report.pending {
+                        await workspace.replayKeptReport(pane: pane, on: connection)
+                    }
+                    self.replaying[alias] = nil
                 }
             }
         }

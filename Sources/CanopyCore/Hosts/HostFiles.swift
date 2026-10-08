@@ -126,7 +126,7 @@ public enum HostFiles {
 
     /// Canopy's helper on a host, with the version it reports to the app.
     /// `probe` lists the sessions of Canopy's tmux server, each with its foreground program, whether that is the shell,
-    /// its folder, and its title, as JSON. `relay` is the host's `canopy`, `replay` hands the app a hook's report that
+    /// its folder, and its title, and the panes with a kept hook report, as JSON. `relay` is the host's `canopy`, `replay` hands the app a hook's report that
     /// found no app, and `open` is the host's `xdg-open`.
     public static let script = scriptSource.replacingOccurrences(of: "@CANOPY_VERSION@", with: version)
 
@@ -151,22 +151,37 @@ public enum HostFiles {
         # Long enough for a slow producer, such as a keychain, piping into `canopy ticket connect`; bounded, since a pipe
         # its parent never closes would otherwise hold every command forever.
         INPUT_WAIT = 10
-        # A hook reports and goes: Claude waits on it, and a stalled connection must not hold Claude for long.
-        HOOK_TIMEOUT = 10
         # The app acknowledges a request as soon as it reads it. sshd here accepts connections on the forwarded socket
         # even while the Mac sleeps, so silence for this long means the request never reached the app.
-        HOOK_ACKNOWLEDGEMENT_WAIT = 5
         ACKNOWLEDGEMENT_WAIT = 10
+        # Claude kills a hook 5 seconds after starting it, so a hook has its input by the first of these, from when it
+        # started, has the app's acknowledgement or keeps its report by the second, and waits for the reply until the
+        # third.
+        HOOK_INPUT_WAIT = 1
+        HOOK_BUDGET = 3
+        HOOK_REPLY_WAIT = 4
 
 
-        def standard_input():
-            """Standard input, base64, unless it is a terminal or nothing arrives on it."""
+        def standard_input(deadline=None):
+            """Standard input, base64, unless it is a terminal or nothing arrives on it. By a deadline, what arrived by
+            then, so a pipe that never closes cannot hold a hook past Claude's timeout."""
             try:
                 if sys.stdin is None or sys.stdin.isatty() or not sys.stdin.readable():
                     return None
-                if not select.select([sys.stdin], [], [], INPUT_WAIT)[0]:
+                descriptor = sys.stdin.fileno()
+                first = INPUT_WAIT if deadline is None else max(0.0, deadline - time.monotonic())
+                if not select.select([descriptor], [], [], first)[0]:
                     return None
-                return base64.b64encode(sys.stdin.buffer.read()).decode("ascii")
+                if deadline is None:
+                    return base64.b64encode(sys.stdin.buffer.read()).decode("ascii")
+                data = bytearray()
+                while True:
+                    chunk = os.read(descriptor, 65536)
+                    data += chunk
+                    remaining = deadline - time.monotonic()
+                    if not chunk or remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
+                        break
+                return base64.b64encode(bytes(data)).decode("ascii")
             except (OSError, ValueError):
                 return None
 
@@ -238,6 +253,14 @@ public enum HostFiles {
                     pass
 
 
+        def left(deadline):
+            """Seconds until a deadline on this host's clock, raising once it has passed."""
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout("out of time")
+            return remaining
+
+
         def connect(path, timeout):
             connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             connection.settimeout(timeout)
@@ -249,18 +272,19 @@ public enum HostFiles {
             return connection
 
 
-        def send(connection, request, wait):
+        def send(connection, request, wait, deadline=None):
             """Sends the request and returns its lines and the app's first: its acknowledgement, or a reply without one,
             which means it ran nothing, as for a relay of another version. Raises when neither comes within `wait`
-            seconds of the request going, or the connection ends first."""
+            seconds of the request going, or by `deadline`, or the connection ends first."""
             request["age"] = max(0.0, time.monotonic() - STARTED)
             data = memoryview(json.dumps(request).encode("ascii") + b"\n")
             # Each part must go within the wait, rather than all of it, so a long input on a slow link still goes.
-            connection.settimeout(wait)
             while data:
+                connection.settimeout(wait if deadline is None else min(wait, left(deadline)))
                 data = data[connection.send(data):]
             lines = Lines(connection)
-            return lines, lines.next(time.monotonic() + wait)
+            acknowledgement = time.monotonic() + wait
+            return lines, lines.next(acknowledgement if deadline is None else min(acknowledgement, deadline))
 
 
         def acknowledged(line):
@@ -301,16 +325,17 @@ public enum HostFiles {
 
 
         def hook(path, arguments):
-            request = request_for(arguments)
+            request = request_for(arguments, STARTED + HOOK_INPUT_WAIT)
+            deadline = STARTED + HOOK_BUDGET
             try:
-                with connect(path, HOOK_ACKNOWLEDGEMENT_WAIT) as connection:
-                    lines, first = send(connection, request, HOOK_ACKNOWLEDGEMENT_WAIT)
+                with connect(path, left(deadline)) as connection:
+                    lines, first = send(connection, request, HOOK_BUDGET, deadline)
                     if acknowledged(first):
                         # The app has the report, so it is not kept. Were the acknowledgement lost on its way here,
                         # the report would be kept although the app ran it, and run again at replay: rare, and better
                         # than losing it.
                         try:
-                            lines.next(time.monotonic() + HOOK_TIMEOUT)
+                            lines.next(STARTED + HOOK_REPLY_WAIT)
                         except (OSError, ValueError):
                             pass
                         return
@@ -319,11 +344,11 @@ public enum HostFiles {
             keep(request)
 
 
-        def request_for(arguments):
+        def request_for(arguments, input_deadline=None):
             return {
                 "version": VERSION, "args": arguments, "cwd": folder(),
                 "env": {key: value for key, value in os.environ.items() if key.startswith("CANOPY_")},
-                "stdin": standard_input(),
+                "stdin": standard_input(input_deadline),
             }
 
 
@@ -429,7 +454,19 @@ public enum HostFiles {
             return table
 
 
-        def probe(server):
+        def pending_panes(home_id):
+            """The panes with a report kept for this home, for the app to replay without waiting for them to attach."""
+            folder = os.path.join(os.path.expanduser("~/.canopy"), home_id, "pending")
+            try:
+                names = os.listdir(folder)
+            except OSError:
+                return []
+            return sorted(name[:-len(".json")] for name in names
+                          if name.endswith(".json") and NAME.fullmatch(name[:-len(".json")]))
+
+
+        def probe(server, home_id):
+            pending = pending_panes(home_id)
             fields = "#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{pane_title}"
             # -u: under a locale that is not UTF-8, as ssh can pass on, tmux would print tabs as underscores.
             sessions = []
@@ -440,7 +477,7 @@ public enum HostFiles {
                 )
             except OSError:
                 # Without tmux there are no sessions, as when its server is not running.
-                print(json.dumps({"sessions": sessions}))
+                print(json.dumps({"sessions": sessions, "pending": pending}))
                 return
             # tmux titles a pane nothing has titled with the machine's name, which says nothing.
             names = {socket.gethostname(), socket.gethostname().split(".")[0]}
@@ -459,11 +496,11 @@ public enum HostFiles {
                         "name": parts[0], "pid": pid, "busy": busy, "foreground": foreground,
                         "folder": parts[2], "title": "" if title in names else title,
                     })
-            print(json.dumps({"sessions": sessions}))
+            print(json.dumps({"sessions": sessions, "pending": pending}))
 
 
         def usage():
-            print("usage: canopy-host probe --server <name> | relay <arguments> | replay --pane <pane> --home-id <id>"
+            print("usage: canopy-host probe --server <name> --home-id <id> | relay <arguments> | replay --pane <pane> --home-id <id>"
                   " | open <url>", file=sys.stderr)
             return 2
 
@@ -476,8 +513,9 @@ public enum HostFiles {
                 return open_link(arguments[1:])
             if len(arguments) == 5 and command == ["replay"] and arguments[1] == "--pane" and arguments[3] == "--home-id":
                 return replay(arguments[2], arguments[4])
-            if len(arguments) == 3 and command == ["probe"] and arguments[1] == "--server":
-                probe(arguments[2])
+            if (len(arguments) == 5 and command == ["probe"] and arguments[1] == "--server"
+                    and arguments[3] == "--home-id" and NAME.fullmatch(arguments[4])):
+                probe(arguments[2], arguments[4])
                 return 0
             return usage()
 

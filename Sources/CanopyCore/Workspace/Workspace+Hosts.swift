@@ -317,7 +317,7 @@ extension Workspace {
     }
 
     /// Runs the report a hook on the host kept for the pane while it could not reach this app, so the pane's agent
-    /// shows what it did meanwhile. The pane waits for it, so neither step waits long, and a failure is let go.
+    /// shows what it did meanwhile. A pane attaching waits for it, so neither step waits long, and a failure is let go.
     public func replayKeptReport(pane: String, on connection: HostConnection) async {
         let command = HostFiles.replayCommand(homeID: homeID, pane: pane)
         guard let result = try? await connection.run(command, timeout: .seconds(10)), result.status == 0,

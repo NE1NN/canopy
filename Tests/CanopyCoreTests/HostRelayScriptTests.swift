@@ -44,6 +44,33 @@ struct HostRelayScriptTests {
             }
         }
 
+        /// Runs a hook whose standard input gets `input` and never closes, as from a parent that keeps the pipe open.
+        /// Returns its status, or nil when it was still running after 30 seconds, a guard against a hang only.
+        func runHookWithOpenInput(_ input: Data, environment: [String: String]) async throws -> Int32? {
+            let script = script
+            return try await offPool {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                process.arguments = [script, "relay", "agent-hook", "stop"]
+                process.environment = environment
+                let pipe = Pipe()
+                process.standardInput = pipe
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                let exited = DispatchSemaphore(value: 0)
+                process.terminationHandler = { _ in exited.signal() }
+                try process.run()
+                defer { try? pipe.fileHandleForWriting.close() }
+                try pipe.fileHandleForWriting.write(contentsOf: input)
+                guard exited.wait(timeout: .now() + 30) == .success else {
+                    process.terminate()
+                    exited.wait()
+                    return nil
+                }
+                return process.terminationStatus
+            }
+        }
+
         func pending(homeID: String, pane: String) -> String {
             home + "/.canopy/\(homeID)/pending/\(pane).json"
         }
@@ -163,6 +190,54 @@ struct HostRelayScriptTests {
         }
         let stubsRead = stubs
         #expect(await eventually { stubsRead.allSatisfy { $0.request?.args == ["agent-hook", "stop"] } })
+    }
+
+    /// Claude kills a hook 5 seconds after starting it, so a hook reads its input, and keeps its report when the app is
+    /// silent, well within that, however its input arrives.
+    @Test func aHookWhoseInputNeverClosesKeepsItsReportWhenTheAppIsSilent() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(path: setup.socket, answer: .silent)
+        let variables = ["CANOPY_SOCKET": setup.socket, "CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": "p7"]
+        let input = Data(#"{"hook_event_name": "Stop"}"#.utf8)
+
+        let status = try await setup.runHookWithOpenInput(input, environment: setup.environment(variables))
+
+        #expect(status == 0)
+        let saved = try JSONDecoder().decode(
+            RelayRequest.self,
+            from: Data(contentsOf: URL(fileURLWithPath: setup.pending(homeID: "ab12cd34", pane: "p7"))))
+        #expect(saved.input == input)
+        #expect(await eventually { app.request?.input == input })
+    }
+
+    /// The budget runs from when the relay started, so time spent before it connects counts too.
+    @Test func aHookWithItsBudgetSpentKeepsItsReportWithoutWaitingOnTheApp() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(path: setup.socket, answer: .silent)
+        let module = setup.dir.sub("canopy_host.py")
+        try HostFiles.script.write(toFile: module, atomically: true, encoding: .utf8)
+        let program = """
+            import sys, time
+            sys.path.insert(0, sys.argv[1])
+            import canopy_host
+            canopy_host.STARTED = time.monotonic() - canopy_host.HOOK_BUDGET
+            canopy_host.hook(sys.argv[2], ["agent-hook", "stop"])
+            """
+        let variables = ["CANOPY_HOME_ID": "ab12cd34", "CANOPY_PANE": "p7"]
+        let (directory, socket, environment) = (setup.dir.path, setup.socket, setup.environment(variables))
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/usr/bin/python3", ["-I", "-c", program, directory, socket], environment: environment,
+                directory: nil, timeout: .seconds(30), stdin: Data("{}".utf8))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        let saved = try JSONDecoder().decode(
+            RelayRequest.self,
+            from: Data(contentsOf: URL(fileURLWithPath: setup.pending(homeID: "ab12cd34", pane: "p7"))))
+        #expect(saved.input == Data("{}".utf8))
+        #expect(app.request == nil)
     }
 
     @Test func aHookTheAppAcknowledgesIsNotKeptWhetherOrNotItAnswers() async throws {

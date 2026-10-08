@@ -243,6 +243,7 @@ After a reconnect only the current screen is drawn again, and older output is in
 The local process of a remote pane is the attach command, so the app asks the host instead.
 While a host is connected, the app runs `canopy-host probe` on it through the master every 2 seconds.
 It prints, for each session of this home's tmux server, the foreground command, whether it is the shell, the session's folder, and its title.
+It also prints `pending`, the panes with a hook report kept for this home, and the app replays each of them as "Reports that cannot be delivered" says, one host's at a time, without holding up the next probe.
 A remote pane is busy while its foreground command is not its shell, which drives the close warnings, the agent state clearing when the program exits, and the pane's title.
 Its folder is what saved terminals and `term list` record.
 
@@ -292,12 +293,16 @@ The hook command is unchanged, since `$CANOPY_CLI` names the relay on the host.
 
 ### Reports that cannot be delivered
 
-When `agent-hook` cannot reach the app, or the app does not acknowledge its request within 5 seconds, the relay saves the request in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there, and exits 0, as a hook must.
+Claude Code kills a hook at its timeout, 5 seconds, so `agent-hook` works to a budget counted from when the relay starts.
+It reads its standard input for at most 1 second, and sends what arrived by then, so a pipe that never closes cannot hold it.
+When it cannot reach the app, or the app does not acknowledge its request within 3 seconds of the relay starting, the relay saves the request in `~/.canopy/<home id>/pending/p<pane number>.json` on the host, replacing one already there, and exits 0, as a hook must.
 A reply that comes without an acknowledgement means the app ran nothing, so the report is saved then too.
-Once acknowledged, the report is the app's: the relay waits up to 10 seconds for the reply and exits 0 whatever comes, saving nothing.
+Once acknowledged, the report is the app's: the relay waits for the reply until 4 seconds after it started and exits 0 whatever comes, saving nothing.
 An acknowledgement lost on its way back saves a report the app has run, so its replay runs it twice; that is rare, and better than losing it.
-Before answering `host.attach` with the ssh command, the app runs `canopy-host replay --pane p<n>` on the host, which prints and removes the pane's saved request, and runs it as if the relay had just sent it.
-An agent that finished while the Mac slept therefore shows as done when Canopy reconnects.
+`canopy-host replay --pane p<n>` prints and removes the pane's saved request, and the app runs it as if the relay had just sent it.
+The app replays a pane's report before answering `host.attach` with the ssh command, and whenever a probe lists the pane as pending.
+After a short sleep the master can survive and no pane attaches again, and a report saved while the app was slow under load would otherwise wait for the next attach, so the probe replays most of them.
+An agent that finished while the Mac slept therefore shows as done within a probe of Canopy reconnecting.
 
 ## Pull requests
 

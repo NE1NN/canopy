@@ -184,6 +184,22 @@ After the acknowledgement, `agent-hook` waits up to `HOOK_TIMEOUT` for the reply
 
 **Commit:** `fix: a hook's report is kept when the app does not acknowledge it`
 
+### Fix after the merge-bar run: a hook within Claude's timeout, and replay from the probe
+
+Claude Code kills a hook at its timeout, which Canopy's hook entry sets to 5 seconds.
+The relay's `agent-hook` waited up to 5 seconds to connect and 5 more for the acknowledgement, so with the Mac asleep Claude killed it just before it kept its report, and the report was lost.
+It now counts one budget from when the relay starts: its standard input is read for at most 1 second, sending what arrived by then; the connection, the request, and the acknowledgement must all come within 3 seconds, or the report is kept; and after the acknowledgement the reply is waited for until 4 seconds.
+The hook's timeout in the settings stays 5 seconds.
+A kept report was replayed only when a pane attached, but after a short sleep the master can survive and no pane attaches again, so the row's agent dot stayed wrong.
+`canopy-host probe` now takes `--home-id` and also prints `pending`, the panes with a kept report for this home, ignoring temporary and replay files and names outside the NAME rule.
+`HostProbe.decode` returns a `HostProbe.Report` with the sessions and the pending panes, and reads output without `pending` as having none.
+`HostMonitor.probe` replays each pending pane's report through `Workspace.replayKeptReport(pane:on:)`, in one task per host at a time, like the worktree listing, so the probe loop never waits for it.
+Replay at attach stays.
+
+**Tests:** a hook whose input never closes, against an app that is silent, exits 0 with its report kept; a hook whose budget is already spent keeps its report without connecting; the probe lists the panes with a kept report and ignores temporary, replay, and other files; a kept report a probe sees is run once, and a later probe runs nothing more.
+
+**Commit:** `fix: a hook keeps its report within Claude's timeout, and the probe replays kept reports`
+
 ### Task 8: Merge bar
 
 - [ ] `make lint`, `make build` 0 warnings, `make test` three clean runs.
