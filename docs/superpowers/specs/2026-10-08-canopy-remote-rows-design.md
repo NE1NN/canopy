@@ -107,7 +107,8 @@ The tmux server is `-L canopy-<home id>` and the forwarded sockets are named wit
 
 The app runs one ssh master per host, `ssh -M -N` with `ControlPersist=no`, as a child it stops itself.
 Its control socket is `CANOPY_HOME/ssh/<home id>-<host hash>` when that is under 104 bytes, and `/tmp/canopy-<uid>/` otherwise.
-Every pane, git call, probe, and forward runs through it.
+Every pane, git call, probe, and forward runs through it, and never around it: each has `-o ProxyCommand=/usr/bin/false`, which ssh only uses when the master is gone or refuses a session.
+sshd allows a few sessions per connection (`MaxSessions`, 10 unless set), and each attached pane holds one, so `host add` warns when the host allows fewer than 20.
 The master starts when something needs the host, and stops once the host has no attached panes and nothing has used it for 10 minutes, or when its panes detach for idleness, or when the app quits.
 
 A host is in one of these states, which `canopy host list` shows:
@@ -124,6 +125,8 @@ A host is in one of these states, which `canopy host list` shows:
 **Waking.** When the master fails to start and the host has `wake`, the app runs `wake` at most once every 2 minutes and retries every 10 seconds for 5 minutes.
 Starting an instance that runs already changes nothing, so the app need not tell an instance that is off from a network that is down.
 After 5 minutes the host is `unreachable` until something asks for it again.
+A refused key, a changed host key, or a bad ssh config makes it `unreachable` at once, since no retry fixes those.
+A name that does not resolve is retried, as the Mac may be offline for now; `host add` alone treats it as a typo when `~/.ssh/config` gives the alias no host name or proxy.
 
 **Idle detach.** The app tracks, for each host, when a key was last typed into any of its panes and whether any of them runs a program.
 Once none has run a program or been typed into for `idleDetachMinutes`, the app detaches the host's panes and stops the master.
@@ -202,7 +205,8 @@ The session is `p<pane number>`, and is saved with the pane, so a relaunched Can
 | ssh ended because | The pane |
 |---|---|
 | the remote shell exited, which ends the session | ends, as a local shell exiting does |
-| the connection dropped | prints "Lost hindie-box, reconnecting…" and attaches again once the host is connected |
+| the connection dropped | prints "Lost hindie-box, reconnecting…" and attaches again once the host is connected; keys typed meanwhile reach the session then, as type-ahead does |
+| the master refused the session, as past `MaxSessions`, and refuses a command too | names `MaxSessions` and waits for Return |
 | the panes detached for idleness | prints "Detached so hindie-box can sleep. Press Return to reconnect." and attaches again on Return |
 | the host stayed unreachable | prints ssh's message and "Press Return to try again." |
 

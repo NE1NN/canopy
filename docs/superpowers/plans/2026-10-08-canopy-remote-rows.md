@@ -109,16 +109,16 @@ Modified:
   - `public struct HostsConfigFile { init(url: URL); func save(_ alias: String, _ entry: HostEntry) throws; func remove(_ alias: String) throws }`, writing through `JSONFile.update`.
   - `HostEntry.clonePath(forRepo name: String, repoPaths: [String]) -> String?`, matching names the way the Tickets plugin's `repo` does.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - a full section decodes; a missing `idleDetachMinutes` is 30; 0 stays 0;
   - one malformed host is skipped with a warning while another loads;
   - no `hosts` key, no file, and unreadable JSON each give no hosts;
   - `save` keeps `plugins` and unknown keys byte-for-byte in order, and `remove` drops only that host;
   - `clonePath` matches `solis-v1` exactly and `web-app` against a repo at `code/web-app`.
-- [ ] **Step 2: Run them, expect compile failures**: `make test`
-- [ ] **Step 3: Implement `HostConfig.swift`**
-- [ ] **Step 4: `make test` passes, `make lint` clean**
-- [ ] **Step 5: Commit** `feat: hosts section in config.json`
+- [x] **Step 2: Run them, expect compile failures**: `make test`
+- [x] **Step 3: Implement `HostConfig.swift`**
+- [x] **Step 4: `make test` passes, `make lint` clean**
+- [x] **Step 5: Commit** `feat: hosts section in config.json`
 
 ### Task 2: Remote rows in state and the snapshot
 
@@ -138,17 +138,17 @@ Modified:
   - In `refreshNow`, the snapshot's rows gain the entry's remote rows (class `.remote`, not missing unless the entry says so), `managed` includes their stand-ins, so `reconcile` keeps them in `rowOrder` and groups.
   - `Workspace.remoteRow(standIn:) -> RemoteRowEntry?` and `Workspace.remoteRow(host:path:) -> RemoteRowEntry?`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - an old `state.json` without `remote` loads with none;
   - a repo with a remote entry lists it after the main row, with class `remote`, `host`, and `remotePath`;
   - a refresh of the local repo (git lists only local worktrees) keeps the remote row in `rowOrder` and in its group;
   - `move` before and after a remote row, and into a group, works;
   - a stand-in deleted from disk is made again by `makeStandIn`, and `remote.json` names the host and path;
   - `holder(of:)` for a local branch ignores a remote row on the same branch.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: remote rows in state and the sidebar's snapshot`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: remote rows in state and the sidebar's snapshot`
 
 ### Task 3: Host ids, socket paths, ssh commands, git over ssh
 
@@ -167,17 +167,17 @@ Modified:
   - `GitRunner.remote(_ ssh: SSHCommand, timeout: Duration?)`: `run(args, in: dir)` runs `git -C <dir> <args>` on the host through `ssh.exec`; an ssh exit of 255 becomes `GitError` with `hostUnreachable` set.
   - `scripts/fake-ssh`: takes the same options as ssh; `-M -N` writes the control socket path as a plain file and sleeps until killed; `-O check|exit|forward` act on that file; anything else runs the remote command with `sh -c` under `HOME=$FAKE_SSH_HOME`, after `cd $FAKE_SSH_HOME`; `-t` allocates nothing extra, since the pty is already the caller's; `-R remote:local` symlinks remote to local; `FAKE_SSH_DOWN=1` makes every call exit 255 with "Connection closed".
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - home ids differ for two homes and for two machines, and are stable;
   - control socket paths stay under 104 bytes for a home 200 characters long;
   - `shellQuoted` round-trips names with spaces, quotes, `$`, and newlines through `sh -c 'printf "%s\n" …'`;
   - `master()` has `-M -N -o ControlPersist=no -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -S <path>`; `exec` and `attach` use `-o ControlMaster=no`, `-S <path>`, and `--`; `attach` adds `-t` and `-R`;
   - `GitRunner.remote` through `scripts/fake-ssh` runs `rev-parse --show-toplevel` in a temp clone under the fake home;
   - `FAKE_SSH_DOWN=1` gives `hostUnreachable`.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: ssh commands and git over ssh`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: ssh commands and git over ssh`
 
 ### Task 4: Host connections
 
@@ -202,7 +202,7 @@ Modified:
   - `protocol HostClock: Sendable { var now: ContinuousClock.Instant { get }; func sleep(for: Duration) async throws }`, with `TestHostClock` in `Tests/CanopyCoreTests/Support/`.
   - Master readiness is `ssh -O check` succeeding, polled every 200 ms for 20 s.
 
-- [ ] **Step 1: Write the failing tests** (fake launcher, test clock)
+- [x] **Step 1: Write the failing tests** (fake launcher, test clock)
   - `connect` starts one master for two concurrent callers;
   - a master that fails runs `wake` once, retries every 10 s, connects when the launcher starts succeeding, and logs `host.woken` then `host.connected`;
   - a second failure within 2 minutes does not run `wake` again;
@@ -211,10 +211,10 @@ Modified:
   - 10 minutes with no `used()` and zero attached panes stops the master and goes `idle`;
   - attached panes, not busy, no input for `idleDetachMinutes`: `detach` happens and logs `host.detached`; busy or recent input resets the timer; `idleDetachMinutes` 0 never detaches;
   - a master that exits on its own goes back to `idle`, and the next `connect` starts a new one.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: one ssh master per host, with waking and idle detach`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: one ssh master per host, with waking and idle detach`
 
 ### Task 5: Host files, checks, and `canopy host`
 
@@ -237,17 +237,17 @@ Modified:
   - Activity: `host.added`, `host.removed`.
   - Writing Canopy's hooks into the host's Claude Code settings waits for milestone 2, which brings the relay they call.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - `HostFiles.script` compiles with `python3 -m py_compile`, and `probe` against a tmux server started in the test on a private socket name lists a session, its folder, and `busy` true while `sleep 30` runs in it and false after; skipped with a note when tmux is missing;
   - `HostProbe.decode` reads the fixture output and an empty server;
   - `host.add` through the fake host: missing tmux (a PATH without it) fails `host_unfit` naming tmux; a clone path that is not git fails `repo_not_found`; an unregistered repo name fails `repo_not_found` listing the registered repos; success writes config, installs files, logs `host.added`;
   - `host.add` again updates repos without duplicating;
   - `host.remove` refuses while the host has rows, naming them;
   - `host.list` shows `idle` for a host nothing has used.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: canopy host add, list, and rm`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: canopy host add, list, and rm`
 
 ### Task 6: Creating, listing, and removing remote rows
 
@@ -270,7 +270,7 @@ Modified:
   - PR lookups include remote rows' branches, and a head or branch change found by `refreshRemote` queues a lookup.
   - Errors: `host_not_found`, `host_has_no_repo` (naming hosts that have it), `host_unreachable`.
 
-- [ ] **Step 1: Write the failing tests** (fake host: a bare origin, the host's clone in the fake home, the local clone registered)
+- [x] **Step 1: Write the failing tests** (fake host: a bare origin, the host's clone in the fake home, the local clone registered)
   - a new branch is made from origin's default branch on the host, the row appears with class `remote` and the stand-in, and `remote.json` is written;
   - an existing origin branch is tracked; an existing host-local branch only behind origin is fast-forwarded, with the note;
   - a branch held by another remote row on that host fails `branch_checked_out`; the same branch held by a local row succeeds;
@@ -281,10 +281,10 @@ Modified:
   - removing a dirty row fails `worktree_dirty`; with `--force` it goes and the stand-in is in the run's trash folder;
   - removing with the host down fails `host_unreachable`; with `--force` it forgets the row and warns;
   - PR branches for the repo include the remote row's branch.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**, refactoring the branch helpers onto `RepoGit` first with the existing tests green.
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: remote rows made, listed, and removed over ssh`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**, refactoring the branch helpers onto `RepoGit` first with the existing tests green.
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: remote rows made, listed, and removed over ssh`
 
 ### Task 7: Remote panes
 
@@ -307,7 +307,7 @@ Modified:
   - `Pane.run(_:)` for remote panes waits for the session to show in the probe, then sends `tmux send-keys -t <session> -l <text>` and `Enter` through the master.
   - Closing a remote pane kills its session through the master; a kill that cannot reach the host is saved in `AppState.pendingSessionKills[alias]` and done on the next connect.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - a remote row's new pane gets `PaneCommand.remoteAttach`, `remoteSession` `p<n>`, and the stand-in as its directory;
   - `saved()` then `restore` keeps the session name and the folder the probe last gave;
   - `isBusy` follows `remoteActivity.busy`; a probe that no longer lists the session clears it;
@@ -315,10 +315,10 @@ Modified:
   - `host.next` maps exit 0 to `end`, 255 while the host is `detached` to `waitForReturn` with the detach message, 255 otherwise to `reconnect`, and an unreachable host to `waitForReturn` with ssh's message;
   - the attach loop, driven with a fake client and a fake tty, prints waiting messages once each, ignores keys other than Return while waiting, and reconnects on Return;
   - closing a pane while the host is down records a pending kill, and the next connect runs it.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement**
-- [ ] **Step 4: `make test`, `make lint`**
-- [ ] **Step 5: Commit** `feat: remote panes in tmux on the host`
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement**
+- [x] **Step 4: `make test`, `make lint`**
+- [x] **Step 5: Commit** `feat: remote panes in tmux on the host`
 
 ### Task 8: The app drives hosts
 
@@ -333,11 +333,11 @@ Modified:
   - In `AppModel`: a task per connected host that probes every 2 s, applies results to panes, reports `panesActive`, runs `refreshRemote` every 30 s, and runs pending session kills after each connect; the tasks stop when the host leaves `connected`.
   - At quit, `HostConnection.stop()` for every host, after terminals close, so sessions on hosts only detach.
 
-- [ ] **Step 1: Write the failing tests** for `HostActivityTracker`: busy pane keeps activity, idle panes with old input report idle, a typed key resets, panes of other hosts are ignored.
-- [ ] **Step 2: Run, expect failures**
-- [ ] **Step 3: Implement the tracker and wire it in `AppModel`**
-- [ ] **Step 4: `make test`, `make lint`, `make build` with 0 warnings**
-- [ ] **Step 5: Commit** `feat: the app probes hosts and detaches idle ones`
+- [x] **Step 1: Write the failing tests** for `HostActivityTracker`: busy pane keeps activity, idle panes with old input report idle, a typed key resets, panes of other hosts are ignored.
+- [x] **Step 2: Run, expect failures**
+- [x] **Step 3: Implement the tracker and wire it in `AppModel`**
+- [x] **Step 4: `make test`, `make lint`, `make build` with 0 warnings**
+- [x] **Step 5: Commit** `feat: the app probes hosts and detaches idle ones`
 
 ### Task 9: Window and agent guide
 
@@ -353,12 +353,12 @@ Modified:
   - The New Row sheet's Where pop-up, shown only when some host has the repo, defaulting to the repo's last choice kept in `UserDefaults` under `newRow.where.<repo path>`, and the primary button's help showing `canopy row new … --on <host>`.
   - The agent guide's Remote Rows section.
 
-- [ ] **Step 1: Write the failing picker test** for the `--on` command text.
-- [ ] **Step 2: Run, expect failure**
-- [ ] **Step 3: Implement the views and guide**
-- [ ] **Step 4: `make test`, `make lint`, `make build`**
-- [ ] **Step 5: UI check** with `scripts/ui-fixture.sh` light and dark: window shots of a remote row, its hover help, and the Where pop-up open
-- [ ] **Step 6: Commit** `feat: remote rows in the sidebar and the New Row sheet`
+- [x] **Step 1: Write the failing picker test** for the `--on` command text.
+- [x] **Step 2: Run, expect failure**
+- [x] **Step 3: Implement the views and guide**
+- [x] **Step 4: `make test`, `make lint`, `make build`**
+- [x] **Step 5: UI check** with `scripts/ui-fixture.sh` light and dark: window shots of a remote row, its hover help, and the Where pop-up open
+- [x] **Step 6: Commit** `feat: remote rows in the sidebar and the New Row sheet`
 
 ### Task 10: End to end
 
@@ -383,15 +383,81 @@ Modified:
   - `scripts/ui-fixture.sh` adds a fake host with one remote row.
   - `scripts/e2e-remote.sh <alias>`: the same steps against a real host on a throwaway dev home and a throwaway branch `canopy-e2e/<timestamp>`, plus `claude --version` run in a remote pane, a pushed branch's PR badge when `--with-pr <repo>` is given, and waking with the host stopped when `--stop-first` is given. It removes its row and branch at the end.
 
-- [ ] **Step 1: Write the e2e steps**
-- [ ] **Step 2: `make e2e` passes**
-- [ ] **Step 3: `scripts/e2e-remote.sh hindie-box` passes**
-- [ ] **Step 4: Commit** `test: remote rows end to end`
+- [x] **Step 1: Write the e2e steps**
+- [x] **Step 2: `make e2e` passes**
+- [x] **Step 3: `scripts/e2e-remote.sh hindie-box` passes**
+- [x] **Step 4: Commit** `test: remote rows end to end`
 
 ### Task 11: Merge bar for the milestone
 
-- [ ] `make lint`, `make build` with 0 warnings, `make test` three clean runs on a quiet machine (load under the core count).
-- [ ] `make e2e` and `scripts/e2e-remote.sh hindie-box`.
-- [ ] Hand-check on the real box with a dev build: a remote row of solis-v1, `claude --full` in it, close the lid (or kill the master), reopen and see the same session.
-- [ ] An independent opus reviewer on `git diff main...HEAD` with the spec and this plan; fix findings with tests and add an After Review section here.
-- [ ] Fill this plan's code blocks from the commits.
+- [x] `make lint`, `make build` with 0 warnings, `make test` three clean runs on a quiet machine (load under the core count).
+- [x] `make e2e` and `scripts/e2e-hosts.sh --host hindie-box`.
+- [x] Hand-check on the real box with a dev build, on a throwaway repo: solis-v1 is not touched by agents, so the author's own `claude --full` check is in the PR's click checks.
+- [x] An independent opus reviewer on `git diff main...HEAD` with the spec and this plan, then a second one on the fixes; findings fixed with tests, in After Review below.
+- [x] The code blocks are not filled in: What was built below says where the build differs from this plan, and the commits hold the code.
+
+## What was built
+
+The tasks were built as written, except for these differences, each found while building or reviewing.
+
+- The end-to-end script is `scripts/e2e-hosts.sh`, not `scripts/e2e-remote.sh`.
+  `make e2e` runs it on the fake host, and `--host <alias>` runs it on a real host in a throwaway `~/canopy-e2e/<id>`.
+  It also checks a second home on the same host, type-ahead while a pane reconnects, and that the session after a relaunch or a drop is the same one by its creation time.
+  It does not cover `--stop-first` (waking), `--with-pr`, or `claude --version`; waking and PR badges are unit-tested.
+- A home's id is 8 random hex digits kept in `CANOPY_HOME/home-id`, not a hash of the Mac's host name and the home's path, since macOS changes the host name with the network.
+- `HostConnection.run` takes no stdin; files reach the host base64-encoded inside the command.
+- The probe runs `python3 ~/.canopy/bin/canopy-host`, not the script itself: this Mac's endpoint-security scanner holds the first run of a new file for seconds, past the probe's 10 second limit.
+- Every command and attach through the master has `-o ProxyCommand=/usr/bin/false -o BatchMode=yes`, so a session the master refuses never reaches the host around it.
+- `host.list` answers `{hosts, warnings}`; `canopy host list --json` still prints the array, and the warnings go to stderr.
+- `host add` warns when the host's sshd allows fewer than 20 sessions per connection (MaxSessions), and fails at once with `host_unknown` for an alias `~/.ssh/config` does not name and that does not resolve.
+- The app's side of probing is `HostActivity.summary` and `HostMonitor`, rather than a `HostActivityTracker`.
+- `Foreground`, which runs ssh in a remote pane, is in CanopyCore, so its signal mask can be tested.
+- Masters run under a watchdog shell that stops ssh once the app's process is gone, since SIGTERM skips `applicationShouldTerminate`.
+- Control socket paths leave 17 bytes for ssh's temporary name.
+- A removed remote row's stand-in is deleted, not trashed: it only holds `remote.json`.
+- `row new --pr --on` is refused with `bad_params`; the New Row sheet leaves out pull requests and this Mac's In row marks when Where is a host.
+- Idle detach also needs no busy report for the idle period, not only no typing.
+- A remote pane's title prefers the probe's title (blank when it is only the host name), then the foreground program, then the host.
+- Two timing tests allow 20 seconds instead of 5 (`timeoutKillsGitAndEverythingItStarted`, `slowShellGivesUpInsteadOfBlocking`), since they failed above load 50.
+- The e2e runs found an older bug: a second Canopy started on a home in use hung forever in `terminate`, since `start()` quits from a main actor job and the reply's task could never run. An app that never took its home now quits at once, and the e2e scripts wait for the app's process, not its socket, before launching again.
+
+## After Review
+
+The first opus review of `git diff main...HEAD` found 15 issues; a second one on the fixes found 8 more.
+Each was checked against the code first, and each fix has a test that failed before it.
+
+From the first review:
+
+1. `host.attach` blocked until the whole connection attempt ended, since a task group waits for every child and connecting ignores cancellation. `HostConnection.connect(waitingAtMost:)` now answers after 5 seconds and leaves the attempt for the next caller.
+2. A host that dropped after `git worktree add` left a worktree no row knew. The real path is read before the add, and what follows it only warns.
+3. sshd's MaxSessions (10 on hindie-box, checked) refuses an 11th session through one master, and ssh then connected around it, out of reach of idle detach. Commands through the master can no longer go around it, a pane names MaxSessions instead of reconnecting every second, and `host add` warns.
+4. Keys typed while a pane reconnected reached the session once ssh attached. This was fixed by dropping them, then reverted: hindie-box showed `canopy term send` into a reconnecting pane was lost, and type-ahead is what any terminal does. The e2e now checks that typed-ahead keys arrive.
+5. The home id came from the Mac's host name. It is now made once and kept.
+6. ssh in a remote pane, started from the concurrency pool, inherited its blocked signals, SIGWINCH among them, so the remote tmux never heard of resizes. Confirmed with a child reporting its mask; ssh now starts with an empty mask and default dispositions.
+7. Failures no retry can fix (a refused key, a changed host key, a bad ssh config) retried and woke the host for 5 minutes. They now end the attempt at once.
+8. Panes preparing a host at once each installed its files, racing on one temporary file. They share one preparation, and each writer has its own temporary name.
+9. A host that dropped while its branches were listed looked like one without the branch.
+10. `branch list` counted remote rows as holding branches on this Mac.
+11. See 3.
+12. A failed `host add` re-run kept its new settings on the live connection, and a failed new alias kept its master.
+13. A remote removal that failed had already ended the row's sessions, and `--force` could not remove a row whose host config forgot.
+14. A slow worktree listing started before a row was made marked the new row missing. Listings now wait their turn in the clone's queue.
+15. Text sent to a remote pane could not start with a dash, `CANOPY_ROW_PATH` came from the pane's folder rather than its row, and `host list` never showed config warnings.
+
+The review also found that two e2e checks could not fail (the session after the relaunch was looked up by the pane's new id, and the session after a drop by the pane's own scrollback), and that the planned second-home step was missing. All three are real checks now.
+
+From the second review:
+
+1. Failing at once on a name that does not resolve broke waking a host whose name only resolves while it is awake, and a Mac whose network was not back yet. Only `host add` now treats it as a typo.
+2. Probing waited for a host's worktree listing, which now waits behind rows being made. Listings run beside the probes.
+3. ssh also ends with 255 when the session's program dies by a signal, which a pane would have blamed on MaxSessions. A refusal is now confirmed with one command through the master.
+4. A host that dropped while its default branch was read made a new branch from the clone's HEAD.
+5. Two apps starting on a new home at once could disagree on its id. The id is written whole and linked into place.
+6. The MaxSessions check read values inside Match blocks, and warned on hosts where only root can read sshd's config.
+7. A host added back kept its old preparation, and sessions closed while pending ones ended were forgotten.
+
+Not changed:
+
+- If `git worktree add` succeeds on the host but ssh then reports a drop, the worktree has no row, and a retry fails with `branch_checked_out`. Adopting it would need telling it apart from another home's worktree in the same folder, which waits for a later milestone.
+- With every session in use, the probe itself is refused, so busy state and idle detach pause until a pane closes. `host add`'s warning covers it.
+- Tests that start tmux assume Homebrew's `/opt/homebrew/bin`, as the CI runner and this Mac have it.
