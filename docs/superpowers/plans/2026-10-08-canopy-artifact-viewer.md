@@ -5139,3 +5139,38 @@ git commit -m "test: the UI fixture shows a web panel, a web tab, and an artifac
 - `web list` gives a page's host as its title until the page has loaded one.
 - Downloads are cancelled and JavaScript alerts are not shown.
 - WebKit blocks some ports, such as 9, without telling its delegate, so a page there stays blank with no error.
+
+## After Review
+
+An independent reviewer (opus) read `git diff main...HEAD` with the spec and this plan.
+It found no high-severity bugs, and these eleven others, all fixed in `fix: what the review found in the artifact viewer` with tests where the logic is in CanopyCore.
+
+1. ⌘W closed the selected tab's terminal while the author was reading the panel.
+   The page's web view now reports keyboard focus to `AppModel.focusedPage`, ⌘W closes the panel's page while it has the keyboard, and the menu item reads Close Page then.
+   Checked in the dev build: ⌘W with the panel focused closed only the panel's page.
+2. `tel:5551234` and other `scheme:digits` links read as paths and reached `NSWorkspace` through SwiftTerm, which opened FaceTime.
+   `TerminalLink.file(_:in:)` now resolves a path against the pane's folder, opens only a file or folder that exists, and never one that runs something (`.app`, `.command`, and the like); `TerminalFileLinkTests` pins it.
+3. A page could open pop-up sheets from a timer, from any row.
+   `javaScriptCanOpenWindowsAutomatically` is off, a pop-up shows only for a page on screen while Canopy is in front, and a second pop-up never replaces one showing.
+4. The address a page opened with was not saved, so after a relaunch an artifact sent to sign-in could open twice, and a page left on another site took that site as its own.
+   `SavedWebPage.opened` keeps it, and `aPageKeepsTheAddressItOpenedWithAcrossARelaunch` pins it.
+5. One unreadable saved tab or panel dropped every row's layouts.
+   Rows, tabs, and panels now decode leniently on their own, a page's title and a panel's `hidden` default when absent, and `aBrokenPageOrTabCostsOnlyItself` pins it.
+6. A script's `a.click()` in a background row could open browser tabs.
+   A page opens the browser only while it is on screen and Canopy is in front.
+7. App Transport Security would block plain http pages on public hosts.
+   `Info.plist` allows arbitrary loads in web content, and `http://example.com/` loaded in the dev build.
+8. Page titles reached `canopy web list` with control characters, so a title could write escape sequences into an agent's terminal.
+   `pageNavigated` turns control characters into spaces, and `titlesLoseControlCharacters` pins it.
+9. A view drawn just after its page closed could make a web view nothing would drop.
+   `WebViews.controller(for:)` returns nil for a page no row has.
+10. `closeAll` missed rows with only a panel.
+    It now walks every row with tabs or a panel, and `closingEverythingClosesRowsThatHaveOnlyAPanel` pins it.
+11. A page whose web process kept crashing reloaded forever.
+    It reloads once, then shows the error with Reload, until a load finishes.
+
+The reviewer also asked for a test of moving a tab that is not selected into a panel that holds a page; `movingATabThatIsNotSelectedKeepsTheAuthorsTab` covers it.
+
+One more fix came from the per-commit runs.
+`cancellingStopsTheCloneAndDeletesWhatItWrote` failed once under load: its stand-in wrote its pid with `echo $! > file`, which creates the file before the pid is in it, and the test read the empty file the moment it appeared.
+That stand-in, its sibling, and `aHandleStopsGitAndEverythingItStarted` now write to a temporary name and rename it into place.
