@@ -67,6 +67,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case trashFailed(String, reason: String)
     case folderFailed(String, reason: String)
     case pluginNotStarted(String, reason: String)
+    case hostUnreachable(String, reason: String)
     case git(GitError)
 
     public var code: String {
@@ -131,6 +132,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .trashFailed: "trash_failed"
         case .folderFailed: "folder_failed"
         case .pluginNotStarted: "plugin_not_started"
+        case .hostUnreachable: "host_unreachable"
         case .git: "git_failed"
         }
     }
@@ -238,6 +240,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .trashFailed(let path, let reason): "Could not move \(path) to the Trash: \(reason)"
         case .folderFailed(let path, let reason): "Could not make \(path): \(reason)"
         case .pluginNotStarted(let name, let reason): "\(name) did not start. \(reason)"
+        case .hostUnreachable(let host, let reason): "Could not reach \(host): \(reason)"
         case .git(let error): error.description
         }
     }

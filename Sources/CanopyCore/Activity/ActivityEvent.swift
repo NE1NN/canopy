@@ -36,6 +36,12 @@ public enum ActivityType {
     public static let pluginDisabled = "plugin.disabled"
     public static let pluginRowCreated = "plugin.row.created"
     public static let pluginRowRemoved = "plugin.row.removed"
+    public static let hostAdded = "host.added"
+    public static let hostRemoved = "host.removed"
+    public static let hostConnected = "host.connected"
+    public static let hostDetached = "host.detached"
+    public static let hostUnreachable = "host.unreachable"
+    public static let hostWoken = "host.woken"
 
     /// `agent.working`, `agent.waiting`, and `agent.done`, or `agent.cleared` when the state goes to none.
     public static func agent(_ state: AgentState) -> String {

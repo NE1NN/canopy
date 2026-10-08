@@ -1,0 +1,206 @@
+import Foundation
+
+public enum HostState: String, Codable, Sendable {
+    /// Not connected, and nothing needs the host.
+    case idle
+    case connecting
+    /// The host's `wake` ran, and the master is retrying.
+    case waking
+    case connected
+    /// It could not connect for five minutes, until something asks for the host again.
+    case unreachable
+    /// Its panes detached for idleness, so the host can power itself off.
+    case detached
+}
+
+/// One host's ssh master, which every pane, git call, and probe goes through. It starts when something needs the host,
+/// wakes a host that is off, and stops once nothing uses the host, so the host can idle.
+public actor HostConnection {
+    static let giveUpAfter = Duration.seconds(5 * 60)
+    static let retryEvery = Duration.seconds(10)
+    static let wakeAtMostEvery = Duration.seconds(2 * 60)
+    static let readyWithin = Duration.seconds(20)
+    static let checkEvery = Duration.milliseconds(200)
+    /// How long a master nothing uses stays up while the host has no attached panes.
+    static let unusedFor = Duration.seconds(10 * 60)
+
+    public nonisolated let alias: String
+    public nonisolated let ssh: SSHCommand
+    public private(set) var entry: HostEntry
+    public private(set) var state = HostState.idle
+    /// ssh's message from the last failure to connect.
+    public private(set) var lastError: String?
+
+    private let launcher: any HostProcessLauncher
+    private let clock: any HostClock
+    private let activity: ActivityLog
+    private var master: (any HostMasterProcess)?
+    private var connecting: Task<Void, any Error>?
+    private var lastWake: ContinuousClock.Instant?
+    private var lastUse: ContinuousClock.Instant
+    private var lastBusy: ContinuousClock.Instant
+    private var observers: [UUID: AsyncStream<HostState>.Continuation] = [:]
+
+    public init(
+        alias: String, entry: HostEntry, ssh: SSHCommand, launcher: any HostProcessLauncher = SubprocessHostLauncher(),
+        clock: any HostClock = SystemHostClock(), activity: ActivityLog
+    ) {
+        self.alias = alias
+        self.entry = entry
+        self.ssh = ssh
+        self.launcher = launcher
+        self.clock = clock
+        self.activity = activity
+        lastUse = clock.now
+        lastBusy = clock.now
+    }
+
+    public func update(_ entry: HostEntry) {
+        self.entry = entry
+    }
+
+    /// Yields the current state, then each change.
+    public func states() -> AsyncStream<HostState> {
+        let (stream, continuation) = AsyncStream.makeStream(of: HostState.self, bufferingPolicy: .bufferingNewest(8))
+        let id = UUID()
+        observers[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.forget(id) }
+        }
+        continuation.yield(state)
+        return stream
+    }
+
+    /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
+    public func connect() async throws {
+        lastUse = clock.now
+        if state == .connected, master?.isRunning == true { return }
+        if let connecting {
+            try await connecting.value
+            return
+        }
+        let attempt = Task { try await self.establish() }
+        connecting = attempt
+        defer { connecting = nil }
+        try await attempt.value
+    }
+
+    /// Runs `remote` on the host through the master, connecting first.
+    public func run(_ remote: [String], timeout: Duration) async throws -> SubprocessResult {
+        try await connect()
+        lastUse = clock.now
+        return await launcher.run(ssh.exec(remote), timeout: timeout)
+    }
+
+    /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, and how
+    /// long since anything was typed into one. Stops a master nothing needs, and detaches quiet panes.
+    public func panesActive(attached: Int, busy: Bool, quietFor: Duration) {
+        guard state == .connected else { return }
+        let now = clock.now
+        if busy { lastBusy = now }
+        if attached == 0 {
+            if now - lastUse >= Self.unusedFor { stopMaster(becoming: .idle) }
+            return
+        }
+        lastUse = now
+        let limit = Duration.seconds(entry.idleDetachMinutes * 60)
+        guard entry.idleDetachMinutes > 0, !busy, quietFor >= limit, now - lastBusy >= limit else { return }
+        stopMaster(becoming: .detached)
+        activity.record(ActivityType.hostDetached, data: ["host": .string(alias)])
+    }
+
+    /// Detaches the host's panes and lets it go, as idleness does.
+    public func detach() {
+        guard state == .connected else { return }
+        stopMaster(becoming: .detached)
+        activity.record(ActivityType.hostDetached, data: ["host": .string(alias)])
+    }
+
+    /// Stops the master for good, as Canopy quits. Sessions on the host only detach.
+    public func stop() {
+        connecting?.cancel()
+        stopMaster(becoming: .idle)
+        for observer in observers.values { observer.finish() }
+        observers.removeAll()
+    }
+
+    private func establish() async throws {
+        let deadline = clock.now + Self.giveUpAfter
+        set(.connecting)
+        while true {
+            if try await startMaster() {
+                lastError = nil
+                lastUse = clock.now
+                lastBusy = clock.now
+                set(.connected)
+                activity.record(ActivityType.hostConnected, data: ["host": .string(alias)])
+                return
+            }
+            if clock.now >= deadline {
+                set(.unreachable)
+                activity.record(
+                    ActivityType.hostUnreachable,
+                    data: ["host": .string(alias), "reason": .string(lastError ?? "")])
+                throw WorkspaceError.hostUnreachable(alias, reason: lastError ?? "ssh could not connect.")
+            }
+            if let wake = entry.wake, lastWake.map({ clock.now - $0 >= Self.wakeAtMostEvery }) ?? true {
+                lastWake = clock.now
+                set(.waking)
+                activity.record(ActivityType.hostWoken, data: ["host": .string(alias)])
+                _ = await launcher.runWake(wake)
+            }
+            try await clock.sleep(for: Self.retryEvery)
+        }
+    }
+
+    /// Starts a master and waits until ssh says it is up, or it exits. Returns whether it is up.
+    private func startMaster() async throws -> Bool {
+        master?.stop()
+        let started = launcher.startMaster(ssh.master())
+        master = started
+        let deadline = clock.now + Self.readyWithin
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            if await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0 {
+                watch(started)
+                return true
+            }
+            guard started.isRunning else { break }
+            try await clock.sleep(for: Self.checkEvery)
+        }
+        started.stop()
+        let message = started.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastError = message.isEmpty ? "ssh did not connect within 20 seconds." : message
+        return false
+    }
+
+    /// A master that ends on its own, as when the network drops, leaves the host idle for the next caller to connect.
+    private func watch(_ started: any HostMasterProcess) {
+        Task { [weak self] in
+            await started.waitForExit()
+            await self?.ended(started)
+        }
+    }
+
+    private func ended(_ ended: any HostMasterProcess) {
+        guard let master, master === ended, state == .connected else { return }
+        self.master = nil
+        set(.idle)
+    }
+
+    private func stopMaster(becoming next: HostState) {
+        master?.stop()
+        master = nil
+        set(next)
+    }
+
+    private func set(_ next: HostState) {
+        guard state != next else { return }
+        state = next
+        for observer in observers.values { observer.yield(next) }
+    }
+
+    private func forget(_ id: UUID) {
+        observers[id] = nil
+    }
+}
