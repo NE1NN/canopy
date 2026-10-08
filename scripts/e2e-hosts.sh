@@ -6,7 +6,7 @@
 #
 # It adds the host, makes a remote row with --run, types into it, checks the host's report of its folder, checks a
 # second home on the same host keeps to its own tmux server, rejoins the session after the app quits and after the
-# connection drops, drops keys typed while reconnecting, detaches the idle host and reconnects on Return, and removes
+# connection drops, keeps keys typed while reconnecting, detaches the idle host and reconnects on Return, and removes
 # the row and the host. The real host's throwaway folder and this home's tmux server there are removed at the
 # end, and nothing else on the host is touched.
 set -euo pipefail
@@ -181,15 +181,15 @@ control=$({ ls "$CANOPY_HOME"/ssh/"${server#canopy-}"-* /tmp/canopy-"$(id -u)"/"
 [[ -n "$control" ]] || fail "no control socket for this home"
 before=$(connections)
 "${CANOPY_SSH:-/usr/bin/ssh}" -S "$control" -O exit "$alias" >/dev/null 2>&1 || true
-# Keys typed while the pane says it is reconnecting were meant for that message, not for the session.
 wait_for 30 screen_has "reconnecting" || fail "the pane did not say it was reconnecting"
-"$cli" term send "$pane" "echo leaked-\$((5 + 5))" --enter >/dev/null
+# Typed ahead while the pane reconnects, it reaches the session once ssh attaches, as in any terminal.
+"$cli" term send "$pane" "echo ahead-\$((5 + 5))" --enter >/dev/null
 wait_for 90 connected_again || fail "the host did not reconnect"
 sleep 2
 "$cli" term send "$pane" "echo after-drop-\$((3 + 3))" --enter >/dev/null
 wait_for 60 screen_has after-drop-6 || fail "the pane did not come back after the drop"
 [[ "$(created_at)" == "$started" && "$(session_count)" == 1 ]] || fail "the session after the drop is not the same one"
-! screen_has leaked-10 || fail "keys typed while reconnecting reached the session"
+wait_for 60 screen_has ahead-10 || fail "keys typed while reconnecting were lost"
 
 step "an idle host detaches, and Return reconnects"
 "$cli" host add "$alias" --idle-detach 1 >/dev/null

@@ -4,8 +4,8 @@ import Foundation
 /// The terminal's foreground, for the attach loop: ssh runs in it, and Return is read from it.
 public enum Foreground {
     /// Runs a program on this terminal and returns its exit status. It shares the terminal's process group, so it
-    /// gets the window size changes and keys as a program run from a shell does. Keys typed before it starts are
-    /// dropped: they were meant for a message on the screen, not for the program.
+    /// gets the window size changes and keys as a program run from a shell does. Keys typed before it starts reach it,
+    /// as typing ahead does in any terminal, so `canopy term send` into a pane that is reconnecting is not lost.
     public static func run(_ argv: [String]) async -> Int32 {
         await withCheckedContinuation { continuation in
             Thread {
@@ -23,7 +23,6 @@ public enum Foreground {
                 sigfillset(&every)
                 posix_spawnattr_setsigdefault(&attributes, &every)
                 posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
-                if isatty(STDIN_FILENO) != 0 { tcflush(STDIN_FILENO, TCIFLUSH) }
                 guard posix_spawn(&pid, argv[0], nil, &attributes, arguments, environ) == 0 else {
                     continuation.resume(returning: 255)
                     return
