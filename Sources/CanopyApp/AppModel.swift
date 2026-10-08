@@ -3,6 +3,7 @@ import CanopyCore
 import Foundation
 import Observation
 import SwiftUI
+import WebKit
 
 @MainActor
 @Observable
@@ -15,6 +16,8 @@ final class AppModel {
     /// The app's one list of built-in plugins, with the panel each draws.
     let builtInPlugins: [BuiltInPlugin]
     let activity: ActivityLog
+    /// Every web page's web view, kept while the page is in its row.
+    let webViews = WebViews()
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
     var selectedRowPath: String? {
@@ -54,6 +57,7 @@ final class AppModel {
             workspace: workspace, terminals: terminals, plugins: builtInPlugins.map(\.plugin),
             secrets: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy",
             trash: BuiltInPlugins.trash(environment: environment))
+        connectWebViews()
     }
 
     /// The bundle's folder holding `canopy`, which terminals get on their PATH.
@@ -103,6 +107,7 @@ final class AppModel {
         terminals.continueNumbering(from: await workspace.savedNextPane)
         terminals.continueWebNumbering(from: await workspace.savedNextWebPage)
         terminals.webPlacement = await workspace.savedWebPlacement
+        savedWebPanelWidth = await workspace.webPanelWidth
         snapshot = await workspace.snapshot
         restoreTerminals(saved)
         let updates = await workspace.updates()
@@ -807,10 +812,15 @@ final class AppModel {
             height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
     }
 
+    /// Split Pane does nothing in a web tab.
+    var canSplit: Bool {
+        canOpenTerminal && selectedTab?.page == nil
+    }
+
     /// ⌘D and the tab bar's split button.
     /// Adds a pane by the add rule, keeping panes at least `minPaneColumns` wide on a line.
     func splitPane() {
-        guard canOpenTerminal, let row = selection else { return }
+        guard canSplit, let row = selection else { return }
         withFolder(of: row) {
             self.terminals.addPane(for: self.context(for: row), fits: self.addRuleFits())
             self.focusSelectedTerminal()
@@ -911,22 +921,84 @@ final class AppModel {
         }
     }
 
-    /// ⌘W. Only for the main window itself, so it never closes a terminal behind a sheet or a closed window.
+    /// ⌘W: the focused terminal, or the page of a web tab. Only for the main window itself, so it never closes
+    /// anything behind a sheet or a closed window.
     func closeFocusedPane() {
         guard let window = NSApp.keyWindow, window.sheetParent == nil, window.attachedSheet == nil,
-            let pane = selectedTab?.focused
+            let row = selection, let tab = selectedTab
         else { return }
-        requestClose(pane)
+        if let pane = tab.focused {
+            requestClose(pane)
+        } else {
+            terminals.closeTab(tab.id, inRow: row.path)
+            focusSelectedTerminal()
+        }
     }
 
-    /// Hands the keyboard back to the terminal on screen, as after renaming a tab.
+    /// Hands the keyboard back to the terminal or page on screen, as after renaming a tab.
     func focusSelectedTerminal() {
-        (selectedTab?.focused?.emulator as? SwiftTermEmulator)?.focus()
+        if let page = selectedTab?.page {
+            let webView = webViews.existing(page.id)?.webView
+            webView?.window?.makeFirstResponder(webView)
+        } else {
+            (selectedTab?.focused?.emulator as? SwiftTermEmulator)?.focus()
+        }
     }
 
     func selectTab(offset: Int) {
         guard let row = selection else { return }
         terminals.selectTab(offset: offset, inRow: row.path)
+    }
+
+    // MARK: Web pages
+
+    /// A page's window of its own showing in a sheet, such as Google's sign-in.
+    var webPopUp: WebPopUp?
+    private(set) var draggedWebPanelWidth: Double?
+    private var savedWebPanelWidth: Double?
+
+    private func connectWebViews() {
+        webViews.onNavigated = { [weak self] id, url, title in self?.terminals.pageNavigated(id, url: url, title: title)
+        }
+        webViews.openInBrowser = { [weak self] in self?.openInBrowser($0) }
+        webViews.presentPopUp = { [weak self] webView, owner in
+            self?.webPopUp = WebPopUp(webView: webView, owner: owner)
+        }
+        webViews.dismissPopUp = { [weak self] in self?.dismissPopUp($0) }
+        terminals.onPageClosed = { [weak self] in self?.webViews.drop($0) }
+    }
+
+    func dismissPopUp(_ webView: WKWebView) {
+        guard webPopUp?.webView === webView else { return }
+        webPopUp = nil
+    }
+
+    /// The panel's width, which every row shares: as dragged, else as saved, else the standard, within its limits for
+    /// the room beside the row's plugin panel, if any.
+    func webPanelWidth(available: Double) -> Double {
+        WebPanelWidth.clamp(draggedWebPanelWidth ?? savedWebPanelWidth ?? WebPanelWidth.standard, available: available)
+    }
+
+    func dragWebPanel(to width: Double) {
+        draggedWebPanelWidth = width
+    }
+
+    /// Saves the width the drag ended at, as it was shown.
+    func endWebPanelDrag(available: Double) {
+        let width = webPanelWidth(available: available)
+        draggedWebPanelWidth = width
+        savedWebPanelWidth = width
+        perform { try await $0.setWebPanelWidth(width) }
+    }
+
+    /// The selected row's panel, for View > Show or Hide Web Panel.
+    var selectedPanel: WebPanel? {
+        selection.flatMap { terminals.panel(inRow: $0.path) }
+    }
+
+    func toggleWebPanel() {
+        guard let row = selection, let panel = terminals.panel(inRow: row.path) else { return }
+        terminals.setPanelHidden(!panel.isHidden, inRow: row.path)
     }
 
     // MARK: Repos

@@ -17,12 +17,14 @@ struct PluginDetailView: View {
             HStack(spacing: 0) {
                 PluginPanelColumn(row: row)
                     .frame(width: width)
-                PanelDivider(width: width) {
+                PanelDivider(width: width, side: .leading) {
                     model.dragPanel(row.plugin, to: $0)
                 } onEnd: {
                     model.endPanelDrag(row.plugin, detailWidth: geometry.size.width)
                 }
-                TerminalArea(path: row.path, name: row.displayName)
+                WebPanelSplit(path: row.path) {
+                    TerminalArea(path: row.path, name: row.displayName)
+                }
             }
         }
         // In a window the panel and the top bar take the title bar's row.
@@ -91,9 +93,15 @@ struct PanelTitleStrip: View {
     }
 }
 
-/// The line between the panel and the terminals, with a wider grip that drags the panel's width.
-private struct PanelDivider: View {
+/// The line between a panel and the terminals, with a wider grip that drags the panel's width. A panel on the trailing
+/// side grows as the line moves left.
+struct PanelDivider: View {
+    enum Side {
+        case leading, trailing
+    }
+
     let width: Double
+    let side: Side
     let onDrag: (Double) -> Void
     let onEnd: () -> Void
     @State private var startWidth: Double?
@@ -112,7 +120,7 @@ private struct PanelDivider: View {
                             .onChanged { value in
                                 let start = startWidth ?? width
                                 startWidth = start
-                                onDrag(start + value.translation.width)
+                                onDrag(start + (side == .leading ? 1 : -1) * value.translation.width)
                             }
                             .onEnded { _ in
                                 startWidth = nil
@@ -120,6 +128,8 @@ private struct PanelDivider: View {
                             }
                     )
             }
+            // Above its neighbors, so the half of the grip over a terminal or a page still takes the drag.
+            .zIndex(1)
             .accessibilityHidden(true)
     }
 }

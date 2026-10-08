@@ -47,7 +47,9 @@ struct TopBarView: View {
             }
             IconButton(
                 title: "Split Pane", systemImage: "rectangle.split.2x1", shortcut: "⌘D", size: 26, imageSize: 13,
-                action: model.splitPane)
+                action: model.splitPane
+            )
+            .disabled(!model.canSplit)
             IconButton(
                 title: "New Tab", systemImage: "plus", shortcut: "⌘T", size: 26, imageSize: 13, action: model.newTab)
         }
@@ -178,6 +180,8 @@ struct TabItemView: View {
         .onHover { isHovering = $0 }
         .gesture(
             TapGesture(count: 2).onEnded {
+                // A web tab is named after its page.
+                guard tab.grid != nil else { return }
                 draft = tab.name
                 isRenaming = true
             }
