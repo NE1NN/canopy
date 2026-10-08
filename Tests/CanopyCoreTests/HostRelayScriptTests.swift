@@ -345,6 +345,10 @@ struct HostRelayScriptTests {
             RelayRequest.self,
             from: Data(contentsOf: URL(fileURLWithPath: setup.pending(homeID: "ab12cd34", pane: "p7"))))
         #expect(saved.input == input)
+        // The age the relay gave the report as it kept it, on its own clock: past its budget, but before it would stop
+        // waiting for a reply, and so well before Claude's 5 seconds.
+        let age = try #require(saved.age)
+        #expect(age < 4, "kept after \(age) seconds")
         #expect(await eventually { app.request?.input == input })
     }
 
