@@ -77,6 +77,7 @@ struct NewRowSheet: View {
                     .help("Where the row's worktree and terminals live")
                     .onChange(of: host) {
                         UserDefaults.standard.set(host, forKey: Self.whereKey(repo.path))
+                        picker.onHost = host != nil
                     }
                 }
                 if !repo.groups.isEmpty {
@@ -107,7 +108,10 @@ struct NewRowSheet: View {
         }
         .padding(20)
         .frame(width: 560, height: 520)
-        .task { await picker.load() }
+        .task {
+            picker.onHost = host != nil
+            await picker.load()
+        }
         .onAppear { isFieldFocused = true }
     }
 
@@ -142,7 +146,7 @@ private struct NewRowList: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if picker.showsPullRequests {
+                    if picker.showsPullRequests && !picker.onHost {
                         SectionLabel(title: "Pull requests", count: count(picker.pullRequestItems)) {}
                         if let note = picker.pullRequestNote {
                             NoteRow(note: note)
@@ -185,7 +189,7 @@ private struct NewRowList: View {
     private func line(for item: NewRowItem) -> some View {
         ItemLine(
             item: item, isSelected: picker.selectedItem?.id == item.id, base: $picker.base,
-            defaultBase: picker.defaultBase, select: { picker.select(item.id) }, run: run
+            defaultBase: picker.defaultBase, onHost: picker.onHost, select: { picker.select(item.id) }, run: run
         )
         .id(item.id)
     }
@@ -197,6 +201,8 @@ private struct ItemLine: View {
     let isSelected: Bool
     @Binding var base: String
     let defaultBase: String?
+    /// The row goes on a host, where rows on this Mac say nothing.
+    let onHost: Bool
     let select: () -> Void
     let run: () -> Void
     @State private var isHovering = false
@@ -275,7 +281,7 @@ private struct ItemLine: View {
                 }
             }
             Spacer(minLength: 8)
-            if let holder = pr.row {
+            if let holder = pr.row, !onHost {
                 HolderTag(holder: holder)
             }
         case .branch(let branch):
@@ -288,7 +294,8 @@ private struct ItemLine: View {
                 .truncationMode(.middle)
             TagView(text: branch.label)
             Spacer(minLength: 8)
-            if let holder = branch.row {
+            // A row on this Mac says nothing about the host, which gets a row of its own.
+            if let holder = branch.row, !onHost {
                 HolderTag(holder: holder)
             }
             Text(ShortAge.text(branch.committedAt))

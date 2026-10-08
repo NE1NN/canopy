@@ -156,6 +156,8 @@ public final class NewRowPicker {
     public private(set) var isFetching = false
     /// False once the repo's origin turns out not to be on GitHub.
     public private(set) var showsPullRequests = true
+    /// The row goes on a host, which cannot start from a pull request yet, so none are listed.
+    public var onHost = false
 
     @ObservationIgnored private let sources: Sources
     @ObservationIgnored private let lookupDelay: Duration
@@ -230,7 +232,7 @@ public final class NewRowPicker {
     }
 
     public var pullRequestItems: [NewRowItem] {
-        guard showsPullRequests, case .success(let open) = openPullRequests else { return [] }
+        guard showsPullRequests, !onHost, case .success(let open) = openPullRequests else { return [] }
         if let key = lookupKey {
             guard case .success(let found?) = lookups[key] else { return [] }
             return [.pullRequest(found)]
@@ -243,7 +245,7 @@ public final class NewRowPicker {
     }
 
     public var pullRequestNote: Note? {
-        guard showsPullRequests else { return nil }
+        guard showsPullRequests, !onHost else { return nil }
         switch openPullRequests {
         case nil: return Note(kind: .loading, text: "Loading pull requests…")
         case .failure(let error): return Note(kind: .warning, text: Self.pullRequestWarning(error))

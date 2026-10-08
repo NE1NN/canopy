@@ -100,6 +100,23 @@ struct NewRowPickerTests {
         items.map(\.id)
     }
 
+    @Test func onAHostThePickerLeavesPullRequestsOut() async throws {
+        let lists = FakeLists()
+        lists.state.withLock {
+            $0.pullRequests = .success([pr(7, head: "feat/x")])
+            $0.local = listing([branch("feat/x")])
+        }
+        let picker = makePicker(lists)
+        await picker.load()
+        #expect(ids(picker.pullRequestItems).count == 1)
+
+        picker.onHost = true
+
+        #expect(picker.pullRequestItems.isEmpty)
+        #expect(picker.pullRequestNote == nil)
+        #expect(picker.items.map(\.id) == ids(picker.branchItems))
+    }
+
     @Test func showsLocalBranchesBeforeTheFetchFinishes() async throws {
         let lists = FakeLists()
         let gate = Gate()
