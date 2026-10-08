@@ -176,6 +176,8 @@ public struct RemotePaneInfo: Sendable, Equatable {
     /// Where the session starts when the host has none.
     public var folder: String
     public var repoPath: String
+    /// The row's stand-in.
+    public var rowPath: String
     public var rowName: String
 }
 
@@ -203,6 +205,6 @@ extension RowLifecycle: RemotePaneHooks {
         return RemotePaneInfo(
             pane: id, host: remote.host, session: session,
             folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, repoPath: repoPath,
-            rowName: pane.context.rowName)
+            rowPath: pane.context.rowPath, rowName: pane.context.rowName)
     }
 }

@@ -478,6 +478,23 @@ struct RemoteSessionTests {
 
         let typed = await eventually { FileManager.default.fileExists(atPath: marker) }
         #expect(typed)
+        // tmux would read text starting with a dash as its own flags.
+        let dashed = setup.dir.sub("dashed")
+        await setup.workspace.sendKeys("-v; echo hi > '\(dashed)'", to: "p9", on: "box")
+        #expect(await eventually { FileManager.default.fileExists(atPath: dashed) })
+        await setup.workspace.stop()
+    }
+
+    /// A pane restored in a folder outside its worktree still names the worktree as its row's.
+    @Test func aPanesRowPathIsItsRowsWorktreeWhereverItStarts() async throws {
+        let setup = try await RemoteRowTests.Setup()
+        let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/w")
+
+        let argv = try await setup.workspace.attachCommand(
+            host: "box", repoPath: setup.repo, standIn: created.row.path, session: "p1", folder: "/tmp", pane: "p1",
+            rowName: "feat/w")
+
+        #expect(argv.last?.contains("'CANOPY_ROW_PATH=\(try #require(created.row.remotePath))'") == true)
         await setup.workspace.stop()
     }
 }

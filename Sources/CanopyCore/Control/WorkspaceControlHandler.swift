@@ -472,8 +472,8 @@ public struct WorkspaceControlHandler: Sendable {
             try await workspace.prepareHost(connection)
             return HostAttachResult(
                 ready: try await workspace.attachCommand(
-                    host: pane.host, repoPath: pane.repoPath, session: pane.session, folder: pane.folder,
-                    pane: pane.pane, rowName: pane.rowName))
+                    host: pane.host, repoPath: pane.repoPath, standIn: pane.rowPath, session: pane.session,
+                    folder: pane.folder, pane: pane.pane, rowName: pane.rowName))
         } catch {
             return HostAttachResult(failed: (error as? WorkspaceError)?.message ?? "\(error)")
         }

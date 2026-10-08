@@ -262,7 +262,7 @@ extension Workspace {
         _ = try? await connection.run(
             [
                 "sh", "-c",
-                #"tmux -u -L "$0" send-keys -t "=$1:" -l "$2" && tmux -u -L "$0" send-keys -t "=$1:" Enter"#,
+                #"tmux -u -L "$0" send-keys -t "=$1:" -l -- "$2" && tmux -u -L "$0" send-keys -t "=$1:" Enter"#,
                 server, session, text,
             ],
             timeout: .seconds(15))
@@ -270,12 +270,11 @@ extension Workspace {
 
     /// The ssh command line that joins a remote pane's session, or starts it in `folder`.
     public func attachCommand(
-        host alias: String, repoPath: String, session: String, folder: String, pane: String, rowName: String
+        host alias: String, repoPath: String, standIn: String, session: String, folder: String, pane: String,
+        rowName: String
     ) async throws -> [String] {
         let target = try await remoteTarget(repoPath: repoPath, host: alias)
-        let row = state.repos.first { $0.path == repoPath }?.remote.first {
-            $0.host == alias && Paths.isInside(folder, $0.path)
-        }
+        let row = remoteRow(standIn: standIn)
         let environment = RemoteAttach.environment(
             pane: pane, rowName: rowName, repoName: target.repoName, host: alias, rowPath: row?.path ?? folder,
             clone: target.clone)
