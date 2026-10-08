@@ -80,11 +80,17 @@ public enum HostFiles {
 
     /// `~/.canopy/bin/canopy`, the same for every home and every build, which `~/.local/bin/canopy` links to.
     /// A pane whose shell's startup files put other folders before its home's own still reaches its home's `canopy`.
+    /// A remote pane's session from before the CLI reached hosts has CANOPY_HOST and CANOPY_PANE but no
+    /// CANOPY_HOME_ID, and inside tmux TERM_PROGRAM is tmux's, so those name such a terminal.
     public static let sharedCanopy = """
         #!/bin/sh
         # Written by Canopy. Runs the canopy of the Canopy terminal it is in.
         if [ -n "$CANOPY_HOME_ID" ] && [ -x "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" ]; then
             exec "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" "$@"
+        fi
+        if [ -z "$CANOPY_HOME_ID" ] && [ -n "$CANOPY_HOST" ] && [ -n "$CANOPY_PANE" ]; then
+            echo "This terminal started before Canopy's CLI reached this host. A new Canopy terminal has it." >&2
+            exit 1
         fi
         echo "Run canopy in a Canopy terminal on this host." >&2
         exit 1

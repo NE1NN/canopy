@@ -25,9 +25,15 @@ struct HostFilesTests {
 
     /// The shared `canopy`, read by sh rather than run, since a new file's first run can wait on this Mac's security
     /// scanner.
-    func runShared(_ host: FakeHost, homeID: String?, _ arguments: [String]) throws -> SubprocessResult {
-        let assignment = homeID.map { ["env", "CANOPY_HOME_ID=\($0)"] } ?? ["env", "-u", "CANOPY_HOME_ID"]
-        let argv = host.ssh.exec(assignment + ["sh", ".local/bin/canopy"] + arguments)
+    func runShared(
+        _ host: FakeHost, homeID: String?, _ arguments: [String], variables: [String: String] = [:]
+    ) throws -> SubprocessResult {
+        // Only what the test gives, so a test run inside a remote pane passes none of that pane's variables on.
+        let unset = ["-u", "CANOPY_HOST"] + (homeID == nil ? ["-u", "CANOPY_HOME_ID"] : [])
+        let assignments =
+            (homeID.map { ["CANOPY_HOME_ID=\($0)"] } ?? [])
+            + variables.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let argv = host.ssh.exec(["env"] + unset + assignments + ["sh", ".local/bin/canopy"] + arguments)
         return try Subprocess.run(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
     }
@@ -120,6 +126,22 @@ struct HostFilesTests {
             #expect(result.status == 1)
             #expect(String(decoding: result.stderr, as: UTF8.self) == "Run canopy in a Canopy terminal on this host.\n")
         }
+    }
+
+    /// A remote pane's session started before its home had a `canopy` on the host has the pane's variables but no
+    /// CANOPY_HOME_ID, as from before Canopy's CLI reached hosts.
+    @Test func theSharedCanopyInATerminalFromBeforeTheCLISaysANewTerminalHasIt() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir)
+        try install(host, homeID: "aaaa1111")
+
+        let result = try runShared(
+            host, homeID: nil, ["row", "list"], variables: ["CANOPY_HOST": "box", "CANOPY_PANE": "p3"])
+
+        #expect(result.status == 1)
+        #expect(
+            String(decoding: result.stderr, as: UTF8.self)
+                == "This terminal started before Canopy's CLI reached this host. A new Canopy terminal has it.\n")
     }
 
     /// Every home and every build writes the same shared `canopy`, so none of them replaces it with something else, and
