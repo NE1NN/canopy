@@ -712,6 +712,21 @@ struct RemoteRelayTests {
         await setup.workspace.stop()
     }
 
+    /// The install makes the home's folder on the host first, readable by anyone, and the relay's socket is in it.
+    @Test func theFolderOfTheHostsSocketIsItsUsersAlone() async throws {
+        let setup = try await Setup()
+        try FileManager.default.createDirectory(
+            atPath: setup.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+
+        try await setup.prepare()
+
+        var info = stat()
+        #expect(lstat(setup.folder, &info) == 0)
+        #expect(info.st_mode & 0o777 == 0o700)
+        #expect(try await setup.relay([setup.cli, "--version"]).status == 0)
+        await setup.workspace.stop()
+    }
+
     @Test func removingAHostStopsItsSocket() async throws {
         let setup = try await Setup()
         try await setup.prepare()

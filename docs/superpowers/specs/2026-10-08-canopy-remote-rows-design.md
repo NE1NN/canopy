@@ -275,7 +275,7 @@ Quitting Canopy and stopping the master only detach.
 
 Each new connection to a host forwards `~/.canopy/<home id>/app.sock` on the host to the host's socket in the app, `CANOPY_HOME/hosts/<host hash>.sock`, through the master with `ssh -O forward -R`, removing a stale file at that path first.
 One forward serves every pane on the host, since each request names its pane, and it lasts as long as the master.
-sshd makes the socket readable by its user alone.
+sshd makes the socket readable by its user alone, and the app makes its folder, the home's own, its user's alone before each forward.
 The app serves one request per connection on that socket and knows which host it came from.
 It runs its own CLI with the arguments, with `CANOPY_HOME` set to its home, `CANOPY_PANE` as sent, and the row's stand-in in place of the remote row's path in `CANOPY_ROW_PATH` and in the working folder.
 The relay sends how long ago it started, so `agent-hook` dates its report by when the hook ran on the host, not when the app ran the CLI.

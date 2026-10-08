@@ -279,7 +279,8 @@ extension Workspace {
     static let hostLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy", category: "hosts")
 
     /// Forwards the host's relay socket to the host's socket here, through the master, for as long as it runs. sshd
-    /// leaves the socket's file behind when a connection drops, and will not forward over it, so it goes first.
+    /// leaves the socket's file behind when a connection drops, and will not forward over it, so it goes first. The
+    /// socket's folder is the home's own, which the install made with the host's umask, so it is made private here.
     /// Panes work without the forward, only without `canopy`, so a failure is logged rather than failing the attach.
     private func forwardRelay(on connection: HostConnection) async {
         let alias = connection.alias
@@ -287,7 +288,8 @@ extension Workspace {
             let local = try relayServer(for: alias).socketPath
             let remote = HostPaths.relaySocket(home: try await connection.home(), homeID: homeID)
             _ = try await output(
-                of: ["sh", "-c", #"mkdir -p -m 700 "${0%/*}" && rm -f "$0""#, remote], on: connection,
+                of: ["sh", "-c", #"mkdir -p -m 700 "${0%/*}" && chmod 700 "${0%/*}" && rm -f "$0""#, remote],
+                on: connection,
                 timeout: .seconds(30))
             guard let result = await connection.forward(remote: remote, local: local) else {
                 throw WorkspaceError.hostUnreachable(alias, reason: "The connection ended.")
