@@ -143,7 +143,7 @@ final class TicketsHarness {
 
     /// Runs `sleep 30` in a new tab of the row, and returns once the pane counts as busy.
     func runBusyProgram(in row: PluginRow) async {
-        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).focused
+        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).pane
         await pane.run("sleep 30")
         _ = await eventually { pane.isBusy }
     }

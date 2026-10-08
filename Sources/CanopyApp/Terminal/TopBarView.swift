@@ -129,7 +129,7 @@ struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: tab.layout.shape.symbolName)
+            Image(systemName: tab.grid?.layout.shape.symbolName ?? "globe")
                 .font(.system(size: 12))
                 .frame(width: 14)
             if isRenaming {

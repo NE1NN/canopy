@@ -18,7 +18,7 @@ struct PluginTerminalTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).focused
+        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).pane
         await pane.run(
             #"printf 'ready:%s:%s:%s:%s\n' "$CANOPY_PLUGIN" "$CANOPY_ITEM" "${CANOPY_REPO-unset}" "$(pwd -P)""#)
 
@@ -31,7 +31,7 @@ struct PluginTerminalTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).focused
+        let pane = terminals.openTab(for: PaneContext(pluginRow: row)).pane
         pane.report(AgentReport(state: .working))
         terminals.closePane(pane.id)
 

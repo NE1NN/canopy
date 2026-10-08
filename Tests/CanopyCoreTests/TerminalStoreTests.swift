@@ -32,13 +32,13 @@ struct TerminalStoreTests {
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
 
-        let tabs = (0..<3).map { _ in terminals.openTab(for: context) }
+        let tabs = (0..<3).map { _ in terminals.openTab(for: context).tab }
         terminals.closeTab(tabs[0].id, inRow: dir.path)
         terminals.openTab(for: context)
 
         #expect(terminals.tabs(inRow: dir.path).map(\.name) == ["Terminal 2", "Terminal 3", "Terminal"])
         #expect(Set(terminals.panes.map(\.id)).count == 3)
-        #expect(terminals.pane(tabs[1].focused.id) === tabs[1].focused)
+        #expect(terminals.pane(try #require(tabs[1].focused).id) === tabs[1].focused)
     }
 
     @Test func closingTheSelectedTabSelectsItsRightNeighbor() throws {
@@ -46,7 +46,7 @@ struct TerminalStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tabs = (0..<3).map { _ in terminals.openTab(for: context) }
+        let tabs = (0..<3).map { _ in terminals.openTab(for: context).tab }
 
         terminals.selectTab(tabs[1].id, inRow: dir.path)
         terminals.closeTab(tabs[1].id, inRow: dir.path)
@@ -55,7 +55,7 @@ struct TerminalStoreTests {
         terminals.closeTab(tabs[2].id, inRow: dir.path)
         #expect(terminals.selectedTab(inRow: dir.path)?.id == tabs[0].id)
 
-        terminals.closePane(tabs[0].focused.id)
+        terminals.closePane(try #require(tabs[0].focused).id)
         #expect(terminals.tabs(inRow: dir.path).isEmpty)
         #expect(terminals.selectedTab(inRow: dir.path) == nil)
     }
@@ -65,7 +65,7 @@ struct TerminalStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tabs = (0..<3).map { _ in terminals.openTab(for: context) }
+        let tabs = (0..<3).map { _ in terminals.openTab(for: context).tab }
 
         terminals.selectTab(tabs[2].id, inRow: dir.path)
         terminals.closeTab(tabs[0].id, inRow: dir.path)
@@ -78,7 +78,7 @@ struct TerminalStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = Fixture.context(dir.path)
-        let tabs = (0..<3).map { _ in terminals.openTab(for: context) }
+        let tabs = (0..<3).map { _ in terminals.openTab(for: context).tab }
 
         terminals.selectTab(offset: 1, inRow: dir.path)
         #expect(terminals.selectedTab(inRow: dir.path)?.id == tabs[0].id)
@@ -90,7 +90,7 @@ struct TerminalStoreTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let tab = terminals.openTab(for: Fixture.context(dir.path))
+        let tab = terminals.openTab(for: Fixture.context(dir.path)).tab
 
         terminals.renameTab(tab.id, inRow: dir.path, to: "  Server ")
         terminals.renameTab(tab.id, inRow: dir.path, to: "   ")
@@ -105,10 +105,10 @@ struct TerminalStoreTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let groups = [
-            terminals.openTab(for: Fixture.context(dir.path)).focused.pid,
-            terminals.openTab(for: Fixture.context(dir.path)).focused.pid,
+            terminals.openTab(for: Fixture.context(dir.path)).pane.pid,
+            terminals.openTab(for: Fixture.context(dir.path)).pane.pid,
         ].compactMap { $0 }
-        let kept = terminals.openTab(for: Fixture.context(other)).focused
+        let kept = terminals.openTab(for: Fixture.context(other)).pane
 
         terminals.closeRow(path: dir.path)
 
@@ -121,8 +121,8 @@ struct TerminalStoreTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let idle = terminals.openTab(for: Fixture.context(dir.path)).focused
-        let busy = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let idle = terminals.openTab(for: Fixture.context(dir.path)).pane
+        let busy = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         await busy.run("sleep 30")
 
@@ -162,12 +162,12 @@ struct TerminalStoreTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let main = terminals.openTab(for: Fixture.context("/old/demo", repoPath: "/old/demo")).focused
-        let elsewhere = terminals.openTab(for: Fixture.context(dir.sub("wt"), repoPath: "/old/demo")).focused
+        let main = terminals.openTab(for: Fixture.context("/old/demo", repoPath: "/old/demo")).pane
+        let elsewhere = terminals.openTab(for: Fixture.context(dir.sub("wt"), repoPath: "/old/demo")).pane
 
         terminals.moveRows(ofRepo: "/old/demo", to: "/new/demo")
 
-        #expect(terminals.tabs(inRow: "/new/demo").map(\.focused.id) == [main.id])
+        #expect(terminals.tabs(inRow: "/new/demo").map(\.focused?.id) == [main.id])
         #expect(terminals.tabs(inRow: "/old/demo").isEmpty)
         #expect(main.context.rowPath == "/new/demo")
         #expect(elsewhere.context.rowPath == dir.sub("wt"))
@@ -183,7 +183,7 @@ struct TerminalStoreTests {
         defer { terminals.closeAll() }
         terminals.preferredSize = TerminalSize(columns: 150, rows: 45)
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         #expect(pane.emulator.size == TerminalSize(columns: 150, rows: 45))
     }

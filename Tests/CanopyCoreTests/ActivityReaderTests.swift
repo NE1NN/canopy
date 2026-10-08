@@ -133,6 +133,12 @@ struct ActivityReaderTests {
         #expect(summary("term.opened", ["pane": "p3"]) == "p3")
         #expect(summary("term.exited", ["pane": "p3", "code": 129]) == "p3 exit 129")
         #expect(
+            summary("web.opened", ["page": "w2", "placement": "panel", "url": "https://claude.ai/artifact/a"])
+                == "w2 panel: https://claude.ai/artifact/a")
+        #expect(
+            summary("web.closed", ["page": "w2", "url": "https://claude.ai/artifact/a"])
+                == "w2: https://claude.ai/artifact/a")
+        #expect(
             summary("term.command", ["pane": "p3", "cmd": "make\nmake test", "exit": 2, "durationMs": 83_250])
                 == "p3 exit 2 in 1m23s: make \u{21b5} make test")
         #expect(

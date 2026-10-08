@@ -30,6 +30,8 @@ public enum ActivityType {
     public static let termExited = "term.exited"
     public static let termCommand = "term.command"
     public static let cliCall = "cli.call"
+    public static let webOpened = "web.opened"
+    public static let webClosed = "web.closed"
     public static let pluginEnabled = "plugin.enabled"
     public static let pluginDisabled = "plugin.disabled"
     public static let pluginRowCreated = "plugin.row.created"

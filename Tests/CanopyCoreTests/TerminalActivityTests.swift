@@ -16,7 +16,7 @@ struct TerminalActivityTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         await pane.run("exit 3")
         #expect(await eventually { pane.status == .exited(3) })
 
@@ -32,7 +32,7 @@ struct TerminalActivityTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = ActivitySource.$current.withValue(.cli) { terminals.openTab(for: Fixture.context(dir.path)).focused }
+        let pane = ActivitySource.$current.withValue(.cli) { terminals.openTab(for: Fixture.context(dir.path)).pane }
         ActivitySource.$current.withValue(.cli) { terminals.closePane(pane.id) }
 
         let events = await logged(terminals, "term")
@@ -46,7 +46,7 @@ struct TerminalActivityTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
 
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         await pane.run("exit 0")
         #expect(await eventually { pane.status == .exited(0) })
         pane.screen.type("\r")
@@ -58,7 +58,7 @@ struct TerminalActivityTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         // The row's checkout moved to another branch, and a second repo with the same folder name was added.
         let row = Row(repoPath: "/r/demo", path: dir.path, branch: "feat/y", head: nil, rowClass: .canopy)

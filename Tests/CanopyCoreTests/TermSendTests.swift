@@ -31,7 +31,7 @@ struct TermSendTests {
         let rows = RowLifecycle(
             workspace: Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git), terminals: terminals)
         let command = ReadRecorder.command(try ReadRecorder.install(in: dir), paste: paste)
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(command)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(command)).pane
         // A loaded machine can take seconds to schedule the recorder, and Return must still wait for it.
         pane.returnPatience = .seconds(60)
         #expect(await eventually { pane.screen.text.contains("ready") })

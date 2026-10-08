@@ -806,8 +806,8 @@ final class AppModel {
         }
     }
 
-    func resize(_ tab: TerminalTab, divider: DividerID, to position: Double, in rect: CGRect) {
-        terminals.resize(tab, divider: divider, to: position, in: rect, minimum: minimumPaneSize)
+    func resize(_ grid: TerminalGrid, divider: DividerID, to position: Double, in rect: CGRect) {
+        terminals.resize(grid, divider: divider, to: position, in: rect, minimum: minimumPaneSize)
     }
 
     /// The pane being dragged by its header, so drops only react to Canopy's own pane drags.
@@ -891,7 +891,7 @@ final class AppModel {
 
     /// Hands the keyboard back to the terminal on screen, as after renaming a tab.
     func focusSelectedTerminal() {
-        (selectedTab?.focused.emulator as? SwiftTermEmulator)?.focus()
+        (selectedTab?.focused?.emulator as? SwiftTermEmulator)?.focus()
     }
 
     func selectTab(offset: Int) {

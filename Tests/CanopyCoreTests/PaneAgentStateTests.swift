@@ -9,7 +9,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         var changes: [AgentChange] = []
         pane.onAgentChange = { _, change in changes.append(change) }
@@ -35,7 +35,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         _ = pane.report(AgentReport(state: .working))
@@ -56,7 +56,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // `canopy term send <pane> 1 --enter` picks an option: the text alone leaves the prompt, and Return answers it.
@@ -76,7 +76,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // cat runs until Control-D, so the test decides when the program exits.
@@ -103,7 +103,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         pane.report(AgentReport(state: .done))
 
         pane.screen.type("\u{1b}[I")
@@ -117,7 +117,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // The window is hidden, so nothing refreshes while the program runs.
@@ -135,7 +135,7 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         _ = pane.report(AgentReport(state: .waiting))
@@ -147,12 +147,12 @@ struct PaneAgentStateTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let exiting = terminals.openTab(for: Fixture.context(dir.path)).focused
+        let exiting = terminals.openTab(for: Fixture.context(dir.path)).pane
         _ = exiting.report(AgentReport(state: .done))
         await exiting.run("exit 0")
         #expect(await eventually { exiting.agent.state == .none })
 
-        let closing = terminals.addPane(for: Fixture.context(dir.path), fits: { _ in true })
+        let closing = terminals.addPane(for: Fixture.context(dir.path), fits: { _ in true })!
         _ = closing.report(AgentReport(state: .working))
         var order: [String] = []
         closing.onClose = { _ in order.append("closed") }

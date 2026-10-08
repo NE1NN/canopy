@@ -67,7 +67,7 @@ extension TerminalStore {
 
     /// Whether the pane on screen is the one the author is focused on.
     public func isFocused(_ pane: Pane) -> Bool {
-        isOnScreen(pane) && tab(containing: pane.id)?.1.focusedPaneID == pane.id
+        isOnScreen(pane) && tab(containing: pane.id)?.1.grid?.focusedPaneID == pane.id
     }
 
     /// Clears the green of every pane the author now sees.

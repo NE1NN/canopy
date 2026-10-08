@@ -36,8 +36,12 @@ struct TerminalArea: View {
         VStack(spacing: 0) {
             Color.clear.frame(height: Style.topBarHeight)
             if let tab = model.terminals.selectedTab(inRow: path) {
-                GridView(tab: tab)
-                    .id(tab.id)
+                if let grid = tab.grid {
+                    GridView(grid: grid)
+                        .id(tab.id)
+                } else {
+                    Spacer()
+                }
             } else {
                 ContentUnavailableView {
                     Label("No Terminals", systemImage: "apple.terminal")
