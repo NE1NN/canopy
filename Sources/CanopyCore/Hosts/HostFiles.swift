@@ -233,10 +233,18 @@ public enum HostFiles {
 
 
         def folder():
+            """The working folder as the shell names it: PWD when it names this folder, so a HOME reached through a link
+            keeps the name remote rows' paths use, or else the real path."""
+            shell = os.environ.get("PWD", "")
+            try:
+                if shell.startswith("/") and os.path.samefile(shell, "."):
+                    return shell
+            except OSError:
+                pass
             try:
                 return os.getcwd()
             except OSError:
-                return os.environ.get("PWD") or "/"
+                return shell or "/"
 
 
         class Lines:

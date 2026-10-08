@@ -123,6 +123,32 @@ struct HostRelayScriptTests {
         #expect(age >= 0)
     }
 
+    /// A host whose HOME is a link names a remote row by the link, as the pane's shell does, while the folder's real
+    /// path would match no row. A PWD that names another folder is not believed.
+    @Test func theRelayNamesItsFolderAsTheShellDoesThroughALinkedHome() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)),
+            connections: 2)
+        let real = setup.dir.sub("real-home")
+        let linked = setup.dir.sub("linked-home")
+        try FileManager.default.createDirectory(
+            atPath: real + "/.canopy/worktrees/demo/feat-x", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: linked, withDestinationPath: real)
+        let folder = linked + "/.canopy/worktrees/demo/feat-x"
+        let variables = ["CANOPY_SOCKET": setup.socket, "HOME": linked]
+
+        let throughTheLink = try await setup.run(
+            ["relay", "row", "list"], environment: setup.environment(variables.merging(["PWD": folder]) { $1 }),
+            directory: folder)
+        let stale = try await setup.run(
+            ["relay", "row", "list"], environment: setup.environment(variables.merging(["PWD": linked]) { $1 }),
+            directory: folder)
+
+        #expect(throughTheLink.status == 0 && stale.status == 0)
+        #expect(app.requests.map { $0?.cwd } == [folder, real + "/.canopy/worktrees/demo/feat-x"])
+    }
+
     /// Only the commands that read standard input on the Mac get it, so a command in a loop over lines leaves the
     /// rest of them to the loop.
     @Test func aCommandThatReadsNoInputLeavesItForWhatRunsAfterIt() async throws {
