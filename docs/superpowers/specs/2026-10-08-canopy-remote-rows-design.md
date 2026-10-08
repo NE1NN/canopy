@@ -99,13 +99,14 @@ Canopy keeps its files under `~/.canopy` on the host, each Mac's Canopy home in 
 | `~/.canopy/<home id>/files-version` | the version of this home's files |
 | `~/.canopy/<home id>/app.sock` | the app's relay socket, forwarded from the Mac while the host is connected |
 | `~/.canopy/<home id>/pending/` | agent reports the relay could not deliver |
-| `~/.canopy/bin/canopy` | the same for every home and version: runs `~/.canopy/$CANOPY_HOME_ID/bin/canopy`, and outside a Canopy pane fails with "Run canopy in a Canopy terminal on this host."; in a remote pane whose session started before Canopy's CLI reached the host, which has `CANOPY_HOST` but no `CANOPY_HOME_ID`, it says a new Canopy terminal has it |
+| `~/.canopy/bin/canopy` | shared by every home and build: runs `~/.canopy/$CANOPY_HOME_ID/bin/canopy`, and outside a Canopy pane fails with "Run canopy in a Canopy terminal on this host."; in a remote pane whose session started before Canopy's CLI reached the host, which has `CANOPY_HOST` but no `CANOPY_HOME_ID`, it says a new Canopy terminal has it |
 | `~/.local/bin/canopy` | a link to `~/.canopy/bin/canopy`, made when nothing else is there, so login shells and shells that reorder PATH find it |
 | `~/.canopy/worktrees/<repo>/<slug>` | remote rows' worktrees, named as local rows' folders are |
 
 A home's scripts and `tmux.conf` carry the app's version, and are installed again whenever the app connects and finds another version in `files-version`.
 So two homes with different builds on one host, such as the release app and a dev build, never replace each other's files.
-The shared `~/.canopy/bin/canopy` has no version, and is written only when it differs.
+The shared `~/.canopy/bin/canopy` has no version but a revision of its own, raised whenever it changes.
+An install writes it only over an earlier revision, or over this revision when the file differs, so an older build connecting to the host never takes back a newer build's.
 A host added before Canopy's CLI reached hosts gets its new files when the app next connects, and Canopy's hooks in its Claude Code settings only when `canopy host add` runs for it again.
 Builds from before homes had their own folders kept their files in `~/.canopy/bin` and `~/.canopy/tmux.conf`, and those are left for any such build still using them.
 A Mac's Canopy home has an id, 8 random hex digits made the first time and kept in `CANOPY_HOME/home-id`.

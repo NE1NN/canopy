@@ -144,9 +144,9 @@ struct HostFilesTests {
                 == "This terminal started before Canopy's CLI reached this host. A new Canopy terminal has it.\n")
     }
 
-    /// Every home and every build writes the same shared `canopy`, so none of them replaces it with something else, and
-    /// it never makes a home install again.
-    @Test func theSharedCanopyIsTheSameForEveryHomeAndVersionAndIsWrittenOnlyWhenItDiffers() throws {
+    /// Every home and every build of one revision writes the same shared `canopy`, so none of them replaces it with
+    /// something else, and it never makes a home install again.
+    @Test func theSharedCanopyIsTheSameForEveryHomeAndIsWrittenOnlyWhenItDiffers() throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
         let shared = host.home + "/.canopy/bin/canopy"
@@ -164,6 +164,27 @@ struct HostFilesTests {
         try Data("#!/bin/sh\nexec python3 \"$HOME/.canopy/bin/canopy-host\" relay \"$@\"\n".utf8)
             .write(to: URL(fileURLWithPath: shared))
         try install(host, homeID: "aaaa1111")
+        #expect(try String(contentsOfFile: shared, encoding: .utf8) == HostFiles.sharedCanopy)
+    }
+
+    /// A later build may change the shared `canopy`, as this one added what a terminal from before the CLI is told, and
+    /// an older build connecting to the same host must not take that back.
+    @Test func anInstallReplacesAnEarlierSharedCanopyButNeverALaterOne() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir)
+        try install(host, homeID: "aaaa1111")
+        let shared = host.home + "/.canopy/bin/canopy"
+        let later = "#!/bin/sh\n# Written by Canopy (revision 999999). A later build's.\nexit 0\n"
+        try Data(later.utf8).write(to: URL(fileURLWithPath: shared))
+
+        try install(host, homeID: "bbbb2222")
+
+        #expect(try String(contentsOfFile: shared, encoding: .utf8) == later)
+        let earlier = HostFiles.sharedCanopy.replacingOccurrences(
+            of: #"\(revision \d+\)"#, with: "(revision 0)", options: .regularExpression)
+        #expect(earlier != HostFiles.sharedCanopy)
+        try Data(earlier.utf8).write(to: URL(fileURLWithPath: shared))
+        try install(host, homeID: "bbbb2222")
         #expect(try String(contentsOfFile: shared, encoding: .utf8) == HostFiles.sharedCanopy)
     }
 

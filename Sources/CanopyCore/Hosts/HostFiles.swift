@@ -4,20 +4,21 @@ import Foundation
 /// Each Canopy home keeps its own under `~/.canopy/<home id>`, so the release app and a dev build connected to one
 /// host at once never replace each other's.
 public enum HostFiles {
-    /// Changes whenever any of the files does, so a host with older files gets them again.
-    /// The shared `canopy` stays out of it: it is the same for every version and must never ask for an install.
+    /// Changes whenever any of this home's files does, so a host with older files gets them again.
+    /// The shared `canopy` stays out of it, since it is not this home's alone: it has a revision of its own.
     public static let version =
         "\(CanopyVersion.current)+\(HomeID.hash(scriptBody + canopyLauncherSource + xdgOpenLauncherSource + tmuxConf))"
 
     /// The remote command that writes this home's files, each through a temporary file and a rename, then the version,
     /// and has this home's tmux server, when it runs, read the new config. Contents travel in the command,
-    /// base64-encoded. `~/.local/bin/canopy` links to the shared `canopy` so login shells find it, unless something
-    /// else already has that name.
+    /// base64-encoded. The shared `canopy` is written only over an earlier revision of it, or a copy of this one that
+    /// differs. `~/.local/bin/canopy` links to the shared `canopy` so login shells find it, unless something else
+    /// already has that name.
     /// Builds before each home had its own folder kept theirs in `~/.canopy/bin`, `~/.canopy/tmux.conf`, and
     /// `~/.canopy/files-version`. Those stay, since an older build on another home may still use them.
     public static func installCommand(homeID: String) -> [String] {
         let program = """
-            import base64, os, subprocess, sys
+            import base64, os, re, subprocess, sys
             canopy = os.path.expanduser("~/.canopy")
             home = os.path.join(canopy, sys.argv[1])
             def put(path, text, mode):
@@ -40,7 +41,11 @@ public enum HostFiles {
                     current = file.read()
             except OSError:
                 current = None
-            if current != content or not os.access(shared, os.X_OK):
+            def revision(text):
+                found = re.search(rb"^# Written by Canopy \\(revision (\\d+)\\)", text, re.MULTILINE)
+                return int(found.group(1)) if found else 0
+            theirs, ours = (-1 if current is None else revision(current)), revision(content)
+            if theirs < ours or (theirs == ours and (current != content or not os.access(shared, os.X_OK))):
                 put(shared, content, 0o755)
             link = os.path.expanduser("~/.local/bin/canopy")
             try:
@@ -78,13 +83,17 @@ public enum HostFiles {
     private static let xdgOpenLauncherSource =
         "#!/bin/sh\nexec python3 \"$HOME/.canopy/@CANOPY_HOME_ID@/bin/canopy-host\" open \"$@\"\n"
 
-    /// `~/.canopy/bin/canopy`, the same for every home and every build, which `~/.local/bin/canopy` links to.
+    /// `~/.canopy/bin/canopy`, which `~/.local/bin/canopy` links to, shared by every home and build on the host.
     /// A pane whose shell's startup files put other folders before its home's own still reaches its home's `canopy`.
+    /// Its revision goes up whenever it changes, and an install never replaces a later one, so an older build that
+    /// connects to the host keeps what a newer one says.
     /// A remote pane's session from before the CLI reached hosts has CANOPY_HOST and CANOPY_PANE but no
     /// CANOPY_HOME_ID, and inside tmux TERM_PROGRAM is tmux's, so those name such a terminal.
+    static let sharedCanopyRevision = 1
+
     public static let sharedCanopy = """
         #!/bin/sh
-        # Written by Canopy. Runs the canopy of the Canopy terminal it is in.
+        # Written by Canopy (revision \(sharedCanopyRevision)). Runs the canopy of the Canopy terminal it is in.
         if [ -n "$CANOPY_HOME_ID" ] && [ -x "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" ]; then
             exec "$HOME/.canopy/$CANOPY_HOME_ID/bin/canopy" "$@"
         fi
