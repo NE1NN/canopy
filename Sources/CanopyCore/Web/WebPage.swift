@@ -36,6 +36,8 @@ public final class WebPage: Identifiable {
     public internal(set) var context: PaneContext
     /// The address it opened with, which still finds it after it moves on, as to claude.ai's sign-in.
     public let openedURL: URL
+    /// The site it opened on, which it stays on. Links the author clicks to other sites open in the browser.
+    public let site: String
 
     init(id: WebPageID, url: URL, title: String, context: PaneContext) {
         self.id = id
@@ -43,6 +45,7 @@ public final class WebPage: Identifiable {
         self.title = title
         self.context = context
         self.openedURL = url
+        self.site = WebNavigation.site(of: url)
     }
 
     /// Whether the page is at `url`, or opened with it.
