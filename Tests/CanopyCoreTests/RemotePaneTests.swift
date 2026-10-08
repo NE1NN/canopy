@@ -64,7 +64,69 @@ struct RemotePaneTests {
         let again = try #require(restored.tabs(inRow: context.rowPath).first?.focused)
         #expect(again.remoteSession == pane.id.description)
         #expect(again.remoteFolder == "/home/u/elsewhere")
-        #expect(again.id != pane.id)
+        #expect(again.id == pane.id)
+    }
+
+    /// The session's shell, and Claude in it, keep the CANOPY_PANE it started with, so a relaunched pane keeps it too.
+    @Test func aRestoredRemotePaneTakesTheIDItsSessionIsNamedAfter() throws {
+        let dir = try TempDir()
+        let context = try remoteContext(dir)
+        let local = Fixture.context(dir.path)
+        let restored = Fixture.terminals(dir)
+        defer { restored.closeAll() }
+        restored.continueNumbering(from: 50)
+
+        restored.restore(
+            SavedRowTerminals(
+                tabs: [SavedTab(name: "", layout: .leaf(SavedPane(folder: "/w", session: "p7")), focused: 0)],
+                selectedTab: 0),
+            for: context)
+        restored.restore(
+            SavedRowTerminals(
+                tabs: [SavedTab(name: "", layout: .leaf(SavedPane(folder: dir.path)), focused: 0)],
+                selectedTab: 0),
+            for: local)
+
+        #expect(restored.tabs(inRow: context.rowPath).first?.focused?.id == PaneID(7))
+        #expect(restored.tabs(inRow: local.rowPath).first?.focused?.id == PaneID(50))
+        #expect(restored.openTab(for: context).pane.id == PaneID(51))
+    }
+
+    @Test func aSessionWhoseIDIsTakenGetsAFreshOne() throws {
+        let dir = try TempDir()
+        let context = try remoteContext(dir)
+        let restored = Fixture.terminals(dir)
+        defer { restored.closeAll() }
+        let first = restored.openTab(for: context).pane
+        let same = SavedPane(folder: "/w", session: first.id.description)
+        let other = try TempDir()
+
+        restored.restore(
+            SavedRowTerminals(
+                tabs: [SavedTab(name: "", layout: .split(.row, [.leaf(same), .leaf(same)], [0.5, 0.5]), focused: 0)],
+                selectedTab: 0),
+            for: try remoteContext(other))
+
+        let ids = restored.panes.map(\.id)
+        #expect(ids.count == 3)
+        #expect(Set(ids).count == 3)
+        #expect(restored.openTab(for: context).pane.id.number > ids.map(\.number).max() ?? 0)
+    }
+
+    @Test func aRestoredSessionsIDIsNeverGivenOutAgain() throws {
+        let dir = try TempDir()
+        let context = try remoteContext(dir)
+        let restored = Fixture.terminals(dir)
+        defer { restored.closeAll() }
+
+        restored.restore(
+            SavedRowTerminals(
+                tabs: [SavedTab(name: "", layout: .leaf(SavedPane(folder: "/w", session: "p3")), focused: 0)],
+                selectedTab: 0),
+            for: context)
+
+        #expect(restored.panes.map(\.id) == [PaneID(3)])
+        #expect(restored.openTab(for: context).pane.id == PaneID(4))
     }
 
     @Test func aRemotePanesTitleIsItsProgramsOwnThenTheProgramThenTheHost() throws {
@@ -133,13 +195,15 @@ struct RemotePaneTests {
 }
 
 struct RemoteAttachTests {
-    @Test func tmuxStartsOrJoinsTheSessionInItsFolderWithThePanesVariables() throws {
+    @Test func tmuxStartsOrJoinsTheSessionInItsFolderWithThePanesVariablesAndPATH() throws {
         let command = RemoteAttach.tmuxCommand(
             homeID: "abcd1234", session: "p7", folder: "/home/u/my work",
             environment: ["CANOPY_PANE": "p7", "CANOPY_ROW_PATH": "/home/u/my work"])
 
         let dir = try TempDir()
-        try "#!/bin/sh\nprintf '%s\\n' \"$@\"\n".write(toFile: dir.sub("tmux"), atomically: true, encoding: .utf8)
+        // tmux gives a new session's first shell the PATH of the client that made it, whatever `-e PATH` says.
+        try "#!/bin/sh\necho \"client PATH=$PATH\"\nprintf '%s\\n' \"$@\"\n".write(
+            toFile: dir.sub("tmux"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.sub("tmux"))
         let result = try Subprocess.run(
             "/bin/sh", ["-c", SSHCommand.shellQuoted(command)],
@@ -149,6 +213,7 @@ struct RemoteAttachTests {
         let words = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(
             words == [
+                "client PATH=/home/u/.canopy/abcd1234/bin:\(dir.path):/usr/bin:/bin",
                 "-u", "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/abcd1234/tmux.conf", "new-session", "-A", "-s",
                 "p7", "-c",
                 "/home/u/my work", "-e", "PATH=/home/u/.canopy/abcd1234/bin:\(dir.path):/usr/bin:/bin", "-e",

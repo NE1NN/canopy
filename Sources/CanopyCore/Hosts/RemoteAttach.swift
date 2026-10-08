@@ -58,12 +58,13 @@ public struct HostNextResult: Codable, Sendable, Equatable {
 public enum RemoteAttach {
     /// Starts the pane's session on the host, or joins it when it runs already, with this home's tmux server and
     /// config. The variables only apply to a session it starts. Its PATH starts with this home's `bin`, so `canopy`
-    /// and `xdg-open` there are this home's.
+    /// and `xdg-open` there are this home's. tmux gives a new session's first shell the PATH of the client that made
+    /// it, over `-e PATH`, so the client runs with it too.
     public static func tmuxCommand(homeID: String, session: String, folder: String, environment: [String: String])
         -> [String]
     {
         let script =
-            #"h=$0 s=$1 n=$2 d=$3; shift 3; exec tmux -u -L "$s" -f "$HOME/.canopy/$h/tmux.conf" new-session -A -s "$n" -c "$d" -e "PATH=$HOME/.canopy/$h/bin:$PATH" "$@""#
+            #"h=$0 s=$1 n=$2 d=$3; shift 3; PATH="$HOME/.canopy/$h/bin:$PATH"; export PATH; exec tmux -u -L "$s" -f "$HOME/.canopy/$h/tmux.conf" new-session -A -s "$n" -c "$d" -e "PATH=$PATH" "$@""#
         let variables = environment.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
         return ["sh", "-c", script, homeID, HostPaths.tmuxServer(homeID: homeID), session, folder] + variables
     }

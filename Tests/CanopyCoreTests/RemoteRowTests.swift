@@ -738,7 +738,7 @@ struct RemoteRelayTests {
         #expect(remote.contains("'CANOPY_SOCKET=\(setup.hostSocket)'"))
         #expect(remote.contains("'CANOPY_CLI=\(setup.folder)/bin/canopy'"))
         #expect(remote.contains("'CANOPY_HOME_ID=\(id)'"))
-        #expect(remote.contains(#""PATH=$HOME/.canopy/$h/bin:$PATH""#))
+        #expect(remote.contains(#"PATH="$HOME/.canopy/$h/bin:$PATH"; export PATH; exec tmux"#))
         await setup.workspace.stop()
     }
 }

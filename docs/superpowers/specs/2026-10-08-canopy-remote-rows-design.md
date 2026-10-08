@@ -207,6 +207,7 @@ A remote pane runs `canopy remote-attach` in its pty, in the stand-in folder, a 
 3. when ssh ends, asks the app what next.
 
 The session is `p<pane number>`, and is saved with the pane, so a relaunched Canopy reattaches to the same running program.
+The relaunched pane takes that number again, so the `CANOPY_PANE` that the session's programs have still names it.
 `<folder>` is the remote row's path, or the folder the pane was last in when it is restored.
 `new-session -A` makes a session that is gone, as after the host restarts, so the pane then starts a fresh shell where it was.
 

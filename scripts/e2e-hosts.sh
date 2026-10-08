@@ -4,11 +4,14 @@
 #   scripts/e2e-hosts.sh                  a host this Mac plays through scripts/fake-ssh, with Homebrew's tmux
 #   scripts/e2e-hosts.sh --host <alias>   a real host from ~/.ssh/config, in a throwaway ~/canopy-e2e/<id> there
 #
-# It adds the host, makes a remote row with --run, types into it, checks the host's report of its folder, checks a
-# second home on the same host keeps to its own tmux server, rejoins the session after the app quits and after the
-# connection drops, keeps keys typed while reconnecting, detaches the idle host and reconnects on Return, and removes
-# the row and the host. The real host's throwaway folder, and the throwaway homes' tmux servers and own files there,
-# are removed at the end, and nothing else on the host is touched.
+# It adds the host, makes a remote row with --run, types into it, and checks the host's report of its folder. In the
+# remote pane it runs the host's canopy: row list, term list, a hook's report, web open, xdg-open of an artifact link,
+# and row new. It checks a second home on the same host keeps to its own tmux server, rejoins the session after the app
+# quits and replays a hook's report kept meanwhile, rejoins after the connection drops, keeps keys typed while
+# reconnecting, detaches the idle host and reconnects on Return, and removes the row and the host. The real host's
+# throwaway folder, and the throwaway homes' tmux servers, own files, and worktrees there, are removed at the end.
+# Apart from them, only the host's Claude Code settings change: host add writes Canopy's hooks there, which do nothing
+# outside a Canopy pane.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,8 +29,9 @@ app="$PWD/build/Canopy Dev.app"
 cli="$app/Contents/Resources/bin/canopy"
 [[ -x "$cli" ]] || { echo "build it first: make app" >&2; exit 1; }
 work=$(mktemp -d -t cnp-hosts)
+host_home=""
 # Until the full cleanup below is ready.
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" ${host_home:+"$host_home"}' EXIT
 export CANOPY_HOME="$work/home"
 export CANOPY_TRASH_FOLDER="$work/trash"
 unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST
@@ -49,8 +53,8 @@ app_pid() { "$cli" status --json 2>/dev/null | json 'd.get("pid", "")' || true; 
 if [[ -z "$alias" ]]; then
     alias=fake-box
     command -v tmux >/dev/null || [[ -x /opt/homebrew/bin/tmux ]] || fail "the fake host needs tmux: brew install tmux"
-    host_home="$work/host"
-    mkdir -p "$host_home"
+    # Short, so the pane's socket there, ~/.canopy/<home id>/app.sock, stays well under macOS's 104 bytes.
+    host_home=$(mktemp -d /tmp/cnp-host.XXXXXX)
     export CANOPY_SSH="$PWD/scripts/fake-ssh" FAKE_SSH_HOME="$host_home"
     export FAKE_SSH_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     on_host() { "$CANOPY_SSH" -- "$alias" "$@"; }
@@ -74,12 +78,12 @@ cleanup() {
         [[ "$name" =~ ^canopy-[0-9a-f]{8}$ ]] && on_host "rm -rf ~/.canopy/${name#canopy-}" >/dev/null 2>&1 || true
     done
     # A run that failed before row rm leaves its worktrees, whose clone goes with the throwaway folder below.
-    on_host 'cd ~/.canopy/worktrees/demo 2>/dev/null && rm -rf e2e-remote e2e-other && cd .. && rmdir demo' \
+    on_host 'cd ~/.canopy/worktrees/demo 2>/dev/null && rm -rf e2e-remote e2e-other e2e-second && cd .. && rmdir demo' \
         >/dev/null 2>&1 || true
     # The fake host's tmux server can outlive kill-server once its folder goes, so it is stopped by its config's path.
     if [[ -n "${host_home:-}" ]]; then pkill -9 -f "tmux -u -L canopy-[0-9a-f]* -f $host_home/" 2>/dev/null || true; fi
     on_host "rm -rf '$host_dir'" >/dev/null 2>&1 || true
-    rm -rf "$work"
+    rm -rf "$work" ${host_home:+"$host_home"}
 }
 trap cleanup EXIT
 
@@ -120,13 +124,19 @@ wait_for() { # seconds, then a command that must succeed
 screen_has() { "$cli" term read "$pane" --lines 200 | grep -q "$1"; }
 host_state() { "$cli" host list --json | json '[h["state"] for h in d if h["alias"] == "'"$alias"'"][0]'; }
 state_is() { [[ "$(host_state)" == "$1" ]]; }
+# The master's control socket is named after this home's id, in the home or, when that is too long, in /tmp.
+control_socket() {
+    { ls "$CANOPY_HOME"/ssh/"${server#canopy-}"-* /tmp/canopy-"$(id -u)"/"${server#canopy-}"-* 2>/dev/null || true; } |
+        grep -Ev '\.(env|links)$' | head -1
+}
+master_gone() { ! "${CANOPY_SSH:-/usr/bin/ssh}" -S "$control" -O check "$alias" >/dev/null 2>&1; }
 connections() { "$cli" log --type host.connected --json | json 'len(d)'; }
 connected_again() { (($(connections) > before)); }
 
 step "a throwaway repo here, and its clone on $alias"
 git init -q -b main "$work/demo"
 git -C "$work/demo" -c user.email=e2e@example.com -c user.name=e2e commit -q --allow-empty -m init
-on_host "set -e; mkdir -p '$host_dir'; git init -q --bare -b main '$host_dir/origin.git'; \
+on_host "set -e; mkdir -p '$host_dir/out'; git init -q --bare -b main '$host_dir/origin.git'; \
     git clone -q '$host_dir/origin.git' '$host_dir/demo' 2>/dev/null; \
     git -C '$host_dir/demo' -c user.email=e2e@example.com -c user.name=e2e commit -q --allow-empty -m init; \
     git -C '$host_dir/demo' push -q origin main; git -C '$host_dir/demo' remote set-head origin main"
@@ -138,6 +148,8 @@ launch
 server=$("$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
 [[ "$(host_state)" == connected ]] || fail "the host is $(host_state), not connected"
 on_host "test -x ~/.canopy/${server#canopy-}/bin/canopy-host" || fail "canopy-host is not on the host"
+on_host 'grep -q agent-hook "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"' ||
+    fail "host add did not install Canopy's hooks in the host's Claude Code settings"
 if "$cli" host add "$alias" --repo "demo=$host_dir/nowhere" 2>/dev/null; then fail "a missing clone was accepted"; fi
 
 step "row new --on makes the worktree on the host and runs --run in its tmux session"
@@ -147,7 +159,6 @@ wait_for 60 screen_has remote-42 || fail "--run did not reach the host"
 remote=$("$cli" row list --json | json '[r["remotePath"] for r in d if r.get("branch") == "e2e/remote"][0]')
 on_host "test \"\$(git -C '$remote' rev-parse --abbrev-ref HEAD)\" = e2e/remote" || fail "no worktree at $remote"
 on_host "tmux -u -L $server has-session -t =$pane" || fail "no tmux session named $pane"
-# The session keeps its name when relaunching gives the pane a new one.
 session=$pane
 created_at() { on_host "tmux -u -L $server display-message -p -t '=$session:' '#{session_created}'"; }
 session_count() { on_host "tmux -u -L $server list-sessions" | wc -l | tr -d ' '; }
@@ -158,6 +169,70 @@ step "term send types into it, and the host reports its folder"
 wait_for 30 screen_has sent-2 || fail "term send did not reach the host"
 folder_is_tmp() { "$cli" term list --json | json '[t["folder"] for t in d if t["pane"] == "'"$pane"'"][0]' | grep -Eqx '(/private)?/tmp'; }
 wait_for 20 folder_is_tmp || fail "term list does not show the host's folder"
+
+# The line typed for a command run in the remote pane's shell, as a person would type it. Its output and exit status
+# go to files on the host, so nothing depends on reading them back off the screen.
+typed() { # name, command
+    local out="'$host_dir/out/$1'" status="'$host_dir/out/$1.status'"
+    printf '{ %s; } > %s 2>&1; echo $? > %s.new && mv %s.new %s' "$2" "$out" "$status" "$status" "$status"
+}
+finished() { wait_for 60 on_host "test -f '$host_dir/out/$1.status'" || fail "$1 did not finish on the host"; }
+in_pane() { # name, command
+    "$cli" term send "$pane" "$(typed "$1" "$2")" --enter >/dev/null
+    finished "$1"
+}
+output_of() { on_host "cat '$host_dir/out/$1'"; }
+status_of() { on_host "cat '$host_dir/out/$1.status'"; }
+quoted() { local text=${1//\'/\'\\\'\'}; printf "'%s'" "$text"; }
+in_session() { # name, command: typed into the pane's session on the host itself, for while no pane shows it
+    local target
+    target=$(quoted "=$session:")
+    on_host "tmux -u -L $server send-keys -t $target -l -- $(quoted "$(typed "$1" "$2")") &&
+        tmux -u -L $server send-keys -t $target Enter"
+    finished "$1"
+}
+succeeded() { [[ "$(status_of "$1")" == 0 ]] || fail "$1 exited with $(status_of "$1"): $(output_of "$1")"; }
+agent_state() {
+    "$cli" term list --json | json 'next(t.get("agent", "none") for t in d if t["pane"] == "'"$pane"'")'
+}
+hook_report() { # Stop's last message
+    local event='{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "'"$1"'"}'
+    printf "printf '%%s' '%s' | canopy agent-hook" "$event"
+}
+
+step "in the remote pane, canopy lists the rows and the pane"
+in_pane rows "cd '$remote' && canopy row list"
+succeeded rows
+output_of rows | grep -q "e2e/remote" || fail "canopy row list on the host does not list e2e/remote: $(output_of rows)"
+in_pane terms "canopy term list"
+succeeded terms
+output_of terms | grep -q "^$pane " || fail "canopy term list on the host does not list $pane: $(output_of terms)"
+
+step "a hook's report in the remote pane shows as the pane's agent state"
+in_pane hook "$(hook_report 'Tests pass. Should I push it?')"
+succeeded hook
+[[ -z "$(output_of hook)" ]] || fail "agent-hook printed something: $(output_of hook)"
+wait_for 10 eval '[[ "$(agent_state)" == waiting ]]' || fail "the pane's agent is $(agent_state), not waiting"
+
+step "web open and xdg-open of an artifact link in the remote pane open pages in the remote row"
+pages() { "$cli" web list --repo demo --row e2e/remote --json | json '" ".join(p["url"] for p in d)'; }
+in_pane web "canopy web open https://example.com/e2e"
+succeeded web
+[[ "$(pages)" == *"https://example.com/e2e"* ]] || fail "web open did not open the page in e2e/remote: $(pages)"
+# The artifact takes the panel's place, as a second web open does.
+in_pane artifact "xdg-open https://claude.ai/artifact/e2e-artifact"
+succeeded artifact
+[[ "$(pages)" == *"https://claude.ai/artifact/e2e-artifact"* ]] || fail "xdg-open did not open the artifact: $(pages)"
+
+step "row new typed in the remote pane makes a row on the same host"
+in_pane second "canopy row new e2e/second"
+succeeded second
+second=$("$cli" row list --json | json '[r.get("remotePath", "") for r in d if r.get("branch") == "e2e/second"][0]')
+[[ -n "$second" ]] || fail "row new on the host did not make a remote row: $(output_of second)"
+on_host "test \"\$(git -C '$second' rev-parse --abbrev-ref HEAD)\" = e2e/second" || fail "no worktree at $second"
+stand_in_second=$("$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/second"][0]')
+"$cli" row rm "$stand_in_second" --force --delete-branch >/dev/null
+on_host "test ! -e '$second'" || fail "the second row's worktree is still on the host"
 
 step "a second home on the same host has its own tmux server, sessions, and files"
 home2() { CANOPY_HOME="$work/home2" "$@"; }
@@ -183,20 +258,32 @@ home2 "$cli" host rm "$alias" >/dev/null
 CANOPY_HOME="$work/home2" stop_app
 on_host "tmux -u -L $server2 kill-server" >/dev/null 2>&1 || true
 
-step "quitting and relaunching joins the same session"
+step "quitting and relaunching joins the same session, and replays a hook's report kept meanwhile"
 "$cli" term send "$pane" "echo before-quit-\$((2 + 2))" --enter >/dev/null
 wait_for 30 screen_has before-quit-4 || fail "the marker did not show"
+control=$(control_socket)
+[[ -n "$control" ]] || fail "no control socket for this home"
 stop_app
+# A master outlives a killed app by a moment, forwarding to a socket no one serves.
+wait_for 20 master_gone || fail "the master outlived the app"
+# The pane's ssh and the connection's forward went with the app, but the session runs on. The report is typed into the
+# session on the host itself, so it runs in the session's shell with the session's variables, as Claude's hook would.
+in_session hook-away "$(hook_report 'Done.')"
+succeeded hook-away
+[[ -z "$(output_of hook-away)" ]] || fail "agent-hook printed something with the app away: $(output_of hook-away)"
+kept="~/.canopy/${server#canopy-}/pending/$session.json"
+on_host "test -f $kept" || fail "agent-hook did not keep its report on the host while the app was away"
 launch
 "$cli" row select e2e/remote --repo demo >/dev/null
 pane=$("$cli" term list --json | json '[t["pane"] for t in d if t["row"] == "e2e/remote"][0]')
+[[ "$pane" == "$session" ]] || fail "the relaunched pane is $pane, not $session, which its session's CANOPY_PANE names"
 wait_for 90 screen_has before-quit-4 || fail "the relaunched pane did not rejoin its session"
 [[ "$(created_at)" == "$started" && "$(session_count)" == 1 ]] || fail "relaunching started another session"
+wait_for 10 eval '[[ "$(agent_state)" == done ]]' || fail "the kept report did not show: the agent is $(agent_state)"
+on_host "test ! -e $kept" || fail "the kept report is still on the host after the pane reattached"
 
 step "a dropped connection reconnects to the same session"
-# The master's control socket is named after this home's id, in the home or, when that is too long, in /tmp.
-control=$({ ls "$CANOPY_HOME"/ssh/"${server#canopy-}"-* /tmp/canopy-"$(id -u)"/"${server#canopy-}"-* 2>/dev/null || true; } |
-    grep -v '\.env$' | head -1)
+control=$(control_socket)
 [[ -n "$control" ]] || fail "no control socket for this home"
 before=$(connections)
 "${CANOPY_SSH:-/usr/bin/ssh}" -S "$control" -O exit "$alias" >/dev/null 2>&1 || true
