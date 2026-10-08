@@ -95,6 +95,7 @@ final class AppModel {
         plugins.ui = bridge
         plugins.onNotice = { [weak self] in self?.show($0) }
         plugins.onClosingRows = { [weak self] in self?.setAside($0) }
+        terminals.onFollowLink = { [weak self] pane, route in self?.followed(route, from: pane) }
         updateViewing()
         // Before layouts are restored, so a plugin row's folder deleted outside Canopy is back for its shells.
         await plugins.start()
@@ -493,8 +494,35 @@ final class AppModel {
 
     /// Only web links open: text a server sends, such as an error, could hold links of any kind.
     func open(_ url: URL) -> OpenURLAction.Result {
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return .discarded }
-        guard let openedURLsFile else { return .systemAction }
+        guard WebAddress.isWeb(url) else { return .discarded }
+        guard openedURLsFile != nil else { return .systemAction }
+        recordOpened(url)
+        return .handled
+    }
+
+    /// Opens a web link in the default browser, as `open` does for SwiftUI's links.
+    func openInBrowser(_ url: URL) {
+        guard WebAddress.isWeb(url) else { return }
+        if openedURLsFile != nil {
+            recordOpened(url)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// A link ⌘-clicked in a terminal, after the terminals opened an artifact in the pane's row.
+    private func followed(_ route: TerminalLink, from pane: Pane) {
+        switch route {
+        case .artifact:
+            if selectedRowPath != pane.context.rowPath { reveal(pane.context.rowPath) }
+        case .browser(let url): openInBrowser(url)
+        case .path(let path): SwiftTermEmulator.openPath(path)
+        case .refused: break
+        }
+    }
+
+    private func recordOpened(_ url: URL) {
+        guard let openedURLsFile else { return }
         let line = Data((url.absoluteString + "\n").utf8)
         if let handle = FileHandle(forWritingAtPath: openedURLsFile) {
             handle.seekToEndOfFile()
@@ -503,7 +531,6 @@ final class AppModel {
         } else {
             FileManager.default.createFile(atPath: openedURLsFile, contents: line)
         }
-        return .handled
     }
 
     /// Panel widths as dragged in this session, which the saved ones catch up with.

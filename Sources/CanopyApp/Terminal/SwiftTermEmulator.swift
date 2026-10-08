@@ -39,6 +39,7 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
     var onInput: ((Data) -> Void)?
     var onResize: ((TerminalSize) -> Void)?
     var onTitle: ((String) -> Void)?
+    var onOpenLink: ((String) -> Void)?
 
     init(size: TerminalSize) {
         terminalView = TerminalView(
@@ -138,6 +139,16 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
     }
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+    /// A file path ⌘-clicked in a terminal opens with its app, as SwiftTerm opens it.
+    static func openPath(_ path: String) {
+        TerminalView.openDefaultLink(path)
+    }
+
+    /// ⌘-click. The pane's row decides where the link goes.
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        onOpenLink?(link)
+    }
 
     /// OSC 52, which editors and tmux use to copy.
     func clipboardCopy(source: TerminalView, content: Data) {

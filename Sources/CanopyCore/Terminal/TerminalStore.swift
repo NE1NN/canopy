@@ -121,6 +121,9 @@ public final class TerminalStore {
     }
     /// Called when a pane's agent finishes or needs the author, unless the author is focused on that pane.
     @ObservationIgnored public var onAgentAlert: (Pane, AgentState) -> Void = { _, _ in }
+    /// Called after a link ⌘-clicked in a pane was followed, with where it went. An artifact is open in the pane's row
+    /// by then, and the app hands anything else to the browser or the file's app.
+    @ObservationIgnored public var onFollowLink: (Pane, TerminalLink) -> Void = { _, _ in }
     /// Called when a page leaves its row, so the app can drop its web view.
     @ObservationIgnored public var onPageClosed: (WebPageID) -> Void = { _ in }
     @ObservationIgnored private var agentObservers: [UUID: (AgentEvent) -> Void] = [:]
@@ -541,6 +544,10 @@ public final class TerminalStore {
             emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory)
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
+        pane.onOpenLink = { [weak self] pane, link in
+            guard let self else { return }
+            self.onFollowLink(pane, self.followLink(link, from: pane))
+        }
         return pane
     }
 

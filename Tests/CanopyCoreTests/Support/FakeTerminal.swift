@@ -9,6 +9,7 @@ final class FakeEmulator: TerminalEmulator {
     var onInput: ((Data) -> Void)?
     var onResize: ((TerminalSize) -> Void)?
     var onTitle: ((String) -> Void)?
+    var onOpenLink: ((String) -> Void)?
     private(set) var shown = Data()
 
     var text: String { String(decoding: shown, as: UTF8.self) }
@@ -34,6 +35,11 @@ final class FakeEmulator: TerminalEmulator {
 
     func type(_ text: String) {
         onInput?(Data(text.utf8))
+    }
+
+    /// The author ⌘-clicking a link in the terminal.
+    func click(link: String) {
+        onOpenLink?(link)
     }
 }
 

@@ -12,6 +12,8 @@ public protocol TerminalEmulator: AnyObject {
     var onResize: ((TerminalSize) -> Void)? { get set }
     /// Called when the running program sets the title.
     var onTitle: ((String) -> Void)? { get set }
+    /// Called with a link the author ⌘-clicked: a URL, or a path the emulator found in the text.
+    var onOpenLink: ((String) -> Void)? { get set }
     /// Shows what the process wrote.
     func feed(_ data: Data)
     /// The visible screen as plain text, one line per row, without trailing blank lines.

@@ -132,6 +132,16 @@ extension TerminalStore {
         if changed { onChange() }
     }
 
+    /// Opens an artifact link ⌘-clicked in a pane in the pane's row. Returns where the link goes.
+    @discardableResult
+    public func followLink(_ link: String, from pane: Pane) -> TerminalLink {
+        let route = TerminalLink(link)
+        if case .artifact(let url) = route {
+            openPage(url, for: pane.context)
+        }
+        return route
+    }
+
     public func setPanelHidden(_ hidden: Bool, inRow path: String) {
         guard panelsByRow[path] != nil, panelsByRow[path]?.isHidden != hidden else { return }
         panelsByRow[path]?.isHidden = hidden

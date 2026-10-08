@@ -31,6 +31,7 @@ final class QuietEmulator: TerminalEmulator {
     var onInput: ((Data) -> Void)?
     var onResize: ((TerminalSize) -> Void)?
     var onTitle: ((String) -> Void)?
+    var onOpenLink: ((String) -> Void)?
     func feed(_ data: Data) {}
     func screenText() -> String { "" }
     func recentText(lines: Int) -> String { "" }
