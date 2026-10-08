@@ -417,17 +417,15 @@ extension Workspace {
     }
 
     /// Stops what listens on `port` on the host, signalling only those of `pids` that still listen on it there.
-    /// Returns the pids it had to SIGKILL.
-    public func stopRemotePort(_ port: UInt16, pids: [Int32], on alias: String) async throws -> [Int32] {
-        struct Stopped: Decodable { var killed: [Int32] }
+    public func stopRemotePort(_ port: UInt16, pids: [Int32], on alias: String) async throws -> RemotePortStop {
         let connection = try await connection(for: alias)
         let printed = try await output(
             of: HostFiles.stopPortCommand(homeID: homeID, port: port, pids: pids), on: connection,
             timeout: .seconds(30))
-        guard let stopped = try? JSONDecoder().decode(Stopped.self, from: Data(printed.utf8)) else {
+        guard let stopped = try? JSONDecoder().decode(RemotePortStop.self, from: Data(printed.utf8)) else {
             throw WorkspaceError.hostCommandFailed(alias, reason: "canopy-host stop-port printed \(printed)")
         }
-        return stopped.killed
+        return stopped
     }
 
     /// The host's remote rows, in the order the sidebar has their repos.

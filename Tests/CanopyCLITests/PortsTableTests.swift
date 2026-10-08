@@ -36,4 +36,24 @@ struct PortsTableTests {
                 9000 (not forwarded)  node     42   box   demo  feat/web
                 """)
     }
+
+    /// A host's pids and this Mac's are different processes, even when their numbers are the same.
+    @Test func aKilledProcessIsNamedOnlyWhereItWasKilled() {
+        let report = PortsCommand.report(
+            PortsStopResult(
+                port: 5173, stopped: [info(3000, pid: 40), info(5173, pid: 40, host: "box", localPort: 5173)],
+                killed: [PortProcess(pid: 40, host: "box")]))
+
+        #expect(
+            report == """
+                Stopped node (pid 40) on port 3000.
+                Stopped node (pid 40) on port 5173 on box. It ignored SIGTERM, so it was killed.
+                """)
+    }
+
+    @Test func aStopThatSignalledNothingSaysSo() {
+        let report = PortsCommand.report(PortsStopResult(port: 5173, stopped: [], killed: []))
+
+        #expect(report.hasPrefix("Nothing was stopped: what listened on port 5173 had already exited."))
+    }
 }

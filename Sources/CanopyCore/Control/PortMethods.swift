@@ -62,7 +62,20 @@ public struct PortsStopParams: Codable, Sendable {
 
 public struct PortsStopResult: Codable, Sendable {
     public var port: Int
+    /// The processes signalled. A remote port's pids from the last probe that no longer listen are left out.
     public var stopped: [PortInfo]
     /// Processes that ignored SIGTERM and were killed, on this Mac and on hosts.
-    public var killed: [Int32]
+    public var killed: [PortProcess]
+}
+
+/// A process on this Mac, or on a host, whose pids are a different machine's.
+public struct PortProcess: Codable, Sendable, Hashable {
+    public var pid: Int32
+    /// Left out for this Mac's processes.
+    public var host: String?
+
+    public init(pid: Int32, host: String?) {
+        self.pid = pid
+        self.host = host
+    }
 }

@@ -342,6 +342,7 @@ Stopping one runs `canopy-host stop-port` on the host, which sends SIGTERM to it
 The local scan leaves out the connected masters' pids, since a master holds its forwards' sockets on the Mac.
 `canopy ports` lists them with `host`, `localPort`, and `forwardError` when there is no forward; its table gains a HOST column when any port has a host.
 `ports stop <n>` takes a remote port by its port on the host or its Mac port, and a port whose own number is `n` comes before one whose Mac port is.
+It reports only the processes the host signalled, so a server that restarted since the last probe is not reported as stopped, and names each process it killed with its host, whose pids are not this Mac's.
 
 ## Commands
 

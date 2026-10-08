@@ -176,6 +176,37 @@ extension RemotePortForwardingTests {
         await setup.stop()
     }
 
+    /// A server that restarted since the last probe has a pid the host will not signal, so nothing is reported as
+    /// stopped, and the new server goes on.
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func stoppingAPortWhoseServerRestartedSinceTheProbeReportsNothingStopped() async throws {
+        let setup = try await Setup()
+        defer { setup.endSessions() }
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        let localPorts = RecordingLocalPorts()
+        let (handler, _) = handler(setup, localPorts: localPorts)
+        try setup.serve(port)
+        let old = try #require(await setup.forwarded(port)?.processes.first?.pid)
+        try setup.keys(["C-c"])
+        try setup.serve(port)
+        // The fake host's processes are this Mac's, so the scan sees the new server.
+        #expect(
+            await eventually {
+                let pids = PortScanner.listeningPorts().filter { $0.port == port }.map(\.pid)
+                return !pids.isEmpty && !pids.contains(old)
+            })
+
+        let stopped = try await call(
+            handler, PortMethod.stop, PortsStopParams(port: Int(port), target: TargetHint(envRowPath: setup.row.path)),
+            as: PortsStopResult.self)
+
+        #expect(stopped.stopped.isEmpty)
+        #expect(stopped.killed.isEmpty)
+        #expect(!LocalPortChooser.isFree(port))
+        #expect(localPorts.calls.isEmpty)
+        await setup.stop()
+    }
+
     @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
     func stoppingARemotePortByItsMacPortStopsItOnTheHost() async throws {
         let setup = try await Setup()

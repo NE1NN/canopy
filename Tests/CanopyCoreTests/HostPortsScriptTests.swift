@@ -282,7 +282,9 @@ struct HostPortsScriptTests {
         let result = try await setup.stop(port: listener.port.port, pids: [listener.port.pid, other.port.pid])
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(String(decoding: result.stdout, as: UTF8.self) == #"{"killed": []}"# + "\n")
+        #expect(
+            String(decoding: result.stdout, as: UTF8.self)
+                == #"{"stopped": [\#(listener.port.pid)], "killed": []}"# + "\n")
         #expect(await eventually { !listener.process.isRunning })
         #expect(listener.process.terminationReason == .uncaughtSignal)
         #expect(listener.process.terminationStatus == SIGTERM)
@@ -300,7 +302,8 @@ struct HostPortsScriptTests {
         let result = try await setup.stop(port: listener.port.port, pids: [pid], wait: 0.3)
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(String(decoding: result.stdout, as: UTF8.self) == #"{"killed": [\#(pid)]}"# + "\n")
+        #expect(
+            String(decoding: result.stdout, as: UTF8.self) == #"{"stopped": [\#(pid)], "killed": [\#(pid)]}"# + "\n")
         #expect(await eventually { !listener.process.isRunning })
         #expect(listener.process.terminationStatus == SIGKILL)
     }

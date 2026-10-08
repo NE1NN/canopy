@@ -76,15 +76,24 @@ struct PortsCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let result = client.call(
                 PortMethod.stop, PortsStopParams(port: port, target: rowOptions.hint, all: all))
-            try client.print(result) {
-                let stopped = try result.decode(PortsStopResult.self)
-                return stopped.stopped.map { info in
-                    let how = stopped.killed.contains(info.pid) ? " It ignored SIGTERM, so it was killed." : ""
-                    let host = info.host.map { " on \($0)" } ?? ""
-                    return "Stopped \(info.process) (pid \(info.pid)) on port \(info.port)\(host).\(how)"
-                }
-                .joined(separator: "\n")
-            }
+            try client.print(result) { PortsCommand.report(try result.decode(PortsStopResult.self)) }
         }
+    }
+
+    /// A line for each process stopped. A host's pids are told apart from this Mac's by the host.
+    static func report(_ stopped: PortsStopResult) -> String {
+        guard !stopped.stopped.isEmpty else {
+            return "Nothing was stopped: what listened on port \(stopped.port) had already exited. Run `canopy ports`"
+                + " to see what listens there now."
+        }
+        let killed = Set(stopped.killed)
+        return stopped.stopped.map { info in
+            let how =
+                killed.contains(PortProcess(pid: info.pid, host: info.host))
+                ? " It ignored SIGTERM, so it was killed." : ""
+            let host = info.host.map { " on \($0)" } ?? ""
+            return "Stopped \(info.process) (pid \(info.pid)) on port \(info.port)\(host).\(how)"
+        }
+        .joined(separator: "\n")
     }
 }

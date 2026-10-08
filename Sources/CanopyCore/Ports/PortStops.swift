@@ -25,6 +25,14 @@ public struct LocalPorts: Sendable {
         folder: { ProcessTable.folder(of: $0) }, stop: { await PortStopper().stop($0) })
 }
 
+/// What `canopy-host stop-port` did on a host.
+public struct RemotePortStop: Sendable, Equatable, Decodable {
+    /// The pids it signalled, which were still listening on the port.
+    public var stopped: [Int32]
+    /// Those of them that ignored SIGTERM and were killed.
+    public var killed: [Int32]
+}
+
 /// What stopping some ports signals, split by where their pids mean something: this Mac's processes, for
 /// `PortStopper`, and each host's, for `canopy-host stop-port` there. A remote port's pids are the host's, so they
 /// only ever land in `remote`.

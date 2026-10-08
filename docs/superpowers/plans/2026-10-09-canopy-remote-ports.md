@@ -99,7 +99,7 @@ Modified:
   Ancestors come from the `ps -A -o pid=,ppid=,tpgid=,comm=` table the probe already reads; folders from `/proc/<pid>/cwd`, else `lsof -a -p <pid> -d cwd -Fn` when there is no `/proc` (the fake host is the Mac).
   Without `ss`, `ports` is `[]`; when `ss` fails or takes longer than 5 seconds, `ports` is `null`.
 - Each session in the probe also carries `pid` (the pane's shell), which it already prints.
-- `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"killed": [pids]}`. Pids not listening on the port are left alone.
+- `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"stopped": [pids], "killed": [pids]}`, the pids it signalled and those it killed. Pids not listening on the port are left alone.
 - `HostProbe.Report` (which already has `sessions` and `pending`) gains `shells: [String: Int32]` (session to shell pid) and `ports: [RemoteListeningPort]`, and `HostProbe.command(homeID:ports:)` adds `--ports` when asked.
   The argument check in `canopy-host` accepts `--ports` only as the last argument of `probe`.
 - `HostFiles.version` changes, so hosts reinstall.
@@ -156,7 +156,7 @@ Modified:
 - `RowLifecycle(workspace:terminals:hostMonitor:localPorts:)`: `LocalPorts` holds this Mac's scan, process table, and stop (`.system` uses `PortScanner` and `PortStopper`), which tests replace with a stand-in that records stops.
 - `portGroups()` merges `HostMonitor`'s remote groups into sidebar order, scans this Mac for local rows only, and leaves out every connected master's pid (`Workspace.masterPIDs()`) from the local scan.
 - `PortInfo` gains `host: String?`, `localPort: Int?`, and `forwardError: String?`; the table gains a HOST column only when a port has one, and PORT reads `5173 → 5174` when the two differ, or `5173 (not forwarded)`.
-- `stopPort` and `stopPorts` build `PortStops` from `RowPort`s and go through one private `stop(_:)`: `PortStops.local` (ports without `remote`) goes to `LocalPorts.stop`, each of `PortStops.remote` to `Workspace.stopRemotePort(_:pids:on:)`, which runs `HostFiles.stopPortCommand` through the master, and `killed` merges both.
+- `stopPort` and `stopPorts` build `PortStops` from `RowPort`s and go through one private `stop(_:)`: `PortStops.local` (ports without `remote`) goes to `LocalPorts.stop`, each of `PortStops.remote` to `Workspace.stopRemotePort(_:pids:on:)`, which runs `HostFiles.stopPortCommand` through the master; `stopped` lists only the remote pids the host signalled, and `killed` merges both, each with its host.
   A remote stop that succeeds drops the port from `HostMonitor.remotePorts` and reads the host's ports again on its next probe.
 - `ports stop <n>` matches `port`, or else a remote port's `localPort` (`PortStops.matching`), so a port whose own number is `n` comes first.
 - Other ports a port's processes hold (`[PortGroup].otherPorts(of:)`) compare pids only within one host, or this Mac.

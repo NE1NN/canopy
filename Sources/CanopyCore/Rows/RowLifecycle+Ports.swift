@@ -69,9 +69,11 @@ extension RowLifecycle {
             throw WorkspaceError.portNotFound(number)
         }
         let snapshot = await workspace.snapshot
-        let stopped = holding.flatMap { info(of: $0.port, inRow: $0.rowPath, snapshot) }
-        let killed = try await stop(holding.map(\.port))
-        return PortsStopResult(port: number, stopped: stopped, killed: killed)
+        let outcome = try await stop(holding.map(\.port))
+        let stopped = holding.flatMap { info(of: $0.port, inRow: $0.rowPath, snapshot) }.filter { info in
+            info.host.map { outcome.remote[$0]?.contains(info.pid) == true } ?? true
+        }
+        return PortsStopResult(port: number, stopped: stopped, killed: outcome.killed)
     }
 
     /// Stops what listens on these ports in a row, as found by a scan now rather than when the panel last looked, so a
@@ -86,21 +88,31 @@ extension RowLifecycle {
         }
     }
 
-    /// The one place ports are stopped: this Mac's processes here, and a host's on that host, never here. Returns the
-    /// pids that ignored SIGTERM and were killed.
-    private func stop(_ ports: [RowPort]) async throws -> [Int32] {
+    private struct Outcome {
+        /// The pids each host signalled, which this Mac's scan does not need, being as of now.
+        var remote: [String: Set<Int32>] = [:]
+        var killed: [PortProcess] = []
+    }
+
+    /// The one place ports are stopped: this Mac's processes here, and a host's on that host, never here.
+    private func stop(_ ports: [RowPort]) async throws -> Outcome {
         let stops = PortStops(ports)
-        var killed = stops.local.isEmpty ? [] : await localPorts.stop(stops.local).killed
+        var outcome = Outcome()
+        if !stops.local.isEmpty {
+            outcome.killed = await localPorts.stop(stops.local).killed.map { PortProcess(pid: $0, host: nil) }
+        }
         var failure: (any Error)?
         for remote in stops.remote {
             do {
-                killed += try await workspace.stopRemotePort(remote.port, pids: remote.pids, on: remote.host)
+                let stopped = try await workspace.stopRemotePort(remote.port, pids: remote.pids, on: remote.host)
+                outcome.remote[remote.host, default: []].formUnion(stopped.stopped)
+                outcome.killed += stopped.killed.map { PortProcess(pid: $0, host: remote.host) }
                 hostMonitor?.portsStopped([remote.port], on: remote.host)
             } catch {
                 failure = failure ?? error
             }
         }
         if let failure { throw failure }
-        return killed
+        return outcome
     }
 }

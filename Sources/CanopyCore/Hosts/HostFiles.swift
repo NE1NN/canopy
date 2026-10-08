@@ -119,8 +119,8 @@ public enum HostFiles {
         ]
     }
 
-    /// Stops the pids that still listen on `port` on the host, printing `{"killed": [pids]}` for those it had to
-    /// SIGKILL.
+    /// Stops the pids that still listen on `port` on the host, printing `{"stopped": [pids], "killed": [pids]}`: those
+    /// it signalled, and those of them it had to SIGKILL.
     public static func stopPortCommand(homeID: String, port: UInt16, pids: [Int32]) -> [String] {
         let stop =
             #"h=$0 p=$1; shift; exec python3 "$HOME/.canopy/$h/bin/canopy-host" stop-port --port "$p" --pid "$@""#
@@ -805,7 +805,8 @@ public enum HostFiles {
 
         def stop_port(port, pids):
             """SIGTERM and SIGCONT to each of the pids listening on the port, then SIGKILL to those still listening after
-            STOP_WAIT seconds. Pids not listening on it are left alone."""
+            STOP_WAIT seconds. Pids not listening on it are left alone. Prints the pids it signalled and those it
+            killed."""
             if listening_pids(port) is None:
                 print("canopy-host: ss cannot list this host's ports, so nothing was stopped.", file=sys.stderr)
                 return 1
@@ -824,7 +825,7 @@ public enum HostFiles {
                     break
                 time.sleep(0.1)
             killed = [pid for pid in holding if signal_if_listening(pid, port, signal.SIGKILL)]
-            print(json.dumps({"killed": killed}))
+            print(json.dumps({"stopped": signalled, "killed": killed}))
             return 0
 
 
