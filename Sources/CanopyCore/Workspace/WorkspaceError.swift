@@ -70,6 +70,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case hostUnreachable(String, reason: String)
     case hostNotFound(String, known: [String])
     case hostUnknown(String)
+    case hostReserved(String)
     case hostUnfit(String, missing: [String])
     case hostHasRows(String, rows: [String])
     case hostCommandFailed(String, reason: String)
@@ -142,6 +143,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .hostUnreachable: "host_unreachable"
         case .hostNotFound: "host_not_found"
         case .hostUnknown: "host_unknown"
+        case .hostReserved: "host_reserved"
         case .hostUnfit: "host_unfit"
         case .hostHasRows: "host_has_rows"
         case .hostCommandFailed: "host_command_failed"
@@ -263,6 +265,9 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .hostUnknown(let host):
             "ssh does not know a host named \(host). Add it to ~/.ssh/config, check that `ssh \(host)` logs in, "
                 + "then run `canopy host add` again."
+        case .hostReserved(let host):
+            "Canopy keeps the name \(host) for this Mac, as in `row new --on \(host)`. "
+                + "Give the host another alias in ~/.ssh/config, then add it under that one."
         case .hostUnfit(let host, let missing): "\(host) needs \(Self.list(missing)) before Canopy can use it."
         case .hostHasRows(let host, let rows):
             "\(host) still has rows: \(rows.joined(separator: ", ")). Remove them with `canopy row rm` first."

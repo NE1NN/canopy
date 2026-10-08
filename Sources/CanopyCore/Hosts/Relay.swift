@@ -74,6 +74,12 @@ public enum RelayPaths {
 }
 
 public enum RelayRun {
+    /// The host a CLI run came from through its relay, from the `CANOPY_HOST` that `environment(for:)` sets.
+    /// A local pane never has it.
+    public static func host(in environment: [String: String]) -> String? {
+        environment["CANOPY_HOST"].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// The environment for the app's CLI running a host's request. Only the request's `CANOPY_*` variables cross
     /// over, so nothing else from the host, such as its PATH or HOME, misleads a program on the Mac; those come from
     /// this Mac's own.

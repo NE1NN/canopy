@@ -34,6 +34,15 @@ struct PaneEnvironmentTests {
         #expect(environment["LANG"] == "en_AU.UTF-8")
     }
 
+    /// The CLI takes `CANOPY_HOST` to mean it runs through a host's relay, so a local pane must never have it.
+    @Test func aLocalPaneNamesNoHost() {
+        let environment = PaneEnvironment.build(
+            settings: settings(["HOME": "/Users/me", "CANOPY_HOST": "box"]), context: context, pane: PaneID(12))
+
+        #expect(environment["CANOPY_HOST"] == nil)
+        #expect(RelayRun.host(in: environment) == nil)
+    }
+
     @Test func describesTheTerminalRowAndPane() {
         let environment = PaneEnvironment.build(settings: settings([:]), context: context, pane: PaneID(12))
 

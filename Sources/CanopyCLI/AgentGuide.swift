@@ -108,14 +108,22 @@ struct AgentGuide: ParsableCommand {
             canopy host add <alias> --repo <repo>=<path>... [--wake <cmd>] [--idle-detach <min>]
             canopy host list | rm <alias>
             canopy row new <branch> --on <host> [--run <cmd>]   a row whose worktree is on the host
+            canopy row new <branch> --on local                  from a host, a row on this Mac
 
         A host is an ssh alias from ~/.ssh/config with a clone of the repo. A remote row's worktree is in
         ~/.canopy/worktrees/<repo>/ on the host, and its terminals open there inside tmux, so programs such as
         claude keep running while this Mac sleeps or Canopy quits, and the terminal joins them again when it
         reconnects. `row list` shows its class as remote:<host>, and its path is a stand-in folder on this Mac, which
-        `row select` and `row rm` take. Agents on the host use the host's own git and gh. Panes detach after the
-        host's idle minutes with nothing running and nothing typed, so it can power itself off; Return reconnects.
-        A host that cannot be reached runs its --wake command, such as one that starts it.
+        `row select` and `row rm` take. Panes detach after the host's idle minutes with nothing running and nothing
+        typed, so it can power itself off; Return reconnects. A host that cannot be reached runs its --wake command,
+        such as one that starts it.
+
+        In a remote row's terminals, `canopy` works as it does here: it relays each command to Canopy on this Mac,
+        so `term`, `web`, `row`, and the rest act on the remote row. `row new` there makes its row on the same host
+        unless you pass `--on local`. The relay has no terminal, so a command that would prompt reads standard input.
+        Claude Code on the host opens links with xdg-open, which opens claude.ai artifact links in Canopy, in your
+        row, and hands any other link to the host's own xdg-open. `canopy host add` keeps Claude Code's hooks on the
+        host, so `canopy hooks` there only says so. Agents on the host use the host's own git and gh, not this Mac's.
 
         ## Terminals
 

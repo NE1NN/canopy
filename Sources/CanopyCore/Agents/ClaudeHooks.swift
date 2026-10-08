@@ -6,6 +6,12 @@ public enum ClaudeHooks {
     /// in Claude's transcript.
     public static let command = #"[ -z "$CANOPY_CLI" ] || "$CANOPY_CLI" agent-hook >/dev/null 2>&1 || true"#
 
+    /// What `canopy hooks` says when run through a host's relay. The host's settings file is out of this Mac's reach,
+    /// and `host add` installs the hooks there.
+    public static func keptByHostAdd(on host: String) -> String {
+        "Canopy's hooks on \(host) are kept by `canopy host add`."
+    }
+
     public enum Status: String, Codable, Sendable {
         case installed
         /// Some of Canopy's hooks are missing or differ, as after an older Canopy installed them.

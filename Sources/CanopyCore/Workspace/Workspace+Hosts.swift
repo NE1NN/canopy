@@ -75,6 +75,7 @@ extension Workspace {
         guard !alias.isEmpty, !alias.hasPrefix("-"), !alias.contains(where: \.isWhitespace) else {
             throw WorkspaceError.hostUnknown(alias)
         }
+        guard alias != RowTarget.local else { throw WorkspaceError.hostReserved(alias) }
         let snapshot = self.snapshot
         var names: [String: String] = [:]
         for (name, path) in requested {

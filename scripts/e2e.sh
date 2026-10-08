@@ -10,7 +10,7 @@ shots="$PWD/build/e2e"
 work=$(mktemp -d -t canopy-e2e)
 export CANOPY_HOME="$work/home"
 # Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
-unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM
+unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST
 export CLAUDE_CONFIG_DIR="$work/claude"
 mkdir -p "$shots"
 
@@ -75,6 +75,15 @@ done
 
 step "running inside a row resolves the repo from the folder"
 (cd "$CANOPY_HOME/worktrees/demo/feat-plain" && "$cli" row new feat/from-cwd --json) >/dev/null
+
+step "through a host's relay, --on local makes the row on this Mac, and no host may be named local"
+CANOPY_HOST=box "$cli" row new feat/on-local --repo demo --on local --no-setup >/dev/null ||
+    fail "row new --on local through a host's relay failed"
+[[ -d "$CANOPY_HOME/worktrees/demo/feat-on-local" ]] || fail "row new --on local made no local worktree"
+"$cli" row rm feat/on-local --repo demo --delete-branch >/dev/null
+if "$cli" host add local --json > "$work/host-local.json" 2>/dev/null; then fail "host add local succeeded"; fi
+grep -q '"code" : "host_reserved"' "$work/host-local.json" || fail "host add local did not fail with host_reserved"
+"$cli" agent-guide | grep -q -- "--on local" || fail "agent-guide does not say how to make a local row from a host"
 
 step "listing"
 "$cli" row list
@@ -428,6 +437,12 @@ cmp -s "$settings" "$work/settings.before" || fail "uninstall did not give back 
 "$cli" hooks install --settings "$work/other-settings.json" >/dev/null
 grep -q 'agent-hook' "$work/other-settings.json" || fail "hooks install --settings wrote elsewhere"
 "$cli" agent-guide | grep -q "canopy hooks install" || fail "agent-guide is missing canopy hooks"
+cp "$settings" "$work/settings.before"
+for verb in install uninstall status; do
+    said=$(CANOPY_HOST=box "$cli" hooks "$verb") || fail "hooks $verb through a host's relay failed"
+    [[ "$said" == "Canopy's hooks on box are kept by \`canopy host add\`." ]] || fail "hooks $verb on a host said: $said"
+done
+cmp -s "$settings" "$work/settings.before" || fail "hooks through a host's relay changed this Mac's settings"
 
 step "canopy pr says when a repo's origin is not on GitHub"
 if "$cli" pr feat/term --repo demo --json > "$work/pr-local.json" 2>/dev/null; then fail "expected failure"; fi

@@ -336,6 +336,7 @@ Row and terminal events about a remote row add `host` and `remotePath` to `data`
 | Case | Canopy |
 |---|---|
 | ssh does not know the alias | `host add` fails with `host_unknown`, saying to add it to `~/.ssh/config`. |
+| The alias is `local`, which `row new --on local` keeps for this Mac | `host add` fails with `host_reserved`, saying to give the host another alias. |
 | ssh cannot log in, or the host is not Linux, or lacks git, tmux 3.0, or python3 | `host add` fails with `host_unfit`, naming what is missing. |
 | A `--repo` path is not a git checkout, or the repo is not registered | `host add` fails with `repo_not_found`, naming it. |
 | `row new --on` names a host Canopy does not have, or one without the repo | `host_not_found` or `host_has_no_repo`, naming the hosts that have the repo. |

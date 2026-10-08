@@ -153,6 +153,22 @@ struct HostControlTests {
         await setup.workspace.stop()
     }
 
+    /// `row new --on local` means this Mac, so no host may take that name.
+    @Test func aHostCannotBeNamedLocal() async throws {
+        let setup = try await Setup()
+
+        await #expect {
+            try await setup.workspace.addHost(alias: "local", repos: [:], wake: nil, idleDetachMinutes: nil)
+        } throws: { error in
+            guard let error = error as? WorkspaceError else { return false }
+            return error.code == "host_reserved" && error.message.contains("--on local")
+        }
+        #expect(await setup.workspace.hostConnections["local"] == nil)
+        #expect(await setup.workspace.hostListing().hosts.isEmpty)
+        _ = try await setup.workspace.addHost(alias: "Local", repos: [:], wake: nil, idleDetachMinutes: nil)
+        await setup.workspace.stop()
+    }
+
     /// A host added again gets a new connection, whose generations start over, so it must be prepared again.
     @Test func aRemovedHostIsPreparedAgainOnceAddedBack() async throws {
         let setup = try await Setup()
