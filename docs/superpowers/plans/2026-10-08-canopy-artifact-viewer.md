@@ -5174,3 +5174,18 @@ The reviewer also asked for a test of moving a tab that is not selected into a p
 One more fix came from the per-commit runs.
 `cancellingStopsTheCloneAndDeletesWhatItWrote` failed once under load: its stand-in wrote its pid with `echo $! > file`, which creates the file before the pid is in it, and the test read the empty file the moment it appeared.
 That stand-in, its sibling, and `aHandleStopsGitAndEverythingItStarted` now write to a temporary name and rename it into place.
+
+### CI on PR 35
+
+`refreshesOnATimer`, a test this PR does not touch, failed on GitHub's 3-CPU runner with 2 timer lookups where it waited for 3.
+The full suite run in the background with six `yes` hogs reproduced it, also with 2, and a trace of the timer showed why.
+On a saturated runner one cycle of the 150 ms timer took 7 to 17 seconds:
+- Its sleep took 2.5 to 4.6 seconds to resume, waiting for a thread of the cooperative pool.
+- The hop onto the workspace and the start of the queued lookup took 1 to 4 seconds more.
+- The lookup's two processes, git for origin and then `gh`, took 2 to 7 seconds.
+- One tick also waited out a lookup the test itself had queued, which ran for 9.5 seconds.
+
+So three cycles needed 25 to 50 seconds, against a 20-second wait that started while the test's own lookup was still running.
+The test now counts only the timer's lookups, from when the lookups already queued are done, and asks for two, which is enough to show the timer repeats.
+It also allows 60 seconds, about three cycles at the slowest measured.
+With that change it passed three full-suite runs under the same load.
