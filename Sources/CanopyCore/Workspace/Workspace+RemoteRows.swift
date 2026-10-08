@@ -120,11 +120,18 @@ extension Workspace {
             }
 
             let home = try await target.connection.home()
-            let parent = "\(home)/.canopy/worktrees/\(target.dirName)"
-            let taken = Set(
-                try await output(
-                    of: ["sh", "-c", #"mkdir -p "$0" && ls -1A "$0""#, parent], on: target.connection
-                ).split(separator: "\n").map(String.init))
+            // git lists worktrees by their real path, which differs from one made under a home reached through a link.
+            let listed = try await output(
+                of: [
+                    "sh", "-c", #"mkdir -p "$0" && cd "$0" && pwd -P && ls -1A"#,
+                    "\(home)/.canopy/worktrees/\(target.dirName)",
+                ],
+                on: target.connection
+            ).split(separator: "\n").map(String.init)
+            guard let parent = listed.first, parent.hasPrefix("/") else {
+                throw WorkspaceError.hostUnreachable(alias, reason: "The host did not say where its worktrees go.")
+            }
+            let taken = Set(listed.dropFirst())
             let registered = Set(state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.path))
             let folder = BranchSlug.folder(for: branch, in: URL(fileURLWithPath: parent)) {
                 taken.contains($0.lastPathComponent) || registered.contains($0.path)
@@ -142,28 +149,33 @@ extension Workspace {
             {
                 throw WorkspaceError.branchCheckedOut(branch, row: nil)
             }
-            // git lists worktrees by their real path, which differs from one made under a home reached through a link.
-            let real = try await RepoGit(git: clone.git, path: folder).run(["rev-parse", "--show-toplevel"])
-                .trimmingCharacters(in: .newlines)
-            let worktree = RepoGit(git: clone.git, path: real.isEmpty ? folder : real)
-            if let fastForward {
-                do {
-                    try await worktree.run(["merge", "--ff-only", "--quiet", fastForward.commit])
-                    notes.append(
-                        "Fast-forwarded \(branch) by \(Self.commits(fastForward.count)) to match \(fastForward.name).")
-                } catch let error as GitError where !error.hostUnreachable {
-                    warnings.append(
-                        "Could not fast-forward \(branch) to \(fastForward.name), so it starts as it was: \(error)")
+            // The worktree is there from now on, so the row is saved even when the host drops before it is filled in.
+            let worktree = RepoGit(git: clone.git, path: folder)
+            var head: String?
+            do {
+                if let fastForward {
+                    do {
+                        try await worktree.run(["merge", "--ff-only", "--quiet", fastForward.commit])
+                        notes.append(
+                            "Fast-forwarded \(branch) by \(Self.commits(fastForward.count)) to match \(fastForward.name)."
+                        )
+                    } catch let error as GitError where !error.hostUnreachable {
+                        warnings.append(
+                            "Could not fast-forward \(branch) to \(fastForward.name), so it starts as it was: \(error)")
+                    }
                 }
+                if try await output(
+                    of: ["sh", "-c", #"test -f "$0/.canopy/config.json" && echo yes; true"#, folder],
+                    on: target.connection
+                ).contains("yes") {
+                    notes.append(
+                        "Remote rows do not run the branch's setup commands, so run them in the row if it needs them.")
+                }
+                head = try await worktree.run(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                warnings.append(
+                    "Lost \(alias) after making the worktree, so the row fills in once the host is back: \(error)")
             }
-            if try await output(
-                of: ["sh", "-c", #"test -f "$0/.canopy/config.json" && echo yes; true"#, folder],
-                on: target.connection
-            ).contains("yes") {
-                notes.append(
-                    "Remote rows do not run the branch's setup commands, so run them in the row if it needs them.")
-            }
-            let head = try await worktree.run(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
             let leaf = (folder as NSString).lastPathComponent
             let entry = RemoteRowEntry(
                 host: alias, path: worktree.path,

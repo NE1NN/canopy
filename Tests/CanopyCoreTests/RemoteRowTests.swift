@@ -164,6 +164,40 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
+    @Test func aHostThatDropsOnceTheWorktreeIsMadeStillGetsItsRow() async throws {
+        let setup = try await Setup()
+        try await setup.workspace.connection(for: "box").connect()
+        let dropped = setup.dir.sub("dropped")
+        let script = setup.dir.sub("dropping-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *"-O"* ]] && exec '\(FakeHost.script)' "$@"
+        [[ -e '\(dropped)' ]] && { echo "Connection closed" >&2; exit 255; }
+        '\(FakeHost.script)' "$@"
+        status=$?
+        [[ "$*" == *"worktree add"* || "$*" == *"'worktree' 'add'"* ]] && touch '\(dropped)'
+        exit $status
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let dropping = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await dropping.start()
+        try await dropping.addRepo(path: setup.repo)
+        try HostsConfigFile(url: dropping.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+
+        let created = try await dropping.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/drop")
+
+        #expect(FileManager.default.fileExists(atPath: dropped))
+        let folder = try #require(created.row.remotePath)
+        #expect(FileManager.default.fileExists(atPath: folder + "/.git"))
+        #expect(created.row.branch == "feat/drop")
+        #expect(created.warnings.contains { $0.contains("box") })
+        #expect(await dropping.snapshot.row(path: created.row.path)?.remotePath == folder)
+        await dropping.stop()
+        await setup.workspace.stop()
+    }
+
     @Test func removingADirtyRowNeedsForceAndThenGoesWithItsStandIn() async throws {
         let setup = try await Setup()
         let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/d")
