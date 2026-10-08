@@ -164,8 +164,6 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
-    /// A host that drops while its branches are listed must not look like one without the branch, which would make
-    /// a new branch on the wrong base.
     /// Each machine's git only knows its own worktrees, so a branch a remote row holds is still free on this Mac.
     @Test func aBranchARemoteRowHoldsIsFreeOnThisMac() async throws {
         let setup = try await Setup()
@@ -216,12 +214,15 @@ struct RemoteRowTests {
         await setup.workspace.stop()
     }
 
-    @Test func aHostThatDropsWhileListingBranchesMakesNoBranch() async throws {
+    /// A host that drops while its branches or its default branch are read must not look like one without them,
+    /// which would make a new branch on the wrong base.
+    @Test(arguments: ["for-each-ref", "symbolic-ref"])
+    func aHostThatDropsWhileReadingBranchesMakesNoBranch(_ dropped: String) async throws {
         let setup = try await Setup()
         let script = setup.dir.sub("dropping-ssh")
         try """
         #!/bin/bash
-        [[ "$*" == *for-each-ref* ]] && { echo "Connection closed" >&2; exit 255; }
+        [[ "$*" == *\(dropped)* ]] && { echo "Connection closed" >&2; exit 255; }
         exec '\(FakeHost.script)' "$@"
         """.write(toFile: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)

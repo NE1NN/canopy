@@ -191,7 +191,7 @@ extension Workspace {
     }
 
     func startPoint(_ base: String?, in clone: RepoGit, hasOrigin: Bool) async throws -> String {
-        guard let base else { return await defaultBase(in: clone, hasOrigin: hasOrigin) }
+        guard let base else { return try await defaultBase(in: clone, hasOrigin: hasOrigin) }
         guard !base.hasPrefix("-"), await clone.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"])
         else {
             throw WorkspaceError.invalidBase(base)
@@ -362,22 +362,29 @@ extension Workspace {
     }
 
     func defaultBase(repoPath: String, hasOrigin: Bool) async -> String {
-        await defaultBase(in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)
+        (try? await defaultBase(in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)) ?? "HEAD"
     }
 
-    func defaultBase(in clone: RepoGit, hasOrigin: Bool) async -> String {
-        guard hasOrigin, let branch = await defaultBranch(in: clone) else { return "HEAD" }
+    func defaultBase(in clone: RepoGit, hasOrigin: Bool) async throws -> String {
+        guard hasOrigin, let branch = try await defaultBranch(in: clone) else { return "HEAD" }
         return "origin/" + branch
     }
 
     /// The branch `origin/HEAD` points at, such as `main`, or nil when the repo has none.
     public nonisolated func defaultBranch(repoPath: String) async -> String? {
-        await defaultBranch(in: RepoGit(git: git, path: repoPath))
+        try? await defaultBranch(in: RepoGit(git: git, path: repoPath))
     }
 
-    nonisolated func defaultBranch(in clone: RepoGit) async -> String? {
-        guard let head = try? await clone.run(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
-        else { return nil }
+    /// Fails only when the clone is on a host that did not answer, which says nothing about the default branch.
+    nonisolated func defaultBranch(in clone: RepoGit) async throws -> String? {
+        let head: String
+        do {
+            head = try await clone.run(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+        } catch let error as GitError where error.hostUnreachable {
+            throw error
+        } catch {
+            return nil
+        }
         let name = head.trimmingCharacters(in: .whitespacesAndNewlines)
         guard name.hasPrefix("origin/"), name.count > "origin/".count else { return nil }
         return String(name.dropFirst("origin/".count))
