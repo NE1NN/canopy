@@ -116,14 +116,19 @@ if [[ -z "$master_pid" ]] || ! kill -0 "$master_pid" 2>/dev/null; then
     exec /bin/bash -c "$*"
 fi
 # A command through a master ends with it, as ssh's do when the connection drops. It stays in the foreground, so a
-# terminal program such as tmux keeps the terminal.
+# terminal program such as tmux keeps the terminal. The watcher is stopped once the command ends, and acts only while
+# this script is still its parent: a pid it outlived can belong to another process by then, whose children it would
+# kill.
 (
-    while kill -0 "$master_pid" 2>/dev/null && kill -0 $$ 2>/dev/null; do sleep 0.5; done
+    while kill -0 "$master_pid" 2>/dev/null; do sleep 0.5; done
     # bash -c execs its last command, so the child may be tmux by now, which waits on its server before it
     # exits on a gentler signal.
-    pkill -KILL -P $$ 2>/dev/null
+    me=$(exec /bin/sh -c 'echo $PPID')  # macOS's bash 3.2 has no BASHPID.
+    [[ "$(ps -o ppid= -p "$me" | tr -d ' ')" == "$$" ]] && pkill -KILL -P $$ 2>/dev/null
 ) &
+watcher=$!
 /bin/bash -c "$*"
 status=$?
+kill "$watcher" 2>/dev/null
 kill -0 "$master_pid" 2>/dev/null || exit 255
 exit "$status"
