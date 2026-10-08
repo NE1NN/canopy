@@ -29,6 +29,45 @@ struct HostFilesTests {
         #expect(try String(contentsOfFile: host.home + "/.canopy/files-version", encoding: .utf8) == HostFiles.version)
     }
 
+    @Test func installingWritesCanopyAndXdgOpenAndLinksCanopyWhereLoginShellsLook() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir)
+
+        try install(host)
+        try install(host)
+
+        let bin = host.home + "/.canopy/bin/"
+        #expect(try String(contentsOfFile: bin + "canopy", encoding: .utf8) == HostFiles.canopyLauncher)
+        #expect(try String(contentsOfFile: bin + "xdg-open", encoding: .utf8) == HostFiles.xdgOpenLauncher)
+        #expect(FileManager.default.isExecutableFile(atPath: bin + "canopy"))
+        #expect(FileManager.default.isExecutableFile(atPath: bin + "xdg-open"))
+        let link = host.home + "/.local/bin/canopy"
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link) == bin + "canopy")
+        // Read by sh rather than run, since a new file's first run can wait on this Mac's security scanner.
+        let argv = host.ssh.exec(["sh", ".local/bin/canopy", "row", "list"])
+        let result = try Subprocess.run(
+            argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
+        #expect(result.status == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "Run canopy in a Canopy terminal on this host.\n")
+    }
+
+    @Test func installingLeavesAnotherCanopyOnThePathAlone() throws {
+        let dir = try TempDir()
+        let host = try FakeHost(in: dir)
+        let bin = host.home + "/.local/bin"
+        try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+        try "mine".write(toFile: bin + "/canopy", atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: bin + "/elsewhere", withDestinationPath: "/nowhere")
+
+        try install(host)
+
+        #expect(try String(contentsOfFile: bin + "/canopy", encoding: .utf8) == "mine")
+        try FileManager.default.removeItem(atPath: bin + "/canopy")
+        try FileManager.default.moveItem(atPath: bin + "/elsewhere", toPath: bin + "/canopy")
+        try install(host)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: bin + "/canopy") == "/nowhere")
+    }
+
     /// tmux may be missing for a moment, as while the host's packages update, and the probe runs every 2 seconds.
     @Test func withoutTmuxInstallingWorksAndTheProbeFindsNoSessions() throws {
         let dir = try TempDir()
