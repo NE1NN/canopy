@@ -110,17 +110,22 @@ public enum RelayRun {
         environment["CANOPY_HOST"].flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    /// The environment for the app's CLI running a host's request. Only the request's `CANOPY_*` variables cross
-    /// over, so nothing else from the host, such as its PATH or HOME, misleads a program on the Mac; those come from
-    /// this Mac's own.
+    /// The variables the CLI reads from the pane it runs in, the only ones of a request that cross over. Others would
+    /// mislead or steer the CLI on this Mac by what a program on the host chose: the host's PATH or HOME, or
+    /// `CANOPY_APP`, `CANOPY_SSH`, and `CANOPY_SOCKET`.
+    public static let paneVariables: Set<String> = [
+        "CANOPY_PANE", "CANOPY_REPO", "CANOPY_ROW_PATH", "CANOPY_PLUGIN", "CANOPY_ITEM",
+    ]
+
+    /// The environment for the app's CLI running a host's request: the request's `paneVariables`, this Mac's PATH,
+    /// HOME, and TMPDIR, and the home, host, and time the app sets.
     public static func environment(
         for request: RelayRequest, host: String, rows: [RemoteRowEntry], home: CanopyHome, receivedAt: Date,
         shellEnvironment: [String: String] = GitEnvironment.current
     ) -> [String: String] {
-        var environment = request.env.filter { $0.key.hasPrefix("CANOPY_") }
+        var environment = request.env.filter { paneVariables.contains($0.key) }
         environment[CanopyHome.environmentKey] = home.root.path
         environment["CANOPY_HOST"] = host
-        environment["CANOPY_STARTED_AT"] = nil
         if let rowPath = environment["CANOPY_ROW_PATH"] {
             let hostRows = rows.filter { $0.host == host }
             environment["CANOPY_ROW_PATH"] = RelayPaths.local(rowPath, rows: hostRows, home: home.root.path)

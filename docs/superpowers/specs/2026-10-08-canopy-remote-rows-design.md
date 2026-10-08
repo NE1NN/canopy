@@ -278,6 +278,8 @@ One forward serves every pane on the host, since each request names its pane, an
 sshd makes the socket readable by its user alone, and the app makes its folder, the home's own, its user's alone before each forward.
 The app serves one request per connection on that socket and knows which host it came from.
 It runs its own CLI with the arguments, with `CANOPY_HOME` set to its home, `CANOPY_PANE` as sent, and the row's stand-in in place of the remote row's path in `CANOPY_ROW_PATH` and in the working folder.
+Of the request's variables only those the CLI reads from a pane cross over, `CANOPY_PANE`, `CANOPY_REPO`, `CANOPY_ROW_PATH`, `CANOPY_PLUGIN`, and `CANOPY_ITEM`, so a program on the host cannot steer the CLI with `CANOPY_APP`, `CANOPY_SSH`, or `CANOPY_SOCKET`.
+PATH, HOME, and TMPDIR are this Mac's.
 The relay sends how long ago it started, so `agent-hook` dates its report by when the hook ran on the host, not when the app ran the CLI.
 A run whose relay hangs up is stopped.
 A working folder outside the host's remote rows becomes the Canopy home, so the CLI targets nothing by folder.

@@ -74,6 +74,28 @@ struct RelayTests {
         #expect(env["SECRET"] == nil)
     }
 
+    /// Only what the CLI reads from a pane crosses over. CANOPY_APP, CANOPY_SSH, CANOPY_SOCKET, and the like would steer
+    /// the CLI on this Mac by what a program on the host chose.
+    @Test func aRelayedRunGetsOnlyThePaneVariablesTheCLIReads() {
+        let pane = [
+            "CANOPY_PANE": "p3", "CANOPY_REPO": "demo", "CANOPY_ROW_PATH": Self.featX.path, "CANOPY_PLUGIN": "tickets",
+            "CANOPY_ITEM": "t-1",
+        ]
+        let steering = [
+            "CANOPY_APP": "/tmp/Evil.app", "CANOPY_SSH": "/tmp/evil", "CANOPY_SOCKET": "/tmp/app.sock",
+            "CANOPY_CLI": "/home/me/.canopy/ab/bin/canopy", "CANOPY_HOME_ID": "ab12cd34", "CANOPY_ROW": "feat/x",
+            "CANOPY_ROOT_PATH": "/srv/demo", "CANOPY_TRASH_FOLDER": "/tmp/trash", "CANOPY_COMMAND_TOKEN": "t",
+            "CANOPY_FIXTURE_PLUGIN": "1",
+        ]
+
+        let env = Self.environment(Self.request(env: pane.merging(steering) { $1 }))
+
+        let crossed = env.filter { $0.key.hasPrefix("CANOPY_") }
+        #expect(Set(crossed.keys) == Set(pane.keys).union(["CANOPY_HOME", "CANOPY_HOST"]))
+        #expect(crossed["CANOPY_PANE"] == "p3" && crossed["CANOPY_REPO"] == "demo")
+        #expect(crossed["CANOPY_PLUGIN"] == "tickets" && crossed["CANOPY_ITEM"] == "t-1")
+    }
+
     @Test func aRelayedRunGetsThisMacsPathHomeAndTemporaryFolder() {
         let env = Self.environment(
             Self.request(env: ["HOME": "/home/me", "PATH": "/home/me/bin", "TMPDIR": "/tmp/host"]))
