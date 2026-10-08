@@ -14,21 +14,26 @@ final class WebViews {
     /// Where a page's web view went and what it is called now.
     var onNavigated: (WebPageID, URL?, String?) -> Void = { _, _, _ in }
     var openInBrowser: (URL) -> Void = { _ in }
-    /// A page asked for a window of its own, such as Google's sign-in.
-    var presentPopUp: (WKWebView, WebPageController) -> Void = { _, _ in }
+    /// A page asked for a window of its own, such as Google's sign-in. Returns whether it shows.
+    var presentPopUp: (WKWebView, WebPageController) -> Bool = { _, _ in false }
+    /// Whether a page is still in a row, so a view drawn a moment after it closed never brings its web view back.
+    var isOpen: (WebPageID) -> Bool = { _ in false }
     var dismissPopUp: (WKWebView) -> Void = { _ in }
 
     init() {
         configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        // Only a click opens a window, so a page cannot stack sheets over the window on its own.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let safari = Bundle(path: "/Applications/Safari.app")?.object(
             forInfoDictionaryKey: "CFBundleShortVersionString")
         configuration.applicationNameForUserAgent = SafariUserAgent.applicationName(safariVersion: safari as? String)
     }
 
-    /// The page's controller, made and loaded on first use.
-    func controller(for page: CanopyCore.WebPage) -> WebPageController {
+    /// The page's controller, made and loaded on first use. Nil for a page that closed.
+    func controller(for page: CanopyCore.WebPage) -> WebPageController? {
         if let controller = controllers[page.id] { return controller }
+        guard isOpen(page.id) else { return nil }
         let controller = WebPageController(page: page, configuration: configuration, owner: self)
         controllers[page.id] = controller
         return controller
@@ -54,6 +59,7 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     private(set) var isLoading = false
     /// WebKit's description of why the page failed to load, until it loads again.
     private(set) var error: String?
+    @ObservationIgnored private var restartedAfterCrash = false
     @ObservationIgnored private weak var owner: WebViews?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var popUps: [WKWebView] = []
@@ -123,7 +129,7 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
         switch WebNavigation.decide(url, site: site, isLinkClick: isLinkClick) {
         case .allow: return .allow
         case .openInBrowser:
-            owner?.openInBrowser(url)
+            if isInFront { owner?.openInBrowser(url) }
             return .cancel
         case .refuse: return .cancel
         }
@@ -170,17 +176,18 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
         let isLinkClick = navigationAction.navigationType == .linkActivated
         switch WebNavigation.decideNewWindow(url, site: site, isLinkClick: isLinkClick) {
         case .popUp:
+            guard isInFront else { return nil }
             let popUp = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 600), configuration: configuration)
             popUp.navigationDelegate = self
             popUp.uiDelegate = self
+            guard owner?.presentPopUp(popUp, self) == true else { return nil }
             popUps.append(popUp)
-            owner?.presentPopUp(popUp, self)
             return popUp
         case .loadInPage:
             if let url { self.webView.load(URLRequest(url: url)) }
             return nil
         case .openInBrowser:
-            if let url { owner?.openInBrowser(url) }
+            if let url, isInFront { owner?.openInBrowser(url) }
             return nil
         case .refuse:
             return nil
@@ -198,8 +205,24 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
         popUps.removeAll { $0 === popUp }
     }
 
+    /// Reloads once. A page whose web process ends again shows the error, rather than reloading forever.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        if webView === self.webView { reload() }
+        guard webView === self.webView else { return }
+        if restartedAfterCrash {
+            error = "The page stopped working. Reload to try again."
+        } else {
+            restartedAfterCrash = true
+            reload()
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if webView === self.webView { restartedAfterCrash = false }
+    }
+
+    /// Only a page the author can see opens the browser or a pop-up, so one in a background row cannot.
+    private var isInFront: Bool {
+        webView.window != nil && NSApp.isActive
     }
 }
 

@@ -72,6 +72,24 @@ public enum TerminalLink: Equatable, Sendable {
         }
     }
 
+    /// Bundles and scripts that would run something rather than show it.
+    static let runnable: Set<String> = ["app", "command", "tool", "terminal", "workflow", "scpt", "pkg", "mpkg"]
+
+    /// The file a `.path` link names, relative to the terminal's folder, with any `:line` or `:line:column` after it.
+    /// Nil unless it is there and opening it shows it rather than runs it, since a program's output can hold any text,
+    /// such as `tel:5551234`.
+    public static func file(_ link: String, in folder: String?) -> URL? {
+        var path = (link as NSString).expandingTildeInPath
+        if !path.hasPrefix("/") {
+            guard let folder else { return nil }
+            path = (folder as NSString).appendingPathComponent(path)
+        }
+        let candidates = [path, path.replacing(/:\d+(:\d+)?$/, with: "")]
+        guard let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
+        let url = URL(fileURLWithPath: found)
+        return Self.runnable.contains(url.pathExtension.lowercased()) ? nil : url
+    }
+
     /// Whether the text starts with a scheme, such as `mailto:`. `App.swift:12` is a path and a line, not a scheme.
     private static func namesScheme(_ text: String) -> Bool {
         guard let match = text.firstMatch(of: /^[A-Za-z][A-Za-z0-9+.\-]*:(.*)$/) else { return false }

@@ -85,9 +85,9 @@ struct TerminalCommands: Commands {
         }
         // Replacing the save group also drops File > Close, so ⌘W closes a terminal rather than the window.
         CommandGroup(replacing: .saveItem) {
-            Button(model.selectedTab?.page == nil ? "Close Terminal" : "Close Page", action: model.closeFocusedPane)
+            Button(model.closeTitle, action: model.closeFocusedPane)
                 .keyboardShortcut("w")
-                .disabled(model.selectedTab == nil)
+                .disabled(model.selectedTab == nil && model.focusedPanelPage == nil)
         }
         CommandGroup(after: .sidebar) {
             Button(model.selectedPanel?.isHidden == false ? "Hide Web Panel" : "Show Web Panel") {

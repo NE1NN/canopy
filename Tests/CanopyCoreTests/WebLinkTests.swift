@@ -62,3 +62,30 @@ struct WebLinkTests {
         }
     }
 }
+
+struct TerminalFileLinkTests {
+    @Test func aSchemeWithDigitsIsAPathThatOpensNothingUnlessItIsAFile() throws {
+        let dir = try TempDir()
+        for text in ["tel:5551234", "facetime:5551234", "zoommtg:123456"] {
+            #expect(TerminalLink(text) == .path(text), "\(text)")
+            #expect(TerminalLink.file(text, in: dir.path) == nil, "\(text)")
+        }
+    }
+
+    @Test func pathsOpenOnlyWhenTheyAreFilesThatDoNotRunAnything() throws {
+        let dir = try TempDir()
+        try FileManager.default.createDirectory(atPath: dir.sub("Sources"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir.sub("Sources/App.swift"), contents: Data())
+        FileManager.default.createFile(atPath: dir.sub("run.command"), contents: Data())
+        try FileManager.default.createDirectory(atPath: dir.sub("Tool.app"), withIntermediateDirectories: true)
+
+        #expect(TerminalLink.file("Sources/App.swift:12", in: dir.path)?.path == dir.sub("Sources/App.swift"))
+        #expect(TerminalLink.file("Sources/App.swift:12:4", in: dir.path)?.path == dir.sub("Sources/App.swift"))
+        #expect(TerminalLink.file(dir.sub("Sources/App.swift"), in: nil)?.path == dir.sub("Sources/App.swift"))
+        #expect(TerminalLink.file("Sources", in: dir.path)?.path == dir.sub("Sources"))
+        #expect(TerminalLink.file("Sources/Missing.swift", in: dir.path) == nil)
+        #expect(TerminalLink.file("Sources/App.swift", in: nil) == nil)
+        #expect(TerminalLink.file("run.command", in: dir.path) == nil)
+        #expect(TerminalLink.file("Tool.app", in: dir.path) == nil)
+    }
+}

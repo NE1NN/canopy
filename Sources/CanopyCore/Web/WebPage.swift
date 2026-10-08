@@ -39,13 +39,13 @@ public final class WebPage: Identifiable {
     /// The site it opened on, which it stays on. Links the author clicks to other sites open in the browser.
     public let site: String
 
-    init(id: WebPageID, url: URL, title: String, context: PaneContext) {
+    init(id: WebPageID, url: URL, title: String, context: PaneContext, openedURL: URL? = nil) {
         self.id = id
         self.url = url
         self.title = title
         self.context = context
-        self.openedURL = url
-        self.site = WebNavigation.site(of: url)
+        self.openedURL = openedURL ?? url
+        self.site = WebNavigation.site(of: openedURL ?? url)
     }
 
     /// Whether the page is at `url`, or opened with it.

@@ -10,26 +10,28 @@ struct WebPageView: View {
     let page: CanopyCore.WebPage
 
     var body: some View {
-        let controller = model.webViews.controller(for: page)
-        WebViewHost(webView: controller.webView)
-            .overlay {
-                if let error = controller.error {
-                    ContentUnavailableView {
-                        Label("Page Did Not Load", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(error)
-                    } actions: {
-                        Button("Reload", action: controller.reload)
+        if let controller = model.webViews.controller(for: page) {
+            WebViewHost(webView: controller.webView) { model.webPageFocusChanged(page.id, $0) }
+                .overlay {
+                    if let error = controller.error {
+                        ContentUnavailableView {
+                            Label("Page Did Not Load", systemImage: "exclamationmark.triangle")
+                        } description: {
+                            Text(error)
+                        } actions: {
+                            Button("Reload", action: controller.reload)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Style.panelBackground)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Style.panelBackground)
                 }
-            }
+        }
     }
 }
 
 private struct WebViewHost: NSViewRepresentable {
     let webView: WKWebView
+    var onFocusChange: (Bool) -> Void = { _ in }
 
     func makeNSView(context: Context) -> WebViewContainer {
         WebViewContainer(webView: webView)
@@ -37,16 +39,19 @@ private struct WebViewHost: NSViewRepresentable {
 
     func updateNSView(_ container: WebViewContainer, context: Context) {
         container.adopt(webView)
+        container.onFocusChange = onFocusChange
     }
 
     static func dismantleNSView(_ container: WebViewContainer, coordinator: ()) {
-        container.release()
+        container.dismantle()
     }
 }
 
 /// Holds a web view that may move to another container, as when its page moves between the panel and a tab.
 final class WebViewContainer: NSView {
     private var webView: WKWebView
+    var onFocusChange: (Bool) -> Void = { _ in }
+    private var focusObservation: NSKeyValueObservation?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -72,6 +77,23 @@ final class WebViewContainer: NSView {
     func release() {
         if webView.superview === self { webView.removeFromSuperview() }
     }
+
+    func dismantle() {
+        focusObservation = nil
+        release()
+    }
+
+    /// Tells the model while the keyboard is in the page, so ⌘W closes the panel's page rather than a terminal.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        focusObservation = window?.observe(\.firstResponder, options: [.initial, .new]) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let view = window.firstResponder as? NSView
+                self.onFocusChange(view?.isDescendant(of: self.webView) ?? false)
+            }
+        }
+    }
 }
 
 /// What sits above a page, in the panel and in a web tab: its title, Reload, Open in Browser, the move, and Close.
@@ -84,7 +106,7 @@ struct WebHeader: View {
 
     var body: some View {
         let controller = model.webViews.controller(for: page)
-        let isLoading = controller.isLoading
+        let isLoading = controller?.isLoading ?? false
         HStack(spacing: 2) {
             Group {
                 if isLoading {
@@ -105,9 +127,9 @@ struct WebHeader: View {
                 .truncationMode(.tail)
                 .help(page.url.absoluteString)
             Spacer(minLength: 8)
-            IconButton(title: "Reload", systemImage: "arrow.clockwise", shortcut: "⌘R", action: controller.reload)
+            IconButton(title: "Reload", systemImage: "arrow.clockwise", shortcut: "⌘R") { controller?.reload() }
             IconButton(title: "Open in Browser", systemImage: "safari") {
-                model.openInBrowser(controller.webView.url ?? page.url)
+                model.openInBrowser(controller?.webView.url ?? page.url)
             }
             IconButton(
                 title: placement == .panel ? "Move to Tab" : "Move to Panel",

@@ -104,7 +104,9 @@ public struct AppState: Codable, Sendable, Equatable {
         nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
         portsCollapsed = try container.decodeIfPresent(Bool.self, forKey: .portsCollapsed) ?? false
         agentHooksOffered = try container.decodeIfPresent(Bool.self, forKey: .agentHooksOffered) ?? false
-        terminals = (try? container.decodeIfPresent([String: SavedRowTerminals].self, forKey: .terminals)) ?? [:]
+        // A row whose tabs cannot be read is dropped on its own, so other rows keep theirs.
+        let terminals = try? container.decodeIfPresent([String: Lenient<SavedRowTerminals>].self, forKey: .terminals)
+        self.terminals = terminals?.compactMapValues(\.value) ?? [:]
         // A plugin's entry that cannot be read is dropped on its own, so repos and other plugins still load.
         let plugins = try? container.decodeIfPresent([String: Lenient<PluginEntry>].self, forKey: .plugins)
         self.plugins = plugins?.compactMapValues(\.value) ?? [:]

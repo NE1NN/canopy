@@ -452,7 +452,7 @@ public final class TerminalStore {
     }
 
     public func closeAll() {
-        for path in Array(tabsByRow.keys) {
+        for path in rowPaths {
             closeRow(path: path)
         }
     }
@@ -489,7 +489,9 @@ public final class TerminalStore {
     }
 
     private func savedPage(_ page: WebPage) -> SavedWebPage {
-        SavedWebPage(url: page.url.absoluteString, title: page.title)
+        SavedWebPage(
+            url: page.url.absoluteString, title: page.title,
+            opened: page.openedURL == page.url ? nil : page.openedURL.absoluteString)
     }
 
     /// Rebuilds a row's saved tabs with fresh shells in the saved folders, and its pages, which load once they show.
@@ -534,7 +536,9 @@ public final class TerminalStore {
     private func restoredPage(_ saved: SavedWebPage, for context: PaneContext) -> WebPage? {
         guard let url = WebAddress.parse(saved.url) else { return nil }
         defer { nextWebPage += 1 }
-        return WebPage(id: WebPageID(nextWebPage), url: url, title: saved.title, context: context)
+        return WebPage(
+            id: WebPageID(nextWebPage), url: url, title: saved.title, context: context,
+            openedURL: saved.opened.flatMap(WebAddress.parse))
     }
 
     private func makePane(_ context: PaneContext, command: PaneCommand, directory: String?) -> Pane {

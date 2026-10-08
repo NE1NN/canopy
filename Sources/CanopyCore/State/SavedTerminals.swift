@@ -9,12 +9,23 @@ public struct SavedPane: Codable, Hashable, Sendable {
 
 /// A web page as saved: where it was and what it was called. Restoring loads it only once it shows.
 public struct SavedWebPage: Codable, Hashable, Sendable {
+    /// Where the page was.
     public var url: String
     public var title: String
+    /// The address it opened with, when it moved on from there. Its site, and finding it again, go by this.
+    public var opened: String?
 
-    public init(url: String, title: String) {
+    public init(url: String, title: String, opened: String? = nil) {
         self.url = url
         self.title = title
+        self.opened = opened
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        url = try container.decode(String.self, forKey: .url)
+        title = (try? container.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        opened = try? container.decodeIfPresent(String.self, forKey: .opened)
     }
 }
 
@@ -60,6 +71,12 @@ public struct SavedWebPanel: Codable, Equatable, Sendable {
         self.page = page
         self.hidden = hidden
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        page = try container.decode(SavedWebPage.self, forKey: .page)
+        hidden = (try? container.decodeIfPresent(Bool.self, forKey: .hidden)) ?? false
+    }
 }
 
 /// A row's tabs and panel as saved in state.json.
@@ -72,5 +89,13 @@ public struct SavedRowTerminals: Codable, Equatable, Sendable {
         self.tabs = tabs
         self.selectedTab = selectedTab
         self.panel = panel
+    }
+
+    /// A tab or panel that cannot be read is dropped on its own, so the row's others still load.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tabs = try container.decode([Lenient<SavedTab>].self, forKey: .tabs).compactMap(\.value)
+        selectedTab = (try? container.decodeIfPresent(Int.self, forKey: .selectedTab)) ?? 0
+        panel = try? container.decodeIfPresent(SavedWebPanel.self, forKey: .panel)
     }
 }

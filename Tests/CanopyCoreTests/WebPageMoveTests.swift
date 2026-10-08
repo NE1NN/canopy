@@ -210,3 +210,49 @@ struct WebPageMoveTests {
         return WorkspaceSnapshot(repos: [RepoSnapshot(path: repo, name: "demo", rows: rows)])
     }
 }
+
+@MainActor
+struct WebPageReviewTests {
+    let artifact = URL(string: "https://claude.ai/artifact/a1")!
+    let other = URL(string: "http://localhost:5173/")!
+
+    @Test func movingATabThatIsNotSelectedKeepsTheAuthorsTab() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let context = Fixture.context(dir.path)
+        let inPanel = terminals.openPage(artifact, for: context).page
+        let inTab = terminals.openPage(other, for: context, placement: .tab).page
+        let terminal = terminals.openTab(for: context).tab
+        let web = try #require(terminals.tabs(inRow: dir.path).first { $0.page === inTab })
+
+        terminals.moveTabToPanel(web.id, inRow: dir.path)
+
+        #expect(terminals.selectedTab(inRow: dir.path)?.id == terminal.id)
+        #expect(terminals.shownPanel(inRow: dir.path) === inTab)
+        #expect(terminals.tabs(inRow: dir.path).first?.page === inPanel)
+    }
+
+    @Test func titlesLoseControlCharacters() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        let page = terminals.openPage(artifact, for: Fixture.context(dir.path)).page
+
+        terminals.pageNavigated(page.id, url: nil, title: "Plan\u{1b}]52;c;aGk=\u{07}\nnext\u{9b}2J ")
+
+        #expect(page.title == "Plan ]52;c;aGk= next 2J")
+    }
+
+    @Test func closingEverythingClosesRowsThatHaveOnlyAPanel() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        let page = terminals.openPage(artifact, for: Fixture.context(dir.path)).page
+        var closed: [WebPageID] = []
+        terminals.onPageClosed = { closed.append($0) }
+
+        terminals.closeAll()
+
+        #expect(closed == [page.id])
+        #expect(terminals.panel(inRow: dir.path) == nil)
+    }
+}

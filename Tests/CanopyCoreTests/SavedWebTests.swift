@@ -104,10 +104,9 @@ struct SavedWebTests {
         #expect(row.tabs[0].layout == .leaf(SavedPane(folder: "/r")))
         #expect(row.panel?.page.url == "http://localhost:5173/")
         #expect(try JSONDecoder().decode(SavedRowTerminals.self, from: try JSONEncoder().encode(row)) == row)
+        // A tab with neither a layout nor a page is dropped.
         let tabWithNothing = #"{"tabs": [{"name": "x"}], "selectedTab": 0}"#
-        #expect(throws: (any Error).self) {
-            try JSONDecoder().decode(SavedRowTerminals.self, from: Data(tabWithNothing.utf8))
-        }
+        #expect(try JSONDecoder().decode(SavedRowTerminals.self, from: Data(tabWithNothing.utf8)).tabs.isEmpty)
     }
 
     @Test func anOlderStateFileHasNoPages() throws {
@@ -154,5 +153,51 @@ struct SavedWebTests {
         #expect(await reloaded.savedWebPlacement == .tab)
         #expect(await reloaded.webPanelWidth == 555)
         await reloaded.stop()
+    }
+}
+
+@MainActor
+struct SavedWebReviewTests {
+    @Test func aPageKeepsTheAddressItOpenedWithAcrossARelaunch() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        let context = Fixture.context(dir.path)
+        let opened = URL(string: "http://localhost:5173/")!
+        let page = terminals.openPage(opened, for: context).page
+        terminals.pageNavigated(page.id, url: URL(string: "https://login.auth.example/authorize")!, title: nil)
+        let saved = try #require(terminals.saved()[dir.path])
+        #expect(saved.panel?.page.opened == opened.absoluteString)
+
+        let restored = Fixture.terminals(dir)
+        restored.restore(saved, for: context)
+
+        let back = try #require(restored.panel(inRow: dir.path)?.page)
+        #expect(back.url.absoluteString == "https://login.auth.example/authorize")
+        #expect(back.site == "localhost")
+        #expect(restored.openPage(opened, for: context).page === back)
+    }
+
+    @Test func aBrokenPageOrTabCostsOnlyItself() throws {
+        let json = """
+            {"version": 1, "terminals": {
+                "/a": {"tabs": [
+                    {"name": "Terminal", "layout": {"pane": {"folder": "/a"}}},
+                    {"name": "Broken"},
+                    {"name": "Plan", "web": {"url": "https://claude.ai/artifact/a1"}}
+                ], "selectedTab": 2, "panel": {"page": {"url": "http://localhost:5173/"}}},
+                "/b": {"tabs": "not a list"},
+                "/c": {"tabs": [{"name": "Terminal", "layout": {"pane": {"folder": "/c"}}}], "selectedTab": 0,
+                    "panel": {"hidden": true}}
+            }}
+            """
+
+        let state = try JSONDecoder().decode(AppState.self, from: Data(json.utf8))
+
+        let a = try #require(state.terminals["/a"])
+        #expect(a.tabs.map(\.name) == ["Terminal", "Plan"])
+        #expect(a.tabs[1].web == SavedWebPage(url: "https://claude.ai/artifact/a1", title: ""))
+        #expect(a.panel == SavedWebPanel(page: SavedWebPage(url: "http://localhost:5173/", title: ""), hidden: false))
+        #expect(state.terminals["/b"] == nil)
+        #expect(state.terminals["/c"]?.tabs.count == 1 && state.terminals["/c"]?.panel == nil)
     }
 }

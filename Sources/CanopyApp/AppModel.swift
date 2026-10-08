@@ -521,7 +521,10 @@ final class AppModel {
         case .artifact:
             if selectedRowPath != pane.context.rowPath { reveal(pane.context.rowPath) }
         case .browser(let url): openInBrowser(url)
-        case .path(let path): SwiftTermEmulator.openPath(path)
+        case .path(let path):
+            if let file = TerminalLink.file(path, in: pane.currentDirectory ?? pane.context.rowPath) {
+                NSWorkspace.shared.open(file)
+            }
         case .refused: break
         }
     }
@@ -921,15 +924,19 @@ final class AppModel {
         }
     }
 
-    /// ⌘W: the focused terminal, or the page of a web tab. Only for the main window itself, so it never closes
-    /// anything behind a sheet or a closed window.
+    /// ⌘W: the panel's page while the author is in it, else the focused terminal, or the page of a web tab. Only for
+    /// the main window itself, so it never closes anything behind a sheet or a closed window.
     func closeFocusedPane() {
         guard let window = NSApp.keyWindow, window.sheetParent == nil, window.attachedSheet == nil,
-            let row = selection, let tab = selectedTab
+            let row = selection
         else { return }
-        if let pane = tab.focused {
+        if let page = focusedPanelPage {
+            terminals.closePanel(inRow: row.path)
+            webPageFocusChanged(page.id, false)
+            focusSelectedTerminal()
+        } else if let tab = selectedTab, let pane = tab.focused {
             requestClose(pane)
-        } else {
+        } else if let tab = selectedTab {
             terminals.closeTab(tab.id, inRow: row.path)
             focusSelectedTerminal()
         }
@@ -962,10 +969,37 @@ final class AppModel {
         }
         webViews.openInBrowser = { [weak self] in self?.openInBrowser($0) }
         webViews.presentPopUp = { [weak self] webView, owner in
-            self?.webPopUp = WebPopUp(webView: webView, owner: owner)
+            guard let self, self.webPopUp == nil else { return false }
+            self.webPopUp = WebPopUp(webView: webView, owner: owner)
+            return true
         }
+        webViews.isOpen = { [weak self] in self?.terminals.page($0) != nil }
         webViews.dismissPopUp = { [weak self] in self?.dismissPopUp($0) }
         terminals.onPageClosed = { [weak self] in self?.webViews.drop($0) }
+    }
+
+    /// The page whose web view has the keyboard, if any.
+    private(set) var focusedPage: WebPageID?
+
+    func webPageFocusChanged(_ id: WebPageID, _ focused: Bool) {
+        if focused {
+            focusedPage = id
+        } else if focusedPage == id {
+            focusedPage = nil
+        }
+    }
+
+    /// The selected row's panel page while the author is in it, which ⌘W closes rather than a terminal.
+    var focusedPanelPage: CanopyCore.WebPage? {
+        guard let focusedPage, let row = selection, let page = terminals.shownPanel(inRow: row.path),
+            page.id == focusedPage
+        else { return nil }
+        return page
+    }
+
+    /// What ⌘W closes, for its menu item.
+    var closeTitle: String {
+        focusedPanelPage != nil || selectedTab?.page != nil ? "Close Page" : "Close Terminal"
     }
 
     func dismissPopUp(_ webView: WKWebView) {

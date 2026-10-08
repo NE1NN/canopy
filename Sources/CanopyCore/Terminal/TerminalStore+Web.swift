@@ -125,7 +125,7 @@ extension TerminalStore {
             page.url = url
             changed = true
         }
-        if let title, page.title != title {
+        if let title = title.map(Self.plainTitle), page.title != title {
             page.title = title
             changed = true
         }
@@ -140,6 +140,15 @@ extension TerminalStore {
             openPage(url, for: pane.context)
         }
         return route
+    }
+
+    /// A title with its control characters as spaces, so `canopy web list` never prints escape sequences into a
+    /// terminal.
+    static func plainTitle(_ title: String) -> String {
+        let scalars = title.unicodeScalars.map { scalar in
+            scalar.properties.generalCategory == .control ? " " : Character(scalar)
+        }
+        return String(scalars).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
     }
 
     public func setPanelHidden(_ hidden: Bool, inRow path: String) {

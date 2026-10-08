@@ -140,11 +140,6 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
-    /// A file path ⌘-clicked in a terminal opens with its app, as SwiftTerm opens it.
-    static func openPath(_ path: String) {
-        TerminalView.openDefaultLink(path)
-    }
-
     /// ⌘-click. The pane's row decides where the link goes.
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         onOpenLink?(link)
