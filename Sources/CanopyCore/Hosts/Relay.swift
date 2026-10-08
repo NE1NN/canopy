@@ -74,10 +74,15 @@ public enum RelayInput: String, Sendable, CaseIterable {
         return commands.first { words.starts(with: $0.words) }?.input
     }
 
-    /// `commands` as JSON, which the host's script reads as a Python literal.
-    static var literal: String {
+    /// `commands` as JSON, which the host's script reads as a Python literal, so with no `\/` for a slash, which
+    /// Python reads as an invalid escape.
+    static var literal: String { literal(of: commands) }
+
+    static func literal(of commands: [(words: [String], input: RelayInput)]) -> String {
         let pairs: [[Any]] = commands.map { [$0.words, $0.input.rawValue] }
-        let data = (try? JSONSerialization.data(withJSONObject: pairs, options: [.sortedKeys])) ?? Data("[]".utf8)
+        let data =
+            (try? JSONSerialization.data(withJSONObject: pairs, options: [.sortedKeys, .withoutEscapingSlashes]))
+            ?? Data("[]".utf8)
         return String(decoding: data, as: UTF8.self)
     }
 }
