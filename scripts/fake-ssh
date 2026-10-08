@@ -86,10 +86,14 @@ for forward in "${forwards[@]+"${forwards[@]}"}"; do
     ln -s "$local_path" "$remote"
 done
 
-# The host says it is Linux, as Canopy's hosts must be.
-mkdir -p "$FAKE_SSH_HOME/.fake-ssh-bin"
-printf '#!/bin/sh\n[ "$1" = "-s" ] && { echo Linux; exit 0; }\nexec /usr/bin/uname "$@"\n' > "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
-chmod +x "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
+# The host says it is Linux, as Canopy's hosts must be. Written once: macOS's security scanners can hold the first run
+# of every new file for seconds.
+if [[ ! -x "$FAKE_SSH_HOME/.fake-ssh-bin/uname" ]]; then
+    mkdir -p "$FAKE_SSH_HOME/.fake-ssh-bin"
+    printf '#!/bin/sh\n[ "$1" = "-s" ] && { echo Linux; exit 0; }\nexec /usr/bin/uname "$@"\n' > "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$"
+    chmod +x "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$"
+    mv -f "$FAKE_SSH_HOME/.fake-ssh-bin/uname.$$" "$FAKE_SSH_HOME/.fake-ssh-bin/uname"
+fi
 
 cd "$FAKE_SSH_HOME" || exit 255
 export HOME="$FAKE_SSH_HOME"
