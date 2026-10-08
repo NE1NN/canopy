@@ -23,6 +23,9 @@ struct HostCommand: AsyncParsableCommand {
                 the host cannot be reached, such as a command that starts it. Panes detach after --idle-detach \
                 minutes with nothing running and nothing typed, 30 by default, so the host can power itself off; 0 \
                 never detaches.
+
+                Programs on the host can then run canopy, which drives this Mac's Canopy as a local agent can, so \
+                add only a host whose account you trust as you trust this Mac.
                 """
         )
 
