@@ -36,12 +36,19 @@ unreachable() {
     exit 255
 }
 
+# The master's pid, while that process is still this control path's master. A master killed outright leaves its file,
+# and its pid can belong to any process by then, which -O exit would kill.
 master_pid() {
-    [[ -n "$control" && -f "$control" ]] && cat "$control"
+    [[ -n "$control" && -f "$control" ]] || return 1
+    local pid
+    pid=$(cat "$control")
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$(ps -ww -o command= -p "$pid" 2>/dev/null)" == *fake-ssh*" -M "*"$control"* ]] || return 1
+    echo "$pid"
 }
 
 if [[ -n "$operation" ]]; then
-    pid=$(master_pid)
+    pid=$(master_pid || true)
     case "$operation" in
         check)
             if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
