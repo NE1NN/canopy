@@ -37,7 +37,9 @@ public enum HostActivity {
 
 /// Probes connected hosts for what their sessions do, tells each host what its panes are up to, and replays the hook
 /// reports a host kept, so an agent that finished while the app was away shows it without its pane attaching again.
-/// Every few seconds it also lists each host's listening ports and forwards those of its remote rows to the Mac.
+/// Every few seconds it also lists each host's listening ports and forwards those of its remote rows to the Mac. A host's
+/// probes run one at a time, so they hold one of its ssh sessions at most, which `host add`'s MaxSessions warning
+/// counts on.
 @MainActor
 public final class HostMonitor {
     /// How often the hosts' worktrees are listed again, in probes.
@@ -53,9 +55,11 @@ public final class HostMonitor {
     private var listing: [String: Task<Void, Never>] = [:]
     /// Each host's kept reports being replayed, which can each take seconds.
     private var replaying: [String: Task<Void, Never>] = [:]
-    /// Each host's ports round under way, which the session probe never waits for, and when the last one started.
-    private var portsRound: [String: Task<Void, Never>] = [:]
+    /// Each host's forwards being made from its last ports probe, which take no ssh session, so probes go on.
+    private var forwarding: [String: Task<Void, Never>] = [:]
     private var lastPorts: [String: ContinuousClock.Instant] = [:]
+    /// The hosts a probe is under way on, which another call skips.
+    private var probing: Set<String> = []
 
     public init(workspace: Workspace, terminals: TerminalStore, portsEvery: Duration = .seconds(5)) {
         self.workspace = workspace
@@ -75,7 +79,8 @@ public final class HostMonitor {
         }
         for connection in connected {
             let alias = connection.alias
-            startPortsRound(on: connection)
+            guard probing.insert(alias).inserted else { continue }
+            defer { probing.remove(alias) }
             guard let result = await connection.probe(command, timeout: .seconds(10)),
                 result.status == 0, let report = try? HostProbe.decode(result.stdout)
             else { continue }
@@ -107,29 +112,32 @@ public final class HostMonitor {
                     self.replaying[alias] = nil
                 }
             }
+            await probePorts(on: connection)
         }
     }
 
-    private func startPortsRound(on connection: HostConnection) {
+    /// The host's listening ports, once `portsEvery` has passed, read right after its session probe so the two never
+    /// hold a session each. Its own short timeout keeps a stuck `ss` from holding up the next session probe for long.
+    /// A probe that fails keeps what the last one found, and a host without `ss` lists none.
+    private func probePorts(on connection: HostConnection) async {
         let alias = connection.alias
         let now = ContinuousClock.now
-        guard portsRound[alias] == nil, lastPorts[alias].map({ now - $0 >= portsEvery }) ?? true else { return }
+        guard forwarding[alias] == nil, lastPorts[alias].map({ now - $0 >= portsEvery }) ?? true else { return }
         lastPorts[alias] = now
-        portsRound[alias] = Task {
-            await self.refreshPorts(on: connection)
-            self.portsRound[alias] = nil
+        guard
+            let result = await connection.probe(
+                HostProbe.command(homeID: workspace.homeID, ports: true), timeout: .seconds(10)),
+            result.status == 0, let report = try? HostProbe.decode(result.stdout)
+        else { return }
+        forwarding[alias] = Task {
+            await self.forward(report, on: connection)
+            self.forwarding[alias] = nil
         }
     }
 
-    /// The host's listening ports, given to its remote rows, with the rows' ports forwarded to the Mac. A probe that
-    /// fails keeps what the last one found, and a host without `ss` lists none.
-    private func refreshPorts(on connection: HostConnection) async {
+    /// Gives the host's ports to its remote rows and forwards the rows' ports to the Mac.
+    private func forward(_ report: HostProbe.Report, on connection: HostConnection) async {
         let alias = connection.alias
-        guard
-            let result = await connection.probe(
-                HostProbe.command(homeID: workspace.homeID, ports: true), timeout: .seconds(30)),
-            result.status == 0, let report = try? HostProbe.decode(result.stdout)
-        else { return }
         let rows = await workspace.remoteRows(on: alias)
         var sessions: [String: String] = [:]
         for pane in terminals.panes where pane.context.remote?.host == alias {

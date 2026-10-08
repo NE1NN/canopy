@@ -41,7 +41,7 @@ A What was built section at the end says where the build differs.
 | Decision | Choice | Reason |
 |---|---|---|
 | Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per ports round, and the session list it needs for attribution comes in the same answer. |
-| How often | Every 5 seconds per host, by time since the last ports probe, started from the 2-second probe loop as a task of its own, one per host at a time | The spec's 5 seconds, without a second loop, and the session probe never waits for `ss`, `lsof`, or forwards. |
+| How often | Every 5 seconds per host, by time since the last ports probe, as its own ssh call right after that host's session probe, with a 10-second timeout; attribution and forwards then run in a task of their own | A host's probes hold one ssh session at most, which `host add`'s MaxSessions warning counts on, a stuck `ss` delays the next session probe by its timeout at most, and forwards (control commands, no session) never hold probes up. |
 | Forward target on the host | `127.0.0.1` for `0.0.0.0` or `127.0.0.1`, `[::1]` for `::` or `::1`, any other IPv4 address as it is, and any other IPv6 address in brackets | A Vite server on `::1` alone refuses `127.0.0.1`, and the probe keeps `::` for an IPv6-only wildcard, as `ss` prints sshd's `[::]`. |
 | Mac port | The same port when nothing listens there on `127.0.0.1` or `::1`, else the next free one up to 65535, skipping ports other forwards hold | A local server on `::1` would otherwise catch `localhost:5173`. |
 | A Mac port that frees later | The forward keeps its port | Moving a forward under an open browser tab breaks it. |

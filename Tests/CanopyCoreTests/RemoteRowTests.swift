@@ -615,6 +615,59 @@ struct HostMonitorListingTests {
     }
 }
 
+struct HostMonitorSessionTests {
+    /// sshd allows a few sessions per connection, and each attached pane holds one, so a host's probes take one
+    /// session at most between them, however slow the ports probe and however often `probe()` is called.
+    @Test @MainActor func aHostsSessionAndPortsProbesNeverRunAtOnce() async throws {
+        let setup = try await RemoteRowTests.Setup()
+        let lock = setup.dir.sub("probing")
+        let overlap = setup.dir.sub("overlap")
+        let log = setup.dir.sub("probes")
+        let script = setup.dir.sub("probe-ssh")
+        // A probe takes the lock while it runs, and notes any other it finds holding it. The ports probe is slowed so
+        // a session probe that did not wait for it would meet it.
+        try #"""
+        #!/bin/bash
+        if [[ "$*" == *'canopy-host" probe'* ]]; then
+            [[ "$*" == *--ports* ]] && kind=ports || kind=sessions
+            echo "$kind" >> '\#(log)'
+            if mkdir '\#(lock)' 2>/dev/null; then
+                [[ $kind == ports ]] && sleep 1
+                '\#(FakeHost.script)' "$@"; status=$?
+                rmdir '\#(lock)'
+                exit $status
+            fi
+            touch '\#(overlap)'
+        fi
+        exec '\#(FakeHost.script)' "$@"
+        """#.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git,
+            hostTooling: HostTooling(sshExecutable: script, environment: { setup.host.environment }))
+        try await workspace.start()
+        try await workspace.addRepo(path: setup.repo)
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
+        try await workspace.prepareHost(try await workspace.connection(for: "box"))
+        let monitor = HostMonitor(
+            workspace: workspace, terminals: Fixture.terminals(setup.dir), portsEvery: .zero)
+        let probes = { ((try? String(contentsOfFile: log, encoding: .utf8)) ?? "").split(separator: "\n") }
+
+        #expect(
+            await eventually {
+                async let first: Void = monitor.probe()
+                async let second: Void = monitor.probe()
+                _ = await (first, second)
+                return probes().filter { $0 == "ports" }.count >= 3
+            })
+
+        #expect(probes().contains("sessions"))
+        #expect(!FileManager.default.fileExists(atPath: overlap))
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+}
+
 struct RemoteLinkedHomeTests {
     @Test func aHostWhoseHomeIsALinkStillListsItsRows() async throws {
         let setup = try await RemoteRowTests.Setup(host: { try FakeHost(in: $0, linkedHome: true) })
