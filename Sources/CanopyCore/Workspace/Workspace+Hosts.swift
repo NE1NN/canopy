@@ -201,7 +201,7 @@ extension Workspace {
     }
 
     private func killCommand(_ sessions: [String]) -> [String] {
-        ["sh", "-c", #"s=$0; for n; do tmux -L "$s" kill-session -t "=$n" 2>/dev/null; done; true"#]
+        ["sh", "-c", #"s=$0; for n; do tmux -u -L "$s" kill-session -t "=$n" 2>/dev/null; done; true"#]
             + [HostPaths.tmuxServer(homeID: homeID)] + sessions
     }
 
@@ -213,13 +213,14 @@ extension Workspace {
         let deadline = ContinuousClock.now + .seconds(120)
         while ContinuousClock.now < deadline {
             let result = try? await connection.run(
-                ["tmux", "-L", server, "has-session", "-t", "=\(session)"], timeout: .seconds(15))
+                ["tmux", "-u", "-L", server, "has-session", "-t", "=\(session)"], timeout: .seconds(15))
             if result?.status == 0 { break }
             try? await Task.sleep(for: .milliseconds(300))
         }
         _ = try? await connection.run(
             [
-                "sh", "-c", #"tmux -L "$0" send-keys -t "=$1:" -l "$2" && tmux -L "$0" send-keys -t "=$1:" Enter"#,
+                "sh", "-c",
+                #"tmux -u -L "$0" send-keys -t "=$1:" -l "$2" && tmux -u -L "$0" send-keys -t "=$1:" Enter"#,
                 server, session, text,
             ],
             timeout: .seconds(15))

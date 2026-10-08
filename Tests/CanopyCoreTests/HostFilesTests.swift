@@ -62,6 +62,8 @@ struct HostFilesTests {
             let argv = host.ssh.exec([host.home + "/.canopy/bin/canopy-host", "probe", "--server", server])
             var environment = host.environment
             environment["FAKE_SSH_PATH"] = "/opt/homebrew/bin:/usr/bin:/bin"
+            // As the app runs it: git's environment says LC_ALL=C, and ssh passes LC_* on to the host.
+            environment["LC_ALL"] = "C"
             let result = try Subprocess.run(
                 argv[0], Array(argv.dropFirst()), environment: environment, directory: nil, timeout: .seconds(30))
             return try HostProbe.decode(result.stdout)

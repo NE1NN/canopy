@@ -62,7 +62,7 @@ public enum RemoteAttach {
         -> [String]
     {
         let script =
-            #"s=$0 n=$1 d=$2; shift 2; exec tmux -L "$s" -f "$HOME/.canopy/tmux.conf" new-session -A -s "$n" -c "$d" "$@""#
+            #"s=$0 n=$1 d=$2; shift 2; exec tmux -u -L "$s" -f "$HOME/.canopy/tmux.conf" new-session -A -s "$n" -c "$d" "$@""#
         let variables = environment.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
         return ["sh", "-c", script, server, session, folder] + variables
     }

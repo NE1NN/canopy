@@ -13,7 +13,7 @@ struct RemoteRowTests {
         let origin: String
         let clone: String
 
-        init(host make: (TempDir) throws -> FakeHost = { try FakeHost(in: $0) }) async throws {
+        init(host make: @Sendable (TempDir) throws -> FakeHost = { try FakeHost(in: $0) }) async throws {
             dir = try TempDir()
             let host = try make(dir)
             self.host = host
@@ -330,5 +330,31 @@ struct RemoteStandInPathTests {
             for: TargetHint(row: link + "/remote/box/demo/feat-linked"), in: await linked.snapshot)
         #expect(found.path == created.row.path)
         await linked.stop()
+    }
+}
+
+@MainActor
+struct HostMonitorTests {
+    @Test(.enabled(if: RemoteSessionTests.tmux != nil, "needs tmux: brew install tmux"))
+    func aProbeTellsEachRemotePaneWhatItsSessionDoes() async throws {
+        let setup = try await RemoteRowTests.Setup(host: {
+            try FakeHost(in: $0, path: "/opt/homebrew/bin:/usr/bin:/bin")
+        })
+        let server = HostPaths.tmuxServer(homeID: setup.workspace.homeID)
+        defer { RemoteSessionTests().killServer(server) }
+        let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/m")
+        try await setup.workspace.prepareHost(try await setup.workspace.connection(for: "box"))
+        let terminals = Fixture.terminals(setup.dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).focused
+        let folder = try #require(created.row.remotePath)
+        try RemoteSessionTests().startSession(try #require(pane.remoteSession), server: server, in: folder)
+        let monitor = HostMonitor(workspace: setup.workspace, terminals: terminals)
+
+        await monitor.probe()
+
+        #expect(pane.remoteActivity?.folder == folder)
+        #expect(pane.remoteActivity?.busy == false)
+        await setup.workspace.stop()
     }
 }

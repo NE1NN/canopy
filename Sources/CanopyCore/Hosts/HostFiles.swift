@@ -22,7 +22,7 @@ public enum HostFiles {
             put("bin/canopy-host", sys.argv[1], 0o755)
             put("tmux.conf", sys.argv[2], 0o644)
             put("files-version", sys.argv[3], 0o644)
-            subprocess.run(["tmux", "-L", sys.argv[4], "source-file", os.path.join(home, "tmux.conf")],
+            subprocess.run(["tmux", "-u", "-L", sys.argv[4], "source-file", os.path.join(home, "tmux.conf")],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             """
         return [
@@ -68,7 +68,7 @@ public enum HostFiles {
         def processes():
             """Each process's terminal foreground group and name, by pid."""
             listed = subprocess.run(
-                ["ps", "-A", "-o", "pid=,tpgid=,comm="], capture_output=True, text=True
+                ["ps", "-A", "-o", "pid=,tpgid=,comm="], capture_output=True, encoding="utf-8", errors="replace"
             ).stdout
             table = {}
             for line in listed.splitlines():
@@ -81,9 +81,10 @@ public enum HostFiles {
 
         def probe(server):
             fields = "#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{pane_title}"
+            # -u: under a locale that is not UTF-8, as ssh can pass on, tmux would print tabs as underscores.
             listed = subprocess.run(
-                ["tmux", "-L", server, "list-panes", "-a", "-F", fields],
-                capture_output=True, text=True,
+                ["tmux", "-u", "-L", server, "list-panes", "-a", "-F", fields],
+                capture_output=True, encoding="utf-8", errors="replace",
             )
             sessions = []
             if listed.returncode == 0:

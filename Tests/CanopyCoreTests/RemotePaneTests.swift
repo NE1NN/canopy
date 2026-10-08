@@ -133,7 +133,7 @@ struct RemoteAttachTests {
         let words = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
         #expect(
             words == [
-                "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/tmux.conf", "new-session", "-A", "-s", "p7", "-c",
+                "-u", "-L", "canopy-abcd1234", "-f", "/home/u/.canopy/tmux.conf", "new-session", "-A", "-s", "p7", "-c",
                 "/home/u/my work", "-e", "CANOPY_PANE=p7", "-e", "CANOPY_ROW_PATH=/home/u/my work",
             ])
     }
