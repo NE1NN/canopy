@@ -72,6 +72,8 @@ struct HostFilesTests {
         let idle = await eventually { (try? probe())?["p1"]?.busy == false }
         #expect(idle)
         #expect(try probe()["p1"]?.folder == folder)
+        // tmux's title for a pane nothing titled is the machine's name, which says nothing.
+        #expect(try probe()["p1"]?.title == "")
         _ = try Subprocess.run(
             tmux, ["-L", server, "send-keys", "-t", "p1", "sleep 30", "Enter"], environment: Fixture.environment,
             directory: nil, timeout: .seconds(10))

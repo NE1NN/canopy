@@ -393,6 +393,8 @@ struct RowLineView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.isMissing ? .secondary : .primary)
+                // The branch keeps its room before a remote row's host name does.
+                .layoutPriority(1)
             if let tag = row.externalTag {
                 TagView(text: tag.label)
             }

@@ -45,7 +45,7 @@ public enum HostFiles {
         set -g default-terminal "tmux-256color"
         set -ga terminal-overrides ",xterm-256color:Tc:smcup@:rmcup@"
         set -g set-titles on
-        set -g set-titles-string "#T"
+        set -g set-titles-string "#{?#{||:#{==:#{pane_title},#{host}},#{==:#{pane_title},#{host_short}}},#{pane_current_command},#{pane_title}}"
         set -s set-clipboard on
         set -g allow-passthrough on
         set -g focus-events on
@@ -61,6 +61,7 @@ public enum HostFiles {
         """Canopy's helper on this host. Canopy installs and updates it; changes here are replaced."""
         import json
         import os
+        import socket
         import subprocess
         import sys
 
@@ -87,6 +88,8 @@ public enum HostFiles {
                 capture_output=True, encoding="utf-8", errors="replace",
             )
             sessions = []
+            # tmux titles a pane nothing has titled with the machine's name, which says nothing.
+            names = {socket.gethostname(), socket.gethostname().split(".")[0]}
             if listed.returncode == 0:
                 table = processes()
                 for line in listed.stdout.splitlines():
@@ -97,9 +100,10 @@ public enum HostFiles {
                     group, shell = table.get(pid, (pid, ""))
                     busy = group > 0 and group != pid
                     foreground = table.get(group, (0, shell))[1] if busy else shell
+                    title = "\t".join(parts[3:])
                     sessions.append({
                         "name": parts[0], "pid": pid, "busy": busy, "foreground": foreground,
-                        "folder": parts[2], "title": "\t".join(parts[3:]),
+                        "folder": parts[2], "title": "" if title in names else title,
                     })
             print(json.dumps({"sessions": sessions}))
 

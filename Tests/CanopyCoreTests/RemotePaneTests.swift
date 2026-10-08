@@ -67,6 +67,22 @@ struct RemotePaneTests {
         #expect(again.id != pane.id)
     }
 
+    @Test func aRemotePanesTitleIsItsProgramsOwnThenTheProgramThenTheHost() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+        let pane = terminals.openTab(for: try remoteContext(dir)).focused
+
+        pane.refreshTitle()
+        #expect(pane.title == "box")
+        pane.remoteActivity = SessionActivity(busy: false, foreground: "bash", folder: "/w", title: "")
+        #expect(pane.title == "bash")
+        pane.remoteActivity = SessionActivity(busy: true, foreground: "claude", folder: "/w", title: "✳ Fix the form")
+        #expect(pane.title == "✳ Fix the form")
+        pane.remoteActivity = SessionActivity(busy: true, foreground: "sleep", folder: "/w", title: "")
+        #expect(pane.title == "sleep")
+    }
+
     @Test func aRemotePaneIsBusyWhileTheHostSaysAProgramRuns() throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)

@@ -211,9 +211,10 @@ public final class Pane: Identifiable {
             return
         }
         if let remote = context.remote {
-            // tmux passes the session's title on, so a title the host's program set holds while the pane attaches.
-            let resolved = PaneTitle.resolve(programTitle, foreground: nil)
-            title = resolved.isEmpty ? remoteActivity?.foreground ?? remote.host : resolved
+            // The host says what the session's program titled it, or else which program runs. Until it has, the title
+            // tmux passed on stands in.
+            let candidates = [remoteActivity?.title, remoteActivity?.foreground, programTitle?.text, remote.host]
+            title = candidates.lazy.compactMap { $0 }.first { !$0.isEmpty } ?? remote.host
             return
         }
         guard let process else { return }
