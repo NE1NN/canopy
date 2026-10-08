@@ -54,6 +54,8 @@ final class FakeHostLauncher: HostProcessLauncher {
         var masters: [Master] = []
         var wakes: [String] = []
         var commands: [[String]] = []
+        /// Whether the control socket's file was there as each master started.
+        var socketThereAtStart: [Bool] = []
     }
 
     let state = Mutex(State())
@@ -68,7 +70,10 @@ final class FakeHostLauncher: HostProcessLauncher {
 
     func startMaster(_ argv: [String]) -> any HostMasterProcess {
         let master = Master()
+        let control = argv.firstIndex(of: "-S").map { argv[$0 + 1] } ?? ""
+        let there = FileManager.default.fileExists(atPath: control)
         let up = state.withLock { state in
+            state.socketThereAtStart.append(there)
             state.masters.append(master)
             return state.masterUp
         }

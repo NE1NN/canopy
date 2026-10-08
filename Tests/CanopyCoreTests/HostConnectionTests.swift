@@ -16,7 +16,8 @@ struct HostConnectionTests {
             activity = ActivityLog(folder: URL(fileURLWithPath: dir.sub("activity")))
             connection = HostConnection(
                 alias: "box", entry: HostEntry(repos: [:], wake: wake, idleDetachMinutes: idleMinutes),
-                ssh: SSHCommand(executable: "/usr/bin/ssh", controlPath: "/c", alias: "box"), launcher: launcher,
+                ssh: SSHCommand(executable: "/usr/bin/ssh", controlPath: dir.sub("cm"), alias: "box"),
+                launcher: launcher,
                 clock: clock, activity: activity)
         }
 
@@ -146,5 +147,15 @@ struct HostConnectionTests {
         #expect(result.status == 0)
         #expect(setup.launcher.commands.last == setup.connection.ssh.exec(["echo", "hi"]))
         #expect(await setup.connection.state == .connected)
+    }
+
+    @Test func aSocketNoMasterAnswersOnIsClearedBeforeANewMaster() async throws {
+        let setup = try Setup()
+        // A master killed outright leaves its socket, and a new one would then run without multiplexing.
+        try Data().write(to: URL(fileURLWithPath: setup.dir.sub("cm")))
+
+        try await setup.connection.connect()
+
+        #expect(setup.launcher.state.withLock { $0.socketThereAtStart } == [false])
     }
 }

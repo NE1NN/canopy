@@ -179,6 +179,7 @@ public actor HostConnection {
     /// Starts a master and waits until ssh says it is up, or it exits. Returns whether it is up.
     private func startMaster() async throws -> Bool {
         master?.stop()
+        await clearControlSocket()
         let started = launcher.startMaster(ssh.master())
         master = started
         let deadline = clock.now + Self.readyWithin
@@ -195,6 +196,16 @@ public actor HostConnection {
         let message = started.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         lastError = message.isEmpty ? "ssh did not connect within 20 seconds." : message
         return false
+    }
+
+    /// A master killed outright leaves its socket behind, and a new master finding it would run without multiplexing,
+    /// so nothing could go through it. One that still answers, which nothing here owns, is asked to exit first.
+    private func clearControlSocket() async {
+        guard FileManager.default.fileExists(atPath: ssh.controlPath) else { return }
+        if await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0 {
+            _ = await launcher.run(ssh.control("exit"), timeout: .seconds(5))
+        }
+        unlink(ssh.controlPath)
     }
 
     /// A master that ends on its own, as when the network drops, leaves the host idle for the next caller to connect.

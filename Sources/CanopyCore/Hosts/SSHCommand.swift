@@ -35,8 +35,9 @@ public struct SSHCommand: Sendable, Equatable {
     }
 
     /// Runs `remote` on the host in a terminal, through the master, forwarding each remote socket to a local one.
+    /// ssh's notes, such as "Shared connection to … closed", stay out of the pane, which says what happened itself.
     public func attach(_ remote: [String], forwards: [(remote: String, local: String)] = []) -> [String] {
-        var argv = [executable, "-t", "-S", controlPath, "-o", "ControlMaster=no"]
+        var argv = [executable, "-t", "-S", controlPath, "-o", "ControlMaster=no", "-o", "LogLevel=ERROR"]
         for forward in forwards {
             argv += ["-R", "\(forward.remote):\(forward.local)"]
         }

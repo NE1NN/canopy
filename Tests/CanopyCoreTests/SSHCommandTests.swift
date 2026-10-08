@@ -71,6 +71,7 @@ struct SSHCommandTests {
         #expect(exec.last == "'git' '-C' '/a b' 'status'")
         #expect(!exec.contains("-t"))
         #expect(attach.contains("-t"))
+        #expect(attach.containsSequence(["-o", "LogLevel=ERROR"]))
         #expect(attach.containsSequence(["-R", "/tmp/r.sock:/l.sock"]))
         #expect(ssh.control("check") == ["/usr/bin/ssh", "-S", "/c/sock", "-O", "check", "box"])
     }
