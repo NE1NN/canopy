@@ -2,7 +2,8 @@
 """Plays iproute2's `ss -ltnpH` for tests: prints the lines in the file $FAKE_SS_LINES names, leaving out processes
 that have exited, as a socket goes with its last process, and fails when that file is missing, as `ss` can on a host.
 Without $FAKE_SS_LINES it prints this Mac's listening sockets of this user, read with `lsof`, as `ss` prints a host's
-without root."""
+without root. A file .fake-ss-home-only in $HOME, the fake host's home, keeps only the processes working in that home,
+so the rest of this Mac's servers stay off the host, as they would on another machine."""
 import os
 import re
 import subprocess
@@ -25,6 +26,25 @@ def live(line):
     if not kept:
         return None
     return line[:line.index("users:((")] + "users:(" + ",".join(kept) + ")"
+
+
+def working_in(folder, pids):
+    """The pids whose working folder is in `folder`."""
+    if not pids:
+        return set()
+    listed = subprocess.run(
+        ["/usr/sbin/lsof", "-w", "-a", "-p", ",".join(sorted(pids)), "-d", "cwd", "-Fn"],
+        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace")
+    inside = set()
+    pid = None
+    for line in listed.stdout.splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("n") and pid is not None:
+            cwd = os.path.realpath(line[1:])
+            if cwd == folder or cwd.startswith(folder + os.sep):
+                inside.add(pid)
+    return inside
 
 
 def from_lsof():
@@ -53,11 +73,15 @@ def from_lsof():
             host, _, port = value.rpartition(":")
             if host == "*":
                 host = "0.0.0.0" if family == "IPv4" else "[::]"
-            holders = sockets.setdefault((host, port), [])
-            holders.append('("%s",pid=%s,fd=%s)' % (name, pid, descriptor))
+            sockets.setdefault((host, port), []).append((name, pid, descriptor))
+    home = os.path.realpath(os.environ.get("HOME", "/"))
+    if os.path.exists(os.path.join(home, ".fake-ss-home-only")):
+        inside = working_in(home, {pid for holders in sockets.values() for _, pid, _ in holders})
+        sockets = {key: [holder for holder in holders if holder[1] in inside] for key, holders in sockets.items()}
     peer = {True: "[::]:*", False: "0.0.0.0:*"}
-    return ["LISTEN 0 128 %s:%s %s users:(%s)" % (host, port, peer[host.startswith("[")], ",".join(holders))
-            for (host, port), holders in sockets.items()]
+    return ["LISTEN 0 128 %s:%s %s users:(%s)" % (
+        host, port, peer[host.startswith("[")], ",".join('("%s",pid=%s,fd=%s)' % holder for holder in holders))
+        for (host, port), holders in sockets.items() if holders]
 
 
 def main(arguments):
