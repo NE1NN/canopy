@@ -67,7 +67,7 @@ public enum HostFiles {
 
 
         def processes():
-            """Each process's terminal foreground group and name, by pid."""
+            """Each process's terminal foreground group and name, by pid, without a login shell's leading dash."""
             listed = subprocess.run(
                 ["ps", "-A", "-o", "pid=,tpgid=,comm="], capture_output=True, encoding="utf-8", errors="replace"
             ).stdout
@@ -76,7 +76,7 @@ public enum HostFiles {
                 parts = line.split(None, 2)
                 if len(parts) == 3 and parts[0].isdigit():
                     table[int(parts[0])] = (int(parts[1]) if parts[1].lstrip("-").isdigit() else 0,
-                                            os.path.basename(parts[2].strip()))
+                                            os.path.basename(parts[2].strip()).lstrip("-"))
             return table
 
 

@@ -51,7 +51,8 @@ struct HostFilesTests {
         let folder = dir.sub("work dir")
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         _ = try Subprocess.run(
-            tmux, ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", "p1", "-c", folder, "/bin/bash"],
+            // A login shell, as tmux starts one, whose name starts with a dash.
+            tmux, ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", "p1", "-c", folder, "exec -a -bash /bin/bash"],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         defer {
             _ = try? Subprocess.run(
@@ -74,6 +75,7 @@ struct HostFilesTests {
         #expect(try probe()["p1"]?.folder == folder)
         // tmux's title for a pane nothing titled is the machine's name, which says nothing.
         #expect(try probe()["p1"]?.title == "")
+        #expect(try probe()["p1"]?.foreground == "bash")
         _ = try Subprocess.run(
             tmux, ["-L", server, "send-keys", "-t", "p1", "sleep 30", "Enter"], environment: Fixture.environment,
             directory: nil, timeout: .seconds(10))
