@@ -211,6 +211,25 @@ public struct WorkspaceControlHandler: Sendable {
             let moved = try await workspace.moveRow(path: row.path, to: placement)
             return try .from(RowMoveResult(row: .worktree(moved.row), moved: moved.moved, from: moved.from))
 
+        case HostMethod.add:
+            let params = try request.decodeParams(HostAddParams.self)
+            let info = try await workspace.addHost(
+                alias: params.alias, repos: params.repos, wake: params.wake,
+                idleDetachMinutes: params.idleDetachMinutes)
+            return try .from(await withPanes(info))
+
+        case HostMethod.list:
+            var infos: [HostInfo] = []
+            for info in await workspace.hostInfos() {
+                infos.append(await withPanes(info))
+            }
+            return try .from(infos)
+
+        case HostMethod.remove:
+            let params = try request.decodeParams(HostRemoveParams.self)
+            try await workspace.removeHost(alias: params.alias)
+            return .object(["alias": .string(params.alias)])
+
         case GroupMethod.list:
             let params = try request.decodeParams(GroupListParams.self)
             let snapshot = await workspace.snapshot
@@ -409,6 +428,12 @@ public struct WorkspaceControlHandler: Sendable {
         let moved = try await workspace.movePluginRow(path: row.path, to: placement)
         let current = await workspace.snapshot.pluginRow(path: row.path) ?? row
         return RowMoveResult(row: .plugin(current), moved: moved, from: nil)
+    }
+
+    private func withPanes(_ info: HostInfo) async -> HostInfo {
+        var info = info
+        info.panes = await rows.paneIDs(inRows: info.rows)
+        return info
     }
 
     static func code(of error: any Error) -> String {

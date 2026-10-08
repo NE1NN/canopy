@@ -15,7 +15,7 @@ struct FakeHost {
     let ssh: SSHCommand
     let environment: [String: String]
 
-    init(in dir: TempDir, alias: String = "box", down: Bool = false) throws {
+    init(in dir: TempDir, alias: String = "box", down: Bool = false, path: String? = nil) throws {
         self.alias = alias
         home = dir.sub("host-\(alias)")
         try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
@@ -23,6 +23,7 @@ struct FakeHost {
         var environment = Fixture.environment
         environment["FAKE_SSH_HOME"] = home
         if down { environment["FAKE_SSH_DOWN"] = "1" }
+        if let path { environment["FAKE_SSH_PATH"] = path }
         self.environment = environment
     }
 

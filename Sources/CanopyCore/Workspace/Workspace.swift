@@ -55,12 +55,18 @@ public actor Workspace {
     /// Set by `stop()`, so watcher events and refreshes already under way start no more lookups.
     var prStopped = false
 
+    nonisolated let hostTooling: HostTooling
+    /// Names this home on hosts. Computed once, since the machine's name can change while Canopy runs.
+    public nonisolated let homeID: String
+    var hostConnections: [String: HostConnection] = [:]
+
     /// Clones under way, which quitting stops without waiting for the actor.
     nonisolated let runningClones = RunningClones()
 
     public init(
         home: CanopyHome, git: GitRunner = GitRunner(), fetchTimeout: Duration = .seconds(60),
-        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil
+        github: GitHubCLI = GitHubCLI(), prTiming: PRTiming = .standard, activity: ActivityLog? = nil,
+        hostTooling: HostTooling = HostTooling()
     ) {
         self.home = home
         self.activity = activity ?? ActivityLog(folder: home.activityFolder)
@@ -68,6 +74,8 @@ public actor Workspace {
         self.fetchTimeout = fetchTimeout
         self.github = github
         self.prTiming = prTiming
+        self.hostTooling = hostTooling
+        self.homeID = HomeID.of(home: home)
         self.store = StateStore(url: home.stateFile)
         self.classifier = RowClassifier(
             canopyWorktreesRoot: Paths.canonical(home.worktreesRoot.path),
@@ -96,9 +104,10 @@ public actor Workspace {
         await refreshAll()
     }
 
-    /// Stops watching and releases the home for another instance.
-    public func stop() {
+    /// Stops watching, lets every host go, and releases the home for another instance.
+    public func stop() async {
         stopClones()
+        await stopHosts()
         watchers.removeAll()
         for task in pendingRefreshes.values {
             task.cancel()

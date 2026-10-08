@@ -22,6 +22,7 @@ public enum ControlMethod {
     public static let readOnly: Set<String> = [
         status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
         PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items, WebMethod.list,
+        HostMethod.list,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
@@ -37,7 +38,8 @@ public enum ControlMethod {
     /// A plugin's new row waits for its plugin to fill the folder, which may take the network, then for `run`. Listing a
     /// plugin's items and starting one may reach the network too.
     public static func replyTimeout(for method: String) -> TimeInterval? {
-        if [rowNew, rowRemove, repoClone, PluginMethod.new].contains(method) { return nil }
+        // Adding a host may wait for it to start, which can take minutes.
+        if [rowNew, rowRemove, repoClone, PluginMethod.new, HostMethod.add].contains(method) { return nil }
         if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
