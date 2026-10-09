@@ -10,6 +10,7 @@ When an AI agent in a Canopy terminal finishes its turn, Canopy plays a sound an
 Green means the agent is done and the author has not looked yet.
 Yellow means it is waiting for the author, because it asked a question or needs a permission.
 A pulsing dot means it is working.
+A slowly pulsing green ring means its turn ended but background work it started, such as a shell, still runs, and it wakes when that work ends.
 An idle agent shows nothing, which fixes today's running dot that stays on for as long as `claude` runs.
 
 Canopy learns the state from Claude Code's hooks, which call `canopy agent-hook`.
@@ -56,8 +57,10 @@ A pane has one agent state at a time.
 | working | The agent is taking a turn. |
 | waiting | The agent needs the author: a permission, a question, or a plan to approve. |
 | done | The agent finished its turn. |
+| background | The agent's turn ended, but background work it started still runs, and the agent wakes when that work ends. |
 
 A done pane is also unseen until the author looks at it, as described under Seen.
+A background pane has no unseen form: its ring shows for as long as the work runs, whether or not the author looked.
 The sidebar and the tab bar show green only while it is unseen, but `canopy term list` shows done either way.
 
 States live in memory only.
@@ -68,7 +71,8 @@ Quitting Canopy ends every agent, so nothing is saved.
 A state changes on reports from Claude Code's hooks or from `canopy term state`, on keys typed into the pane, and when the agent's program exits.
 
 **Reports** are covered under Hook mapping and CLI.
-A report that names the state the pane is already in changes nothing, with one exception.
+A report that names the state the pane is already in changes nothing, with two exceptions.
+A background report on a background pane takes its list of running work, without a new change, since one task may have ended while another runs.
 A done report on a done pane is a new finish, so the pane becomes unseen again and the sound plays.
 Agents like Codex report only finished turns, never working, so this is how their second finish shows.
 
@@ -80,6 +84,8 @@ Claude Code runs no hook when the author interrupts a turn, or when a permission
 | working | Escape or Control-C | none |
 | waiting on a prompt | Return | working |
 | waiting on a prompt | Escape or Control-C | none |
+
+Keys never move a background pane: the agent sits at its own input line, and a submitted prompt reports working through `UserPromptSubmit`.
 
 A pane waits on a prompt after any waiting report except a turn that ended on a question.
 A turn that ended on a question waits at Claude Code's own input line, where typing only drafts the answer, so that pane waits until the next prompt is submitted.
@@ -143,6 +149,7 @@ Hooks run with Claude Code's environment, which it inherited from the pane's she
 | `PostToolUse`, `PostToolUseFailure` | all | from the main agent, not a subagent | working |
 | `Stop` | | a background subagent or workflow is still running | working |
 | `Stop` | | the final message ends on a question | waiting |
+| `Stop` | | a background shell or monitor is still running | background |
 | `Stop` | | otherwise | done |
 | `StopFailure` | all | | done |
 | `SessionEnd` | all | | none, and the session lets go of the pane |
@@ -161,9 +168,15 @@ Hooks run with Claude Code's environment, which it inherited from the pane's she
   It reports a background session finishing, not the pane's own agent, whose finish `Stop` reports, and mapping it to done would turn a pane green while its agent still waits on a prompt.
 - The question rule reads `last_assistant_message`.
   It takes the last line that is not blank, removes trailing whitespace and the closing marks `*`, `_`, `` ` ``, `)`, `]`, `"`, `'`, `”`, and `’`, and checks whether what is left ends in `?` or `？`.
-- The background rule counts `background_tasks` entries of type `subagent` or `workflow`.
+- The working rule counts `background_tasks` entries of type `subagent` or `workflow`.
   Those end on their own and wake the agent, so the turn is not over.
-  Shell and monitor tasks can run forever, such as a dev server, so they do not hold a pane in working.
+- Shell and monitor tasks can run forever, such as a dev server, so they do not hold a pane in working.
+  They make it background instead: every other `background_tasks` entry counts when its `status` is `running` or missing.
+  Claude Code 2.1.295 reports both a `run_in_background` Bash command and a Monitor as type `shell`, with a `description` and the `command`.
+  The report carries each entry's label: its `description`, else its `command`, else its `type`.
+- The rows of `Stop` apply in order, so a turn that ends on a question while a shell runs waits, and a turn that ends while a subagent and a shell run is working.
+- When a background shell or monitor ends, Claude Code wakes the agent with a `UserPromptSubmit` whose prompt is a `<task-notification>`, so the pane goes to working, and the turn's `Stop` then says done, or background again while other work runs.
+  A dev server started in the background keeps its pane in background for as long as it runs, which is true.
 - `StopFailure` ends a turn on an API error, such as a rate limit.
   It counts as done, so the author comes to look.
 
@@ -279,6 +292,9 @@ A sound that is already playing is not started again, so several panes finishing
 | `agentDoneSound` | `"Glass"` | Played when a pane becomes done. |
 | `agentWaitingSound` | `"Ping"` | Played when a pane becomes waiting. |
 
+Becoming background plays nothing, since the agent is not done.
+The done sound plays when a later `Stop` finds no shell or monitor running.
+
 A sound is a name from `/System/Library/Sounds` or `~/Library/Sounds` without its extension, or a path to a sound file.
 An empty string silences that one sound, and a name that cannot be found plays the default instead.
 Canopy reads these keys each time a sound is due, so changes apply without relaunching.
@@ -292,13 +308,20 @@ Canopy reads these keys each time a sound is due, so changes apply without relau
 | working | the accent color, pulsing between 35% and full opacity about every 1.6 seconds |
 | waiting | yellow |
 | done and unseen | green |
+| background | a green ring, pulsing between 40% and full opacity about every 3 seconds |
 
 Each dot is 6 points across with a 2.5 point halo of its own color at 22% opacity, the shape of today's running dot.
+The background ring is the done green, drawn as a 1.5 point line around an empty middle as wide as the dot and its halo, so it reads as done's color but not done's shape, and its slow pulse sets it apart from working.
 The working dot is today's running dot, pulsing.
 Green and yellow are the system's green and yellow, with the yellow darkened in light mode so it holds up against a white sidebar.
-With Reduce Motion on, the working dot holds still.
+With Reduce Motion on, the working dot and the background ring hold still.
 
-The most urgent state wins wherever one dot stands for several panes: waiting, then done and unseen, then working.
+The most urgent state wins wherever one dot stands for several panes: waiting, then done and unseen, then working, then background.
+Background comes last because it asks the least of the author, so a dev server's ring never hides an agent working in the same row.
+
+Every dot has a tooltip and an accessibility label naming its state.
+A background dot's says the turn ended and lists the running work by its labels: "Turn ended, waiting on background work: npm test. The agent wakes when it finishes."
+Where it stands for several panes, it lists the work of every background pane among them.
 
 ### Sidebar row
 
@@ -306,7 +329,7 @@ A row's dot stands for all of its panes, in every tab.
 It sits where the running dot is today, right-aligned before the PR number.
 Programs that are not agents no longer put a dot on a row.
 The ports panel already shows servers.
-The row's accessibility label says "agent working", "agent waiting for you", or "agent done" in place of "running a program".
+The row's accessibility label says "agent working", "agent waiting for you", "agent done", or "agent waiting on background work: npm test" in place of "running a program".
 
 A row can show a green done dot beside an open PR's green number.
 They stay apart by shape and position:
@@ -339,9 +362,9 @@ A folded repo's header and a folded plugin section's header show the most urgent
 
 | Command | Effect |
 |---|---|
-| `canopy term list [--all]` | gains an AGENT column: working, done, waiting, or blank |
-| `canopy term state [<id>] <working\|done\|waiting\|none>` | reports a pane's agent state, the pane it runs in by default |
-| `canopy term wait <id>... [--for done\|waiting\|any] [--timeout <span>]` | waits until one of the panes reaches the state, then prints which pane and what state |
+| `canopy term list [--all]` | gains an AGENT column: working, done, waiting, background, or blank |
+| `canopy term state [<id>] <working\|done\|waiting\|background\|none>` | reports a pane's agent state, the pane it runs in by default |
+| `canopy term wait <id>... [--for done\|waiting\|background\|any] [--timeout <span>]` | waits until one of the panes reaches the state, then prints which pane and what state |
 | `canopy hooks install\|uninstall\|status [--settings <file>]` | manages Canopy's Claude Code hooks |
 | `canopy agent-hook` | what Claude Code's hooks run, hidden from help |
 
@@ -352,6 +375,7 @@ A folded repo's header and a folded plugin section's header show the most urgent
 
 The table gains an AGENT column after PROCESS.
 With `--json`, each terminal gains `"agent"`, left out when the state is none, like `foreground` and `exited`.
+A background terminal also gains `"backgroundTasks"`, the labels of its running work, left out when there are none.
 
 ### term state
 
@@ -370,6 +394,8 @@ Codex adds its JSON as a last argument, which the shell leaves unused.
 ### term wait
 
 - `--for` defaults to `any`, which means done or waiting.
+  `any` leaves out background, because coordinators wait on a row to learn it finished, and a background row has not.
+  `--for background` waits for a turn that ended with work still running.
 - `--timeout` defaults to `30m`, and takes a span the way `canopy log --since` does, such as `90s`, `30m`, or `2h`.
 - A pane already in the state counts at once, unless something was typed or sent into it since it got there.
   So `canopy term send p12 "next step" --enter` followed by `canopy term wait p12` waits for the next finish rather than returning the last one.
@@ -382,10 +408,11 @@ Codex adds its JSON as a last argument, which the shell leaves unused.
 
 | Method | Params | Result |
 |---|---|---|
-| `term.state` | `pane`, `state`, and from hooks `session`, `event`, `at`, `question`, `takesOver`, and `releases` | `pane` and its `state` afterwards |
+| `term.state` | `pane`, `state`, and from hooks `session`, `event`, `at`, `question`, `takesOver`, `releases`, and `backgroundTasks` | `pane` and its `state` afterwards |
 | `term.wait` | `panes`, `for`, and `timeout` in seconds | `pane` and `state` |
 
-`state` is one of `working`, `waiting`, `done`, and `none`.
+`state` is one of `working`, `waiting`, `done`, `background`, and `none`.
+`backgroundTasks` lists the labels of the running work for a background report.
 `event` is the hook event's name, which goes into the activity log.
 `question` marks a waiting report from a turn that ended on a question, and every other waiting report is a prompt, for the key rules.
 `takesOver` and `releases` carry the session rules, so `canopy agent-hook` alone knows Claude Code's event names.
@@ -400,7 +427,7 @@ The CLI waits for `term.wait`'s reply for its timeout plus 10 seconds.
 
 | Type | Recorded when | `data` |
 |---|---|---|
-| `agent.working`, `agent.waiting`, `agent.done` | a pane's state becomes that state, including a repeat done | `pane`, `from`, `via`, and `session` when a hook sent it |
+| `agent.working`, `agent.waiting`, `agent.done`, `agent.background` | a pane's state becomes that state, including a repeat done | `pane`, `from`, `via`, `session` when a hook sent it, and `tasks` for background |
 | `agent.cleared` | a pane's state goes to none | the same |
 
 `from` is the previous state, or null for none.
@@ -503,3 +530,15 @@ These go beyond what the author approved in conversation, or pick one reading of
 13. The install offer appears only when Claude Code's config folder exists, once per `CANOPY_HOME`.
 14. The settings file keeps its key order and is rewritten with two-space indentation, with no backup copy.
 15. Activity events have one type per state and leave out the agent's message text.
+
+### Background state, 2026-10-09
+
+The author asked for background after panes showed done while their agent waited on a background shell.
+He chose a new state over counting shells as working, which would pin a dev server's row in working, and picked a green ring with a slow pulse.
+These pick one reading of what he asked:
+
+16. Any `background_tasks` entry that is not a subagent or workflow counts when it runs, not only `shell` and `monitor`, so a new kind of task Claude Code adds shows background rather than done.
+17. A question still wins over running shells, and running subagents still win over both.
+18. Background is the least urgent dot and has no unseen form.
+19. `term wait --for any` leaves out background, and `--for background` is new.
+20. `canopy term state <id> background` is allowed, with no task list.
