@@ -58,7 +58,7 @@ final class HostForwards {
     /// By remote port, including forwards no longer wanted whose cancel failed, which may still run in the master.
     private(set) var held: [UInt16: Held] = [:]
     /// Forwards a `-O forward` that timed out may have made, and whose cancel failed too. They keep their Mac ports
-    /// until a later round cancels them.
+    /// until a later round cancels them, and their remote ports are not forwarded again until then.
     private var unsure: [(port: UInt16, forward: Held)] = []
     /// Moves on with every reset, so a round under way when the master stopped records nothing more.
     private var epoch = 0
@@ -124,6 +124,11 @@ final class HostForwards {
                 forwards[port.port] = PortForward(local: forward.local, error: nil)
                 continue
             }
+            // Trying again on the next Mac port would take one more each round while the master does not answer.
+            if let entry = unsure.first(where: { $0.port == port.port }) {
+                forwards[port.port] = PortForward(local: nil, error: Self.noAnswer(entry.forward.local))
+                continue
+            }
             let made = await forward(port, from: moved[port.port] ?? port.port, isFree: isFree, run: run)
             if let old = moved[port.port], made?.local != old, !localPorts.contains(old) {
                 macPorts.release(old, for: ObjectIdentifier(self))
@@ -132,6 +137,10 @@ final class HostForwards {
             forwards[port.port] = made
         }
         return forwards
+    }
+
+    static func noAnswer(_ local: UInt16) -> String {
+        "ssh did not answer while forwarding port \(local)."
     }
 
     /// Whether ssh cancelled the forward, which it also does for one it does not have. Nil once the master is gone.
@@ -179,9 +188,9 @@ final class HostForwards {
                 }
                 guard cancelled else {
                     unsure.append((port.port, forward))
-                    return PortForward(local: nil, error: "ssh did not answer while forwarding port \(local).")
+                    return PortForward(local: nil, error: Self.noAnswer(local))
                 }
-                message = "ssh did not answer while forwarding port \(local)."
+                message = Self.noAnswer(local)
                 macPorts.release(local, for: owner)
             } else {
                 macPorts.release(local, for: owner)

@@ -275,6 +275,28 @@ struct HostForwardsTests {
         #expect(host.launcher.localForwards("cancel") == ["5173:127.0.0.1:5173", "5173:127.0.0.1:5173"])
     }
 
+    /// A wedged master times out every forward and fails every cancel. The port is not tried again until its unsure
+    /// forward is cancelled, so it holds one Mac port rather than one more each round.
+    @Test func aWedgedMasterHoldsOneMacPortAPort() async throws {
+        let dir = try TempDir()
+        let host = Host("box", in: dir)
+        try await host.connection.connect()
+        host.launcher.timeOut(Set(5173...5190))
+        host.launcher.failCancels = true
+
+        for _ in 0..<3 {
+            let round = await host.connection.forwardPorts([Self.port(5173)])
+            #expect(round?[5173]?.local == nil)
+            #expect(round?[5173]?.error == "ssh did not answer while forwarding port 5173.")
+        }
+
+        #expect(host.launcher.localForwards("forward") == ["5173:127.0.0.1:5173"])
+        #expect(await host.connection.forwardedPorts == [5173])
+        host.launcher.failCancels = false
+        host.launcher.timeOut([])
+        #expect(await host.connection.forwardPorts([Self.port(5173)]) == [5173: PortForward(local: 5173, error: nil)])
+    }
+
     @Test func aStoppedMasterForgetsItsForwardsAndTheNextMasterMakesThemAgain() async throws {
         let dir = try TempDir()
         let host = Host("box", in: dir)
