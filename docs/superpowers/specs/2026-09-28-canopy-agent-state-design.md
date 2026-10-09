@@ -308,10 +308,11 @@ Canopy reads these keys each time a sound is due, so changes apply without relau
 | working | the accent color, pulsing between 35% and full opacity about every 1.6 seconds |
 | waiting | yellow |
 | done and unseen | green |
-| background | a green ring, pulsing between 40% and full opacity about every 3 seconds |
+| background | a green ring, pulsing between 60% and full opacity about every 3 seconds |
 
 Each dot is 6 points across with a 2.5 point halo of its own color at 22% opacity, the shape of today's running dot.
-The background ring is the done green, drawn as a 1.5 point line around an empty middle as wide as the dot and its halo, so it reads as done's color but not done's shape, and its slow pulse sets it apart from working.
+The background ring is drawn as a 1.5 point line, 3 points wider than the dot, around an empty middle, so it reads as done's color but not done's shape, and its slow pulse sets it apart from working.
+Its green is the system's in dark mode and darkened in light mode, since a thin line carries less color than a filled dot, and it pulses between 60% and full opacity, since a thin line fades faster than a dot.
 The working dot is today's running dot, pulsing.
 Green and yellow are the system's green and yellow, with the yellow darkened in light mode so it holds up against a white sidebar.
 With Reduce Motion on, the working dot and the background ring hold still.
@@ -320,6 +321,7 @@ The most urgent state wins wherever one dot stands for several panes: waiting, t
 Background comes last because it asks the least of the author, so a dev server's ring never hides an agent working in the same row.
 
 Every dot has a tooltip and an accessibility label naming its state.
+A sidebar row and a group header already have tooltips of their own, the row's path and the group's name, which cover their children's, so theirs gain the dot's line under it.
 A background dot's says the turn ended and lists the running work by its labels: "Turn ended, waiting on background work: npm test. The agent wakes when it finishes."
 Where it stands for several panes, it lists the work of every background pane among them.
 
