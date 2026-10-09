@@ -15,6 +15,7 @@ struct PluginRowLineView: View {
     @State private var isConfirmingRemove = false
 
     private var agentDot: AgentDot? { model.terminals.agentDot(inRow: row.path) }
+    private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRow: row.path) }
 
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedPluginRow?.path == row.path }
 
@@ -37,7 +38,7 @@ struct PluginRowLineView: View {
                 PluginAccessoryView(accessory: accessory)
             }
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
             }
             if (isHovering && !isDragged) || isConfirmingRemove || row.isMissing {
                 if let shortcut, isHovering {
@@ -95,7 +96,7 @@ struct PluginRowLineView: View {
     private var accessibilityLabel: String {
         var parts = [row.displayName, "in \(info.name)"]
         parts += row.look.accessories.map(\.help)
-        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        if let agentDot { parts.append(agentDot.inlineLabel(tasks: backgroundTasks)) }
         if row.isMissing { parts.append("missing") }
         return parts.joined(separator: ", ")
     }

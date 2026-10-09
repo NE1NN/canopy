@@ -7,8 +7,9 @@
 # message, and a closed ticket, with a fix row linked to one, a web panel and a web tab on local pages, and an artifact
 # link printed in a pane. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or Discord.
 # A remote row of web-app lives on build-box, a host this Mac plays through scripts/fake-ssh with Homebrew's tmux. It
-# runs a dev server on 5173 there, which feat/checkout-redesign holds here, so the ports panel shows it forwarded to the
-# next free port, as 5173 → 5174.
+# runs a dev server on 5173 there, with its agent in background, and feat/checkout-redesign holds 5173 here, so the ports
+# panel shows it forwarded to the next free port, as 5173 → 5174. When something on this Mac already listens on 5173,
+# such as a real remote row's forward, both servers take the first port above it that nothing listens on.
 # Links the window opens are written to $work/opened-urls instead of opening a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
@@ -323,6 +324,9 @@ git -C "$work/web-app" branch fix/typo-footer "$(local_commit main 45M "Footer t
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 sleep 1
 
+dev_port=5173
+while [[ -n "$(lsof -nP -iTCP:"$dev_port" -sTCP:LISTEN 2>/dev/null)" ]]; do dev_port=$((dev_port + 1)); done
+
 # A plain prompt keeps the machine's user and host names out of shots.
 plain="PROMPT='%F{blue}%B%1~%b%f %# '; clear"
 agent="$plain; "'printf "\n\033[36m●\033[0m Read \033[90msrc/checkout/\033[0mForm.tsx\n\033[36m●\033[0m Update \033[90msrc/checkout/\033[0mForm.tsx  \033[32m+48\033[0m \033[31m-21\033[0m\n\033[36m●\033[0m Bash \033[90mbun test checkout\033[0m\n  \033[32m✓\033[0m 18 passed\n\nThe form now has three steps. The plan: https://claude.ai/artifact/9f2c1e7a-checkout\n"; sleep 600'
@@ -330,7 +334,7 @@ row=(--repo web-app --row feat/checkout-redesign)
 first=$("$cli" term list --all --json | /usr/bin/python3 -c \
     'import json, sys; print([t["pane"] for t in json.load(sys.stdin) if t["row"] == "feat/checkout-redesign"][0])')
 "$cli" term send "$first" "$agent" --enter >/dev/null
-"$cli" term new "${row[@]}" --run "$plain; python3 -m http.server 5173" >/dev/null
+"$cli" term new "${row[@]}" --run "$plain; python3 -m http.server $dev_port" >/dev/null
 "$cli" term new "${row[@]}" --run "$plain; git status -sb" >/dev/null
 "$cli" term new "${row[@]}" --tab agent --run "$plain; sleep 600" >/dev/null
 "$cli" term new "${row[@]}" --tab "Terminal 2" --run "$plain" >/dev/null
@@ -361,13 +365,13 @@ for ticket in 853 855 851; do "$cli" ticket new "$ticket" --run "$plain" >/dev/n
 
 # A remote row on the build-box host, in its clone of web-app's origin, with its tmux session running.
 git clone -q "$work/remotes/acme/web-app.git" "$work/host/web-app"
-# The host's ss lists only the servers working in its home, so feat/checkout-redesign's 5173 here stays off the host.
+# The host's ss lists only the servers working in its home, so feat/checkout-redesign's server here stays off the host.
 mkdir -p "$work/host/.fake-ssh-bin"
 ln -s "$PWD/scripts/fake-ss" "$work/host/.fake-ssh-bin/ss"
 touch "$work/host/.fake-ss-home-only"
 "$cli" host add build-box --repo web-app='~/web-app' >/dev/null
 "$cli" row new feat/remote-agent --repo web-app --on build-box \
-    --run "$plain; python3 -m http.server 5173 --bind 127.0.0.1" >/dev/null
+    --run "$plain; python3 -m http.server $dev_port --bind 127.0.0.1" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 # Agents in every state, reported the way agents without Claude Code's hooks report them.
@@ -385,6 +389,11 @@ pane_in() {
 # The folded Later group shows its done dot on the group's header, and the folded api-server repo its working dot,
 # while the ports panel still lists feat/rate-limits' port.
 "$cli" term state "$(pane_in chore/bump-deps Terminal)" done >/dev/null
+# The remote row's agent ended its turn with its dev server running, as Claude Code's Stop hook reports it.
+remote_pane=$("$cli" term list --all --json | /usr/bin/python3 -c \
+    'import json, sys; print([t["pane"] for t in json.load(sys.stdin) if t["row"] == "feat/remote-agent"][0])')
+printf '{"session_id": "fixture", "hook_event_name": "Stop", "last_assistant_message": "The dev server is up.", "background_tasks": [{"id": "b1", "type": "shell", "status": "running", "description": "Start the dev server", "command": "python3 -m http.server %s"}]}' "$dev_port" |
+    CANOPY_PANE="$remote_pane" "$cli" agent-hook
 "$cli" group collapse Later --repo web-app >/dev/null
 "$cli" repo collapse api-server >/dev/null
 

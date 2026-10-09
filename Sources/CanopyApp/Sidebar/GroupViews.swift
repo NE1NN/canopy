@@ -20,6 +20,10 @@ struct GroupHeaderView: View {
         return model.terminals.agentDot(inRows: repo.rows(inGroup: group.name).map(\.path))
     }
 
+    private var backgroundTasks: [String] {
+        model.terminals.backgroundTasks(inRows: repo.rows(inGroup: group.name).map(\.path))
+    }
+
     /// A collapsed group shows the selection for the row it hides, so the sidebar always says where the window is.
     private var holdsSelection: Bool {
         model.selectionFold == .group(repoPath: repo.path, name: group.name)
@@ -30,7 +34,7 @@ struct GroupHeaderView: View {
             summary
             Spacer(minLength: 4)
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
                     .accessibilityHidden(true)
             }
             if showsButtons {
@@ -79,7 +83,7 @@ struct GroupHeaderView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(group.name), group, \(count == 1 ? "1 row" : "\(count) rows")"
-                + (agentDot.map { ", \($0.label.lowercased())" } ?? "")
+                + (agentDot.map { ", \($0.inlineLabel(tasks: backgroundTasks))" } ?? "")
         )
         .accessibilityValue(group.collapsed ? "Collapsed" : "Expanded")
         .accessibilityAddTraits(holdsSelection ? [.isButton, .isSelected] : .isButton)

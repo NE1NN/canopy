@@ -165,7 +165,7 @@ struct TabItemView: View {
                     .foregroundStyle(.secondary)
                     .help("Close Tab")
                 } else if let dot = tab.agentDot {
-                    AgentDotView(dot: dot, size: 5)
+                    AgentDotView(dot: dot, size: 5, tasks: tab.backgroundTasks)
                 }
             }
             .frame(width: 14, height: 14)

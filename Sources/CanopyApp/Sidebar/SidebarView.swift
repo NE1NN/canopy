@@ -239,12 +239,14 @@ struct RepoHeaderView: View {
         return model.terminals.agentDot(inRows: repo.rows.map(\.path))
     }
 
+    private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRows: repo.rows.map(\.path)) }
+
     var body: some View {
         HStack(spacing: 8) {
             summary
             Spacer(minLength: 4)
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
                     .accessibilityHidden(true)
             }
             if repo.isMissing {
@@ -328,7 +330,7 @@ struct RepoHeaderView: View {
     private var accessibilityLabel: String {
         var parts = [repo.name, "repo", repo.rows.count == 1 ? "1 row" : "\(repo.rows.count) rows"]
         if repo.isMissing { parts.append("missing") }
-        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        if let agentDot { parts.append(agentDot.inlineLabel(tasks: backgroundTasks)) }
         return parts.joined(separator: ", ")
     }
 
@@ -380,6 +382,7 @@ struct RowLineView: View {
     @State private var isNamingGroup = false
 
     private var agentDot: AgentDot? { model.terminals.agentDot(inRow: row.path) }
+    private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRow: row.path) }
 
     /// Hover stops updating during a drag, so the row being dragged drops its hover look itself.
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedRow?.path == row.path }
@@ -406,7 +409,7 @@ struct RowLineView: View {
             }
             Spacer(minLength: 4)
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
             }
             if let link = row.link, let item = model.snapshot.pluginRow(plugin: link.plugin, item: link.item),
                 let label = item.look.label
@@ -477,7 +480,7 @@ struct RowLineView: View {
         if let group = row.group { parts.append("in \(group)") }
         if let tag = row.externalTag { parts.append("from \(tag.label)") }
         if let pr = row.pullRequest { parts.append("pull request \(pr.number), \(pr.state.label)") }
-        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        if let agentDot { parts.append(agentDot.inlineLabel(tasks: backgroundTasks)) }
         if row.isMissing { parts.append("missing") }
         return parts.joined(separator: ", ")
     }

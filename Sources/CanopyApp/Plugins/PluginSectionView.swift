@@ -45,12 +45,14 @@ struct PluginHeaderView: View {
         return model.terminals.agentDot(inRows: section.rows.map(\.path))
     }
 
+    private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRows: section.rows.map(\.path)) }
+
     var body: some View {
         HStack(spacing: 8) {
             summary
             Spacer(minLength: 4)
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
                     .accessibilityHidden(true)
             }
             if isHovering {
@@ -107,7 +109,7 @@ struct PluginHeaderView: View {
         var parts = [
             section.info.name, "plugin", section.rows.count == 1 ? "1 row" : "\(section.rows.count) rows",
         ]
-        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        if let agentDot { parts.append(agentDot.inlineLabel(tasks: backgroundTasks)) }
         return parts.joined(separator: ", ")
     }
 
