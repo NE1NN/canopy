@@ -688,3 +688,9 @@ An independent opus reviewer read `git diff main...HEAD` with the spec and this 
 - **Nit: a folded header over many background rows listed every task.** Fixed: three names, then "and N more".
 - **Nit: the dot's accessibility label is the full tooltip.** Kept, since the brief asks for the hover text in the accessibility label too; rows and headers use the short form.
 - **Nit: this plan's header held two sentences on one line.** Fixed.
+
+CodeRabbit then asked for the tab's tooltip to stay reachable (fixed: it sits on the tab's symbol and name), for the guide's `term wait` line to cover the new targets (fixed), and for two plan lines to be split (fixed); its note that the decision list renders from 1 was answered, since GitHub keeps a list's start number.
+
+CI then failed once in `probingDoesNotWaitForTheHostsWorktreesToBeListed`, a remote rows test this change does not touch.
+A host's worktrees are listed every 15 answered probes, each an ssh round trip through the fake host, and 15 rounds outran the 20 second wait on the 3 CPU runner.
+`HostMonitor` now takes `listEvery`, and the test lists every other probe; it passed three times under 14 CPU hogs at background priority.
