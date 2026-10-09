@@ -331,12 +331,13 @@ struct RemoteRowTests {
         let setup = try await Setup()
         let created = try await setup.workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/off")
         await setup.workspace.stop()
+        // Its masters never come up, so the five minutes of retries pass at once, with nothing to start each time.
+        let unreachable = FakeHostLauncher()
+        unreachable.masterUp = false
         let down = Workspace(
             home: setup.workspace.home, git: Fixture.git,
             hostTooling: HostTooling(
-                sshExecutable: FakeHost.script,
-                environment: { setup.host.environment.merging(["FAKE_SSH_DOWN": "1"]) { $1 } },
-                clock: TestHostClock()))
+                sshExecutable: FakeHost.script, clock: TestHostClock(), launcher: { _ in unreachable }))
         try await down.start()
 
         await #expect {
