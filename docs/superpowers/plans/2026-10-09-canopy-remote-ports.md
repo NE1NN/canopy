@@ -187,3 +187,39 @@ Modified:
 - [ ] An independent opus review of `git diff main...HEAD` with the spec and this plan; findings fixed test-first, listed under After Review.
 - [ ] CI `check` green.
 - [ ] PR with click checks and Decisions to review; print `READY: PR #<n> <url>`.
+
+## After Review
+
+An independent review of `git diff 731e714..896a45e` found twelve issues, each fixed test-first.
+
+1. A cancelled forward that came back moved to the next Mac port, since `LocalPortChooser.isFree` bound without SO_REUSEADDR and the TIME_WAIT ssh leaves after closing a browser's connections made the old port look busy.
+   It now binds `127.0.0.1`, `::1`, `0.0.0.0`, and `::` (IPv6 only), each with SO_REUSEADDR, and needs all four, which still catches loopback, IPv4 wildcard, and dual-stack wildcard listeners, as tests with real listeners show.
+   A fake-host test forwards a server, GETs through it, stops it, starts it again, and gets the same Mac port; the Mac port row in Decisions now says why.
+2. A slow or failing `ss` looked like no ports, so a busy host dropped its forwards and made them again.
+   The probe now prints `"ports": null` when `ss` fails or takes longer than its 5 seconds, and `HostMonitor` keeps the host's last ports and forwards then; a missing `ss` still means no ports.
+   Script tests cover missing, failing, and slow `ss`, and fake-host tests cover a failing `ss` keeping the forward and a removed `ss` dropping it.
+3. The ports probe held up every host's session probe, since `probe()` awaited each host's ports in one loop.
+   Each host now has its own sequence, its session probe and then its ports when due, and `probe()` waits only for the session probes it started; `HostMonitor.watch(every:)`, which the app runs, starts a round every 2 seconds without waiting for the last, so a host still probing is skipped and holds up no other.
+   Tests with two stand-in hosts, one with a held ports probe and one with a held session probe, count the other host's probes and check the held host never ran two at once.
+   A host's worktrees are now listed every 15 of its own session probes, rather than every 15 rounds.
+4. A failed or timed-out cancel dropped the forward from `HostForwards` while it could still run in the master.
+   A forward whose cancel fails is now kept and cancelled again next round, a server whose address changed keeps its old forward meanwhile rather than getting a second, and a forward that timed out is cancelled before the next Mac port is tried, or kept aside until a later round cancels it.
+5. `ports stop` reported a stale pid as stopped when the server had restarted since the last probe.
+   `stop-port` now prints the pids it signalled beside those it killed, and only those are reported; the CLI says when nothing was stopped.
+   A fake-host test restarts the server and stops the port with the old pid.
+6. `killed` mixed this Mac's pids and hosts', so a local process could be labelled killed.
+   `PortsStopResult.killed` now holds `PortProcess` values with a pid and a host, and the CLI matches both.
+7. A round abandoned because the master stopped returned no forwards, so every port showed as not forwarded with no reason.
+   Such a round now returns nil, and the monitor keeps showing what it had and reads the host's ports again on its next probe.
+8. Forwards did not count as use, so a backgrounded server's host could stop or detach under someone browsing it.
+   A remote row with a listening port now counts as use and as running a program, so the host's master stays up and its panes do not detach; the spec says so under the master, idle detach, and Ports.
+9. `Workspace.forwardPorts` ran one round at a time across all hosts, so a slow host held up the rest.
+   Hosts now forward at the same time, and `MacPortReservations`, shared by the workspace's connections, takes each Mac port before its forward is tried and gives it back when the try fails, the forward goes, or the master stops.
+   A test holds one host's forward and sees the other's go ahead on the next port.
+10. A round under way during `host rm` could put the connection back into the workspace's forwarders.
+    That list is gone, and a removed host's stopped connection forwards nothing and holds no Mac port; a test removes a host during a held round and checks the connection is released and its port free.
+11. `scripts/fake-ssh-forward.py` shut connections down without closing them and connected to the target on its accept loop.
+    Each connection now runs in its own thread, connecting there, and both ends close once the two pumps finish; a test counts the proxy's sockets after ten GETs.
+    The connect moving off the accept loop has no test of its own, since a target that is slow to connect cannot be made on this Mac without a network that drops packets.
+12. The `5173 → 5174` and `(not forwarded)` label was written in both the panel and the CLI.
+    `RowPort.label`, `PortInfo.label`, and `RowPort.forwardProblem` in CanopyCore now give it to both, so the panel's badge also reads `5173 (not forwarded)` for a port without a forward.
