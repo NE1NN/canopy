@@ -15,18 +15,22 @@ struct PaneAgentStateTests {
         pane.onAgentChange = { _, change in changes.append(change) }
         ActivitySource.$current.withValue(.cli) {
             _ = pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
+            _ = pane.report(
+                AgentReport(state: .background, session: "s1", event: "Stop", backgroundTasks: ["npm test"]))
+            _ = pane.report(AgentReport(state: .background, session: "s1", event: "Stop", backgroundTasks: ["x"]))
             _ = pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
         }
 
         #expect(pane.agent.state == .done)
         #expect(pane.agent.unseen)
-        #expect(changes.map(\.to) == [.working, .done])
+        #expect(changes.map(\.to) == [.working, .background, .done])
         let events = await logged(terminals, "agent")
-        #expect(events.map(\.type) == ["agent.working", "agent.done"])
+        #expect(events.map(\.type) == ["agent.working", "agent.background", "agent.done"])
         #expect(
             events.map(\.data) == [
                 ["pane": "p1", "from": .null, "via": "UserPromptSubmit", "session": "s1"],
-                ["pane": "p1", "from": "working", "via": "Stop", "session": "s1"],
+                ["pane": "p1", "from": "working", "via": "Stop", "session": "s1", "tasks": .array(["npm test"])],
+                ["pane": "p1", "from": "background", "via": "Stop", "session": "s1"],
             ])
         #expect(events.allSatisfy { $0.source == .cli && $0.row == "feat/x" && $0.path == dir.path })
     }

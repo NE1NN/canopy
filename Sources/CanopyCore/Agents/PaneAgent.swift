@@ -88,6 +88,8 @@ public struct PaneAgent: Sendable, Equatable {
     public private(set) var session: String?
     /// Waiting at the agent's own input line after a question, rather than on a prompt that keys answer.
     public private(set) var waitsOnQuestion = false
+    /// The labels of the work still running while the pane is background.
+    public private(set) var backgroundTasks: [String] = []
     /// When Canopy saw the pane reach its state.
     public private(set) var since = Date.distantPast
     /// When the last change happened, by the clock of whatever caused it. Hooks that started earlier are stale.
@@ -125,9 +127,18 @@ public struct PaneAgent: Sendable, Equatable {
         defer {
             if report.releases { session = nil }
         }
-        guard let next = report.state, next != state || next == .done else { return nil }
+        guard let next = report.state else { return nil }
+        // A Monitor wakes the agent on each line it reads, and the turn can end background again with less running.
+        if next == .background, state == .background {
+            backgroundTasks = report.backgroundTasks
+            changedAt = at
+            return nil
+        }
+        guard next != state || next == .done else { return nil }
         waitsOnQuestion = next == .waiting && report.question
-        return change(to: next, via: report.event ?? "term.state", session: report.session, at: at, now: now)
+        let change = change(to: next, via: report.event ?? "term.state", session: report.session, at: at, now: now)
+        if next == .background { backgroundTasks = report.backgroundTasks }
+        return change
     }
 
     /// Keys typed into the pane, or text sent with `canopy term send`. Claude Code runs no hook for an interrupt or a
@@ -167,6 +178,7 @@ public struct PaneAgent: Sendable, Equatable {
         state = next
         unseen = next == .done
         if next != .waiting { waitsOnQuestion = false }
+        backgroundTasks = []
         since = now
         changedAt = at
         return change

@@ -328,6 +328,9 @@ public final class Pane: Identifiable {
         if let session = change.session {
             data["session"] = .string(session)
         }
+        if change.to == .background {
+            data["tasks"] = .array(agent.backgroundTasks.map(JSONValue.string))
+        }
         record(ActivityType.agent(change.to), data)
         onAgentChange?(self, change)
     }

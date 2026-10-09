@@ -17,13 +17,16 @@ public struct AgentViewing: Sendable, Equatable {
 public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
     case done
     case waiting
-    /// Done or waiting.
+    /// A turn that ended with background work still running.
+    case background
+    /// Done or waiting. Coordinators wait on a row to learn it finished, and a background row has not.
     case any
 
     public func matches(_ state: AgentState) -> Bool {
         switch self {
         case .done: state == .done
         case .waiting: state == .waiting
+        case .background: state == .background
         case .any: state == .done || state == .waiting
         }
     }
@@ -44,6 +47,11 @@ extension TerminalTab {
     public var agentDot: AgentDot? {
         paneList.compactMap(\.agent.dot).max()
     }
+
+    /// What its background panes wait on.
+    public var backgroundTasks: [String] {
+        paneList.flatMap(\.agent.backgroundTasks)
+    }
 }
 
 extension TerminalStore {
@@ -55,6 +63,16 @@ extension TerminalStore {
     /// The most urgent dot among several rows' panes, for a collapsed group.
     public func agentDot(inRows paths: [String]) -> AgentDot? {
         paths.compactMap(agentDot(inRow:)).max()
+    }
+
+    /// What the row's background panes wait on, in every tab.
+    public func backgroundTasks(inRow path: String) -> [String] {
+        tabs(inRow: path).flatMap(\.backgroundTasks)
+    }
+
+    /// What several rows' background panes wait on, for a collapsed group.
+    public func backgroundTasks(inRows paths: [String]) -> [String] {
+        paths.flatMap(backgroundTasks(inRow:))
     }
 
     /// Whether the author sees the pane: Canopy is frontmost, and the pane is in the selected row's selected tab.

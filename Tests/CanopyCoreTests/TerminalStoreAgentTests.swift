@@ -104,6 +104,31 @@ struct TerminalStoreAgentTests {
         #expect(rows.firstTab.agentDot == .working)
     }
 
+    @Test func backgroundIsTheLeastUrgentDotAndListsItsWork() throws {
+        let dir = try TempDir()
+        let rows = try Rows(dir)
+        defer { rows.terminals.closeAll() }
+        var alerts: [AgentState] = []
+        rows.terminals.onAgentAlert = { alerts.append($1) }
+
+        rows.beside.report(AgentReport(state: .background, backgroundTasks: ["bun dev"]))
+        rows.otherTab.report(AgentReport(state: .background, backgroundTasks: ["npm test"]))
+        #expect(rows.firstTab.agentDot == .background)
+        #expect(rows.firstTab.backgroundTasks == ["bun dev"])
+        #expect(rows.terminals.backgroundTasks(inRow: rows.a) == ["bun dev", "npm test"])
+        rows.focused.report(AgentReport(state: .working))
+        #expect(rows.firstTab.agentDot == .working)
+        #expect(rows.terminals.agentDot(inRows: [rows.a, rows.b]) == .working)
+        #expect(rows.terminals.backgroundTasks(inRows: [rows.a, rows.b]) == ["bun dev", "npm test"])
+        #expect(rows.terminals.backgroundTasks(inRow: rows.b).isEmpty)
+        // Seeing a background pane keeps its ring, and becoming background plays nothing.
+        rows.terminals.viewing = AgentViewing(rowPath: rows.a, isFrontmost: true)
+        #expect(rows.beside.agent.dot == .background)
+        #expect(alerts.isEmpty)
+        rows.beside.report(AgentReport(state: .done))
+        #expect(alerts == [.done])
+    }
+
     @Test func aGroupShowsTheMostUrgentDotOfItsRows() throws {
         let dir = try TempDir()
         let rows = try Rows(dir)
@@ -191,6 +216,27 @@ struct TerminalStoreAgentTests {
         await #expect(throws: CancellationError.self) { try await waiting.value }
         // Nothing still listens: a finish now reaches no wait.
         rows.otherRow.report(AgentReport(state: .done))
+    }
+
+    @Test func onlyAWaitForBackgroundReturnsOnIt() async throws {
+        let dir = try TempDir()
+        let rows = try Rows(dir)
+        defer { rows.terminals.closeAll() }
+        let pane = rows.otherRow
+        pane.report(AgentReport(state: .background, backgroundTasks: ["sleep 60"]))
+        #expect(
+            try await rows.terminals.waitForAgents([pane.id], for: .background, timeout: .seconds(5)).1 == .background)
+
+        for target in [AgentWaitTarget.done, .any] {
+            let waiting = Task { try await rows.terminals.waitForAgents([pane.id], for: target, timeout: .seconds(20)) }
+            try await Task.sleep(for: .milliseconds(100))
+            pane.report(AgentReport(state: .working))
+            pane.report(AgentReport(state: .background, backgroundTasks: ["sleep 30"]))
+            pane.report(AgentReport(state: .working))
+            pane.report(AgentReport(state: .done))
+            #expect(try await waiting.value.1 == .done)
+            pane.report(AgentReport(state: .background))
+        }
     }
 
     @Test func aPaneWithNoAgentCanStartOneDuringAWait() async throws {
