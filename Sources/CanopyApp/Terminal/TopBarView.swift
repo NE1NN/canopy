@@ -129,11 +129,17 @@ struct TabItemView: View {
     @State private var draft = ""
     @FocusState private var isFieldFocused: Bool
 
+    /// On the tab's symbol and name, since hovering the tab swaps its dot for the close button. Empty shows none.
+    private var agentTooltip: String {
+        tab.agentDot.map { $0.help(tasks: tab.backgroundTasks) } ?? ""
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: tab.grid?.layout.shape.symbolName ?? "globe")
                 .font(.system(size: 12))
                 .frame(width: 14)
+                .help(agentTooltip)
             if isRenaming {
                 TextField("Tab name", text: $draft)
                     .textFieldStyle(.plain)
@@ -151,6 +157,7 @@ struct TabItemView: View {
             } else {
                 Text(tab.name)
                     .lineLimit(1)
+                    .help(agentTooltip)
             }
             // The close button and the agent dot share a slot, so hovering does not shift the tab.
             ZStack {

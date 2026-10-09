@@ -662,8 +662,11 @@ No code; the evidence goes in the PR.
 - [x] Remote rows: `scripts/e2e-hosts.sh` gains a background `Stop` through the relay, checked as `background` in `term list`.
 
 What the run turned up:
-- Hovering the ring in a sidebar row showed the row's path, since the row's own tooltip covers its children's. Rows and group headers now put the dot's line under their own tooltip, and the ring's AppKit view carries its own tooltip for the places with none around it.
-- `scripts/ui-fixture.sh` hard-coded 5173 for its local and remote dev servers, and the remote one failed with "Address already in use" whenever something on the Mac already listened there (here, the release app forwarding a real host's 5173), leaving the user's prompt in shots. It now takes the first port from 5173 up that nothing listens on.
+- Hovering the ring in a sidebar row showed the row's path, since a tooltip on the whole row covers its children's, the PR badge's and the remote mark's among them.
+  Rows and group headers now keep their tooltip on their mark and name, with the dot's line under it, so every child shows its own.
+  The ring's AppKit view carries its own tooltip, and a tab puts the dot's tooltip on its name, since hovering a tab swaps its dot for the close button.
+- `scripts/ui-fixture.sh` hard-coded 5173 for its local and remote dev servers, and the remote one failed with "Address already in use" whenever something on the Mac already listened there (here, the release app forwarding a real host's 5173), leaving the user's prompt in shots.
+  It now takes the first port from 5173 up that nothing listens on.
 
 ## After Review
 

@@ -160,7 +160,8 @@ struct AgentGuide: ParsableCommand {
             canopy term state [<id>] <working|waiting|done|background|none>
                                                           report an agent's state, your terminal's by default
             canopy term wait <id>... [--for done|waiting|background|any|ended] [--timeout 30m]
-                                                          wait until one of them is done or waiting for its user
+                                                          wait until one of them reaches the state, by default
+                                                          done or waiting for its user
             canopy hooks install | uninstall | status     Claude Code hooks that report Claude's state on their own
 
         `term list` shows each terminal's agent state: working, waiting, done, background, or blank. Background means

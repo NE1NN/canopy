@@ -323,7 +323,8 @@ The most urgent state wins wherever one dot stands for several panes: waiting, t
 Background comes last because it asks the least of the author, so a dev server's ring never hides an agent working in the same row.
 
 Every dot has a tooltip and an accessibility label naming its state.
-A sidebar row and a group header already have tooltips of their own, the row's path and the group's name, which cover their children's, so theirs gain the dot's line under it.
+A sidebar row's and a group header's own tooltips, the row's path and the group's name, sit on the row's mark and name, since a tooltip on the whole row covers every child's, and they gain the dot's line under them.
+A tab puts its dot's tooltip on its symbol and name, since hovering the tab swaps the dot for its close button.
 A background dot's says the turn ended and lists the running work by its labels: "Turn ended, waiting on background work: npm test. The agent wakes when it finishes."
 Where it stands for several panes, it lists the work of every background pane among them.
 
