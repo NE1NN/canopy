@@ -157,12 +157,16 @@ struct AgentGuide: ParsableCommand {
 
         ## Agent state
 
-            canopy term state [<id>] <working|waiting|done|none>   report an agent's state, your terminal's by default
-            canopy term wait <id>... [--for done|waiting|any] [--timeout 30m]
+            canopy term state [<id>] <working|waiting|done|background|none>
+                                                          report an agent's state, your terminal's by default
+            canopy term wait <id>... [--for done|waiting|background|any] [--timeout 30m]
                                                           wait until one of them is done or waiting for its user
             canopy hooks install | uninstall | status     Claude Code hooks that report Claude's state on their own
 
-        `term list` shows each terminal's agent state: working, waiting, done, or blank. Claude Code reports its own
+        `term list` shows each terminal's agent state: working, waiting, done, background, or blank. Background means
+        the agent's turn ended while work it started in the background still runs, such as a test run or a dev server,
+        and the agent wakes when that work ends; `term list --json` names the work in `backgroundTasks`. Claude Code
+        reports its own
         once `canopy hooks install` has added Canopy's hooks to ~/.claude/settings.json. Other agents report with
         `term state`, for example Codex, from ~/.codex/config.toml:
 
@@ -171,6 +175,9 @@ struct AgentGuide: ParsableCommand {
         `term wait` returns at once for a terminal already in the state, unless something was typed or sent into it
         since then, so `term send ... --enter` followed by `term wait` waits for the next finish. It prints the
         terminal and its state, such as `p12 done`, and fails with wait_timeout, pane_closed, or agent_stopped.
+        `--for any`, the default, means done or waiting and never returns on background, so a wait on an agent that
+        left a dev server running in the background lasts until the server stops or the time runs out. Pass
+        `--for background` to learn that a turn ended with work still running.
         `term state` and `term wait` never start Canopy.
 
         ## Ports

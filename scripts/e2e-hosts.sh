@@ -236,6 +236,11 @@ in_pane hook "$(hook_report 'Tests pass. Should I push it?')"
 succeeded hook
 [[ -z "$(output_of hook)" ]] || fail "agent-hook printed something: $(output_of hook)"
 wait_for 10 eval '[[ "$(agent_state)" == waiting ]]' || fail "the pane's agent is $(agent_state), not waiting"
+background='{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "It runs.", "background_tasks": [{"type": "shell", "status": "running", "command": "npm test"}]}'
+in_pane background-hook "printf '%s' '$background' | canopy agent-hook"
+succeeded background-hook
+wait_for 10 eval '[[ "$(agent_state)" == background ]]' || fail "the pane's agent is $(agent_state), not background"
+"$cli" term list --json | grep -q '"npm test"' || fail "term list does not name the remote pane's background work"
 
 step "web open and xdg-open of an artifact link in the remote pane open pages in the remote row"
 pages() { "$cli" web list --repo demo --row e2e/remote --json | json '" ".join(p["url"] for p in d)'; }

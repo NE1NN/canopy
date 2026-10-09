@@ -154,6 +154,22 @@ struct ClaudeHookTests {
                 == expected(.working, "Stop"))
     }
 
+    @Test func aBackgroundReportCarriesItsWorkToTheApp() throws {
+        let input =
+            #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "shell", "status": "running", "command": "npm test"}]}"#
+        let hook = try #require(
+            AgentHook.request(
+                input: Data(input.utf8), environment: ["CANOPY_PANE": "p3", "CANOPY_HOME": "/tmp/h"],
+                startedAt: started))
+        let params = try #require(hook.request.params).decode(TermStateParams.self)
+        #expect(params.state == .background)
+        #expect(params.report.backgroundTasks == ["npm test"])
+        // Params without the field, as from an older CLI, still read, and other reports leave it out.
+        let done = try JSONValue.from(TermStateParams(pane: "p3", state: .done))
+        if case .object(let fields) = done { #expect(fields["backgroundTasks"] == nil) }
+        #expect(try done.decode(TermStateParams.self).backgroundTasks.isEmpty)
+    }
+
     @Test func aFieldThatChangedShapeReadsAsMissing() {
         #expect(
             report(
