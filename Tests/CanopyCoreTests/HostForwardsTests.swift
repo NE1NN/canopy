@@ -464,8 +464,12 @@ struct FakeSSHForwardTests {
         }
 
         // Its two listeners, and nothing of the connections.
+        var sockets = -1
         #expect(
-            await eventually { (try? Self.sockets(of: proxy)) == 2 }, "\((try? Self.sockets(of: proxy)) ?? -1) sockets")
+            await eventually {
+                sockets = (try? await offPool { try Self.sockets(of: proxy) }) ?? -1
+                return sockets == 2
+            }, "\(sockets) sockets")
         await setup.connection.stop()
     }
 

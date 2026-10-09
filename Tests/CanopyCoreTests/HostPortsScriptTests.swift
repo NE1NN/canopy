@@ -49,8 +49,7 @@ struct HostPortsScriptTests {
             }
         }
 
-        /// The fake host reads folders with `lsof`, which a loaded machine can keep past the helper's wait for it, and
-        /// a folder the helper could not read is left out.
+        /// A folder the helper could not read is left out, as of a process that had not settled in it yet.
         func probeUntilFoldersAreRead() async throws -> [RemoteListeningPort] {
             var ports: [RemoteListeningPort] = []
             _ = await eventually {

@@ -674,6 +674,8 @@ public enum HostFiles {
                 return found
             if not pids:
                 return found
+            if sys.platform == "darwin":
+                return darwin_folders(pids)
             listed = tool(["lsof", "/usr/sbin/lsof", "/usr/bin/lsof"],
                           ["-w", "-a", "-p", ",".join(str(pid) for pid in pids), "-d", "cwd", "-Fn"])
             pid = None
@@ -682,6 +684,30 @@ public enum HostFiles {
                     pid = int(line[1:])
                 elif line.startswith("n") and pid is not None:
                     found[pid] = line[1:]
+            return found
+
+
+        def darwin_folders(pids):
+            """Each process's working folder on macOS, as the fake host in Canopy's tests is, read with libproc: `lsof`
+            takes a second or more there, which a busy machine stretches past its wait."""
+            import ctypes
+            found = {}
+            try:
+                proc_pidinfo = ctypes.CDLL("/usr/lib/libSystem.B.dylib").proc_pidinfo
+            except (OSError, AttributeError):
+                return found
+            proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+            proc_pidinfo.restype = ctypes.c_int
+            # PROC_PIDVNODEPATHINFO fills a proc_vnodepathinfo: the working folder's vnode_info, 152 bytes, and its
+            # path, MAXPATHLEN bytes, then the same for the root folder.
+            flavor, info, path = 9, 152, 1024
+            size = 2 * (info + path)
+            buffer = ctypes.create_string_buffer(size)
+            for pid in pids:
+                if proc_pidinfo(pid, flavor, 0, buffer, size) == size:
+                    folder = buffer.raw[info:info + path].split(b"\0", 1)[0]
+                    if folder:
+                        found[pid] = os.fsdecode(folder)
             return found
 
 

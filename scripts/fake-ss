@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Plays iproute2's `ss -ltnpH` for tests: prints the lines in the file $FAKE_SS_LINES names, leaving out processes
 that have exited, as a socket goes with its last process, and fails when that file is missing, as `ss` can on a host.
-Without $FAKE_SS_LINES it prints this Mac's listening sockets of this user, read with `lsof`, as `ss` prints a host's
-without root. A file .fake-ss-home-only in $HOME, the fake host's home, keeps only the processes working in that home,
-so the rest of this Mac's servers stay off the host, as they would on another machine. $FAKE_SS_SLEEP makes it take that
-many seconds first, and a file .fake-ss-fails in $HOME makes it fail, noting each failure in .fake-ss-failed there, as
-`ss` on a busy host can."""
+Without $FAKE_SS_LINES it prints this Mac's listening sockets of this user, read with `netstat`, as `ss` prints a
+host's without root; tests ask for ports again and again, and `lsof` takes a second or more on a Mac. A file
+.fake-ss-home-only in $HOME, the fake host's home, keeps only the processes working in that home, so the rest of this
+Mac's servers stay off the host, as they would on another machine. $FAKE_SS_SLEEP makes it take that many seconds
+first, and a file .fake-ss-fails in $HOME makes it fail, noting each failure in .fake-ss-failed there, as `ss` on a
+busy host can."""
 import os
 import re
 import subprocess
@@ -32,51 +33,68 @@ def live(line):
 
 
 def working_in(folder, pids):
-    """The pids whose working folder is in `folder`."""
-    if not pids:
-        return set()
-    listed = subprocess.run(
-        ["/usr/sbin/lsof", "-w", "-a", "-p", ",".join(sorted(pids)), "-d", "cwd", "-Fn"],
-        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace")
+    """The pids whose working folder is in `folder`, read with libproc."""
+    import ctypes
+    proc_pidinfo = ctypes.CDLL("/usr/lib/libSystem.B.dylib").proc_pidinfo
+    proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    proc_pidinfo.restype = ctypes.c_int
+    # PROC_PIDVNODEPATHINFO: the working folder's vnode_info, 152 bytes, and its path, then the same for the root.
+    info, path = 152, 1024
+    size = 2 * (info + path)
+    buffer = ctypes.create_string_buffer(size)
     inside = set()
-    pid = None
-    for line in listed.stdout.splitlines():
-        if line.startswith("p"):
-            pid = line[1:]
-        elif line.startswith("n") and pid is not None:
-            cwd = os.path.realpath(line[1:])
-            if cwd == folder or cwd.startswith(folder + os.sep):
-                inside.add(pid)
+    for pid in pids:
+        if proc_pidinfo(int(pid), 9, 0, buffer, size) != size:
+            continue
+        cwd = os.path.realpath(os.fsdecode(buffer.raw[info:info + path].split(b"\0", 1)[0]))
+        if cwd == folder or cwd.startswith(folder + os.sep):
+            inside.add(pid)
     return inside
 
 
-def from_lsof():
+def users():
+    """Each process's user id, by pid."""
+    listed = subprocess.run(["/bin/ps", "-A", "-o", "pid=,uid="], capture_output=True, encoding="utf-8").stdout
+    return {fields[0]: fields[1] for fields in (line.split() for line in listed.splitlines()) if len(fields) == 2}
+
+
+def address(protocol, local):
+    """`ss`'s host and port for one of `netstat`'s local addresses, such as `127.0.0.1.5173` or `*.5173`."""
+    host, _, port = local.rpartition(".")
+    if host == "*":
+        host = "0.0.0.0" if protocol == "tcp4" else "[::]"
+    elif protocol != "tcp4":
+        host = "[%s]" % host
+    return host, port
+
+
+def from_netstat():
     """This user's listening TCP sockets, one line for each address and port with every process holding it."""
-    # The host's PATH, as a test sets it, can leave out /usr/sbin.
-    listed = subprocess.run(
-        ["/usr/sbin/lsof", "-w", "-nP", "-a", "-u", str(os.getuid()), "-iTCP", "-sTCP:LISTEN", "-F", "pcftn"],
-        stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace")
-    # lsof exits 1 when nothing listens, which ss reports as no lines.
-    if listed.returncode not in (0, 1):
+    listed = subprocess.run(["/usr/sbin/netstat", "-anv", "-p", "tcp"], stdin=subprocess.DEVNULL,
+                            capture_output=True, encoding="utf-8", errors="replace")
+    if listed.returncode != 0:
         print(listed.stderr, end="", file=sys.stderr)
         return None
+    lines = listed.stdout.splitlines()
+    header = next((line.split() for line in lines if "process:pid" in line), None)
+    if header is None:
+        print("fake-ss: netstat printed no process:pid column", file=sys.stderr)
+        return None
+    # A process's name can hold spaces, so it is what lies between the ten columns before it and those after.
+    after = len(header) - header.index("process:pid") - 1
+    uid = str(os.getuid())
+    owners = users()
     sockets = {}
-    pid = name = descriptor = family = None
-    for line in listed.stdout.splitlines():
-        tag, value = line[:1], line[1:]
-        if tag == "p":
-            pid = value
-        elif tag == "c":
-            name = value
-        elif tag == "f":
-            descriptor = value
-        elif tag == "t":
-            family = value
-        elif tag == "n" and pid is not None and ":" in value:
-            host, _, port = value.rpartition(":")
-            if host == "*":
-                host = "0.0.0.0" if family == "IPv4" else "[::]"
-            sockets.setdefault((host, port), []).append((name, pid, descriptor))
+    for line in lines:
+        fields = line.split()
+        if len(fields) <= 10 + after or not fields[0].startswith("tcp") or fields[5] != "LISTEN":
+            continue
+        name, _, pid = " ".join(fields[10:len(fields) - after]).rpartition(":")
+        if not pid.isdigit() or owners.get(pid) != uid:
+            continue
+        holders = sockets.setdefault(address(fields[0], fields[3]), [])
+        if all(holder[1] != pid for holder in holders):
+            holders.append((name, pid, "0"))
     home = os.path.realpath(os.environ.get("HOME", "/"))
     if os.path.exists(os.path.join(home, ".fake-ss-home-only")):
         inside = working_in(home, {pid for holders in sockets.values() for _, pid, _ in holders})
@@ -99,7 +117,7 @@ def main(arguments):
         print("Cannot open netlink socket: Device or resource busy", file=sys.stderr)
         return 1
     if "FAKE_SS_LINES" not in os.environ:
-        lines = from_lsof()
+        lines = from_netstat()
         if lines is None:
             return 1
         for line in lines:

@@ -919,9 +919,8 @@ struct RemoteReplayTests {
 
 /// A remote row's servers on the fake host, which lists this Mac's listening sockets as its own, forwarded to Mac
 /// ports by the monitor. The fake host's server holds its own port on this Mac, so its forward takes the next one.
-/// One at a time, since each lists this Mac's sockets with `lsof` over and over.
+/// Each test's host also lists the others' servers, which belong to none of its rows.
 @MainActor
-@Suite(.serialized)
 struct RemotePortForwardingTests {
     @MainActor
     final class Setup {
