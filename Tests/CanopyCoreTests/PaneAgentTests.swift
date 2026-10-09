@@ -196,12 +196,67 @@ struct PaneAgentTests {
     @Test func theMostUrgentDotWins() {
         #expect([AgentDot.working, .done, .waiting].max() == .waiting)
         #expect([AgentDot.working, .done].max() == .done)
+        #expect([AgentDot.background, .working].max() == .working)
+        #expect([AgentDot.background, .done].max() == .done)
+    }
+
+    @Test func aBackgroundTurnKeepsItsWorkUntilTheNextState() {
+        var agent = PaneAgent()
+        _ = agent.apply(hook(.working, event: "UserPromptSubmit", at: 1), now: time(1))
+        let change = agent.apply(
+            AgentReport(state: .background, session: "s1", event: "Stop", backgroundTasks: ["npm test", "bun dev"]),
+            now: time(2))
+        #expect(change == AgentChange(from: .working, to: .background, via: "Stop", session: "s1"))
+        #expect(change?.alerts == false)
+        #expect(agent.dot == .background)
+        #expect(!agent.unseen)
+        #expect(agent.backgroundTasks == ["npm test", "bun dev"])
+        // A Monitor wakes the agent on each line, and its turn can end background again with less running.
+        #expect(agent.apply(AgentReport(state: .background, backgroundTasks: ["bun dev"]), now: time(3)) == nil)
+        #expect(agent.backgroundTasks == ["bun dev"])
+        #expect(agent.seen() == false)
+        #expect(agent.dot == .background)
+        _ = agent.apply(hook(.working, event: "UserPromptSubmit", at: 4), now: time(4))
+        #expect(agent.backgroundTasks.isEmpty)
+        _ = agent.apply(AgentReport(state: .background, backgroundTasks: ["bun dev"]), now: time(5))
+        _ = agent.apply(AgentReport(state: .done), now: time(6))
+        #expect(agent.backgroundTasks.isEmpty)
+        #expect(agent.dot == .done)
+    }
+
+    @Test func aStaleBackgroundReportKeepsTheNewerWork() {
+        var agent = PaneAgent()
+        _ = agent.apply(hook(.working, at: 1), now: time(1))
+        _ = agent.apply(
+            AgentReport(state: .background, session: "s1", at: time(3), backgroundTasks: ["bun dev"]), now: time(3))
+        #expect(
+            agent.apply(
+                AgentReport(state: .background, session: "s1", at: time(2), backgroundTasks: ["npm test"]),
+                now: time(4)) == nil)
+        #expect(agent.backgroundTasks == ["bun dev"])
+        // A refresh of the work is a change of its own, so a hook that started before it is stale.
+        _ = agent.apply(
+            AgentReport(state: .background, session: "s1", at: time(5), backgroundTasks: ["npm test"]), now: time(5))
+        #expect(agent.apply(hook(.working, event: "PostToolUse", at: 4), now: time(6)) == nil)
+        #expect(agent.state == .background)
+    }
+
+    @Test func keysLeaveABackgroundPaneAlone() {
+        var agent = PaneAgent()
+        _ = agent.apply(AgentReport(state: .background, backgroundTasks: ["sleep 60"]), now: time(1))
+        for key in ["\u{1b}", "\u{03}", "\r", "next step\r"] {
+            #expect(agent.typed(Data(key.utf8), at: time(2)) == nil)
+        }
+        #expect(agent.state == .background)
+        #expect(agent.ended(at: time(3)) == AgentChange(from: .background, to: .none, via: "exit"))
+        #expect(agent.backgroundTasks.isEmpty)
     }
 
     @Test func eachStateHasAnActivityType() {
         #expect(ActivityType.agent(.working) == "agent.working")
         #expect(ActivityType.agent(.waiting) == "agent.waiting")
         #expect(ActivityType.agent(.done) == "agent.done")
+        #expect(ActivityType.agent(.background) == "agent.background")
         #expect(ActivityType.agent(.none) == "agent.cleared")
     }
 }

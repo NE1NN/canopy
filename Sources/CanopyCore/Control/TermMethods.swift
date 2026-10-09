@@ -26,6 +26,8 @@ public struct TermInfo: Codable, Sendable, Equatable {
     public var exited: Int32?
     /// The agent's state, left out when it is none.
     public var agent: AgentState?
+    /// What a background agent waits on, left out when nothing runs.
+    public var backgroundTasks: [String]?
 }
 
 public struct TermListParams: Codable, Sendable {
@@ -141,10 +143,12 @@ public struct TermStateParams: Codable, Sendable {
     public var question: Bool
     public var takesOver: Bool
     public var releases: Bool
+    /// The labels of what still runs, for a background report. Left out of the JSON when empty.
+    public var backgroundTasks: [String]
 
     public init(
         pane: String, state: AgentState?, session: String? = nil, event: String? = nil, at: Double? = nil,
-        question: Bool = false, takesOver: Bool = false, releases: Bool = false
+        question: Bool = false, takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = []
     ) {
         self.pane = pane
         self.state = state
@@ -154,13 +158,14 @@ public struct TermStateParams: Codable, Sendable {
         self.question = question
         self.takesOver = takesOver
         self.releases = releases
+        self.backgroundTasks = backgroundTasks
     }
 
     public init(pane: String, _ report: AgentReport) {
         self.init(
             pane: pane, state: report.state, session: report.session, event: report.event,
             at: report.at?.timeIntervalSince1970, question: report.question, takesOver: report.takesOver,
-            releases: report.releases)
+            releases: report.releases, backgroundTasks: report.backgroundTasks)
     }
 
     public init(from decoder: any Decoder) throws {
@@ -173,12 +178,30 @@ public struct TermStateParams: Codable, Sendable {
         question = try container.decodeIfPresent(Bool.self, forKey: .question) ?? false
         takesOver = try container.decodeIfPresent(Bool.self, forKey: .takesOver) ?? false
         releases = try container.decodeIfPresent(Bool.self, forKey: .releases) ?? false
+        backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pane, state, session, event, at, question, takesOver, releases, backgroundTasks
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pane, forKey: .pane)
+        try container.encodeIfPresent(state, forKey: .state)
+        try container.encodeIfPresent(session, forKey: .session)
+        try container.encodeIfPresent(event, forKey: .event)
+        try container.encodeIfPresent(at, forKey: .at)
+        try container.encode(question, forKey: .question)
+        try container.encode(takesOver, forKey: .takesOver)
+        try container.encode(releases, forKey: .releases)
+        if !backgroundTasks.isEmpty { try container.encode(backgroundTasks, forKey: .backgroundTasks) }
     }
 
     public var report: AgentReport {
         AgentReport(
             state: state, session: session, event: event, at: at.map(Date.init(timeIntervalSince1970:)),
-            question: question, takesOver: takesOver, releases: releases)
+            question: question, takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks)
     }
 }
 

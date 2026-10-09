@@ -43,7 +43,8 @@ public enum ActivityType {
     public static let hostUnreachable = "host.unreachable"
     public static let hostWoken = "host.woken"
 
-    /// `agent.working`, `agent.waiting`, and `agent.done`, or `agent.cleared` when the state goes to none.
+    /// `agent.working`, `agent.waiting`, `agent.done`, and `agent.background`, or `agent.cleared` when the state goes
+    /// to none.
     public static func agent(_ state: AgentState) -> String {
         state == .none ? "agent.cleared" : "agent.\(state.rawValue)"
     }

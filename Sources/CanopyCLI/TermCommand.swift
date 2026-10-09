@@ -137,10 +137,11 @@ struct TermCommand: AsyncParsableCommand {
     struct State: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Report an agent's state in a terminal, your own by default.",
-            usage: "canopy term state [<id>] <working|waiting|done|none> [--json]",
+            usage: "canopy term state [<id>] <working|waiting|done|background|none> [--json]",
             discussion: """
                 Agents that Claude Code's hooks do not cover report this way: working while they take a turn, \
-                waiting when they need you, done when they finish, and none when they stop.
+                waiting when they need you, done when they finish, background when their turn ended but work they \
+                started still runs, and none when they stop.
                 """
         )
 
@@ -152,7 +153,7 @@ struct TermCommand: AsyncParsableCommand {
         func validate() throws {
             guard (1...2).contains(values.count) else { throw ValidationError("Pass a state, and optionally an ID.") }
             guard AgentState(rawValue: values.last!) != nil else {
-                throw ValidationError("The state must be working, waiting, done, or none.")
+                throw ValidationError("The state must be working, waiting, done, background, or none.")
             }
         }
 
@@ -179,13 +180,16 @@ struct TermCommand: AsyncParsableCommand {
             abstract: "Wait until an agent in one of the terminals is done or waiting for you.",
             discussion: """
                 A terminal already in the state counts at once, unless something was typed or sent into it since. \
+                any means done or waiting, never background; ended means done, waiting, or background. \
                 It fails when the time runs out, when one of the terminals closes, or when its agent stops.
                 """
         )
 
         @Argument(help: "Terminal IDs, such as p12.")
         var ids: [String]
-        @Option(name: .customLong("for"), help: ArgumentHelp("done, waiting, or any.", valueName: "state"))
+        @Option(
+            name: .customLong("for"),
+            help: ArgumentHelp("done, waiting, background, any, or ended.", valueName: "state"))
         var target = AgentWaitTarget.any
         @Option(help: "How long to wait, such as 90s, 30m, or 2h.")
         var timeout = "30m"

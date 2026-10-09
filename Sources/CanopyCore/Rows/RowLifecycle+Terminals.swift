@@ -19,7 +19,8 @@ extension RowLifecycle {
                         row: pane.context.rowName, rowPath: path, tab: tab.name, title: pane.title,
                         folder: pane.currentDirectory ?? pane.startDirectory ?? path,
                         foreground: pane.foreground?.name, exited: exited,
-                        agent: pane.agent.state == .none ? nil : pane.agent.state)
+                        agent: pane.agent.state == .none ? nil : pane.agent.state,
+                        backgroundTasks: pane.agent.backgroundTasks.isEmpty ? nil : pane.agent.backgroundTasks)
                 }
             }
         }

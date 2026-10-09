@@ -13,11 +13,11 @@ struct ClaudeHookTests {
 
     func expected(
         _ state: AgentState?, _ event: String, question: Bool = false, takesOver: Bool = false,
-        releases: Bool = false
+        releases: Bool = false, backgroundTasks: [String] = []
     ) -> AgentReport {
         AgentReport(
             state: state, session: "abc123", event: event, at: started, question: question, takesOver: takesOver,
-            releases: releases)
+            releases: releases, backgroundTasks: backgroundTasks)
     }
 
     @Test func sessionsTakeAndLetGoOfThePane() {
@@ -113,18 +113,79 @@ struct ClaudeHookTests {
                 )
                     == expected(.working, "Stop"))
         }
-        for type in ["shell", "monitor"] {
-            #expect(
-                report(
-                    #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "The server runs.", "background_tasks": [{"id": "t1", "type": "\#(type)", "status": "running", "command": "bun dev"}]}"#
-                )
-                    == expected(.done, "Stop"))
-        }
         #expect(
             report(
                 #"{"session_id": "abc123", "hook_event_name": "StopFailure", "error": "rate_limit", "last_assistant_message": "API Error: Rate limit reached?"}"#
             )
                 == expected(.done, "StopFailure"))
+    }
+
+    @Test func aTurnThatEndsWithShellsRunningIsBackground() {
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "The 40-second sleep is running in the background. I'll wait for it to finish and report the output.", "background_tasks": [{"id": "bybwi8u6r", "type": "shell", "status": "running", "description": "Sleep 40 seconds then print finished", "command": "sleep 40 && echo finished"}]}"#
+            )
+                == expected(.background, "Stop", backgroundTasks: ["Sleep 40 seconds then print finished"]))
+        // A label falls back to the command, then the type.
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "The server runs.", "background_tasks": [{"id": "t1", "type": "monitor", "status": "running", "description": " ", "command": "bun dev"}, {"id": "t2", "type": "remote_job"}]}"#
+            )
+                == expected(.background, "Stop", backgroundTasks: ["bun dev", "remote_job"]))
+        // Finished tasks do not count.
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "All done.", "background_tasks": [{"id": "t1", "type": "shell", "status": "completed", "command": "npm test"}]}"#
+            )
+                == expected(.done, "Stop"))
+    }
+
+    @Test func oddTasksAreSkippedAndFinishedSubagentsDoNotCount() {
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "running"}, null, "x"]}"#
+            )
+                == expected(.working, "Stop"))
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [7, {"type": "shell", "status": 3, "command": ["npm"], "description": "Run the tests"}]}"#
+            )
+                == expected(.background, "Stop", backgroundTasks: ["Run the tests"]))
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "completed"}]}"#
+            )
+                == expected(.done, "Stop"))
+    }
+
+    @Test func aQuestionOrASubagentWinsOverShells() {
+        let shell = #"{"id": "t1", "type": "shell", "status": "running", "command": "npm test"}"#
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Tests run. Should I push?", "background_tasks": [\#(shell)]}"#
+            )
+                == expected(.waiting, "Stop", question: true))
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Both run.", "background_tasks": [\#(shell), {"id": "t2", "type": "subagent", "status": "running"}]}"#
+            )
+                == expected(.working, "Stop"))
+    }
+
+    @Test func aBackgroundReportCarriesItsWorkToTheApp() throws {
+        let input =
+            #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "shell", "status": "running", "command": "npm test"}]}"#
+        let hook = try #require(
+            AgentHook.request(
+                input: Data(input.utf8), environment: ["CANOPY_PANE": "p3", "CANOPY_HOME": "/tmp/h"],
+                startedAt: started))
+        let params = try #require(hook.request.params).decode(TermStateParams.self)
+        #expect(params.state == .background)
+        #expect(params.report.backgroundTasks == ["npm test"])
+        // Params without the field, as from an older CLI, still read, and other reports leave it out.
+        let done = try JSONValue.from(TermStateParams(pane: "p3", state: .done))
+        if case .object(let fields) = done { #expect(fields["backgroundTasks"] == nil) }
+        #expect(try done.decode(TermStateParams.self).backgroundTasks.isEmpty)
     }
 
     @Test func aFieldThatChangedShapeReadsAsMissing() {

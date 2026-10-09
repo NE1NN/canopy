@@ -6,6 +6,8 @@ public enum AgentState: String, Codable, Sendable, CaseIterable {
     case working
     case waiting
     case done
+    /// The turn ended, but background work the agent started still runs, and the agent wakes when it ends.
+    case background
 }
 
 /// One report of an agent's state.
@@ -24,10 +26,12 @@ public struct AgentReport: Sendable, Equatable {
     public var takesOver: Bool
     /// The session ends and lets go of the pane.
     public var releases: Bool
+    /// What still runs for a background report, by the labels `BackgroundWork` shows.
+    public var backgroundTasks: [String]
 
     public init(
         state: AgentState?, session: String? = nil, event: String? = nil, at: Date? = nil, question: Bool = false,
-        takesOver: Bool = false, releases: Bool = false
+        takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = []
     ) {
         self.state = state
         self.session = session
@@ -36,6 +40,7 @@ public struct AgentReport: Sendable, Equatable {
         self.question = question
         self.takesOver = takesOver
         self.releases = releases
+        self.backgroundTasks = backgroundTasks
     }
 }
 
@@ -63,6 +68,7 @@ public struct AgentChange: Sendable, Equatable {
 /// What stands for a pane's agent in the sidebar, the tab bar, and the pane header. Ordered by urgency, so the most
 /// urgent of several is their `max()`.
 public enum AgentDot: Int, Comparable, Sendable {
+    case background
     case working
     case done
     case waiting
@@ -82,6 +88,8 @@ public struct PaneAgent: Sendable, Equatable {
     public private(set) var session: String?
     /// Waiting at the agent's own input line after a question, rather than on a prompt that keys answer.
     public private(set) var waitsOnQuestion = false
+    /// The labels of the work still running while the pane is background.
+    public private(set) var backgroundTasks: [String] = []
     /// When Canopy saw the pane reach its state.
     public private(set) var since = Date.distantPast
     /// When the last change happened, by the clock of whatever caused it. Hooks that started earlier are stale.
@@ -95,6 +103,7 @@ public struct PaneAgent: Sendable, Equatable {
         case .working: .working
         case .waiting: .waiting
         case .done: unseen ? .done : nil
+        case .background: .background
         }
     }
 
@@ -118,9 +127,18 @@ public struct PaneAgent: Sendable, Equatable {
         defer {
             if report.releases { session = nil }
         }
-        guard let next = report.state, next != state || next == .done else { return nil }
+        guard let next = report.state else { return nil }
+        // A Monitor wakes the agent on each line it reads, and the turn can end background again with less running.
+        if next == .background, state == .background {
+            backgroundTasks = report.backgroundTasks
+            changedAt = at
+            return nil
+        }
+        guard next != state || next == .done else { return nil }
         waitsOnQuestion = next == .waiting && report.question
-        return change(to: next, via: report.event ?? "term.state", session: report.session, at: at, now: now)
+        let change = change(to: next, via: report.event ?? "term.state", session: report.session, at: at, now: now)
+        if next == .background { backgroundTasks = report.backgroundTasks }
+        return change
     }
 
     /// Keys typed into the pane, or text sent with `canopy term send`. Claude Code runs no hook for an interrupt or a
@@ -160,6 +178,7 @@ public struct PaneAgent: Sendable, Equatable {
         state = next
         unseen = next == .done
         if next != .waiting { waitsOnQuestion = false }
+        backgroundTasks = []
         since = now
         changedAt = at
         return change

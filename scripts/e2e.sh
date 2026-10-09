@@ -407,6 +407,17 @@ grep -q '"state" : "done"' "$work/wait.json" || fail "term wait did not report d
 hook '{"session_id": "e2e", "hook_event_name": "UserPromptSubmit", "prompt": "and the docs"}'
 hook '{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "Docs updated.\n\nShould I push it?"}'
 [[ "$(agent_state)" == waiting ]] || fail "a turn ending on a question did not make the pane waiting"
+hook '{"session_id": "e2e", "hook_event_name": "UserPromptSubmit", "prompt": "run the tests"}'
+hook '{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "The tests are running.", "background_tasks": [{"id": "b1", "type": "shell", "status": "running", "description": "Run the test suite", "command": "npm test"}]}'
+[[ "$(agent_state)" == background ]] || fail "a turn ending with a shell running did not make the pane background"
+"$cli" term list --repo demo --row feat/term | grep "^$agent " | grep -q " background " || fail "term list does not show background"
+"$cli" term list --repo demo --row feat/term --json | grep -q '"Run the test suite"' ||
+    fail "term list does not name the background work"
+if "$cli" term wait "$agent" --for done --timeout 1s >/dev/null 2>&1; then fail "term wait --for done returned on background"; fi
+if "$cli" term wait "$agent" --timeout 1s >/dev/null 2>&1; then fail "term wait --for any returned on background"; fi
+"$cli" term wait "$agent" --for background --timeout 5s | grep -qx "$agent background" ||
+    fail "term wait --for background did not return"
+"$cli" term wait "$agent" --for ended --timeout 5s | grep -qx "$agent background" || fail "term wait --for ended did not return"
 "$cli" term state "$agent" none >/dev/null
 [[ "$(agent_state)" == none ]] || fail "term state none did not clear the pane"
 if "$cli" term wait "$agent" --timeout 1s --json > "$work/timeout.json" 2>/dev/null; then fail "expected a timeout"; fi
@@ -417,9 +428,12 @@ CANOPY_PANE="$agent" "$cli" term state done | grep -qx "$agent done" || fail "te
 import json, sys
 events = [e for e in json.load(open(sys.argv[1])) if e["data"].get("pane") == sys.argv[2]]
 types = [e["type"] for e in events]
-want = ["agent.working", "agent.done", "agent.working", "agent.waiting", "agent.cleared", "agent.done"]
+want = ["agent.working", "agent.done", "agent.working", "agent.waiting", "agent.working", "agent.background",
+        "agent.cleared", "agent.done"]
 if types != want:
     sys.exit(f"got {types}")
+if events[5]["data"].get("tasks") != ["Run the test suite"]:
+    sys.exit(f"agent.background has no tasks: {events[5]['data']}")
 if any(e["source"] != "cli" for e in events):
     sys.exit("agent events are not the CLI's")
 EOF
@@ -430,6 +444,7 @@ printf '{"session_id": "x", "hook_event_name": "Stop"}' | CANOPY_PANE=p1 CANOPY_
 printf '{"session_id": "x", "hook_event_name": "Stop"}' | env -u CANOPY_PANE "$cli" agent-hook || fail "agent-hook failed outside Canopy"
 "$cli" term close "$agent" >/dev/null
 grep -q "canopy term wait" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing term wait"
+grep -q -- "--for background" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing the background state"
 
 step "canopy hooks adds its hooks to Claude Code's settings and takes only its own out"
 settings="$CLAUDE_CONFIG_DIR/settings.json"

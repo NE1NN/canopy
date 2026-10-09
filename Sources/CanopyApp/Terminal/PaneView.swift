@@ -106,7 +106,7 @@ struct PaneStatusMark: View {
                 .foregroundStyle(code == 0 ? .green : .red)
                 .accessibilityLabel(code == 0 ? "Exited" : "Exited with code \(code)")
         case .running where pane.agent.dot != nil:
-            AgentDotView(dot: pane.agent.dot ?? .working)
+            AgentDotView(dot: pane.agent.dot ?? .working, tasks: pane.agent.backgroundTasks)
         case .running where pane.isRunningProgram:
             RunningDot()
         case .running:

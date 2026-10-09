@@ -45,17 +45,39 @@ extension ControlServerTests {
             as: TermStateResult.self)
         #expect(try await waiting.value == TermWaitResult(pane: pane, state: .done))
 
+        // A background report carries its work into the list, and only a wait for background returns on it.
+        _ = try await call(
+            client, TermMethod.state,
+            TermStateParams(pane: pane, state: .background, session: "s1", event: "Stop", backgroundTasks: ["bun dev"]),
+            as: TermStateResult.self)
+        let background = try await call(
+            client, TermMethod.list, TermListParams(target: target), as: [TermInfo].self)
+        #expect(background.map(\.agent) == [.background])
+        #expect(background.map(\.backgroundTasks) == [["bun dev"]])
+        let reached = try await call(
+            client, TermMethod.wait, TermWaitParams(panes: [pane], target: .background, timeout: 5),
+            as: TermWaitResult.self)
+        #expect(reached == TermWaitResult(pane: pane, state: .background))
+        await #expect(throws: (any Error).self) {
+            try await call(
+                client, TermMethod.wait, TermWaitParams(panes: [pane], target: .any, timeout: 0.2),
+                as: TermWaitResult.self)
+        }
+
         _ = try await call(
             client, TermMethod.state, TermStateParams(pane: pane, state: AgentState.none), as: TermStateResult.self)
         let cleared = try await call(client, TermMethod.list, TermListParams(target: target), as: [TermInfo].self)
         #expect(cleared.map(\.agent) == [nil])
         let encoded = try JSONValue.from(cleared[0])
-        if case .object(let fields) = encoded { #expect(fields["agent"] == nil) }
+        if case .object(let fields) = encoded {
+            #expect(fields["agent"] == nil)
+            #expect(fields["backgroundTasks"] == nil)
+        }
 
         // Panes log through the terminal store's own log, which this helper does not flush.
-        #expect(await eventually { await logged(workspace, "agent").count == 3 })
+        #expect(await eventually { await logged(workspace, "agent").count == 4 })
         let events = await logged(workspace, "agent")
-        #expect(events.map(\.type) == ["agent.working", "agent.done", "agent.cleared"])
+        #expect(events.map(\.type) == ["agent.working", "agent.done", "agent.background", "agent.cleared"])
         #expect(events.allSatisfy { $0.source == .cli })
     }
 

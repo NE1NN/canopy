@@ -614,6 +614,9 @@ public final class TerminalStore {
         agentObservers[id] = nil
     }
 
+    /// How many agent observers listen, so tests report only once a wait is in place.
+    var agentObserverCount: Int { agentObservers.count }
+
     func notifyAgentObservers(_ event: AgentEvent) {
         for observer in agentObservers.values {
             observer(event)

@@ -57,6 +57,9 @@ enum Style {
 
     /// An agent that finished. The system's green, which sits apart from GitHub's open-PR green in the same row.
     static let agentDone = Color(nsColor: .systemGreen)
+    /// The ring of an agent waiting on background work. A thin line carries less color than the done dot, so the
+    /// green is darkened in light mode to hold up on white, as the waiting yellow is.
+    static let agentBackgroundRing = NSColor(name: nil) { $0.isDark ? .systemGreen : NSColor(hex: 0x1FA544) }
     /// An agent waiting for the author. The system's yellow, darkened in light mode to hold up on white.
     static let agentWaiting = Color.adaptive(light: 0xD49A00, dark: 0xFFD60A)
 

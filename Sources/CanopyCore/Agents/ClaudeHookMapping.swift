@@ -7,11 +7,12 @@ public enum ClaudeHookMapping {
     public static func report(from input: Data, startedAt: Date?) -> AgentReport? {
         guard let hook = try? JSONDecoder().decode(HookInput.self, from: input) else { return nil }
         func report(
-            _ state: AgentState?, question: Bool = false, takesOver: Bool = false, releases: Bool = false
+            _ state: AgentState?, question: Bool = false, takesOver: Bool = false, releases: Bool = false,
+            backgroundTasks: [String] = []
         ) -> AgentReport {
             AgentReport(
                 state: state, session: hook.sessionID, event: hook.event, at: startedAt, question: question,
-                takesOver: takesOver, releases: releases)
+                takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks)
         }
         let fromMainAgent = hook.agentID == nil
         switch hook.event {
@@ -39,12 +40,16 @@ public enum ClaudeHookMapping {
             }
         case "Stop":
             // Background subagents and workflows end on their own and wake the agent, so the turn is not over.
-            // Shell and monitor tasks can run for good, like a dev server, so they do not count.
-            if hook.backgroundTasks?.contains(where: { ["subagent", "workflow"].contains($0.type) }) == true {
+            if hook.backgroundTasks?.contains(where: { $0.isAgent && $0.isRunning }) == true {
                 return report(.working)
             }
             if let message = hook.lastAssistantMessage, endsOnQuestion(message) {
                 return report(.waiting, question: true)
+            }
+            // Shells and monitors can run for good, like a dev server, so the turn is over, but the agent will wake.
+            let running = (hook.backgroundTasks ?? []).filter { !$0.isAgent && $0.isRunning }
+            if !running.isEmpty {
+                return report(.background, backgroundTasks: running.map(\.label))
             }
             return report(.done)
         case "StopFailure":
@@ -80,6 +85,31 @@ public enum ClaudeHookMapping {
 
         struct BackgroundTask: Decodable {
             var type: String?
+            var status: String?
+            var description: String?
+            var command: String?
+
+            /// Subagents and workflows. Any other kind is background work, so a kind Claude Code adds later shows
+            /// background rather than done.
+            var isAgent: Bool { ["subagent", "workflow"].contains(type) }
+            var isRunning: Bool { status == nil || status == "running" }
+
+            var label: String {
+                [description, command, type].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { !$0.isEmpty } ?? "background task"
+            }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                type = try? container.decodeIfPresent(String.self, forKey: .type)
+                status = try? container.decodeIfPresent(String.self, forKey: .status)
+                description = try? container.decodeIfPresent(String.self, forKey: .description)
+                command = try? container.decodeIfPresent(String.self, forKey: .command)
+            }
+
+            enum CodingKeys: String, CodingKey {
+                case type, status, description, command
+            }
         }
 
         /// Only the event's name must decode. Any other field that changed shape reads as missing, so one odd field
@@ -93,7 +123,17 @@ public enum ClaudeHookMapping {
             toolName = try? container.decodeIfPresent(String.self, forKey: .toolName)
             notificationType = try? container.decodeIfPresent(String.self, forKey: .notificationType)
             lastAssistantMessage = try? container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
-            backgroundTasks = try? container.decodeIfPresent([BackgroundTask].self, forKey: .backgroundTasks)
+            backgroundTasks = (try? container.decodeIfPresent([Lossy<BackgroundTask>].self, forKey: .backgroundTasks))?
+                .compactMap(\.value)
+        }
+
+        /// One element of a list that reads as nil when it has the wrong shape, so it cannot drop the others.
+        struct Lossy<Value: Decodable>: Decodable {
+            var value: Value?
+
+            init(from decoder: any Decoder) throws {
+                value = try? Value(from: decoder)
+            }
         }
 
         enum CodingKeys: String, CodingKey {

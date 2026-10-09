@@ -53,7 +53,7 @@ public enum AgentSound {
             switch state {
             case .done: config.agentDoneSound
             case .waiting: config.agentWaitingSound
-            case .working, .none: ""
+            case .working, .background, .none: ""
             }
         return sound.isEmpty ? nil : sound
     }

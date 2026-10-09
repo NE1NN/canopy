@@ -15,6 +15,9 @@ struct PluginRowLineView: View {
     @State private var isConfirmingRemove = false
 
     private var agentDot: AgentDot? { model.terminals.agentDot(inRow: row.path) }
+    private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRow: row.path) }
+    /// On the row's symbol and name only: a tooltip on the whole row would cover its accessories' and buttons' own.
+    private var tooltip: String { AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks) }
 
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedPluginRow?.path == row.path }
 
@@ -24,11 +27,13 @@ struct PluginRowLineView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(row.isMissing ? .tertiary : .secondary)
                 .frame(width: 16)
+                .help(tooltip)
             Text(row.displayName)
                 .font(Style.row)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.isMissing ? .secondary : .primary)
+                .help(tooltip)
             if row.isMissing {
                 TagView(text: "missing")
             }
@@ -37,7 +42,7 @@ struct PluginRowLineView: View {
                 PluginAccessoryView(accessory: accessory)
             }
             if let agentDot {
-                AgentDotView(dot: agentDot)
+                AgentDotView(dot: agentDot, tasks: backgroundTasks)
             }
             if (isHovering && !isDragged) || isConfirmingRemove || row.isMissing {
                 if let shortcut, isHovering {
@@ -80,7 +85,6 @@ struct PluginRowLineView: View {
         }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .help(row.path)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -95,7 +99,7 @@ struct PluginRowLineView: View {
     private var accessibilityLabel: String {
         var parts = [row.displayName, "in \(info.name)"]
         parts += row.look.accessories.map(\.help)
-        if let agentDot { parts.append(agentDot.label.lowercased()) }
+        if let agentDot { parts.append(agentDot.inlineLabel(tasks: backgroundTasks)) }
         if row.isMissing { parts.append("missing") }
         return parts.joined(separator: ", ")
     }
