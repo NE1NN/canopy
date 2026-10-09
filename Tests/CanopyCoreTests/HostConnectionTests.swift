@@ -253,6 +253,39 @@ struct HostConnectionTests {
         #expect(await setup.connection.state == .connected)
     }
 
+    /// A host removed, or a Canopy quitting, stops its connection for good: work still on its way, such as a kept
+    /// report being replayed, must not start a master nothing would stop.
+    @Test func aStoppedConnectionRefusesToConnect() async throws {
+        let setup = try Setup()
+        try await setup.connection.connect()
+
+        await setup.connection.stop()
+
+        await #expect {
+            try await setup.connection.run(["true"], timeout: .seconds(5))
+        } throws: {
+            ($0 as? WorkspaceError)?.code == "host_unreachable"
+                && ($0 as? WorkspaceError)?.message.contains("Canopy stopped using box") == true
+        }
+        #expect(setup.launcher.masters.count == 1)
+        #expect(await setup.connection.state == .idle)
+    }
+
+    /// A master coming up as the connection stops is stopped too, rather than left running.
+    @Test func aMasterComingUpAsTheConnectionStopsIsStopped() async throws {
+        let setup = try Setup()
+        setup.launcher.holdChecks = true
+        let connecting = Task { try await setup.connection.connect() }
+        #expect(await eventually { setup.launcher.heldCheckCount() == 1 })
+
+        await setup.connection.stop()
+        setup.launcher.releaseChecks()
+
+        await #expect(throws: (any Error).self) { try await connecting.value }
+        #expect(await setup.connection.state == .idle)
+        #expect(setup.launcher.masters.allSatisfy { !$0.isRunning })
+    }
+
     @Test func commandsConnectFirstAndGoThroughTheMaster() async throws {
         let setup = try Setup()
 

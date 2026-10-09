@@ -50,6 +50,8 @@ public actor HostConnection {
     private let isPortFree: @Sendable (UInt16) -> Bool
     /// The round of forwards under way, which the next waits for.
     private var forwarding: Task<Void, Never>?
+    /// Stopped for good, as when its host is removed, so work still on its way starts no master nothing would stop.
+    private var stopped = false
 
     /// `isPortFree` says whether nothing on this Mac holds a port; tests pass a stand-in. `macPorts` holds the Mac
     /// ports of every host's forwards, which the workspace shares between its hosts.
@@ -89,6 +91,7 @@ public actor HostConnection {
 
     /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
     public func connect() async throws {
+        guard !stopped else { throw Self.stoppedError(alias) }
         lastUse = clock.now
         // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
         // that is not answering would connect on its own, around the master.
@@ -219,6 +222,7 @@ public actor HostConnection {
 
     /// Stops the master for good, as Canopy quits. Sessions on the host only detach.
     public func stop() {
+        stopped = true
         connecting?.cancel()
         stopMaster(becoming: .idle)
         for observer in observers.values { observer.finish() }
@@ -230,6 +234,10 @@ public actor HostConnection {
         set(.connecting)
         while true {
             if try await startMaster() {
+                guard !stopped else {
+                    stopMaster(becoming: .idle)
+                    throw Self.stoppedError(alias)
+                }
                 lastError = nil
                 generation += 1
                 lastUse = clock.now
@@ -253,6 +261,10 @@ public actor HostConnection {
             }
             try await clock.sleep(for: Self.retryEvery)
         }
+    }
+
+    static func stoppedError(_ alias: String) -> WorkspaceError {
+        .hostUnreachable(alias, reason: "Canopy stopped using \(alias), as it was removed or Canopy is quitting.")
     }
 
     /// ssh's failures that waiting and waking cannot change. A name that does not resolve is not one: the Mac may be
