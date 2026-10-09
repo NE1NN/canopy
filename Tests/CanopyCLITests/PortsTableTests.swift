@@ -51,6 +51,22 @@ struct PortsTableTests {
                 """)
     }
 
+    /// What stopped is printed, and each host that could not stop its port after it, as an error.
+    @Test func aHostThatCouldNotStopItsPortIsNamedAfterWhatStopped() {
+        let result = PortsStopResult(
+            port: 5173, stopped: [info(5173, pid: 40, host: "box", localPort: 5173)], killed: [],
+            failures: [
+                PortStopFailure(
+                    host: "other", port: 5173,
+                    error: ControlError(code: "host_command_failed", message: "A command on other failed: exit 1"))
+            ])
+
+        #expect(PortsCommand.report(result) == "Stopped node (pid 40) on port 5173 on box.")
+        #expect(
+            PortsCommand.failures(result) == ["Could not stop port 5173 on other: A command on other failed: exit 1"])
+        #expect(PortsCommand.failures(PortsStopResult(port: 5173, stopped: [], killed: [])).isEmpty)
+    }
+
     @Test func aStopThatSignalledNothingSaysSo() {
         let report = PortsCommand.report(PortsStopResult(port: 5173, stopped: [], killed: []))
 

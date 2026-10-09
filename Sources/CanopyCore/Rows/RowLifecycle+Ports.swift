@@ -69,11 +69,22 @@ extension RowLifecycle {
             throw WorkspaceError.portNotFound(number)
         }
         let snapshot = await workspace.snapshot
-        let outcome = try await stop(holding.map(\.port))
+        let outcome = await stop(holding.map(\.port))
+        // A stop that went nowhere is an error, while one that went through somewhere says what failed beside it.
+        if let first = outcome.failures.first, !outcome.stoppedAnything { throw first.error }
         let stopped = holding.flatMap { info(of: $0.port, inRow: $0.rowPath, snapshot) }.filter { info in
             info.host.map { outcome.remote[$0]?.contains(info.pid) == true } ?? true
         }
-        return PortsStopResult(port: number, stopped: stopped, killed: outcome.killed)
+        return PortsStopResult(
+            port: number, stopped: stopped, killed: outcome.killed,
+            failures: outcome.failures.isEmpty
+                ? nil
+                : outcome.failures.map {
+                    PortStopFailure(
+                        host: $0.host, port: Int($0.port),
+                        error: ($0.error as? WorkspaceError).map(ControlError.init)
+                            ?? ControlError(code: "internal", message: "\($0.error)"))
+                })
     }
 
     /// Stops what listens on these ports in a row, as found by a scan now rather than when the panel last looked, so a
@@ -81,10 +92,11 @@ extension RowLifecycle {
     /// ports are as its host's last probe found them, and the host checks each pid still listens before signalling it.
     public func stopPorts(_ numbers: Set<UInt16>, inRow path: String) async {
         let group = await portGroups().first { $0.rowPath == path }
-        do {
-            _ = try await stop(group?.ports.filter { numbers.contains($0.port) } ?? [])
-        } catch {
-            Workspace.hostLog.error("Could not stop ports: \(String(describing: error), privacy: .public)")
+        let outcome = await stop(group?.ports.filter { numbers.contains($0.port) } ?? [])
+        for failure in outcome.failures {
+            Workspace.hostLog.error(
+                "Could not stop port \(failure.port) on \(failure.host, privacy: .public): \(String(describing: failure.error), privacy: .public)"
+            )
         }
     }
 
@@ -92,27 +104,31 @@ extension RowLifecycle {
         /// The pids each host signalled, which this Mac's scan does not need, being as of now.
         var remote: [String: Set<Int32>] = [:]
         var killed: [PortProcess] = []
+        /// Whether this Mac's processes were stopped, or a host answered for its own.
+        var stoppedAnything = false
+        var failures: [(host: String, port: UInt16, error: any Error)] = []
     }
 
     /// The one place ports are stopped: this Mac's processes here, and a host's on that host, never here.
-    private func stop(_ ports: [RowPort]) async throws -> Outcome {
+    /// A host that fails leaves the others going, and the outcome says which failed.
+    private func stop(_ ports: [RowPort]) async -> Outcome {
         let stops = PortStops(ports)
         var outcome = Outcome()
         if !stops.local.isEmpty {
             outcome.killed = await localPorts.stop(stops.local).killed.map { PortProcess(pid: $0, host: nil) }
+            outcome.stoppedAnything = true
         }
-        var failure: (any Error)?
         for remote in stops.remote {
             do {
                 let stopped = try await workspace.stopRemotePort(remote.port, pids: remote.pids, on: remote.host)
                 outcome.remote[remote.host, default: []].formUnion(stopped.stopped)
                 outcome.killed += stopped.killed.map { PortProcess(pid: $0, host: remote.host) }
+                outcome.stoppedAnything = true
                 hostMonitor?.portsStopped([remote.port], on: remote.host)
             } catch {
-                failure = failure ?? error
+                outcome.failures.append((remote.host, remote.port, error))
             }
         }
-        if let failure { throw failure }
         return outcome
     }
 }

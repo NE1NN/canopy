@@ -82,6 +82,8 @@ final class FakeHostLauncher: HostProcessLauncher {
         /// `-O check` waits here until it is released.
         var holdChecks = false
         var heldChecks: [CheckedContinuation<Void, Never>] = []
+        /// What `canopy-host stop-port` prints, with status 0, when set.
+        var stopPortOutput: String?
         /// What `canopy-host probe` prints, by kind, when set.
         var probeOutput: [Probe: String] = [:]
         /// Probes of these kinds wait until released, or until the task waiting for them is cancelled.
@@ -166,6 +168,11 @@ final class FakeHostLauncher: HostProcessLauncher {
             guard argv.containsSequence(["-O", operation]), let at = argv.firstIndex(of: "-L") else { return nil }
             return argv[at + 1]
         }
+    }
+
+    var stopPortOutput: String? {
+        get { state.withLock { $0.stopPortOutput } }
+        set { state.withLock { $0.stopPortOutput = newValue } }
     }
 
     /// Probes of `kind` print `output`, with status 0.
@@ -268,6 +275,11 @@ final class FakeHostLauncher: HostProcessLauncher {
             return SubprocessResult(
                 status: 255, stdout: Data(), stderr: Data("mux_client_request_session: read from master failed".utf8),
                 timedOut: false)
+        }
+        if argv.joined(separator: " ").contains(#"canopy-host" stop-port"#),
+            let output = state.withLock({ $0.stopPortOutput })
+        {
+            return SubprocessResult(status: 0, stdout: Data(output.utf8), stderr: Data(), timedOut: false)
         }
         if let kind = Probe(argv) {
             let id = UUID()

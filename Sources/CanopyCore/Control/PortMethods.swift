@@ -71,6 +71,29 @@ public struct PortsStopResult: Codable, Sendable {
     public var stopped: [PortInfo]
     /// Processes that ignored SIGTERM and were killed, on this Mac and on hosts.
     public var killed: [PortProcess]
+    /// The hosts that could not stop their port, when others stopped theirs. Left out when every stop went through;
+    /// when none did, the first failure is the call's error instead.
+    public var failures: [PortStopFailure]?
+
+    public init(port: Int, stopped: [PortInfo], killed: [PortProcess], failures: [PortStopFailure]? = nil) {
+        self.port = port
+        self.stopped = stopped
+        self.killed = killed
+        self.failures = failures
+    }
+}
+
+/// A host's port that could not be stopped, and why.
+public struct PortStopFailure: Codable, Sendable, Equatable {
+    public var host: String
+    public var port: Int
+    public var error: ControlError
+
+    public init(host: String, port: Int, error: ControlError) {
+        self.host = host
+        self.port = port
+        self.error = error
+    }
 }
 
 /// A process on this Mac, or on a host, whose pids are a different machine's.

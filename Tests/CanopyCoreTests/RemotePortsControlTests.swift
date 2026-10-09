@@ -89,6 +89,59 @@ struct PortStopsTests {
     }
 }
 
+/// Stopping ports on several hosts at once, through stand-in hosts.
+@MainActor
+struct RemotePortStopFailureTests {
+    /// One host failing to stop its port does not hide that another host's was stopped.
+    @Test func aHostThatFailsToStopItsPortLeavesTheOthersStopsReported() async throws {
+        let hosts = try await HostMonitorRoundTests.Hosts(["box", "other"], rows: true)
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        let rows = RowLifecycle(
+            workspace: hosts.workspace, terminals: hosts.terminals, hostMonitor: monitor,
+            localPorts: RecordingLocalPorts(scan: { [] }).ports)
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        hosts.serve(on: "box", [port])
+        hosts.serve(on: "other", [port])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return ["box", "other"].allSatisfy { monitor.remotePorts[$0]?.isEmpty == false }
+            })
+        hosts["box"].stopPortOutput = #"{"stopped": [\#(port)], "killed": []}"#
+        hosts["other"].execStatus = 1
+
+        let result = try await rows.stopPort(Int(port), rowPath: nil)
+
+        #expect(result.stopped.map(\.host) == ["box"])
+        #expect(result.failures?.map(\.host) == ["other"])
+        #expect(result.failures?.first?.port == Int(port))
+        #expect(result.failures?.first?.error.code == "host_command_failed")
+        await hosts.stop()
+    }
+
+    /// When nothing was stopped, the failure is the answer.
+    @Test func aStopThatFailsEverywhereIsAnError() async throws {
+        let hosts = try await HostMonitorRoundTests.Hosts(["box"], rows: true)
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        let rows = RowLifecycle(
+            workspace: hosts.workspace, terminals: hosts.terminals, hostMonitor: monitor,
+            localPorts: RecordingLocalPorts(scan: { [] }).ports)
+        let port = FakeSSHForwardTests.freePort()
+        hosts.serve(on: "box", [port])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return monitor.remotePorts["box"]?.isEmpty == false
+            })
+        hosts["box"].execStatus = 1
+
+        await #expect {
+            try await rows.stopPort(Int(port), rowPath: nil)
+        } throws: { ($0 as? WorkspaceError)?.code == "host_command_failed" }
+        await hosts.stop()
+    }
+}
+
 /// Stands in for this Mac's ports: records every stop, and signals nothing.
 final class RecordingLocalPorts: Sendable {
     let stops = Mutex<[[ListeningPort]]>([])

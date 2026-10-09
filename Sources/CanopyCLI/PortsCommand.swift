@@ -1,5 +1,6 @@
 import ArgumentParser
 import CanopyCore
+import Foundation
 
 struct PortsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -53,7 +54,9 @@ struct PortsCommand: AsyncParsableCommand {
             discussion: """
                 Sends SIGTERM, then SIGKILL if the port is still listening after 3 seconds. Any other ports the \
                 process holds close too. A port in another row is refused unless you pass that --row, or --all. A \
-                remote row's port is stopped on its host, and is found by its port there or by its port on this Mac.
+                remote row's port is stopped on its host, and is found by its port there or by its port on this Mac. When \
+                some hosts stop theirs and others cannot, it prints what stopped, then an error for each that could not, \
+                and exits 1.
                 """
         )
 
@@ -68,8 +71,19 @@ struct PortsCommand: AsyncParsableCommand {
             let client = Client(json: output.json)
             let result = client.call(
                 PortMethod.stop, PortsStopParams(port: port, target: rowOptions.hint, all: all))
-            try client.print(result) { PortsCommand.report(try result.decode(PortsStopResult.self)) }
+            let stopped = try result.decode(PortsStopResult.self)
+            try client.print(result) { PortsCommand.report(stopped) }
+            let failures = PortsCommand.failures(stopped)
+            guard failures.isEmpty else {
+                for failure in failures { FileHandle.standardError.write(Data("error: \(failure)\n".utf8)) }
+                throw ExitCode(1)
+            }
         }
+    }
+
+    /// A line for each host that could not stop its port, while others stopped theirs.
+    static func failures(_ result: PortsStopResult) -> [String] {
+        (result.failures ?? []).map { "Could not stop port \($0.port) on \($0.host): \($0.error.message)" }
     }
 
     /// A line for each process stopped. A host's pids are told apart from this Mac's by the host.

@@ -187,6 +187,8 @@ struct AgentGuide: ParsableCommand {
         The list shows the host in HOST, and PORT reads `5173 → 5174` when this Mac's port differs ("host" and
         "localPort" in --json); a port ssh could not forward reads `(not forwarded)`, with ssh's message as
         "forwardError". Its PID is the host's. `ports stop` takes either number and stops the server on the host.
+        When one host stops its port and another cannot, it prints what stopped, then an error for the other, and
+        exits 1; --json lists the other in "failures".
 
         ## Pull requests and branches
 
