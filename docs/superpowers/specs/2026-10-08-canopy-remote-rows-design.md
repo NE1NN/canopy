@@ -337,7 +337,7 @@ The forward goes when the port stops listening on the host or the master stops.
 While a remote row has a listening port, its host's panes do not detach for idleness and its master stays up, as "Idle detach" says.
 The ports panel lists a remote row's ports under it with the server mark and the host's name after the row's, and shows `5173 → 5174` when the Mac's port differs.
 Clicking one opens the Mac's port in the browser.
-A port without a forward is dimmed, with ssh's message on hover.
+A port without a forward is dimmed and reads `5173 (not forwarded)`, as `canopy ports` does, with ssh's message on hover.
 Stopping one runs `canopy-host stop-port` on the host, which sends SIGTERM to its processes there while they still listen on it, never to the local ssh, and its tooltip names the host.
 The local scan leaves out the connected masters' pids, since a master holds its forwards' sockets on the Mac.
 `canopy ports` lists them with `host`, `localPort`, and `forwardError` when there is no forward; its table gains a HOST column when any port has a host.

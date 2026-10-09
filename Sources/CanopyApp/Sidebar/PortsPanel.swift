@@ -151,19 +151,13 @@ struct PortBadge: View {
     /// A remote port without a forward cannot be opened here.
     private var isUnreachable: Bool { port.macPort == nil }
 
-    /// A remote port's Mac port follows its own when the two differ.
-    private var label: String {
-        guard let local = port.remote?.local, local != port.port else { return "\(port.port)" }
-        return "\(port.port) → \(local)"
-    }
-
     var body: some View {
         HStack(spacing: 2) {
             Button {
                 if let mac = port.macPort, let url = URL(string: "http://localhost:\(mac)") { openURL(url) }
             } label: {
                 // The badge's padding is part of the label, so a click anywhere on the badge but `x` opens the port.
-                Text(verbatim: label)
+                Text(verbatim: port.label)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(isUnreachable ? .tertiary : .primary)
                     .padding(.leading, 7)
@@ -213,8 +207,7 @@ struct PortBadge: View {
 
     private var openHelp: String {
         guard let mac = port.macPort else {
-            let reason = port.remote?.error ?? "ssh could not forward it."
-            return "\(holders). Not forwarded to this Mac: \(reason)"
+            return "\(holders). Not forwarded to this Mac: \(port.forwardProblem ?? "")"
         }
         return "\(holders). Opens http://localhost:\(mac)."
     }

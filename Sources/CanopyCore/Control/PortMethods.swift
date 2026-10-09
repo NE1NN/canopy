@@ -23,6 +23,11 @@ public struct PortInfo: Codable, Sendable, Equatable {
     public var forwardError: String? = nil
 }
 
+extension PortInfo {
+    /// As the ports panel shows it.
+    public var label: String { PortLabel.text(port: port, remote: host != nil, local: localPort) }
+}
+
 public struct PortsListParams: Codable, Sendable {
     public var target: TargetHint
     /// Every row's ports, as when no row resolves.

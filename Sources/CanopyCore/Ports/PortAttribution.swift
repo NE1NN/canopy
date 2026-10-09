@@ -21,6 +21,26 @@ extension RowPort {
         guard let remote else { return port }
         return remote.local
     }
+
+    /// How the panel and `canopy ports` show it.
+    public var label: String {
+        PortLabel.text(port: Int(port), remote: remote != nil, local: remote?.local.map(Int.init))
+    }
+
+    /// Why a remote port cannot be opened on this Mac, nil when it can.
+    public var forwardProblem: String? {
+        guard let remote, remote.local == nil else { return nil }
+        return remote.error ?? "ssh could not forward it."
+    }
+}
+
+public enum PortLabel {
+    /// `5173`, `5173 → 5174` when a remote port's Mac port differs, or `5173 (not forwarded)` while it has none.
+    public static func text(port: Int, remote: Bool, local: Int?) -> String {
+        guard remote else { return "\(port)" }
+        guard let local else { return "\(port) (not forwarded)" }
+        return local == port ? "\(port)" : "\(port) → \(local)"
+    }
 }
 
 /// A port on a host, and where the Mac reaches it.

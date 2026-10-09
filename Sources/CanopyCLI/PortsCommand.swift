@@ -41,16 +41,8 @@ struct PortsCommand: AsyncParsableCommand {
         return Table.render(
             ["PORT", "PROCESS", "PID"] + (remote ? ["HOST"] : []) + ["REPO", "ROW"],
             ports.map { info in
-                var port = "\(info.port)"
-                if info.host != nil {
-                    if let local = info.localPort {
-                        if local != info.port { port += " → \(local)" }
-                    } else {
-                        port += " (not forwarded)"
-                    }
-                }
                 // A plugin row's owner is its plugin.
-                return [port, info.process, "\(info.pid)"] + (remote ? [info.host ?? "-"] : [])
+                [info.label, info.process, "\(info.pid)"] + (remote ? [info.host ?? "-"] : [])
                     + [info.repo ?? info.plugin ?? "-", info.row]
             })
     }

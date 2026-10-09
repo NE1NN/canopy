@@ -68,6 +68,20 @@ struct PortStopsTests {
         #expect(groups.otherPorts(of: remote(6000, on: "other", mac: 6000, 10)) == [])
     }
 
+    /// The panel's badge and the CLI's table say the same of a port.
+    @Test func aPortsLabelNamesTheMacPortWhenItDiffersOrSaysItIsNotForwarded() {
+        #expect(local(3000, 1).label == "3000")
+        #expect(remote(5173, on: "box", mac: 5173, 1).label == "5173")
+        #expect(remote(5173, on: "box", mac: 5174, 1).label == "5173 → 5174")
+        #expect(remote(5173, on: "box", mac: nil, 1).label == "5173 (not forwarded)")
+        let info = PortInfo(
+            repo: nil, row: "r", rowPath: "/r", port: 5173, pid: 1, process: "node", host: "box", localPort: 5174)
+        #expect(info.label == "5173 → 5174")
+        #expect(remote(5173, on: "box", mac: nil, 1).forwardProblem == "Port forwarding failed")
+        #expect(remote(5173, on: "box", mac: 5174, 1).forwardProblem == nil)
+        #expect(local(3000, 1).forwardProblem == nil)
+    }
+
     @Test func theMacReachesALocalPortAsItIsAndARemoteOneThroughItsForward() {
         #expect(local(3000, 1).macPort == 3000)
         #expect(remote(5173, on: "box", mac: 5174, 1).macPort == 5174)
