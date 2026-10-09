@@ -12,9 +12,15 @@ public enum BackgroundWork {
         "Agent waiting on background work" + listed(unique(tasks))
     }
 
+    /// The first few names, and how many more, so a folded header over many rows keeps a short tooltip.
     private static func listed(_ names: [String]) -> String {
-        names.isEmpty ? "" : ": " + names.joined(separator: ", ")
+        guard !names.isEmpty else { return "" }
+        let shown = names.prefix(shownNames).joined(separator: ", ")
+        let more = names.count - shownNames
+        return ": " + shown + (more > 0 ? ", and \(more) more" : "")
     }
+
+    static let shownNames = 3
 
     private static func unique(_ tasks: [String]) -> [String] {
         var seen = Set<String>()

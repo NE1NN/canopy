@@ -159,7 +159,7 @@ struct AgentGuide: ParsableCommand {
 
             canopy term state [<id>] <working|waiting|done|background|none>
                                                           report an agent's state, your terminal's by default
-            canopy term wait <id>... [--for done|waiting|background|any] [--timeout 30m]
+            canopy term wait <id>... [--for done|waiting|background|any|ended] [--timeout 30m]
                                                           wait until one of them is done or waiting for its user
             canopy hooks install | uninstall | status     Claude Code hooks that report Claude's state on their own
 
@@ -177,7 +177,8 @@ struct AgentGuide: ParsableCommand {
         terminal and its state, such as `p12 done`, and fails with wait_timeout, pane_closed, or agent_stopped.
         `--for any`, the default, means done or waiting and never returns on background, so a wait on an agent that
         left a dev server running in the background lasts until the server stops or the time runs out. Pass
-        `--for background` to learn that a turn ended with work still running.
+        `--for background` to learn that a turn ended with work still running, or `--for ended` for any end of a
+        turn: done, waiting, or background.
         `term state` and `term wait` never start Canopy.
 
         ## Ports

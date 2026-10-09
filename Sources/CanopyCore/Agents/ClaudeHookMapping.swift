@@ -40,14 +40,14 @@ public enum ClaudeHookMapping {
             }
         case "Stop":
             // Background subagents and workflows end on their own and wake the agent, so the turn is not over.
-            if hook.backgroundTasks?.contains(where: \.isAgent) == true {
+            if hook.backgroundTasks?.contains(where: { $0.isAgent && $0.isRunning }) == true {
                 return report(.working)
             }
             if let message = hook.lastAssistantMessage, endsOnQuestion(message) {
                 return report(.waiting, question: true)
             }
             // Shells and monitors can run for good, like a dev server, so the turn is over, but the agent will wake.
-            let running = (hook.backgroundTasks ?? []).filter(\.isRunningWork)
+            let running = (hook.backgroundTasks ?? []).filter { !$0.isAgent && $0.isRunning }
             if !running.isEmpty {
                 return report(.background, backgroundTasks: running.map(\.label))
             }
@@ -89,9 +89,10 @@ public enum ClaudeHookMapping {
             var description: String?
             var command: String?
 
+            /// Subagents and workflows. Any other kind is background work, so a kind Claude Code adds later shows
+            /// background rather than done.
             var isAgent: Bool { ["subagent", "workflow"].contains(type) }
-            /// Any other kind counts while it runs, so a kind Claude Code adds later shows background rather than done.
-            var isRunningWork: Bool { !isAgent && (status == nil || status == "running") }
+            var isRunning: Bool { status == nil || status == "running" }
 
             var label: String {
                 [description, command, type].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -122,7 +123,17 @@ public enum ClaudeHookMapping {
             toolName = try? container.decodeIfPresent(String.self, forKey: .toolName)
             notificationType = try? container.decodeIfPresent(String.self, forKey: .notificationType)
             lastAssistantMessage = try? container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
-            backgroundTasks = try? container.decodeIfPresent([BackgroundTask].self, forKey: .backgroundTasks)
+            backgroundTasks = (try? container.decodeIfPresent([Lossy<BackgroundTask>].self, forKey: .backgroundTasks))?
+                .compactMap(\.value)
+        }
+
+        /// One element of a list that reads as nil when it has the wrong shape, so it cannot drop the others.
+        struct Lossy<Value: Decodable>: Decodable {
+            var value: Value?
+
+            init(from decoder: any Decoder) throws {
+                value = try? Value(from: decoder)
+            }
         }
 
         enum CodingKeys: String, CodingKey {

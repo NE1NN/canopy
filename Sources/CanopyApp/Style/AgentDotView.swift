@@ -76,8 +76,7 @@ extension AgentDot {
         self == .background ? BackgroundWork.summary(tasks) : label(tasks: tasks)
     }
 
-    /// A row's or header's own tooltip with the dot's under it. A container's tooltip covers its children's, so the
-    /// dot's tooltip shows only where nothing around it has one.
+    /// A row's or header's own tooltip with the dot's line under it, so hovering its name says what its agent does.
     static func help(_ base: String, dot: AgentDot?, tasks: [String]) -> String {
         guard let dot else { return base }
         return base + "\n" + dot.help(tasks: tasks)

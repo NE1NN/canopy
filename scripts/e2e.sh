@@ -417,6 +417,7 @@ if "$cli" term wait "$agent" --for done --timeout 1s >/dev/null 2>&1; then fail 
 if "$cli" term wait "$agent" --timeout 1s >/dev/null 2>&1; then fail "term wait --for any returned on background"; fi
 "$cli" term wait "$agent" --for background --timeout 5s | grep -qx "$agent background" ||
     fail "term wait --for background did not return"
+"$cli" term wait "$agent" --for ended --timeout 5s | grep -qx "$agent background" || fail "term wait --for ended did not return"
 "$cli" term state "$agent" none >/dev/null
 [[ "$(agent_state)" == none ]] || fail "term state none did not clear the pane"
 if "$cli" term wait "$agent" --timeout 1s --json > "$work/timeout.json" 2>/dev/null; then fail "expected a timeout"; fi

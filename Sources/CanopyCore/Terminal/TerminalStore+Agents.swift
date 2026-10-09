@@ -21,6 +21,8 @@ public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
     case background
     /// Done or waiting. Coordinators wait on a row to learn it finished, and a background row has not.
     case any
+    /// Done, waiting, or background: the turn is over, whatever it left running.
+    case ended
 
     public func matches(_ state: AgentState) -> Bool {
         switch self {
@@ -28,11 +30,16 @@ public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
         case .waiting: state == .waiting
         case .background: state == .background
         case .any: state == .done || state == .waiting
+        case .ended: state == .done || state == .waiting || state == .background
         }
     }
 
     var label: String {
-        self == .any ? "done or waiting" : rawValue
+        switch self {
+        case .any: "done or waiting"
+        case .ended: "done, waiting, or background"
+        default: rawValue
+        }
     }
 }
 

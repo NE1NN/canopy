@@ -180,14 +180,16 @@ struct TermCommand: AsyncParsableCommand {
             abstract: "Wait until an agent in one of the terminals is done or waiting for you.",
             discussion: """
                 A terminal already in the state counts at once, unless something was typed or sent into it since. \
-                any means done or waiting, never background. \
+                any means done or waiting, never background; ended means done, waiting, or background. \
                 It fails when the time runs out, when one of the terminals closes, or when its agent stops.
                 """
         )
 
         @Argument(help: "Terminal IDs, such as p12.")
         var ids: [String]
-        @Option(name: .customLong("for"), help: ArgumentHelp("done, waiting, background, or any.", valueName: "state"))
+        @Option(
+            name: .customLong("for"),
+            help: ArgumentHelp("done, waiting, background, any, or ended.", valueName: "state"))
         var target = AgentWaitTarget.any
         @Option(help: "How long to wait, such as 90s, 30m, or 2h.")
         var timeout = "30m"

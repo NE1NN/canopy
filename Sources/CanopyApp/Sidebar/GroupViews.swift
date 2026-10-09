@@ -31,7 +31,9 @@ struct GroupHeaderView: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // On the name only: a tooltip on the whole header would cover its buttons' own.
             summary
+                .help(AgentDot.help(group.name, dot: agentDot, tasks: backgroundTasks))
             Spacer(minLength: 4)
             if let agentDot {
                 AgentDotView(dot: agentDot, tasks: backgroundTasks)
@@ -53,7 +55,6 @@ struct GroupHeaderView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
-        .help(AgentDot.help(group.name, dot: agentDot, tasks: backgroundTasks))
         .contextMenu { GroupMenuItems(rename: { isRenaming = true }, delete: requestDelete) }
         .popover(isPresented: $isRenaming, arrowEdge: .trailing) {
             GroupNamePopover(

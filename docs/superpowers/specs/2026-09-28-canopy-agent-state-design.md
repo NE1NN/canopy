@@ -177,6 +177,8 @@ Hooks run with Claude Code's environment, which it inherited from the pane's she
 - The rows of `Stop` apply in order, so a turn that ends on a question while a shell runs waits, and a turn that ends while a subagent and a shell run is working.
 - When a background shell or monitor ends, Claude Code wakes the agent with a `UserPromptSubmit` whose prompt is a `<task-notification>`, so the pane goes to working, and the turn's `Stop` then says done, or background again while other work runs.
   A dev server started in the background keeps its pane in background for as long as it runs, which is true.
+  So while it runs, every later turn ends in background too: no done sound, no green dot, and `term wait --for any` does not return, until the server stops.
+  Coordinators that only need to know a turn ended use `--for ended`.
 - `StopFailure` ends a turn on an API error, such as a rate limit.
   It counts as done, so the author comes to look.
 
@@ -366,7 +368,7 @@ A folded repo's header and a folded plugin section's header show the most urgent
 |---|---|
 | `canopy term list [--all]` | gains an AGENT column: working, done, waiting, background, or blank |
 | `canopy term state [<id>] <working\|done\|waiting\|background\|none>` | reports a pane's agent state, the pane it runs in by default |
-| `canopy term wait <id>... [--for done\|waiting\|background\|any] [--timeout <span>]` | waits until one of the panes reaches the state, then prints which pane and what state |
+| `canopy term wait <id>... [--for done\|waiting\|background\|any\|ended] [--timeout <span>]` | waits until one of the panes reaches the state, then prints which pane and what state |
 | `canopy hooks install\|uninstall\|status [--settings <file>]` | manages Canopy's Claude Code hooks |
 | `canopy agent-hook` | what Claude Code's hooks run, hidden from help |
 
@@ -397,7 +399,7 @@ Codex adds its JSON as a last argument, which the shell leaves unused.
 
 - `--for` defaults to `any`, which means done or waiting.
   `any` leaves out background, because coordinators wait on a row to learn it finished, and a background row has not.
-  `--for background` waits for a turn that ended with work still running.
+  `--for background` waits for a turn that ended with work still running, and `--for ended` for any end of a turn: done, waiting, or background.
 - `--timeout` defaults to `30m`, and takes a span the way `canopy log --since` does, such as `90s`, `30m`, or `2h`.
 - A pane already in the state counts at once, unless something was typed or sent into it since it got there.
   So `canopy term send p12 "next step" --enter` followed by `canopy term wait p12` waits for the next finish rather than returning the last one.
@@ -510,6 +512,9 @@ One PR, `feat: agent state, with a bell when an agent finishes`, holding this sp
   A wrong one corrects itself at the agent's next hook.
 - **Other hooks can change what Claude Code does after Canopy's hook reported.**
   A `PermissionRequest` hook of the author's own that approves on its own still turns the pane yellow until the tool's `PostToolUse`, and a `Stop` hook that keeps Claude going still reports done.
+- **A CLI and an app from either side of the background state cannot read each other's background.**
+  An older CLI's `term list` fails once any pane is background, and an older app rejects a newer `agent-hook`'s background report.
+  The CLI ships inside the app and hosts relay through the Mac's CLI, so this lasts only between an install and the app's relaunch.
 - **Pulsing dots cost redraws.**
   The plan measures CPU with several agents working at once.
 
@@ -542,5 +547,5 @@ These pick one reading of what he asked:
 16. Any `background_tasks` entry that is not a subagent or workflow counts when it runs, not only `shell` and `monitor`, so a new kind of task Claude Code adds shows background rather than done.
 17. A question still wins over running shells, and running subagents still win over both.
 18. Background is the least urgent dot and has no unseen form.
-19. `term wait --for any` leaves out background, and `--for background` is new.
+19. `term wait --for any` leaves out background, and `--for background` and `--for ended` are new.
 20. `canopy term state <id> background` is allowed, with no task list.

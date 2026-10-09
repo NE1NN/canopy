@@ -387,15 +387,20 @@ struct RowLineView: View {
     /// Hover stops updating during a drag, so the row being dragged drops its hover look itself.
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedRow?.path == row.path }
 
+    /// On the row's mark and name only: a tooltip on the whole row would cover its badges' and buttons' own.
+    private var tooltip: String { AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks) }
+
     var body: some View {
         HStack(spacing: 8) {
             RowMark(row: row)
                 .frame(width: 16)
+                .help(tooltip)
             Text(row.displayName)
                 .font(Style.row)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.isMissing ? .secondary : .primary)
+                .help(tooltip)
                 // The branch keeps its room before a remote row's host name does.
                 .layoutPriority(1)
             if let tag = row.externalTag {
@@ -463,7 +468,6 @@ struct RowLineView: View {
         .onHover { isHovering = $0 }
         // The PR number slides left as the shortcut and remove button come in.
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .help(AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

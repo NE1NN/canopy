@@ -166,7 +166,7 @@ struct TerminalStoreAgentTests {
         await pane.type("next step", enter: true)
 
         let waiting = Task { try await rows.terminals.waitForAgents([pane.id], for: .done, timeout: .seconds(20)) }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { rows.terminals.agentObserverCount == 1 })
         pane.report(AgentReport(state: .working))
         pane.report(AgentReport(state: .waiting))
         pane.report(AgentReport(state: .done))
@@ -190,7 +190,7 @@ struct TerminalStoreAgentTests {
         let closing = Task {
             try await rows.terminals.waitForAgents([rows.otherTab.id], for: .done, timeout: .seconds(20))
         }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { rows.terminals.agentObserverCount == 1 })
         rows.terminals.closePane(rows.otherTab.id)
         await #expect(throws: WorkspaceError.paneClosed(rows.otherTab.id.description)) { try await closing.value }
 
@@ -198,7 +198,7 @@ struct TerminalStoreAgentTests {
         let stopping = Task {
             try await rows.terminals.waitForAgents([rows.beside.id], for: .done, timeout: .seconds(20))
         }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { rows.terminals.agentObserverCount == 1 })
         await rows.beside.type("\u{3}")
         await #expect(throws: WorkspaceError.agentStopped(rows.beside.id.description)) { try await stopping.value }
     }
@@ -211,25 +211,30 @@ struct TerminalStoreAgentTests {
         let waiting = Task {
             try await rows.terminals.waitForAgents([rows.otherRow.id], for: .done, timeout: .seconds(600))
         }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { rows.terminals.agentObserverCount == 1 })
         waiting.cancel()
         await #expect(throws: CancellationError.self) { try await waiting.value }
+        #expect(rows.terminals.agentObserverCount == 0)
         // Nothing still listens: a finish now reaches no wait.
         rows.otherRow.report(AgentReport(state: .done))
     }
 
-    @Test func onlyAWaitForBackgroundReturnsOnIt() async throws {
+    @Test func onlyAWaitForBackgroundOrAnEndReturnsOnBackground() async throws {
         let dir = try TempDir()
         let rows = try Rows(dir)
         defer { rows.terminals.closeAll() }
         let pane = rows.otherRow
         pane.report(AgentReport(state: .background, backgroundTasks: ["sleep 60"]))
-        #expect(
-            try await rows.terminals.waitForAgents([pane.id], for: .background, timeout: .seconds(5)).1 == .background)
+        for target in [AgentWaitTarget.background, .ended] {
+            #expect(
+                try await rows.terminals.waitForAgents([pane.id], for: target, timeout: .seconds(5)).1 == .background)
+        }
+        #expect(AgentWaitTarget.ended.matches(.done) && AgentWaitTarget.ended.matches(.waiting))
+        #expect(!AgentWaitTarget.ended.matches(.working) && !AgentWaitTarget.ended.matches(.none))
 
         for target in [AgentWaitTarget.done, .any] {
             let waiting = Task { try await rows.terminals.waitForAgents([pane.id], for: target, timeout: .seconds(20)) }
-            try await Task.sleep(for: .milliseconds(100))
+            #expect(await eventually { rows.terminals.agentObserverCount == 1 })
             pane.report(AgentReport(state: .working))
             pane.report(AgentReport(state: .background, backgroundTasks: ["sleep 30"]))
             pane.report(AgentReport(state: .working))
@@ -246,7 +251,7 @@ struct TerminalStoreAgentTests {
         let pane = rows.otherRow
 
         let waiting = Task { try await rows.terminals.waitForAgents([pane.id], for: .done, timeout: .seconds(20)) }
-        try await Task.sleep(for: .milliseconds(100))
+        #expect(await eventually { rows.terminals.agentObserverCount == 1 })
         pane.report(AgentReport(state: .working))
         pane.report(AgentReport(state: .done))
         #expect(try await waiting.value.1 == .done)

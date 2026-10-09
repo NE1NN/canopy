@@ -14,5 +14,7 @@ struct BackgroundWorkTests {
             BackgroundWork.summary([]) == "Turn ended, waiting on background work. The agent wakes when it finishes.")
         #expect(BackgroundWork.label(["npm test"]) == "Agent waiting on background work: npm test")
         #expect(BackgroundWork.label([]) == "Agent waiting on background work")
+        #expect(
+            BackgroundWork.label(["a", "b", "c", "d", "e"]) == "Agent waiting on background work: a, b, c, and 2 more")
     }
 }

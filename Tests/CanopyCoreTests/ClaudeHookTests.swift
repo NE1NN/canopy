@@ -140,6 +140,24 @@ struct ClaudeHookTests {
                 == expected(.done, "Stop"))
     }
 
+    @Test func oddTasksAreSkippedAndFinishedSubagentsDoNotCount() {
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "running"}, null, "x"]}"#
+            )
+                == expected(.working, "Stop"))
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [7, {"type": "shell", "status": 3, "command": ["npm"], "description": "Run the tests"}]}"#
+            )
+                == expected(.background, "Stop", backgroundTasks: ["Run the tests"]))
+        #expect(
+            report(
+                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "completed"}]}"#
+            )
+                == expected(.done, "Stop"))
+    }
+
     @Test func aQuestionOrASubagentWinsOverShells() {
         let shell = #"{"id": "t1", "type": "shell", "status": "running", "command": "npm test"}"#
         #expect(

@@ -16,6 +16,8 @@ struct PluginRowLineView: View {
 
     private var agentDot: AgentDot? { model.terminals.agentDot(inRow: row.path) }
     private var backgroundTasks: [String] { model.terminals.backgroundTasks(inRow: row.path) }
+    /// On the row's symbol and name only: a tooltip on the whole row would cover its accessories' and buttons' own.
+    private var tooltip: String { AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks) }
 
     private var isDragged: Bool { model.isDraggingRowOverList && model.draggedPluginRow?.path == row.path }
 
@@ -25,11 +27,13 @@ struct PluginRowLineView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(row.isMissing ? .tertiary : .secondary)
                 .frame(width: 16)
+                .help(tooltip)
             Text(row.displayName)
                 .font(Style.row)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.isMissing ? .secondary : .primary)
+                .help(tooltip)
             if row.isMissing {
                 TagView(text: "missing")
             }
@@ -81,7 +85,6 @@ struct PluginRowLineView: View {
         }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .help(AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

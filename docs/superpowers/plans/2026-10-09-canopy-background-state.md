@@ -1,6 +1,7 @@
 # Background Agent State Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A pane whose agent ended its turn while background work it started still runs shows a new background state, a slowly pulsing green ring, instead of done.
 
@@ -256,30 +257,30 @@ git commit -am "feat: Stop with running shells reports background"
 ```swift
     @Test func aBackgroundTurnKeepsItsWorkUntilTheNextState() {
         var agent = PaneAgent()
-        _ = agent.apply(AgentReport(state: .working), now: t(1))
-        let change = agent.apply(AgentReport(state: .background, backgroundTasks: ["npm test", "bun dev"]), now: t(2))
+        _ = agent.apply(AgentReport(state: .working), now: time(1))
+        let change = agent.apply(AgentReport(state: .background, backgroundTasks: ["npm test", "bun dev"]), now: time(2))
         #expect(change == AgentChange(from: .working, to: .background, via: "term.state"))
         #expect(change?.alerts == false)
         #expect(agent.dot == .background)
         #expect(!agent.unseen)
         #expect(agent.backgroundTasks == ["npm test", "bun dev"])
         // A Monitor wakes the agent on each line, and its turn can end background again with less running.
-        #expect(agent.apply(AgentReport(state: .background, backgroundTasks: ["bun dev"]), now: t(3)) == nil)
+        #expect(agent.apply(AgentReport(state: .background, backgroundTasks: ["bun dev"]), now: time(3)) == nil)
         #expect(agent.backgroundTasks == ["bun dev"])
         #expect(agent.seen() == false)
         #expect(agent.dot == .background)
-        _ = agent.apply(AgentReport(state: .working), now: t(4))
+        _ = agent.apply(AgentReport(state: .working), now: time(4))
         #expect(agent.backgroundTasks.isEmpty)
     }
 
     @Test func keysLeaveABackgroundPaneAlone() {
         var agent = PaneAgent()
-        _ = agent.apply(AgentReport(state: .background, backgroundTasks: ["sleep 60"]), now: t(1))
+        _ = agent.apply(AgentReport(state: .background, backgroundTasks: ["sleep 60"]), now: time(1))
         for key in ["\u{1b}", "\u{03}", "\r", "next step\r"] {
-            #expect(agent.typed(Data(key.utf8), at: t(2)) == nil)
+            #expect(agent.typed(Data(key.utf8), at: time(2)) == nil)
         }
         #expect(agent.state == .background)
-        #expect(agent.ended(at: t(3)) == AgentChange(from: .background, to: .none, via: "exit"))
+        #expect(agent.ended(at: time(3)) == AgentChange(from: .background, to: .none, via: "exit"))
         #expect(agent.backgroundTasks.isEmpty)
     }
 ```
@@ -344,7 +345,7 @@ struct BackgroundWorkTests {
         #expect(alerts == [.done])
     }
 
-    @Test func aWaitForDoneOrAnyIgnoresBackground() async throws {
+    @Test func onlyAWaitForBackgroundReturnsOnIt() async throws {
         let dir = try TempDir()
         let rows = try Rows(dir)
         defer { rows.terminals.closeAll() }
@@ -598,7 +599,8 @@ The look, compared in light and dark window shots before picking:
 | B | the done dot, hollow, 6 pt with its halo | same |
 | C | green dot at 50% with a ring | same |
 
-The plan takes A, the author's pick, unless the shots show it reads as done; the After Review notes what the shots showed.
+The plan takes A, the author's pick, unless the shots show it reads as done.
+The shots settled the details: at 8 points the ring looked light beside the haloed dots, so it is 3 points wider than the dot (9 points); in light mode its floor of 40% washed out on white, so its green is darkened there (0x1FA544) and it pulses between 60% and full opacity, 1.5 s each way.
 
 - [ ] **Step 1: The ring**
 
@@ -653,12 +655,33 @@ git commit -am "feat: a pulsing green ring for background agents, and dot toolti
 
 No code; the evidence goes in the PR.
 
-- [ ] In a dev build from `scripts/ui-fixture.sh`, open a pane, start `claude --settings <temp settings with Canopy's hooks> --model haiku`, and ask it to run `sleep 60` in the background and end its turn.
-- [ ] Window shots, light and dark: the row's ring, and the tooltip naming the sleep.
-- [ ] After the sleep ends and the agent wakes, a shot of the done dot, and `canopy log --type agent` showing working, background, working, done.
-- [ ] Ask it to start a dev server in the background (`python3 -m http.server`) and end its turn: the row stays background, and no bell.
-- [ ] Remote rows: `scripts/e2e-hosts.sh` gains a background `Stop` through the relay, checked as `background` in `term list`.
+- [x] In a dev build from `scripts/ui-fixture.sh`, open a pane, start `claude --settings <temp settings with Canopy's hooks> --model haiku`, and ask it to run `sleep 60` in the background and end its turn.
+- [x] Window shots, light and dark: the row's ring, the tab's, and the pane header's, with `term list` naming "Sleep 60 seconds then echo slept".
+- [x] After the sleep ends and the agent wakes, a shot of the done dot, and `canopy log --type agent` showing working, background, working (`UserPromptSubmit`, the wake), done.
+- [x] Ask it to start a dev server in the background (`python3 -m http.server`) and end its turn: the row stays background 75 seconds on, with no done logged; `canopy ports stop` ends the server, the agent wakes, and the row turns done.
+- [x] Remote rows: `scripts/e2e-hosts.sh` gains a background `Stop` through the relay, checked as `background` in `term list`.
+
+What the run turned up:
+- Hovering the ring in a sidebar row showed the row's path, since the row's own tooltip covers its children's. Rows and group headers now put the dot's line under their own tooltip, and the ring's AppKit view carries its own tooltip for the places with none around it.
+- `scripts/ui-fixture.sh` hard-coded 5173 for its local and remote dev servers, and the remote one failed with "Address already in use" whenever something on the Mac already listened there (here, the release app forwarding a real host's 5173), leaving the user's prompt in shots. It now takes the first port from 5173 up that nothing listens on.
 
 ## After Review
 
-Filled in after the independent review.
+An independent opus reviewer read `git diff main...HEAD` with the spec and this plan, and found no critical issues.
+
+- **Major: a background dev server takes the done signal away from every later turn.**
+  Kept, since the author chose it ("the done bell rings only when a later Stop has no shell or monitor tasks"), and the spec now says plainly that no done sound, no green dot, and no `--for any` come while the server runs.
+  Coordinators could not ask for the end of a turn whatever it left running, so `term wait --for ended` (done, waiting, or background) is new, with tests, e2e, and the agent guide.
+- **Minor: one odd element emptied the whole `background_tasks` list.**
+  Fixed: elements decode one by one, and one with the wrong shape is skipped.
+  A test covers `null`, a string, a number, and wrongly typed fields.
+- **Minor: a completed subagent left in the list kept a pane working.**
+  Fixed: subagents and workflows count only while running, as other work does.
+- **Minor: a CLI and an app from either side of this change cannot read each other's background.**
+  Accepted and written under the spec's Risks: the CLI ships inside the app, and hosts relay through the Mac's CLI, so it lasts only between an install and a relaunch.
+- **Minor: wait tests could pass, or time out, depending on whether the wait was registered within 100 ms.**
+  Fixed in every wait test of `TerminalStoreAgentTests`, not only the new one: they now report only once the store has the wait's observer, and the cancelled wait checks that it lets go of it.
+- **Minor: a stale doc comment on `ActivityType.agent`.** Fixed.
+- **Nit: a folded header over many background rows listed every task.** Fixed: three names, then "and N more".
+- **Nit: the dot's accessibility label is the full tooltip.** Kept, since the brief asks for the hover text in the accessibility label too; rows and headers use the short form.
+- **Nit: this plan's header held two sentences on one line.** Fixed.
