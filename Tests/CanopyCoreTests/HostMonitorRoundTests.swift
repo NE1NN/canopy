@@ -183,4 +183,63 @@ struct HostMonitorRoundTests {
         #expect(await serving.state == .connected)
         await hosts.stop()
     }
+
+    /// A server that died while the host's `ss` kept failing would otherwise count as use for good, so ports count
+    /// only while the listing they came from is recent.
+    @Test func portsFromAStaleListingAreNoUse() async throws {
+        let hosts = try await Hosts(["box"], rows: true)
+        let clock = TestHostClock()
+        let monitor = HostMonitor(
+            workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero, clock: clock)
+        let port = FakeSSHForwardTests.freePort()
+        hosts.serve(on: "box", [port])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return monitor.remotePorts["box"]?.first?.ports.first?.remote?.local == port
+            })
+        hosts["box"].answer(.ports, with: #"{"sessions": [], "pending": [], "ports": null}"#)
+        let listed = hosts["box"].probes(.ports)
+        // A host's ports probes go one after another, so by the second since, none that found the port is under way.
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return hosts["box"].probes(.ports) >= listed + 2
+            })
+        #expect(monitor.remotePorts["box"]?.isEmpty == false)
+        let box = try await hosts.workspace.connection(for: "box")
+
+        clock.advance(by: .seconds(61))
+        hosts.clock.advance(by: .seconds(11 * 60))
+
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return await box.state == .idle
+            })
+        await hosts.stop()
+    }
+
+    /// A port ssh could not forward cannot be browsed from the Mac, so it keeps nothing up.
+    @Test func aPortWithoutAForwardIsNoUse() async throws {
+        let hosts = try await Hosts(["box"], rows: true)
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        hosts["box"].refuseEveryPort(true)
+        hosts.serve(on: "box", [FakeSSHForwardTests.freePort()])
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return monitor.remotePorts["box"]?.first?.ports.first?.remote?.error != nil
+            })
+        let box = try await hosts.workspace.connection(for: "box")
+
+        hosts.clock.advance(by: .seconds(11 * 60))
+
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return await box.state == .idle
+            })
+        await hosts.stop()
+    }
 }

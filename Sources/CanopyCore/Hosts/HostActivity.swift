@@ -50,6 +50,9 @@ public final class HostMonitor {
     /// The ports of each connected host's remote rows, a group for each row with any, in sidebar order.
     public private(set) var remotePorts: [String: [PortGroup]] = [:]
     private let portsEvery: Duration
+    /// How long a ports listing counts as use after it was read, as a host whose `ss` keeps failing keeps its last.
+    private let portsStaleAfter: Duration
+    private let clock: any HostClock
     /// Each host's session probes that it answered.
     private var probes: [String: Int] = [:]
     /// Each host's worktree listing under way. It can wait behind a row being made, so probes go on without it.
@@ -59,13 +62,20 @@ public final class HostMonitor {
     /// Each host's forwards being made from its last ports probe, which take no ssh session, so probes go on.
     private var forwarding: [String: Task<Void, Never>] = [:]
     private var lastPorts: [String: ContinuousClock.Instant] = [:]
+    /// When each host's ports were last listed.
+    private var listed: [String: ContinuousClock.Instant] = [:]
     /// The hosts a probe is under way on, which another call skips.
     private var probing: Set<String> = []
 
-    public init(workspace: Workspace, terminals: TerminalStore, portsEvery: Duration = .seconds(5)) {
+    public init(
+        workspace: Workspace, terminals: TerminalStore, portsEvery: Duration = .seconds(5),
+        portsStaleAfter: Duration = .seconds(60), clock: any HostClock = SystemHostClock()
+    ) {
         self.workspace = workspace
         self.terminals = terminals
         self.portsEvery = portsEvery
+        self.portsStaleAfter = portsStaleAfter
+        self.clock = clock
     }
 
     /// Starts a round every `interval` until cancelled, without waiting for the last, so a host still probing is
@@ -86,6 +96,7 @@ public final class HostMonitor {
         for alias in Set(remotePorts.keys).union(lastPorts.keys) where !aliases.contains(alias) {
             remotePorts[alias] = nil
             lastPorts[alias] = nil
+            listed[alias] = nil
             probes[alias] = nil
         }
         var sessions: [Task<Bool, Never>] = []
@@ -121,7 +132,7 @@ public final class HostMonitor {
         }
         let summary = HostActivity.summary(panes: samples, sessions: sessions, now: Date())
         await connection.panesActive(
-            attached: summary.attached, busy: summary.busy, serving: remotePorts[alias]?.isEmpty == false,
+            attached: summary.attached, busy: summary.busy, serving: serves(alias),
             quietFor: summary.quietFor)
         let probed = probes[alias, default: 0] + 1
         probes[alias] = probed
@@ -144,6 +155,13 @@ public final class HostMonitor {
         return true
     }
 
+    /// Whether a remote row of the host serves a port someone could be browsing from the Mac: one with a forward, in
+    /// a listing recent enough to trust. A server that died while `ss` kept failing would otherwise keep the host up.
+    private func serves(_ alias: String) -> Bool {
+        guard let listed = listed[alias], clock.now - listed < portsStaleAfter else { return false }
+        return remotePorts[alias]?.contains { $0.ports.contains { $0.remote?.local != nil } } == true
+    }
+
     /// Ports just stopped on a host leave the panel at once, and the host's ports are read again on its next probe.
     public func portsStopped(_ ports: Set<UInt16>, on alias: String) {
         lastPorts[alias] = nil
@@ -161,7 +179,7 @@ public final class HostMonitor {
     /// `ss` lists none.
     private func probePorts(on connection: HostConnection) async {
         let alias = connection.alias
-        let now = ContinuousClock.now
+        let now = clock.now
         guard forwarding[alias] == nil, lastPorts[alias].map({ now - $0 >= portsEvery }) ?? true else { return }
         lastPorts[alias] = now
         guard
@@ -169,6 +187,7 @@ public final class HostMonitor {
                 HostProbe.command(homeID: workspace.homeID, ports: true), timeout: .seconds(10)),
             result.status == 0, let report = try? HostProbe.decode(result.stdout), let ports = report.ports
         else { return }
+        listed[alias] = clock.now
         forwarding[alias] = Task {
             await self.forward(ports, shells: report.shells, on: connection)
             self.forwarding[alias] = nil
