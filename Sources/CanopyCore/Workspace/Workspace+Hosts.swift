@@ -9,17 +9,21 @@ public struct HostTooling: Sendable {
     public var clock: any HostClock
     /// The app's bundled CLI. Without one, hosts' calls are refused.
     public var relayCLI: String?
+    /// What runs each host's ssh, by alias; nil runs `sshExecutable`.
+    public var launcher: (@Sendable (String) -> any HostProcessLauncher)?
 
     public init(
         sshExecutable: String = SSHCommand.executable(),
         environment: @escaping @Sendable () -> [String: String] = { GitEnvironment.current },
         clock: any HostClock = SystemHostClock(),
-        relayCLI: String? = nil
+        relayCLI: String? = nil,
+        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil
     ) {
         self.sshExecutable = sshExecutable
         self.environment = environment
         self.clock = clock
         self.relayCLI = relayCLI
+        self.launcher = launcher
     }
 }
 
@@ -49,8 +53,8 @@ extension Workspace {
             attributes: [.posixPermissions: 0o700])
         let connection = HostConnection(
             alias: alias, entry: entry, ssh: ssh,
-            launcher: SubprocessHostLauncher(environment: hostTooling.environment),
-            clock: hostTooling.clock, activity: activity)
+            launcher: hostTooling.launcher?(alias) ?? SubprocessHostLauncher(environment: hostTooling.environment),
+            clock: hostTooling.clock, activity: activity, macPorts: macPorts)
         hostConnections[alias] = connection
         return connection
     }
@@ -401,6 +405,41 @@ extension Workspace {
             connected.append(connection)
         }
         return connected
+    }
+
+    /// The pids of the connected hosts' masters, which hold their forwards' sockets on this Mac.
+    public func masterPIDs() async -> Set<Int32> {
+        var pids = Set<Int32>()
+        for connection in hostConnections.values {
+            if let pid = await connection.masterPID { pids.insert(pid) }
+        }
+        return pids
+    }
+
+    /// Stops what listens on `port` on the host, signalling only those of `pids` that still listen on it there.
+    public func stopRemotePort(_ port: UInt16, pids: [Int32], on alias: String) async throws -> RemotePortStop {
+        let connection = try await connection(for: alias)
+        let printed = try await output(
+            of: HostFiles.stopPortCommand(homeID: homeID, port: port, pids: pids), on: connection,
+            timeout: .seconds(30))
+        guard let stopped = try? JSONDecoder().decode(RemotePortStop.self, from: Data(printed.utf8)) else {
+            throw WorkspaceError.hostCommandFailed(alias, reason: "canopy-host stop-port printed \(printed)")
+        }
+        return stopped
+    }
+
+    /// The host's remote rows, in the order the sidebar has their repos.
+    public func remoteRows(on alias: String) -> [RemoteRowEntry] {
+        state.repos.flatMap(\.remote).filter { $0.host == alias }
+    }
+
+    /// Forwards a host's listening ports to Mac ports. Hosts forward at the same time, and `macPorts`, which every
+    /// connection here shares, keeps two from picking the same Mac port. Nil when the round said nothing of the host's
+    /// forwards, as when its master stopped meanwhile or the host was removed.
+    public nonisolated func forwardPorts(_ wanted: [RemoteListeningPort], on connection: HostConnection) async
+        -> [UInt16: PortForward]?
+    {
+        await connection.forwardPorts(wanted)
     }
 
     /// Lists the host's worktrees again for every repo with rows there.

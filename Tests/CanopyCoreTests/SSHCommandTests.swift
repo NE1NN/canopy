@@ -125,6 +125,27 @@ struct SSHCommandTests {
             ])
     }
 
+    /// A remote port is reached through the master, which binds the Mac port in its own process.
+    @Test func aPortIsForwardedAndCancelledThroughTheMaster() {
+        #expect(
+            ssh.forwardLocal(local: 5174, target: "127.0.0.1", port: 5173) == [
+                "/usr/bin/ssh", "-S", "/c/sock", "-O", "forward", "-L", "5174:127.0.0.1:5173", "box",
+            ])
+        #expect(
+            ssh.cancelLocal(local: 5174, target: "127.0.0.1", port: 5173) == [
+                "/usr/bin/ssh", "-S", "/c/sock", "-O", "cancel", "-L", "5174:127.0.0.1:5173", "box",
+            ])
+    }
+
+    @Test func anIPv6TargetIsInBrackets() {
+        let port = RemoteListeningPort(port: 5173, address: "::1", processes: [])
+
+        #expect(
+            ssh.forwardLocal(local: 5173, target: port.target, port: port.port) == [
+                "/usr/bin/ssh", "-S", "/c/sock", "-O", "forward", "-L", "5173:[::1]:5173", "box",
+            ])
+    }
+
     @Test func quotedWordsReachTheRemoteShellUnchanged() throws {
         let words = ["plain", "with space", "it's", "$HOME", "a\nb", "", "*", "`date`"]
 

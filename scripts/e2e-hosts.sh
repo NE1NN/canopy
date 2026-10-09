@@ -6,10 +6,12 @@
 #
 # It adds the host, makes a remote row with --run, types into it, and checks the host's report of its folder. In the
 # remote pane it runs the host's canopy: row list, term list, a hook's report, web open, xdg-open of an artifact link,
-# and row new. It checks a second home on the same host keeps to its own tmux server, rejoins the session after the app
-# quits and replays a hook's report kept meanwhile, rejoins after the connection drops, keeps keys typed while
-# reconnecting, detaches the idle host and reconnects on Return, and removes the row and the host. The real host's
-# throwaway folder, and the throwaway homes' tmux servers, own files, and worktrees there, are removed at the end.
+# and row new. Dev servers started there are forwarded to this Mac, one on a port held here takes the next port, and
+# canopy ports stop, with this Mac's port here or the host's typed in the remote pane, stops them on the host. It checks
+# a second home on the same host keeps to its own tmux server, rejoins the session after the app quits and replays a
+# hook's report kept meanwhile, rejoins after the connection drops, keeps keys typed while reconnecting, detaches the
+# idle host and reconnects on Return, and removes the row and the host. The real host's throwaway folder, and the
+# throwaway homes' tmux servers, own files, and worktrees there, are removed at the end, as are the dev servers.
 # Apart from them, only the host's Claude Code settings change: host add writes Canopy's hooks there, which do nothing
 # outside a Canopy pane.
 set -euo pipefail
@@ -57,6 +59,11 @@ if [[ -z "$alias" ]]; then
     host_home=$(mktemp -d /tmp/cnp-host.XXXXXX)
     export CANOPY_SSH="$PWD/scripts/fake-ssh" FAKE_SSH_HOME="$host_home"
     export FAKE_SSH_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    # The host's ss lists this Mac's sockets of processes working in the host's home, as a real host lists its own. A
+    # link to a file that has run before, since this Mac's security scanner can hold a new file's first run.
+    mkdir -p "$host_home/.fake-ssh-bin"
+    ln -s "$PWD/scripts/fake-ss" "$host_home/.fake-ssh-bin/ss"
+    touch "$host_home/.fake-ss-home-only"
     on_host() { "$CANOPY_SSH" -- "$alias" "$@"; }
     host_dir="$host_home/canopy-e2e/$id"
 else
@@ -64,6 +71,16 @@ else
     host_dir="$(on_host 'printf %s "$HOME"')/canopy-e2e/$id"
 fi
 
+# The dev servers' folder on the host, whose path, unique to this run, picks out the servers the run started there.
+www="$host_dir/www"
+listener=""
+# Stops the local listener the run started, while its pid still runs it.
+stop_listener() {
+    if [[ -n "$listener" && "$(ps -ww -o command= -p "$listener" 2>/dev/null)" == *"canopy-e2e-listener-$id"* ]]; then
+        kill "$listener" 2>/dev/null || true
+    fi
+    listener=""
+}
 server=""
 cleanup() {
     local pid home name
@@ -71,6 +88,8 @@ cleanup() {
         pid=$(CANOPY_HOME="$home" app_pid)
         [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
     done
+    stop_listener
+    on_host "pkill -f 'http[.]server [0-9]* --bind [^ ]* --directory $www'" >/dev/null 2>&1 || true
     for name in "$server" "${server2:-}"; do
         [[ -n "$name" ]] || continue
         on_host "tmux -u -L $name kill-server; rm -f \"\${TMUX_TMPDIR:-/tmp}/tmux-\$(id -u)/$name\"" >/dev/null 2>&1 || true
@@ -237,6 +256,83 @@ on_host "test \"\$(git -C '$second' rev-parse --abbrev-ref HEAD)\" = e2e/second"
 stand_in_second=$("$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/second"][0]')
 "$cli" row rm "$stand_in_second" --force --delete-branch >/dev/null
 on_host "test ! -e '$second'" || fail "the second row's worktree is still on the host"
+
+step "a dev server typed in the remote pane is forwarded to this Mac, and answers from the host"
+# Ports bound on both loopbacks and closed at once, which fails when either is taken.
+binds='import socket, sys
+for port in map(int, sys.argv[1:]):
+    for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        s = socket.socket(family)
+        s.bind((address, port))
+        s.close()'
+# Four ports in a row, free here and on the host, below both machines' ephemeral ranges, which start at 32768 on Linux
+# and 49152 on macOS, so a run never meets the author's own servers: two servers, and the next port each can move to.
+base=""
+for _ in $(seq 1 50); do
+    try=$((20000 + RANDOM % 12000))
+    ports="$try $((try + 1)) $((try + 2)) $((try + 3))"
+    # shellcheck disable=SC2086
+    if /usr/bin/python3 -c "$binds" $ports 2>/dev/null && on_host "python3 -c '$binds' $ports" 2>/dev/null; then
+        base=$try
+        break
+    fi
+done
+[[ -n "$base" ]] || fail "no four free ports in a row here and on the host"
+on_host "mkdir -p '$www' && printf %s '$id-from-host' > '$www/marker'"
+serve() { # port, address: in the remote pane's shell, in the background, so the pane's shell is its parent
+    in_pane "serve-$1" "cd '$remote'; python3 -m http.server $1 --bind $2 --directory '$www' & true"
+    succeeded "serve-$1"
+}
+serving() { on_host "pgrep -f 'http[.]server $1 --bind [^ ]* --directory $www' >/dev/null"; }
+ports_json() { "$cli" ports list --all --json; }
+# The Mac port canopy ports gives the remote row's port, empty while it has none.
+mac_port() {
+    ports_json | json 'next((str(p["localPort"]) for p in d if p["port"] == '"$1"' and p.get("host") == "'"$alias"'"
+        and p["row"] == "e2e/remote" and p.get("localPort")), "")'
+}
+forwarded() { [[ -n "$(mac_port "$1")" ]]; }
+listed() { ports_json | json 'any(p["port"] == '"$1"' for p in d)' | grep -qx True; }
+from_host() { [[ "$(curl -s --max-time 5 "http://localhost:$1/marker")" == "$id-from-host" ]]; }
+web=$base
+serve "$web" ::1
+wait_for 60 forwarded "$web" || fail "port $web on the host was not forwarded: $(ports_json)"
+web_mac=$(mac_port "$web")
+# The fake host is this Mac, where the server itself holds its port, so its forward takes the next one.
+if [[ -z "$host_home" && "$web_mac" != "$web" ]]; then fail "port $web, free here, was forwarded to $web_mac"; fi
+from_host "$web_mac" || fail "localhost:$web_mac did not answer from the host's server"
+
+step "a port held on this Mac makes the forward take the next one"
+held=$((base + 2))
+# shellcheck disable=SC2016
+(cd / && exec /usr/bin/python3 -c 'import socket, sys, time
+s = socket.socket(socket.AF_INET6)
+s.bind(("::1", int(sys.argv[1])))
+s.listen()
+time.sleep(600)' "$held" "canopy-e2e-listener-$id" </dev/null >/dev/null 2>&1) &
+listener=$!
+disown
+taken() { ! /usr/bin/python3 -c "$binds" "$1"; }
+wait_for 10 taken "$held" || fail "the local listener did not take port $held"
+serve "$held" 127.0.0.1
+wait_for 60 forwarded "$held" || fail "port $held on the host was not forwarded: $(ports_json)"
+held_mac=$(mac_port "$held")
+[[ "$held_mac" != "$held" ]] || fail "port $held was forwarded to the port this Mac's listener holds"
+from_host "$held_mac" || fail "localhost:$held_mac did not answer from the host's server"
+
+step "canopy ports stop with the Mac port, here, stops the server on the host"
+stop_listener
+"$cli" ports stop "$held_mac" --all >/dev/null || fail "ports stop $held_mac failed"
+wait_for 10 eval '! serving "$held"' || fail "the server on port $held still runs on the host"
+wait_for 30 eval '! listed "$held"' || fail "canopy ports still lists port $held: $(ports_json)"
+
+step "canopy ports stop typed in the remote pane stops the server on the host, and its forward goes"
+in_pane stop "canopy ports stop $web"
+succeeded stop
+output_of stop | grep -q "on port $web on $alias" || fail "ports stop said: $(output_of stop)"
+wait_for 10 eval '! serving "$web"' || fail "the server on port $web still runs on the host"
+wait_for 30 eval '! listed "$web"' || fail "canopy ports still lists port $web: $(ports_json)"
+wait_for 30 eval '! curl -s --max-time 2 -o /dev/null "http://localhost:$web_mac/"' ||
+    fail "localhost:$web_mac still answers after the server stopped"
 
 step "a second home on the same host has its own tmux server, sessions, and files"
 home2() { CANOPY_HOME="$work/home2" "$@"; }

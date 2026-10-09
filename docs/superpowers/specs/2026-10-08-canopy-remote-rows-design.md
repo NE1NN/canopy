@@ -85,6 +85,7 @@ Then it installs Canopy's files on the host, writes Canopy's hooks into the host
 A check that fails saves nothing and names the fix.
 Running it again for a host that exists updates its repos and options, and installs the files again.
 `canopy host rm <alias>` refuses while the host has rows, naming them, and otherwise forgets it, leaving the host's files.
+Its connection stops for good, so work still on its way, such as a kept report being replayed, fails rather than starting a master nothing would stop.
 
 ### Files on the host
 
@@ -120,6 +121,8 @@ Its control socket is `CANOPY_HOME/ssh/<home id>-<host hash>` when that is under
 Every pane, git call, probe, and forward runs through it, and never around it: each has `-o ProxyCommand=/usr/bin/false`, which ssh only uses when the master is gone or refuses a session.
 sshd allows a few sessions per connection (`MaxSessions`, 10 unless set), and each attached pane holds one, so `host add` warns when the host allows fewer than 20.
 The master starts when something needs the host, and stops once the host has no attached panes and nothing has used it for 10 minutes, or when its panes detach for idleness, or when the app quits.
+A remote row's port with a forward counts as use while the host's last ports listing is under a minute old, so the master stays up while someone may browse it.
+A port ssh could not forward counts for nothing, and neither does a listing older than that, so a server that died while `ss` kept failing does not keep the host up for good.
 
 A host is in one of these states, which `canopy host list` shows:
 
@@ -141,6 +144,7 @@ A name that does not resolve is retried, as the Mac may be offline for now; `hos
 **Idle detach.** The app tracks, for each host, when a key was last typed into any of its panes and whether any of them runs a program.
 Once none has run a program or been typed into for `idleDetachMinutes`, the app detaches the host's panes and stops the master.
 A claude waiting at its prompt runs a program, which matches the box's own rule that a running claude keeps it on.
+A remote row's forwarded port counts as running a program too, by the same rule, since someone may be browsing it through its forward with no pane in sight.
 
 ## Remote rows
 
@@ -244,6 +248,7 @@ After a reconnect only the current screen is drawn again, and older output is in
 
 The local process of a remote pane is the attach command, so the app asks the host instead.
 While a host is connected, the app runs `canopy-host probe` on it through the master every 2 seconds.
+Each host's probes run one after another, apart from other hosts', so a slow host holds up no other, and a host still answering the last probe is skipped.
 It prints, for each session of this home's tmux server, the foreground command, whether it is the shell, the session's folder, and its title.
 It also prints `pending`, the panes with a hook report kept for this home, and the app replays each of them as "Reports that cannot be delivered" says, one host's at a time, without holding up the next probe.
 A remote pane is busy while its foreground command is not its shell, which drives the close warnings, the agent state clearing when the program exits, and the pane's title.
@@ -327,13 +332,22 @@ A remote row's head or branch changing in the 30-second listing looks the row's 
 While a host is connected, `canopy-host probe` also lists its listening TCP ports every 5 seconds, from `ss -ltnpH`, with each process's id, its ancestors' ids, and its folder.
 A port belongs to the remote row one of whose tmux sessions the process descends from, or else to the remote row whose worktree holds the process's folder.
 Ports that belong to no remote row are left out.
+A host without `ss` lists no ports, and when `ss` fails or takes too long the host's ports are unknown for that round, so the app keeps the ports and forwards it had.
 
 Each port found is forwarded through the master, `ssh -O forward -L`, to the same port on the Mac when that is free, and otherwise to the next free port above it.
 The forward goes when the port stops listening on the host or the master stops.
-The ports panel lists a remote row's ports under it with the server mark, and shows `5173 → 5174` when the Mac's port differs.
+While a remote row has a forwarded port from a recent listing, its host's panes do not detach for idleness and its master stays up, as "Idle detach" says.
+The ports panel lists a remote row's ports under it with the server mark and the host's name after the row's, and shows `5173 → 5174` when the Mac's port differs.
 Clicking one opens the Mac's port in the browser.
-Stopping one sends SIGTERM to its process on the host, never to the local ssh.
-`canopy ports` lists them with `host` and `localPort`, and `ports stop` takes them.
+A port without a forward is dimmed and reads `5173 (not forwarded)`, as `canopy ports` does, with ssh's message on hover.
+A server that moved to another address keeps its Mac port, and shows as not forwarded, with "Canopy is still moving this forward.", while the old forward cannot be cancelled yet.
+A forward ssh did not answer for may have been made all the same, so it keeps its Mac port, and the port is not forwarded again until a later cancel goes through, which keeps a master that does not answer from taking a Mac port each round.
+Stopping one runs `canopy-host stop-port` on the host, which sends SIGTERM to its processes there while they still listen on it, never to the local ssh, and its tooltip names the host.
+The local scan leaves out the connected masters' pids, since a master holds its forwards' sockets on the Mac.
+`canopy ports` lists them with `host`, `localPort`, and `forwardError` when there is no forward; its table gains a HOST column when any port has a host.
+`ports stop <n>` takes a remote port by its port on the host or its Mac port, and a port whose own number is `n` comes before one whose Mac port is.
+It reports only the processes the host signalled, so a server that restarted since the last probe is not reported as stopped, and names each process it killed with its host, whose pids are not this Mac's.
+When one host stops its port and another cannot, it prints what stopped, then an error for each host that could not, and exits 1, with them in `failures` under `--json`; when nothing could be stopped, the first failure is its error.
 
 ## Commands
 

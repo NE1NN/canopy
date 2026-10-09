@@ -105,7 +105,7 @@ public enum RelayPaths {
     }
 
     /// An absolute path's components, or nil for a relative path or one with `..`, whose tail could leave the stand-in.
-    private static func components(_ path: String) -> [Substring]? {
+    static func components(_ path: String) -> [Substring]? {
         guard path.hasPrefix("/") else { return nil }
         let components = path.split(separator: "/").filter { $0 != "." }
         return components.contains("..") ? nil : components

@@ -10,9 +10,22 @@ public struct PortInfo: Codable, Sendable, Equatable {
     public var plugin: String?
     public var row: String
     public var rowPath: String
+    /// On a host, its port there.
     public var port: Int
+    /// On a host, the host's pid, which means nothing on this Mac.
     public var pid: Int32
     public var process: String
+    /// The host a remote row's port listens on. Left out for this Mac's ports.
+    public var host: String? = nil
+    /// The Mac port a remote port is forwarded to, which `localhost` opens. Left out while it has none.
+    public var localPort: Int? = nil
+    /// Why a remote port has no forward, as ssh said.
+    public var forwardError: String? = nil
+}
+
+extension PortInfo {
+    /// As the ports panel shows it.
+    public var label: String { PortLabel.text(port: port, remote: host != nil, local: localPort) }
 }
 
 public struct PortsListParams: Codable, Sendable {
@@ -54,7 +67,43 @@ public struct PortsStopParams: Codable, Sendable {
 
 public struct PortsStopResult: Codable, Sendable {
     public var port: Int
+    /// The processes signalled. A remote port's pids from the last probe that no longer listen are left out.
     public var stopped: [PortInfo]
-    /// Processes that ignored SIGTERM and were killed.
-    public var killed: [Int32]
+    /// Processes that ignored SIGTERM and were killed, on this Mac and on hosts.
+    public var killed: [PortProcess]
+    /// The hosts that could not stop their port, when others stopped theirs. Left out when every stop went through;
+    /// when none did, the first failure is the call's error instead.
+    public var failures: [PortStopFailure]?
+
+    public init(port: Int, stopped: [PortInfo], killed: [PortProcess], failures: [PortStopFailure]? = nil) {
+        self.port = port
+        self.stopped = stopped
+        self.killed = killed
+        self.failures = failures
+    }
+}
+
+/// A host's port that could not be stopped, and why.
+public struct PortStopFailure: Codable, Sendable, Equatable {
+    public var host: String
+    public var port: Int
+    public var error: ControlError
+
+    public init(host: String, port: Int, error: ControlError) {
+        self.host = host
+        self.port = port
+        self.error = error
+    }
+}
+
+/// A process on this Mac, or on a host, whose pids are a different machine's.
+public struct PortProcess: Codable, Sendable, Hashable {
+    public var pid: Int32
+    /// Left out for this Mac's processes.
+    public var host: String?
+
+    public init(pid: Int32, host: String?) {
+        self.pid = pid
+        self.host = host
+    }
 }

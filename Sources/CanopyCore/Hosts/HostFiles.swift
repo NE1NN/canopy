@@ -119,6 +119,14 @@ public enum HostFiles {
         ]
     }
 
+    /// Stops the pids that still listen on `port` on the host, printing `{"stopped": [pids], "killed": [pids]}`: those
+    /// it signalled, and those of them it had to SIGKILL.
+    public static func stopPortCommand(homeID: String, port: UInt16, pids: [Int32]) -> [String] {
+        let stop =
+            #"h=$0 p=$1; shift; exec python3 "$HOME/.canopy/$h/bin/canopy-host" stop-port --port "$p" --pid "$@""#
+        return ["sh", "-c", stop, homeID, "\(port)"] + pids.map { "\($0)" }
+    }
+
     /// tmux settings for Canopy's own server. Lines scrolled off a session's one window go into Canopy's scrollback,
     /// so scrolling and selecting work as in a local pane, and titles and copies reach Canopy.
     public static let tmuxConf = """
@@ -141,8 +149,9 @@ public enum HostFiles {
 
     /// Canopy's helper on a host, with the version it reports to the app.
     /// `probe` lists the sessions of Canopy's tmux server, each with its foreground program, whether that is the shell,
-    /// its folder, and its title, and the panes with a kept hook report, as JSON. `relay` is the host's `canopy`,
-    /// `replay` hands the app a hook's report that found no app, and `open` is the host's `xdg-open`.
+    /// its folder, and its title, the panes with a kept hook report, and with `--ports` the host's listening ports, as
+    /// JSON. `relay` is the host's `canopy`, `replay` hands the app a hook's report that found no app, `open` is the
+    /// host's `xdg-open`, and `stop-port` stops a port's processes on the host, where their pids mean something.
     public static let script = scriptBody.replacingOccurrences(of: "@CANOPY_VERSION@", with: version)
 
     private static let scriptBody = scriptSource.replacingOccurrences(of: "@INPUT_COMMANDS@", with: RelayInput.literal)
@@ -156,6 +165,7 @@ public enum HostFiles {
         import re
         import select
         import shlex
+        import signal
         import socket
         import subprocess
         import sys
@@ -184,6 +194,12 @@ public enum HostFiles {
         HOOK_INPUT_WAIT = 1
         HOOK_BUDGET = 3
         HOOK_REPLY_WAIT = 4
+        # Ports the host hands out to programs that ask for any free one: tools talking to each other, not servers.
+        PORT_RANGE_FILE = "/proc/sys/net/ipv4/ip_local_port_range"
+        # How long `stop-port` gives a server to let go of its port after SIGTERM, as `PortStopper` does on the Mac.
+        STOP_WAIT = 3
+        # Each of `ss`, `lsof`, and `sysctl` gets this long, so a stuck one cannot hold the probe.
+        TOOL_WAIT = 5
 
 
         # The CLI's help flags, as `RelayInput.helpFlags`: a command asked for its help prints it and reads nothing.
@@ -550,18 +566,187 @@ public enum HostFiles {
             return 3
 
 
+        def number(text):
+            return int(text) if text.lstrip("-").isdigit() else 0
+
+
         def processes():
-            """Each process's terminal foreground group and name, by pid, without a login shell's leading dash."""
+            """Each process's parent, terminal foreground group, and name, by pid, without a login shell's leading dash."""
             listed = subprocess.run(
-                ["ps", "-A", "-o", "pid=,tpgid=,comm="], capture_output=True, encoding="utf-8", errors="replace"
+                ["ps", "-A", "-o", "pid=,ppid=,tpgid=,comm="], capture_output=True, encoding="utf-8", errors="replace"
             ).stdout
             table = {}
             for line in listed.splitlines():
-                parts = line.split(None, 2)
-                if len(parts) == 3 and parts[0].isdigit():
-                    table[int(parts[0])] = (int(parts[1]) if parts[1].lstrip("-").isdigit() else 0,
-                                            os.path.basename(parts[2].strip()).lstrip("-"))
+                parts = line.split(None, 3)
+                if len(parts) == 4 and parts[0].isdigit():
+                    table[int(parts[0])] = (number(parts[1]), number(parts[2]),
+                                            os.path.basename(parts[3].strip()).lstrip("-"))
             return table
+
+
+        def tool(candidates, arguments):
+            """The output of the first of these programs that runs and succeeds, or None."""
+            for program in candidates:
+                try:
+                    ran = subprocess.run([program] + arguments, stdin=subprocess.DEVNULL, capture_output=True,
+                                         encoding="utf-8", errors="replace", timeout=TOOL_WAIT)
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if ran.returncode == 0:
+                    return ran.stdout
+            return None
+
+
+        USERS = re.compile(r'\("((?:[^"\\]|\\.)*)",pid=(\d+),')
+
+
+        class Unlisted(Exception):
+            """`ss` could not list the host's sockets: it is missing, or it failed or took too long, which says nothing
+            about what listens."""
+
+            def __init__(self, missing):
+                super().__init__("missing" if missing else "failed")
+                self.missing = missing
+
+
+        def listeners():
+            """`ss -ltnpH`'s sockets as (address, port, [(name, pid)]), leaving out other users' sockets, which it shows
+            without their processes. Raises Unlisted when it cannot tell."""
+            try:
+                ran = subprocess.run(["ss", "-ltnpH"], stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
+                                     errors="replace", timeout=TOOL_WAIT)
+            except FileNotFoundError:
+                raise Unlisted(missing=True)
+            except (OSError, subprocess.SubprocessError):
+                raise Unlisted(missing=False)
+            if ran.returncode != 0:
+                raise Unlisted(missing=False)
+            listed = ran.stdout
+            found = []
+            for line in listed.splitlines():
+                parts = line.split(None, 5)
+                if len(parts) < 6 or ":" not in parts[3]:
+                    continue
+                host, _, port = parts[3].rpartition(":")
+                holders = [(name, int(pid)) for name, pid in USERS.findall(parts[5])]
+                if not port.isdigit() or not 0 < int(port) < 65536 or not holders:
+                    continue
+                # `[::1]`, `127.0.0.53%lo`, `[fe80::1]%eth0`, and `*` for a socket on every address of both families.
+                address = host.replace("[", "").replace("]", "").split("%")[0]
+                found.append(("0.0.0.0" if address == "*" else address, int(port), holders))
+            return found
+
+
+        def reach(address):
+            """How well the Mac reaches an address through a forward to the host's loopback, best first."""
+            if address in ("0.0.0.0", "127.0.0.1"):
+                return 0
+            if address in ("::", "::1"):
+                return 1
+            return 2
+
+
+        def ephemeral_ports():
+            try:
+                with open(PORT_RANGE_FILE, encoding="ascii") as file:
+                    first, last = (int(word) for word in file.read().split()[:2])
+                return range(first, last + 1)
+            except (OSError, ValueError):
+                pass
+            # Not Linux, as the fake host in Canopy's tests is not.
+            listed = tool(["sysctl", "/usr/sbin/sysctl", "/sbin/sysctl"],
+                          ["-n", "net.inet.ip.portrange.first", "net.inet.ip.portrange.last"])
+            words = (listed or "").split()
+            if len(words) == 2 and all(word.isdigit() for word in words):
+                return range(int(words[0]), int(words[1]) + 1)
+            return range(0)
+
+
+        def folders(pids):
+            """Each process's working folder, by pid, where it can be read."""
+            found = {}
+            if os.path.isdir("/proc/self"):
+                for pid in pids:
+                    try:
+                        found[pid] = os.readlink("/proc/%d/cwd" % pid)
+                    except OSError:
+                        pass
+                return found
+            if not pids:
+                return found
+            if sys.platform == "darwin":
+                return darwin_folders(pids)
+            listed = tool(["lsof", "/usr/sbin/lsof", "/usr/bin/lsof"],
+                          ["-w", "-a", "-p", ",".join(str(pid) for pid in pids), "-d", "cwd", "-Fn"])
+            pid = None
+            for line in (listed or "").splitlines():
+                if line.startswith("p") and line[1:].isdigit():
+                    pid = int(line[1:])
+                elif line.startswith("n") and pid is not None:
+                    found[pid] = line[1:]
+            return found
+
+
+        def darwin_folders(pids):
+            """Each process's working folder on macOS, as the fake host in Canopy's tests is, read with libproc: `lsof`
+            takes a second or more there, which a busy machine stretches past its wait."""
+            import ctypes
+            found = {}
+            try:
+                proc_pidinfo = ctypes.CDLL("/usr/lib/libSystem.B.dylib").proc_pidinfo
+            except (OSError, AttributeError):
+                return found
+            proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+            proc_pidinfo.restype = ctypes.c_int
+            # PROC_PIDVNODEPATHINFO fills a proc_vnodepathinfo: the working folder's vnode_info, 152 bytes, and its
+            # path, MAXPATHLEN bytes, then the same for the root folder.
+            flavor, info, path = 9, 152, 1024
+            size = 2 * (info + path)
+            buffer = ctypes.create_string_buffer(size)
+            for pid in pids:
+                if proc_pidinfo(pid, flavor, 0, buffer, size) == size:
+                    folder = buffer.raw[info:info + path].split(b"\0", 1)[0]
+                    if folder:
+                        found[pid] = os.fsdecode(folder)
+            return found
+
+
+        def ancestors(pid, table):
+            chain = []
+            parent = table.get(pid, (0, 0, ""))[0]
+            while parent > 0 and parent != pid and parent not in chain:
+                chain.append(parent)
+                parent = table.get(parent, (0, 0, ""))[0]
+            return chain
+
+
+        def listening_ports(table):
+            """The host's listening TCP ports outside its ephemeral range, one entry for each, with their processes. None
+            when `ss` fails, and none at all without `ss`."""
+            try:
+                found = listeners()
+            except Unlisted as unlisted:
+                return [] if unlisted.missing else None
+            ephemeral = ephemeral_ports()
+            ports = {}
+            for address, port, holders in found:
+                if port in ephemeral:
+                    continue
+                entry = ports.setdefault(port, {"address": address, "pids": [], "names": {}})
+                if reach(address) < reach(entry["address"]):
+                    entry["address"] = address
+                for name, pid in holders:
+                    if pid not in entry["names"]:
+                        entry["pids"].append(pid)
+                        entry["names"][pid] = name
+            if not ports:
+                return []
+            where = folders(sorted({pid for entry in ports.values() for pid in entry["pids"]}))
+            return [{
+                "port": port, "address": entry["address"],
+                "processes": [{"pid": pid, "name": entry["names"][pid], "ancestors": ancestors(pid, table()),
+                               "folder": where.get(pid)} for pid in entry["pids"]],
+            } for port, entry in sorted(ports.items())]
 
 
         def pending_panes(home_id):
@@ -575,11 +760,9 @@ public enum HostFiles {
                           if name.endswith(".json") and NAME.fullmatch(name[:-len(".json")]))
 
 
-        def probe(server, home_id):
-            pending = pending_panes(home_id)
+        def sessions_of(server, table):
             fields = "#{session_name}\t#{pane_pid}\t#{pane_current_path}\t#{pane_title}"
             # -u: under a locale that is not UTF-8, as ssh can pass on, tmux would print tabs as underscores.
-            sessions = []
             try:
                 listed = subprocess.run(
                     ["tmux", "-u", "-L", server, "list-panes", "-a", "-F", fields],
@@ -587,31 +770,95 @@ public enum HostFiles {
                 )
             except OSError:
                 # Without tmux there are no sessions, as when its server is not running.
-                print(json.dumps({"sessions": sessions, "pending": pending}))
-                return
+                return []
+            if listed.returncode != 0:
+                return []
             # tmux titles a pane nothing has titled with the machine's name, which says nothing.
             names = {socket.gethostname(), socket.gethostname().split(".")[0]}
-            if listed.returncode == 0:
-                table = processes()
-                for line in listed.stdout.splitlines():
-                    parts = line.split("\t")
-                    if len(parts) < 4 or not parts[1].isdigit():
-                        continue
-                    pid = int(parts[1])
-                    group, shell = table.get(pid, (pid, ""))
-                    busy = group > 0 and group != pid
-                    foreground = table.get(group, (0, shell))[1] if busy else shell
-                    title = "\t".join(parts[3:])
-                    sessions.append({
-                        "name": parts[0], "pid": pid, "busy": busy, "foreground": foreground,
-                        "folder": parts[2], "title": "" if title in names else title,
-                    })
-            print(json.dumps({"sessions": sessions, "pending": pending}))
+            sessions = []
+            for line in listed.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) < 4 or not parts[1].isdigit():
+                    continue
+                pid = int(parts[1])
+                _, group, shell = table().get(pid, (0, pid, ""))
+                busy = group > 0 and group != pid
+                foreground = table().get(group, (0, 0, shell))[2] if busy else shell
+                title = "\t".join(parts[3:])
+                sessions.append({
+                    "name": parts[0], "pid": pid, "busy": busy, "foreground": foreground,
+                    "folder": parts[2], "title": "" if title in names else title,
+                })
+            return sessions
+
+
+        def probe(server, home_id, ports):
+            """Prints the sessions of this home's tmux server, the panes with a kept report, and, when asked, the
+            host's listening ports, as JSON."""
+            listed = []
+
+            def table():
+                # Read once, and only when something needs it.
+                if not listed:
+                    listed.append(processes())
+                return listed[0]
+
+            report = {"sessions": sessions_of(server, table), "pending": pending_panes(home_id)}
+            if ports:
+                report["ports"] = listening_ports(table)
+            print(json.dumps(report))
+
+
+        def listening_pids(port):
+            """The pids `ss` shows listening on this port now, or None when `ss` cannot tell."""
+            try:
+                found = listeners()
+            except Unlisted:
+                return None
+            return {pid for _, number, holders in found if number == port for _, pid in holders}
+
+
+        def signal_if_listening(pid, port, number):
+            """Signals the pid only while it still listens on the port, since a pid that let go can be reused at once."""
+            if pid not in (listening_pids(port) or ()):
+                return False
+            try:
+                os.kill(pid, number)
+            except OSError:
+                return False
+            return True
+
+
+        def stop_port(port, pids):
+            """SIGTERM and SIGCONT to each of the pids listening on the port, then SIGKILL to those still listening after
+            STOP_WAIT seconds. Pids not listening on it are left alone. Prints the pids it signalled and those it
+            killed."""
+            if listening_pids(port) is None:
+                print("canopy-host: ss cannot list this host's ports, so nothing was stopped.", file=sys.stderr)
+                return 1
+            asked = [pid for pid in dict.fromkeys(pids) if pid > 1 and pid != os.getpid()]
+            signalled = []
+            for pid in asked:
+                if signal_if_listening(pid, port, signal.SIGTERM):
+                    signalled.append(pid)
+                    # A server paused with Ctrl-Z takes SIGTERM only once resumed.
+                    signal_if_listening(pid, port, signal.SIGCONT)
+            deadline = time.monotonic() + STOP_WAIT
+            holding = signalled
+            while holding:
+                holding = [pid for pid in holding if pid in (listening_pids(port) or ())]
+                if not holding or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+            killed = [pid for pid in holding if signal_if_listening(pid, port, signal.SIGKILL)]
+            print(json.dumps({"stopped": signalled, "killed": killed}))
+            return 0
 
 
         def usage():
-            print("usage: canopy-host probe --server <name> --home-id <id> | relay <arguments> | replay --pane <pane> --home-id <id>"
-                  " | open <url>", file=sys.stderr)
+            print("usage: canopy-host probe --server <name> --home-id <id> [--ports] | relay <arguments>"
+                  " | replay --pane <pane> --home-id <id> | open <url> | stop-port --port <port> --pid <pid>...",
+                  file=sys.stderr)
             return 2
 
 
@@ -623,10 +870,14 @@ public enum HostFiles {
                 return open_link(arguments[1:])
             if len(arguments) == 5 and command == ["replay"] and arguments[1] == "--pane" and arguments[3] == "--home-id":
                 return replay(arguments[2], arguments[4])
-            if (len(arguments) == 5 and command == ["probe"] and arguments[1] == "--server"
-                    and arguments[3] == "--home-id" and NAME.fullmatch(arguments[4])):
-                probe(arguments[2], arguments[4])
+            if (command == ["probe"] and len(arguments) >= 5 and arguments[1] == "--server" and arguments[3] == "--home-id"
+                    and NAME.fullmatch(arguments[4]) and arguments[5:] in ([], ["--ports"])):
+                probe(arguments[2], arguments[4], arguments[5:] == ["--ports"])
                 return 0
+            if (len(arguments) >= 5 and command == ["stop-port"] and arguments[1] == "--port" and arguments[3] == "--pid"
+                    and all(argument.isdigit() for argument in arguments[2:3] + arguments[4:])
+                    and 0 < int(arguments[2]) < 65536):
+                return stop_port(int(arguments[2]), [int(pid) for pid in arguments[4:]])
             return usage()
 
 

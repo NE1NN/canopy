@@ -39,10 +39,18 @@ public struct RowPreparation: Sendable, Equatable {
 public final class RowLifecycle {
     public nonisolated let workspace: Workspace
     public let terminals: TerminalStore
+    /// Remote rows' ports come from its probes. Without one, rows list this Mac's ports alone.
+    public let hostMonitor: HostMonitor?
+    let localPorts: LocalPorts
 
-    public init(workspace: Workspace, terminals: TerminalStore) {
+    public init(
+        workspace: Workspace, terminals: TerminalStore, hostMonitor: HostMonitor? = nil,
+        localPorts: LocalPorts = .system
+    ) {
         self.workspace = workspace
         self.terminals = terminals
+        self.hostMonitor = hostMonitor
+        self.localPorts = localPorts
         terminals.remoteHooks = self
     }
 

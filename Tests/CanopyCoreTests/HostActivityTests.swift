@@ -45,7 +45,7 @@ extension HostConnectionTests {
 
         setup.clock.advance(by: .seconds(11 * 60))
         _ = await setup.connection.probe(["true"], timeout: .seconds(5))
-        await setup.connection.panesActive(attached: 0, busy: false, quietFor: .seconds(11 * 60))
+        await setup.connection.panesActive(attached: 0, busy: false, serving: false, quietFor: .seconds(11 * 60))
 
         #expect(await setup.connection.state == .idle)
     }

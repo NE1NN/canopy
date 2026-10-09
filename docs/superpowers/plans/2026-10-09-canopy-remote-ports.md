@@ -1,0 +1,263 @@
+# Remote Rows, Milestone 3, Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** A dev server an agent starts in a remote row shows in the ports panel under that row and opens at `localhost` on the Mac, forwarded through the host's ssh master.
+
+**Architecture:** `canopy-host probe` gains the host's listening TCP ports, read from `ss -ltnpH`, each with its processes, their ancestors, and their folders.
+The app asks for them every 5 seconds while the host is connected, gives each port to the remote row whose tmux session it descends from, or else whose worktree holds its folder, and forwards it with `ssh -O forward -L` to the same Mac port when that is free, otherwise the next free one above.
+The ports panel and `canopy ports` show remote ports beside local ones, with the host and the Mac's port, and stopping one runs `canopy-host stop-port` on the host, never `kill` on the Mac.
+
+**Tech Stack:** Swift 6 (strict concurrency), SwiftPM, Swift Testing, OpenSSH local forwarding through a control master, Python 3 and iproute2's `ss` on the host.
+
+**Spec:** `docs/superpowers/specs/2026-10-08-canopy-remote-rows-design.md`, section "Ports", and the error table's last row.
+**Earlier plans:** `docs/superpowers/plans/2026-10-08-canopy-remote-rows.md` (milestone 1) and `docs/superpowers/plans/2026-10-08-canopy-remote-relay.md` (milestone 2).
+
+## How this plan is written
+
+As in milestones 1 and 2, this plan fixes the files, the interfaces between tasks, and the tests each task must pass, and the commits hold the code.
+A What was built section at the end says where the build differs.
+
+## Global Constraints
+
+- Swift 6 language mode, strict concurrency, zero warnings, `make lint` clean, `make test` not bare `swift test`.
+- Nothing in tests or `make e2e` reaches `hindie-box`; only `scripts/e2e-hosts.sh --host hindie-box` does.
+- A pid read on a host is never signalled on the Mac.
+  Remote ports carry their host, and every stop path checks it.
+- Test helpers never signal a pid they did not just confirm is theirs, and timing checks wait for a condition or measure on the thread doing the work.
+- Never quit or kill the release Canopy; dev builds by pid only.
+  Never touch solis-v1, ticket-manager, or usefastlane-landing.
+- Markdown: one sentence per line, no em dashes.
+  Commits: conventional prefixes, no Co-Authored-By trailers.
+- Everything on the host is Python 3 and POSIX sh, with `ss` from iproute2, as Ubuntu 24.04 ships them.
+
+## Review Focus
+
+1. A remote pid never reaches `kill` on the Mac, and `stop-port` on the host signals a pid only while it still listens on the port it was asked about.
+2. Forwards follow the host: one per remote port, gone when the port stops listening or the master stops, made again on a new connection, never two for one remote port.
+3. The Mac port is free in both IPv4 and IPv6, loopback and wildcard, before it is used, and a forward that fails tries the next port rather than giving up or looping.
+4. The master's own listening sockets on the Mac never show as a local row's ports.
+5. Probing ports never slows the 2-second session probe, a host whose `ss` is missing shows no ports rather than an error, and one whose `ss` fails or times out keeps the ports and forwards it had.
+
+## Decisions
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Where ports are read | `canopy-host probe --ports`, the same probe with one more list | One ssh session per ports round, and the session list it needs for attribution comes in the same answer. |
+| How often | Every 5 seconds per host, by time since the last ports probe, as its own ssh call right after that host's session probe, with a 10-second timeout; attribution and forwards then run in a task of their own | A host's probes hold one ssh session at most, which `host add`'s MaxSessions warning counts on, a stuck `ss` delays that host's next session probe by its timeout at most and no other host's, since each host's probes run apart, and forwards (control commands, no session) never hold probes up. |
+| Forward target on the host | `127.0.0.1` for `0.0.0.0` or `127.0.0.1`, `[::1]` for `::` or `::1`, any other IPv4 address as it is, and any other IPv6 address in brackets | A Vite server on `::1` alone refuses `127.0.0.1`, and the probe keeps `::` for an IPv6-only wildcard, as `ss` prints sshd's `[::]`. |
+| Mac port | The same port when nothing listens there on `127.0.0.1`, `::1`, `0.0.0.0`, or `::`, else the next free one up to 65535, skipping ports other forwards hold; each check binds with SO_REUSEADDR, as ssh does | A local server on `::1` or a wildcard would otherwise catch `localhost:5173`, and without SO_REUSEADDR the TIME_WAIT a closed browser connection leaves would move a forward that comes back to the next port. |
+| A Mac port that frees later | The forward keeps its port | Moving a forward under an open browser tab breaks it. |
+| Ports in the host's ephemeral range | Left out, read from `/proc/sys/net/ipv4/ip_local_port_range` | The same rule as local ports. |
+| `ports stop <n>` | Matches a remote port by its host port or its Mac port | An agent on the host knows the first, one on the Mac may know either. |
+| Stopping | `canopy-host stop-port --port <n> --pid <pid>...`: SIGTERM and SIGCONT, then SIGKILL after 3 seconds to those still listening | The same contract as `PortStopper`, checked on the host so a reused pid is never signalled. |
+
+## What ssh does, checked on hindie-box
+
+Checked on 2026-10-09 with OpenSSH on this Mac and Ubuntu 24.04's sshd:
+
+- `ssh -O forward -L <p>:127.0.0.1:<q>` binds both `127.0.0.1:<p>` and `[::1]:<p>` on the Mac, in the master's process.
+- When only one of the two is taken, the forward still succeeds and exits 0, bound to the other alone, so a local server on one family would catch some of `localhost:<p>`.
+  Hence the chooser checks both before forwarding.
+- When both are taken, it fails with "mux_client_forward: forwarding request failed: Port forwarding failed" and exits 255.
+- Forwarding the same `-L` again exits 0, and cancelling one that does not exist prints "port not forwarded" and also exits 0.
+- An IPv6 target is written `<p>:[::1]:<q>`, and works for a server bound to `::1` alone.
+- `ss -ltnpH` prints `LISTEN 0 5 127.0.0.1:18431 0.0.0.0:* users:(("python3",pid=40275,fd=3))`, `[::1]:18432`, `[::]:22`, and `127.0.0.53%lo:53`; sockets of other users, root's here, have no `users:` part.
+- The host's ephemeral range is `32768 60999`.
+- A stream-local `-R` forward leaves its socket file behind when the master stops, and a later `-O forward -R` to that path fails with 255 until it is removed.
+
+## File Structure
+
+New:
+
+| File | Responsibility |
+|---|---|
+| `Sources/CanopyCore/Hosts/RemotePorts.swift` | `RemoteListeningPort`, attribution to remote rows, choosing the Mac port, the forward target |
+| `Sources/CanopyCore/Hosts/HostForwards.swift` | one host's forwards: the wanted set against the current one, through the master |
+| `Tests/CanopyCoreTests/RemotePortsTests.swift`, `HostForwardsTests.swift`, `HostPortsScriptTests.swift` | tests |
+
+Modified:
+
+| File | Change |
+|---|---|
+| `Hosts/HostFiles.swift` | `probe --ports`, `stop-port` in `canopy-host`; the version moves |
+| `Hosts/HostProbe.swift` | decode ports |
+| `Hosts/SSHCommand.swift` | `forwardLocal(local:target:)`, `cancelLocal(local:target:)` |
+| `Hosts/HostConnection.swift` | owns its `HostForwards`, cleared when the master stops |
+| `Hosts/HostActivity.swift` (`HostMonitor`) | ports every 5 s, attribution, forwards, the latest remote ports per host |
+| `Ports/PortAttribution.swift` | `RowPort.remote` |
+| `Rows/RowLifecycle+Ports.swift` | merges remote groups, stops remote ports on the host, leaves out the masters' pids |
+| `Control/PortMethods.swift`, `CanopyCLI/PortsCommand.swift`, `CanopyCLI/AgentGuide.swift` | `host`, `localPort`, and the forward's error in `PortInfo` and the table |
+| `CanopyApp/Sidebar/PortsPanel.swift`, `CanopyApp/AppModel.swift` | the server mark, `5173 → 5174`, the error on hover |
+| `scripts/fake-ssh` | `-O forward -L` and `-O cancel -L` through a small Python proxy |
+| `scripts/e2e-hosts.sh`, `scripts/ui-fixture.sh` | a remote dev server end to end, and one in the fixture |
+
+---
+
+### Task 1: The host lists its ports and stops them
+
+**Files:** modify `Hosts/HostFiles.swift`, `Hosts/HostProbe.swift`; test `HostPortsScriptTests.swift`, `HostProbeTests` (existing, if any).
+
+**Interfaces:**
+- `canopy-host probe --server <name> --home-id <id> --ports` adds `"ports": [{"port": 5173, "address": "127.0.0.1", "processes": [{"pid": 812, "name": "node", "ancestors": [800, 1], "folder": "/home/u/x"}]}]`, from `ss -ltnpH`; lines without `users:` (other users' sockets) are skipped; the same port on several addresses is one entry, with the loopback-friendly address by the rule in Decisions; ports in the ephemeral range are left out.
+  Ancestors come from the `ps -A -o pid=,ppid=,tpgid=,comm=` table the probe already reads; folders from `/proc/<pid>/cwd`, else libproc's `proc_pidinfo` on macOS (the fake host is the Mac), else `lsof -a -p <pid> -d cwd -Fn`.
+  Without `ss`, `ports` is `[]`; when `ss` fails or takes longer than 5 seconds, `ports` is `null`.
+- Each session in the probe also carries `pid` (the pane's shell), which it already prints.
+- `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"stopped": [pids], "killed": [pids]}`, the pids it signalled and those it killed.
+  Pids not listening on the port are left alone.
+- `HostProbe.Report` (which already has `sessions` and `pending`) gains `shells: [String: Int32]` (session to shell pid) and `ports: [RemoteListeningPort]`, and `HostProbe.command(homeID:ports:)` adds `--ports` when asked.
+  The argument check in `canopy-host` accepts `--ports` only as the last argument of `probe`.
+- `HostFiles.version` changes, so hosts reinstall.
+
+**Tests** (Python against a stand-in `ss` first on PATH that prints fixed lines, and real child processes for ancestry): IPv4, IPv6, wildcard, `%lo` scoped, and several processes on one socket parse; the address rule; ephemeral ports go; a line without `users:` goes; missing `ss` gives `[]`; a process started by a session's shell lists that shell among its ancestors; `stop-port` stops a Python listener, leaves a pid not on the port alone, and kills one that ignores SIGTERM; Swift decodes the output.
+
+**Commit:** `feat: canopy-host lists the host's listening ports and stops them`
+
+### Task 2: Attribution, the Mac port, and the forward commands
+
+**Files:** create `Hosts/RemotePorts.swift`; modify `Hosts/SSHCommand.swift`; test `RemotePortsTests.swift`, `SSHCommandTests.swift`.
+
+**Interfaces:**
+- `RemotePortAttribution.assign(_ ports: [RemoteListeningPort], rows: [RemoteRowEntry], sessions: [String: String] /* session to stand-in */, shells: [String: Int32]) -> [String: [RemoteListeningPort]]` by stand-in: the row of the nearest session shell among a process's ancestors, else the row whose remote path holds its folder (deepest), else none.
+  A port with processes in two rows goes to the row of the first process that has one.
+  Folders are compared by path components, as `RelayPaths` maps them, so `/h/app-web` is not inside `/h/app`; a folder with `..` matches no row.
+- `LocalPortChooser.port(for remote: UInt16, taken: Set<UInt16>, isFree: (UInt16) -> Bool) -> UInt16?`: `remote` when free and not taken, else the next above, nil past 65535.
+- `LocalPortChooser.isFree(_:)`: binds `127.0.0.1`, `::1`, `0.0.0.0`, and `::` (IPv6 only), each with SO_REUSEADDR, and closes; free only when all four bind, or when IPv6 is unavailable on the Mac and the IPv4 two bind.
+- `RemoteListeningPort.target` (`127.0.0.1`, `[::1]`, the IPv4 address, or the IPv6 address in brackets, by the rule in Decisions).
+- `SSHCommand.forwardLocal(local: UInt16, target: String, port: UInt16)` -> `-S <control> -O forward -L <local>:<target>:<port> <alias>`, and `cancelLocal` with `-O cancel`.
+
+**Tests:** ancestry wins over folder; folder fallback picks the deepest row and ignores a sibling with a shared prefix; a port in no row is left out; the chooser skips taken and busy ports and returns nil at the top; `isFree` is false for a port a test listener holds on `::1` only and on `127.0.0.1` only; the argv for both commands, IPv6 target included.
+
+**Commit:** `feat: remote ports find their row and a port on the Mac`
+
+### Task 3: Forwards and the 5-second ports probe
+
+**Files:** create `Hosts/HostForwards.swift`; modify `Hosts/HostConnection.swift`, `Hosts/HostActivity.swift`, `Workspace/Workspace+Hosts.swift`, `scripts/fake-ssh`; test `HostForwardsTests.swift`, `RemoteRowTests.swift`.
+
+**Interfaces:**
+- `HostForwards` (inside `HostConnection`'s isolation): `apply(_ wanted: [RemoteListeningPort], run: …) async -> [UInt16: PortForward]` keyed by remote port, where `PortForward { local: UInt16?; error: String? }`.
+  New ports get a Mac port and `-O forward`; a forward that exits nonzero tries the next free port, up to 20 tries, then keeps ssh's message for the panel and is tried again on the next round.
+  Ports no longer wanted are cancelled with `-O cancel`.
+  A new master generation starts from none, and stopping the master forgets them all.
+- The Mac ports every host's forwards hold are known to the workspace, so one host never picks a port another host's forward holds.
+- `HostConnection.forwardPorts(_:taken:) async -> [UInt16: PortForward]`, one round at a time, `HostConnection.forwardedPorts`, and `HostConnection.masterPID` (nil while not connected), from `-O check`'s "Master running (pid=N)".
+- `Workspace.forwardPorts(_:on:)` runs one host's round at a time, with `taken` from every other host's `forwardedPorts`.
+- `RowPort.remote: RemotePort?` (Task 4's type) arrives here, so `remotePorts` carries each port's host, Mac port, and error.
+- `HostMonitor` asks for ports when 5 seconds have passed for that host, attributes them with the host's remote rows and the panes' sessions, applies the forwards, and keeps `remotePorts: [String /* host */: [PortGroup]]`, which drops a host once it is no longer connected.
+- `fake-ssh -O forward -L local:target:port` starts a detached Python TCP proxy from `127.0.0.1:local` and `[::1]:local` to `target:port`, records its pid with its own start time beside the control path, and fails with exit 255 and ssh's "Port forwarding failed" text only when it can bind neither, as real ssh does; `-O cancel -L` and the master's exit stop the proxies they recorded, only after checking each pid still runs that proxy; a proxy also exits once its master has, as a master the app kills runs no clean-up.
+  The proxy (`scripts/fake-ssh-forward.py`) runs in `/`, so no local row claims its sockets.
+- `FakeHost(listsPorts: true)` puts `scripts/fake-ss` on the host's PATH as `ss`; without `FAKE_SS_LINES` it prints this Mac's listening sockets of this user from `netstat -anv`.
+
+**Tests:** on the fake host, a Python HTTP server started in a remote row's tmux session is forwarded, and a GET through the Mac port answers; a busy Mac port (a test listener) moves the forward to the next; the server stopping cancels the forward and frees the Mac port; dropping the master clears the forwards, and a reconnect forwards again; a server in no remote row is not forwarded; with a stand-in runner, two hosts wanting the same Mac port get two ports (the chooser's `taken` spans every host's forwards, kept by the workspace), and a failed forward moves to the next port, keeping ssh's message once it gives up.
+
+**Commit:** `feat: remote rows' ports are forwarded to the Mac`
+
+### Task 4: Ports panel, `canopy ports`, and stopping on the host
+
+**Files:** modify `Ports/PortAttribution.swift`, `Rows/RowLifecycle+Ports.swift`, `Control/PortMethods.swift`, `CanopyCLI/PortsCommand.swift`, `CanopyCLI/AgentGuide.swift`, `CanopyApp/Sidebar/PortsPanel.swift`, `CanopyApp/AppModel.swift`; tests in `RemoteRowTests.swift` or a new `RemotePortsControlTests.swift`, and `PortsTests` (existing).
+
+**Interfaces:**
+- `RowPort.remote: RemotePort?` with `host`, `local: UInt16?`, `error: String?`; nil for local ports.
+- `RowLifecycle(workspace:terminals:hostMonitor:localPorts:)`: `LocalPorts` holds this Mac's scan, process table, and stop (`.system` uses `PortScanner` and `PortStopper`), which tests replace with a stand-in that records stops.
+- `portGroups()` merges `HostMonitor`'s remote groups into sidebar order, scans this Mac for local rows only, and leaves out every connected master's pid (`Workspace.masterPIDs()`) from the local scan.
+- `PortInfo` gains `host: String?`, `localPort: Int?`, and `forwardError: String?`; the table gains a HOST column only when a port has one, and PORT reads `5173 → 5174` when the two differ, or `5173 (not forwarded)`.
+- `stopPort` and `stopPorts` build `PortStops` from `RowPort`s and go through one private `stop(_:)`: `PortStops.local` (ports without `remote`) goes to `LocalPorts.stop`, each of `PortStops.remote` to `Workspace.stopRemotePort(_:pids:on:)`, which runs `HostFiles.stopPortCommand` through the master; `stopped` lists only the remote pids the host signalled, and `killed` merges both, each with its host.
+  A remote stop that succeeds drops the port from `HostMonitor.remotePorts` and reads the host's ports again on its next probe.
+- `ports stop <n>` matches `port`, or else a remote port's `localPort` (`PortStops.matching`), so a port whose own number is `n` comes first.
+- Other ports a port's processes hold (`[PortGroup].otherPorts(of:)`) compare pids only within one host, or this Mac.
+- The panel: a remote group's name is followed by the server mark and host (`RemoteMark`), as in the sidebar, a badge reads `5173 → 5174` when the Mac port differs, clicking opens `http://localhost:<Mac port>`, a port without a forward is dimmed with ssh's message on hover, and the stop tooltip names the host.
+- The agent guide's ports section says remote rows' ports are forwarded and how they show.
+
+**Tests:** `ports list --json` in a remote row shows `host` and `localPort` for a forwarded fake-host server; the table's PORT and HOST columns; `ports stop 5173` from the remote row stops the server on the fake host (the test's own child, checked by pid and command) and never calls `kill` locally (a `PortStopper` scan stand-in records calls); `ports stop <Mac port>` does the same; the master's pid is not in the local groups.
+
+**Commit:** `feat: remote ports in the ports panel and canopy ports`
+
+### Task 5: End to end and UI checks
+
+**Files:** `scripts/e2e-hosts.sh`, `scripts/ui-fixture.sh`.
+
+**Steps added, on the fake host and `--host`:**
+- `python3 -m http.server <port>` typed in the remote pane shows in `canopy ports --json` with `host` and `localPort`, and `curl http://localhost:<localPort>` answers from the host.
+- A local listener on the same port first makes the forward take the next port.
+- `canopy ports stop <port>` in the remote pane stops it, and the forward goes.
+- The fixture's remote row runs a server, so the ports panel shows a remote port; window shots in light and dark of the panel with `5173 → 5174`.
+
+**Commit:** `test: remote ports end to end`
+
+### Task 6: Merge bar
+
+- [ ] `make lint`, `make build` 0 warnings, `make test` three clean runs.
+- [ ] `make e2e`, and `scripts/e2e-hosts.sh --host hindie-box`.
+- [ ] UI checks: window shots of the ports panel with a remote port, light and dark.
+- [ ] An independent opus review of `git diff main...HEAD` with the spec and this plan; findings fixed test-first, listed under After Review.
+- [ ] CI `check` green.
+- [ ] PR with click checks and Decisions to review; print `READY: PR #<n> <url>`.
+
+## After Review
+
+An independent review of `git diff 731e714..896a45e` found twelve issues, each fixed test-first.
+
+1. A cancelled forward that came back moved to the next Mac port, since `LocalPortChooser.isFree` bound without SO_REUSEADDR and the TIME_WAIT ssh leaves after closing a browser's connections made the old port look busy.
+   It now binds `127.0.0.1`, `::1`, `0.0.0.0`, and `::` (IPv6 only), each with SO_REUSEADDR, and needs all four, which still catches loopback, IPv4 wildcard, and dual-stack wildcard listeners, as tests with real listeners show.
+   A fake-host test forwards a server, GETs through it, stops it, starts it again, and gets the same Mac port; the Mac port row in Decisions now says why.
+2. A slow or failing `ss` looked like no ports, so a busy host dropped its forwards and made them again.
+   The probe now prints `"ports": null` when `ss` fails or takes longer than its 5 seconds, and `HostMonitor` keeps the host's last ports and forwards then; a missing `ss` still means no ports.
+   Script tests cover missing, failing, and slow `ss`, and fake-host tests cover a failing `ss` keeping the forward and a removed `ss` dropping it.
+3. The ports probe held up every host's session probe, since `probe()` awaited each host's ports in one loop.
+   Each host now has its own sequence, its session probe and then its ports when due, and `probe()` waits only for the session probes it started; `HostMonitor.watch(every:)`, which the app runs, starts a round every 2 seconds without waiting for the last, so a host still probing is skipped and holds up no other.
+   Tests with two stand-in hosts, one with a held ports probe and one with a held session probe, count the other host's probes and check the held host never ran two at once.
+   A host's worktrees are now listed every 15 of its own session probes, rather than every 15 rounds.
+4. A failed or timed-out cancel dropped the forward from `HostForwards` while it could still run in the master.
+   A forward whose cancel fails is now kept and cancelled again next round, a server whose address changed keeps its old forward meanwhile rather than getting a second, and a forward that timed out is cancelled before the next Mac port is tried, or kept aside until a later round cancels it.
+5. `ports stop` reported a stale pid as stopped when the server had restarted since the last probe.
+   `stop-port` now prints the pids it signalled beside those it killed, and only those are reported; the CLI says when nothing was stopped.
+   A fake-host test restarts the server and stops the port with the old pid.
+6. `killed` mixed this Mac's pids and hosts', so a local process could be labelled killed.
+   `PortsStopResult.killed` now holds `PortProcess` values with a pid and a host, and the CLI matches both.
+7. A round abandoned because the master stopped returned no forwards, so every port showed as not forwarded with no reason.
+   Such a round now returns nil, and the monitor keeps showing what it had and reads the host's ports again on its next probe.
+8. Forwards did not count as use, so a backgrounded server's host could stop or detach under someone browsing it.
+   A remote row with a listening port now counts as use and as running a program, so the host's master stays up and its panes do not detach; the spec says so under the master, idle detach, and Ports.
+9. `Workspace.forwardPorts` ran one round at a time across all hosts, so a slow host held up the rest.
+   Hosts now forward at the same time, and `MacPortReservations`, shared by the workspace's connections, takes each Mac port before its forward is tried and gives it back when the try fails, the forward goes, or the master stops.
+   A test holds one host's forward and sees the other's go ahead on the next port.
+10. A round under way during `host rm` could put the connection back into the workspace's forwarders.
+    That list is gone, and a removed host's stopped connection forwards nothing and holds no Mac port; a test removes a host during a held round and checks the connection is released and its port free.
+11. `scripts/fake-ssh-forward.py` shut connections down without closing them and connected to the target on its accept loop.
+    Each connection now runs in its own thread, connecting there, and both ends close once the two pumps finish; a test counts the proxy's sockets after ten GETs.
+    The connect moving off the accept loop has no test of its own, since a target that is slow to connect cannot be made on this Mac without a network that drops packets.
+12. The `5173 → 5174` and `(not forwarded)` label was written in both the panel and the CLI.
+    `RowPort.label`, `PortInfo.label`, and `RowPort.forwardProblem` in CanopyCore now give it to both, so the panel's badge also reads `5173 (not forwarded)` for a port without a forward.
+
+### Second review
+
+A second independent review of the first review's fixes found seven minor issues, CI on PR 38 found two more, and CodeRabbit two, each fixed test-first where it is code.
+
+1. A stale port list counted as use forever: a server that died while `ss` kept failing kept its host's master and panes up, and so did a port with no forward.
+   `HostMonitor` now counts a port as use only when it has a forward and the host's last successful ports listing is under `portsStaleAfter` old, 60 seconds unless a test sets it, on a clock a test can pass.
+   Tests let a listing go stale while `ss` fails, and refuse every forward, and see the host stop its master.
+2. A forward moving to its server's new address gave its Mac port back between the cancel and the forward again, so another host could take it and a browser tab on it would reach that host's server.
+   The move keeps the reservation, and gives it back only when the forward ends up on another port; a test holds the move while another host forwards the same port.
+3. A master that did not answer took one more Mac port each round, as each timed-out forward whose cancel failed was kept aside and the port tried again on the next Mac port.
+   A port is not forwarded again while it has such a forward, and shows ssh's message; a test runs three rounds against a wedged stand-in and sees one Mac port held.
+4. A changed target whose cancel failed showed as forwarded, though its forward reached an address nothing listened on.
+   It now shows as not forwarded, with "Canopy is still moving this forward.", so the panel dims it and the table says so.
+5. `aKeptReportAProbeSeesIsRelayedOnce` could pass without its second probe reaching the host, which a round skips while its ports probe runs.
+   It now probes until the host's session probe count rises.
+6. Ending `HostMonitor.watch` left the rounds it started running, which could outlive the hosts and the test's folder.
+   The rounds run in a task group, each host's probes are kept as a task and pass cancellation to its session probe, and the watch cancels and waits for every task its rounds started once it ends.
+   The stand-in's held probes end when cancelled, as a killed ssh would, and a test ends the watch with a probe held and sees nothing left under way.
+7. From milestone 2, a replay of a kept report under way during `host rm` could start a master no monitor would stop, since `run` connects.
+   A stopped `HostConnection` now refuses to connect, saying Canopy stopped using the host, and stops a master that comes up as it stops.
+8. On CI, `stoppingAPortWhoseServerRestartedSinceTheProbeReportsNothingStopped` found no port to stop, as a ports probe still under way from the wait for the forward read the port while the old server was gone and the new one not yet up.
+   The test now waits for the monitor's work to settle before stopping the server, for the old server's port to free, and for the new one to listen, rather than on a scan of every process.
+   It is not a bug for users: a stop in that moment finds what the last probe found, and says so.
+9. The tests took 660 seconds on CI's 3 CPUs, against 182 for milestone 2, with the forwarding suite running one test at a time for all of it.
+   Each ports probe on the fake host ran `lsof` twice, in `fake-ss` and in `canopy-host`'s folders, and `lsof` takes over a second on a Mac however few processes it is asked about, so the probe loops kept the CPUs busy with it.
+   `fake-ss` now reads `netstat -anv` and `ps`, `canopy-host` reads folders on macOS with libproc's `proc_pidinfo`, keeping `lsof` for other systems without `/proc`, and the forwarding suite runs its tests at once, each host's rows claiming only their own servers.
+   Two host-down tests retried real fake-ssh masters for five minutes of test clock; one now uses a stand-in whose masters never come up, and the other's wake brings the host up.
+   Locally, the forwarding suite went from 128 seconds to 7, and a full run with CI's 8 tests at once from 148 seconds and 469 CPU seconds to 79 and 225.
+10. `ports stop` threw the first host's failure and dropped what other hosts, or this Mac, had stopped.
+    It now returns what stopped with a `failures` list, left out when every stop went through, and the CLI prints what stopped, then an error for each host that could not, and exits 1; when nothing could be stopped, the first failure is still the error.
+11. Six lines of this plan held two sentences each, and now hold one; the spec had none.

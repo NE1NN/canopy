@@ -6,7 +6,9 @@
 # section with rows backed by a stand-in ticket-manager: a waiting ticket, a long conversation with every kind of
 # message, and a closed ticket, with a fix row linked to one, a web panel and a web tab on local pages, and an artifact
 # link printed in a pane. Nothing outside the throwaway folder is touched, and nothing reaches ticket-manager or Discord.
-# A remote row of web-app lives on build-box, a host this Mac plays through scripts/fake-ssh with Homebrew's tmux.
+# A remote row of web-app lives on build-box, a host this Mac plays through scripts/fake-ssh with Homebrew's tmux. It
+# runs a dev server on 5173 there, which feat/checkout-redesign holds here, so the ports panel shows it forwarded to the
+# next free port, as 5173 → 5174.
 # Links the window opens are written to $work/opened-urls instead of opening a browser.
 #
 #   scripts/ui-fixture.sh [dark|light]   launch it and print its pid
@@ -40,7 +42,8 @@ if [[ "${1:-}" == stop ]]; then
     if [[ -n "${tm_pid:-}" && "$(ps -p "$tm_pid" -o command= 2>/dev/null)" == *ticket-manager-stand-in.py* ]]; then
         kill "$tm_pid" 2>/dev/null || true
     fi
-    if [[ -n "${site_pid:-}" && "$(ps -p "$site_pid" -o command= 2>/dev/null)" == *fixture-site* ]]; then
+    # By its arguments, which name this fixture's folder: macOS's /usr/bin/python3 runs Python under its own name.
+    if [[ -n "${site_pid:-}" && "$(ps -ww -p "$site_pid" -o command= 2>/dev/null)" == *" $work/site $work/site-port" ]]; then
         kill "$site_pid" 2>/dev/null || true
     fi
     # Only a folder this script made: named by mktemp -t cnp, and holding the stand-in gh and the fixture ZDOTDIR.
@@ -208,7 +211,7 @@ cat > "$work/site/notes.html" <<'PAGE'
 <style>body{font:15px/1.5 -apple-system,sans-serif;max-width:640px;margin:32px auto;padding:0 24px}</style>
 <h1>Onboarding notes</h1><p>Welcome, workspace, and invite: three screens, each skippable.</p>
 PAGE
-(exec -a fixture-site /usr/bin/python3 -c '
+(exec /usr/bin/python3 -c '
 import functools, http.server, sys, threading, time
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -358,8 +361,13 @@ for ticket in 853 855 851; do "$cli" ticket new "$ticket" --run "$plain" >/dev/n
 
 # A remote row on the build-box host, in its clone of web-app's origin, with its tmux session running.
 git clone -q "$work/remotes/acme/web-app.git" "$work/host/web-app"
+# The host's ss lists only the servers working in its home, so feat/checkout-redesign's 5173 here stays off the host.
+mkdir -p "$work/host/.fake-ssh-bin"
+ln -s "$PWD/scripts/fake-ss" "$work/host/.fake-ssh-bin/ss"
+touch "$work/host/.fake-ss-home-only"
 "$cli" host add build-box --repo web-app='~/web-app' >/dev/null
-"$cli" row new feat/remote-agent --repo web-app --on build-box --run "$plain" >/dev/null
+"$cli" row new feat/remote-agent --repo web-app --on build-box \
+    --run "$plain; python3 -m http.server 5173 --bind 127.0.0.1" >/dev/null
 "$cli" row select feat/checkout-redesign --repo web-app >/dev/null
 
 # Agents in every state, reported the way agents without Claude Code's hooks report them.

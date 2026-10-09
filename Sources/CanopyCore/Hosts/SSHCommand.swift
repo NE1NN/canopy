@@ -50,6 +50,16 @@ public struct SSHCommand: Sendable, Equatable {
         control("forward", ["-R", "\(remote):\(local)"])
     }
 
+    /// Asks the master to forward `local` on this Mac's loopback to `target:port` as the host sees it.
+    public func forwardLocal(local: UInt16, target: String, port: UInt16) -> [String] {
+        control("forward", ["-L", "\(local):\(target):\(port)"])
+    }
+
+    /// Stops a forward `forwardLocal` asked for, given the same words.
+    public func cancelLocal(local: UInt16, target: String, port: UInt16) -> [String] {
+        control("cancel", ["-L", "\(local):\(target):\(port)"])
+    }
+
     /// Prints the settings ssh would use for the host, from ~/.ssh/config, without connecting.
     public func config() -> [String] {
         [executable, "-G", alias]

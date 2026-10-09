@@ -44,10 +44,22 @@ public actor HostConnection {
     private var lastBusy: ContinuousClock.Instant
     private var observers: [UUID: AsyncStream<HostState>.Continuation] = [:]
     private var cachedHome: String?
+    /// The master's own pid, as `-O check` says it.
+    private var runningMasterPID: Int32?
+    private let forwards: HostForwards
+    private let isPortFree: @Sendable (UInt16) -> Bool
+    /// The round of forwards under way, which the next waits for.
+    private var forwarding: Task<Void, Never>?
+    /// Stopped for good, as when its host is removed, so work still on its way starts no master nothing would stop.
+    private var stopped = false
 
+    /// `isPortFree` says whether nothing on this Mac holds a port; tests pass a stand-in. `macPorts` holds the Mac
+    /// ports of every host's forwards, which the workspace shares between its hosts.
     public init(
         alias: String, entry: HostEntry, ssh: SSHCommand, launcher: any HostProcessLauncher = SubprocessHostLauncher(),
-        clock: any HostClock = SystemHostClock(), activity: ActivityLog
+        clock: any HostClock = SystemHostClock(), activity: ActivityLog,
+        isPortFree: @escaping @Sendable (UInt16) -> Bool = LocalPortChooser.isFree,
+        macPorts: MacPortReservations = MacPortReservations()
     ) {
         self.alias = alias
         self.entry = entry
@@ -55,6 +67,8 @@ public actor HostConnection {
         self.launcher = launcher
         self.clock = clock
         self.activity = activity
+        self.isPortFree = isPortFree
+        forwards = HostForwards(ssh: ssh, macPorts: macPorts)
         lastUse = clock.now
         lastBusy = clock.now
     }
@@ -77,6 +91,7 @@ public actor HostConnection {
 
     /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
     public func connect() async throws {
+        guard !stopped else { throw Self.stoppedError(alias) }
         lastUse = clock.now
         // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
         // that is not answering would connect on its own, around the master.
@@ -135,6 +150,36 @@ public actor HostConnection {
         return await launcher.run(ssh.forward(remote: remote, local: local), timeout: .seconds(15))
     }
 
+    /// The master's process on this Mac, which holds the forwards' listening sockets. Nil while not connected.
+    public var masterPID: Int32? {
+        state == .connected && master?.isRunning == true ? runningMasterPID : nil
+    }
+
+    /// The Mac ports this host's forwards hold.
+    public var forwardedPorts: Set<UInt16> {
+        state == .connected ? forwards.localPorts : []
+    }
+
+    /// Forwards each of `wanted` from a Mac port through the master, and cancels the forwards no longer wanted, one
+    /// round at a time. By remote port; nil while the master is not up, or when it stopped during the round.
+    public func forwardPorts(_ wanted: [RemoteListeningPort]) async -> [UInt16: PortForward]? {
+        let previous = forwarding
+        let round = Task {
+            await previous?.value
+            return await self.applyForwards(wanted)
+        }
+        forwarding = Task { _ = await round.value }
+        return await round.value
+    }
+
+    private func applyForwards(_ wanted: [RemoteListeningPort]) async -> [UInt16: PortForward]? {
+        guard state == .connected, let running = master, running.isRunning else { return nil }
+        return await forwards.apply(wanted, isFree: isPortFree) { argv in
+            guard state == .connected, master === running, running.isRunning else { return nil }
+            return await launcher.run(argv, timeout: .seconds(15))
+        }
+    }
+
     /// The host user's home folder, asked once per connection.
     public func home() async throws -> String {
         if let home = cachedHome { return home }
@@ -148,19 +193,22 @@ public actor HostConnection {
         return home
     }
 
-    /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, and how
-    /// long since anything was typed into one. Stops a master nothing needs, and detaches quiet panes.
-    public func panesActive(attached: Int, busy: Bool, quietFor: Duration) {
+    /// What the app sees of the host's panes, every probe: how many are attached, whether any runs a program, whether
+    /// a remote row has a port listening, and how long since anything was typed into one. Stops a master nothing
+    /// needs, and detaches quiet panes. A listening port counts as use and as running, since someone may be browsing
+    /// it through its forward with no pane in sight.
+    public func panesActive(attached: Int, busy: Bool, serving: Bool, quietFor: Duration) {
         guard state == .connected else { return }
         let now = clock.now
-        if busy { lastBusy = now }
+        if busy || serving { lastBusy = now }
+        if serving { lastUse = now }
         if attached == 0 {
             if now - lastUse >= Self.unusedFor { stopMaster(becoming: .idle) }
             return
         }
         lastUse = now
         let limit = Duration.seconds(entry.idleDetachMinutes * 60)
-        guard entry.idleDetachMinutes > 0, !busy, quietFor >= limit, now - lastBusy >= limit else { return }
+        guard entry.idleDetachMinutes > 0, !busy, !serving, quietFor >= limit, now - lastBusy >= limit else { return }
         stopMaster(becoming: .detached)
         activity.record(ActivityType.hostDetached, data: ["host": .string(alias)])
     }
@@ -174,6 +222,7 @@ public actor HostConnection {
 
     /// Stops the master for good, as Canopy quits. Sessions on the host only detach.
     public func stop() {
+        stopped = true
         connecting?.cancel()
         stopMaster(becoming: .idle)
         for observer in observers.values { observer.finish() }
@@ -185,6 +234,10 @@ public actor HostConnection {
         set(.connecting)
         while true {
             if try await startMaster() {
+                guard !stopped else {
+                    stopMaster(becoming: .idle)
+                    throw Self.stoppedError(alias)
+                }
                 lastError = nil
                 generation += 1
                 lastUse = clock.now
@@ -208,6 +261,10 @@ public actor HostConnection {
             }
             try await clock.sleep(for: Self.retryEvery)
         }
+    }
+
+    static func stoppedError(_ alias: String) -> WorkspaceError {
+        .hostUnreachable(alias, reason: "Canopy stopped using \(alias), as it was removed or Canopy is quitting.")
     }
 
     /// ssh's failures that waiting and waking cannot change. A name that does not resolve is not one: the Mac may be
@@ -239,13 +296,16 @@ public actor HostConnection {
     /// Starts a master and waits until ssh says it is up, or it exits. Returns whether it is up.
     private func startMaster() async throws -> Bool {
         master?.stop()
+        lost()
         await clearControlSocket()
         let started = launcher.startMaster(ssh.master())
         master = started
         let deadline = clock.now + Self.readyWithin
         while clock.now < deadline {
             try Task.checkCancellation()
-            if await launcher.run(ssh.control("check"), timeout: .seconds(5)).status == 0 {
+            let check = await launcher.run(ssh.control("check"), timeout: .seconds(5))
+            if check.status == 0 {
+                runningMasterPID = Self.masterPID(in: check.stderr)
                 watch(started)
                 return true
             }
@@ -256,6 +316,13 @@ public actor HostConnection {
         let message = started.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         lastError = message.isEmpty ? "ssh did not connect within 20 seconds." : message
         return false
+    }
+
+    /// ssh's `-O check` says "Master running (pid=N)".
+    static func masterPID(in output: Data) -> Int32? {
+        let text = String(decoding: output, as: UTF8.self)
+        guard let start = text.range(of: "(pid=") else { return nil }
+        return Int32(text[start.upperBound...].prefix { $0.isNumber })
     }
 
     /// A master killed outright leaves its socket behind, and a new master finding it would run without multiplexing,
@@ -279,13 +346,21 @@ public actor HostConnection {
     private func ended(_ ended: any HostMasterProcess) {
         guard let master, master === ended, state == .connected else { return }
         self.master = nil
+        lost()
         set(.idle)
     }
 
     private func stopMaster(becoming next: HostState) {
         master?.stop()
         master = nil
+        lost()
         set(next)
+    }
+
+    /// What went with the master: its forwards and its pid.
+    private func lost() {
+        forwards.reset()
+        runningMasterPID = nil
     }
 
     private func set(_ next: HostState) {

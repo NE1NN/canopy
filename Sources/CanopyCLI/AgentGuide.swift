@@ -182,6 +182,14 @@ struct AgentGuide: ParsableCommand {
         works in. `ports stop` only stops your row's ports, or any row's with --all, never a port no row owns.
         Ports the system picks at random (49152 and up) are left out: they are tools like MCP servers.
 
+        A remote row's ports are its host's: a server started in its terminals, or working in its worktree, is
+        forwarded on its own to localhost on this Mac, on the same port when that is free there, else the next free one.
+        The list shows the host in HOST, and PORT reads `5173 → 5174` when this Mac's port differs ("host" and
+        "localPort" in --json); a port ssh could not forward reads `(not forwarded)`, with ssh's message as
+        "forwardError". Its PID is the host's. `ports stop` takes either number and stops the server on the host.
+        When one host stops its port and another cannot, it prints what stopped, then an error for the other, and
+        exits 1; --json lists the other in "failures".
+
         ## Pull requests and branches
 
             canopy pr show [<branch>] [--refresh]         the row's PR: number, state, title, and URL

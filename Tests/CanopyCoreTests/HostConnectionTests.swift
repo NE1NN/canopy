@@ -181,10 +181,10 @@ struct HostConnectionTests {
         try await setup.connection.connect()
 
         setup.clock.advance(by: .seconds(9 * 60))
-        await setup.connection.panesActive(attached: 0, busy: false, quietFor: .seconds(9 * 60))
+        await setup.connection.panesActive(attached: 0, busy: false, serving: false, quietFor: .seconds(9 * 60))
         #expect(await setup.connection.state == .connected)
         setup.clock.advance(by: .seconds(61))
-        await setup.connection.panesActive(attached: 0, busy: false, quietFor: .seconds(10 * 60))
+        await setup.connection.panesActive(attached: 0, busy: false, serving: false, quietFor: .seconds(10 * 60))
 
         #expect(await setup.connection.state == .idle)
         #expect(setup.launcher.masters.last?.isRunning == false)
@@ -195,18 +195,39 @@ struct HostConnectionTests {
         try await setup.connection.connect()
 
         setup.clock.advance(by: .seconds(20 * 60))
-        await setup.connection.panesActive(attached: 2, busy: true, quietFor: .seconds(20 * 60))
+        await setup.connection.panesActive(attached: 2, busy: true, serving: false, quietFor: .seconds(20 * 60))
         setup.clock.advance(by: .seconds(20 * 60))
-        await setup.connection.panesActive(attached: 2, busy: false, quietFor: .seconds(40 * 60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: false, quietFor: .seconds(40 * 60))
         #expect(await setup.connection.state == .connected)
         setup.clock.advance(by: .seconds(11 * 60))
-        await setup.connection.panesActive(attached: 2, busy: false, quietFor: .seconds(29 * 60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: false, quietFor: .seconds(29 * 60))
         #expect(await setup.connection.state == .connected)
-        await setup.connection.panesActive(attached: 2, busy: false, quietFor: .seconds(30 * 60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: false, quietFor: .seconds(30 * 60))
 
         #expect(await setup.connection.state == .detached)
         #expect(setup.launcher.masters.last?.isRunning == false)
         #expect(setup.events() == ["host.connected", "host.detached"])
+    }
+
+    /// A remote row's server counts as use, so the master stays while someone may be browsing it through its forward,
+    /// and the idle wait starts again once it stops.
+    @Test func aHostServingARemoteRowsPortNeitherStopsNorDetaches() async throws {
+        let setup = try Setup(idleMinutes: 30)
+        try await setup.connection.connect()
+
+        setup.clock.advance(by: .seconds(11 * 60))
+        await setup.connection.panesActive(attached: 0, busy: false, serving: true, quietFor: .seconds(11 * 60))
+        #expect(await setup.connection.state == .connected)
+        setup.clock.advance(by: .seconds(40 * 60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: true, quietFor: .seconds(51 * 60))
+        #expect(await setup.connection.state == .connected)
+        setup.clock.advance(by: .seconds(29 * 60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: false, quietFor: .seconds(80 * 60))
+        #expect(await setup.connection.state == .connected)
+        setup.clock.advance(by: .seconds(60))
+        await setup.connection.panesActive(attached: 2, busy: false, serving: false, quietFor: .seconds(81 * 60))
+
+        #expect(await setup.connection.state == .detached)
     }
 
     @Test func zeroIdleMinutesNeverDetaches() async throws {
@@ -214,7 +235,7 @@ struct HostConnectionTests {
         try await setup.connection.connect()
 
         setup.clock.advance(by: .seconds(24 * 3600))
-        await setup.connection.panesActive(attached: 1, busy: false, quietFor: .seconds(24 * 3600))
+        await setup.connection.panesActive(attached: 1, busy: false, serving: false, quietFor: .seconds(24 * 3600))
 
         #expect(await setup.connection.state == .connected)
     }
@@ -230,6 +251,39 @@ struct HostConnectionTests {
 
         #expect(setup.launcher.masters.count == 2)
         #expect(await setup.connection.state == .connected)
+    }
+
+    /// A host removed, or a Canopy quitting, stops its connection for good: work still on its way, such as a kept
+    /// report being replayed, must not start a master nothing would stop.
+    @Test func aStoppedConnectionRefusesToConnect() async throws {
+        let setup = try Setup()
+        try await setup.connection.connect()
+
+        await setup.connection.stop()
+
+        await #expect {
+            try await setup.connection.run(["true"], timeout: .seconds(5))
+        } throws: {
+            ($0 as? WorkspaceError)?.code == "host_unreachable"
+                && ($0 as? WorkspaceError)?.message.contains("Canopy stopped using box") == true
+        }
+        #expect(setup.launcher.masters.count == 1)
+        #expect(await setup.connection.state == .idle)
+    }
+
+    /// A master coming up as the connection stops is stopped too, rather than left running.
+    @Test func aMasterComingUpAsTheConnectionStopsIsStopped() async throws {
+        let setup = try Setup()
+        setup.launcher.holdChecks = true
+        let connecting = Task { try await setup.connection.connect() }
+        #expect(await eventually { setup.launcher.heldCheckCount() == 1 })
+
+        await setup.connection.stop()
+        setup.launcher.releaseChecks()
+
+        await #expect(throws: (any Error).self) { try await connecting.value }
+        #expect(await setup.connection.state == .idle)
+        #expect(setup.launcher.masters.allSatisfy { !$0.isRunning })
     }
 
     @Test func commandsConnectFirstAndGoThroughTheMaster() async throws {
