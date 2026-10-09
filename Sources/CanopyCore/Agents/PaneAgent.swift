@@ -6,6 +6,8 @@ public enum AgentState: String, Codable, Sendable, CaseIterable {
     case working
     case waiting
     case done
+    /// The turn ended, but background work the agent started still runs, and the agent wakes when it ends.
+    case background
 }
 
 /// One report of an agent's state.
@@ -24,10 +26,12 @@ public struct AgentReport: Sendable, Equatable {
     public var takesOver: Bool
     /// The session ends and lets go of the pane.
     public var releases: Bool
+    /// What still runs for a background report, by the labels `BackgroundWork` shows.
+    public var backgroundTasks: [String]
 
     public init(
         state: AgentState?, session: String? = nil, event: String? = nil, at: Date? = nil, question: Bool = false,
-        takesOver: Bool = false, releases: Bool = false
+        takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = []
     ) {
         self.state = state
         self.session = session
@@ -36,6 +40,7 @@ public struct AgentReport: Sendable, Equatable {
         self.question = question
         self.takesOver = takesOver
         self.releases = releases
+        self.backgroundTasks = backgroundTasks
     }
 }
 
@@ -63,6 +68,7 @@ public struct AgentChange: Sendable, Equatable {
 /// What stands for a pane's agent in the sidebar, the tab bar, and the pane header. Ordered by urgency, so the most
 /// urgent of several is their `max()`.
 public enum AgentDot: Int, Comparable, Sendable {
+    case background
     case working
     case done
     case waiting
@@ -95,6 +101,7 @@ public struct PaneAgent: Sendable, Equatable {
         case .working: .working
         case .waiting: .waiting
         case .done: unseen ? .done : nil
+        case .background: .background
         }
     }
 

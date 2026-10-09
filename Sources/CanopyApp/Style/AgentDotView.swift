@@ -32,7 +32,7 @@ struct AgentDotView: View {
         switch dot {
         case .working: .accentColor
         case .waiting: Style.agentWaiting
-        case .done: Style.agentDone
+        case .done, .background: Style.agentDone
         }
     }
 }
@@ -43,6 +43,7 @@ extension AgentDot {
         case .working: "Agent working"
         case .waiting: "Agent waiting for you"
         case .done: "Agent done"
+        case .background: "Agent waiting on background work"
         }
     }
 }
