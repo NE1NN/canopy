@@ -1,6 +1,7 @@
 # Remote Rows, Milestone 3, Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A dev server an agent starts in a remote row shows in the ports panel under that row and opens at `localhost` on the Mac, forwarded through the host's ssh master.
 
@@ -22,10 +23,13 @@ A What was built section at the end says where the build differs.
 
 - Swift 6 language mode, strict concurrency, zero warnings, `make lint` clean, `make test` not bare `swift test`.
 - Nothing in tests or `make e2e` reaches `hindie-box`; only `scripts/e2e-hosts.sh --host hindie-box` does.
-- A pid read on a host is never signalled on the Mac. Remote ports carry their host, and every stop path checks it.
+- A pid read on a host is never signalled on the Mac.
+  Remote ports carry their host, and every stop path checks it.
 - Test helpers never signal a pid they did not just confirm is theirs, and timing checks wait for a condition or measure on the thread doing the work.
-- Never quit or kill the release Canopy; dev builds by pid only. Never touch solis-v1, ticket-manager, or usefastlane-landing.
-- Markdown: one sentence per line, no em dashes. Commits: conventional prefixes, no Co-Authored-By trailers.
+- Never quit or kill the release Canopy; dev builds by pid only.
+  Never touch solis-v1, ticket-manager, or usefastlane-landing.
+- Markdown: one sentence per line, no em dashes.
+  Commits: conventional prefixes, no Co-Authored-By trailers.
 - Everything on the host is Python 3 and POSIX sh, with `ss` from iproute2, as Ubuntu 24.04 ships them.
 
 ## Review Focus
@@ -54,7 +58,8 @@ A What was built section at the end says where the build differs.
 Checked on 2026-10-09 with OpenSSH on this Mac and Ubuntu 24.04's sshd:
 
 - `ssh -O forward -L <p>:127.0.0.1:<q>` binds both `127.0.0.1:<p>` and `[::1]:<p>` on the Mac, in the master's process.
-- When only one of the two is taken, the forward still succeeds and exits 0, bound to the other alone, so a local server on one family would catch some of `localhost:<p>`. Hence the chooser checks both before forwarding.
+- When only one of the two is taken, the forward still succeeds and exits 0, bound to the other alone, so a local server on one family would catch some of `localhost:<p>`.
+  Hence the chooser checks both before forwarding.
 - When both are taken, it fails with "mux_client_forward: forwarding request failed: Port forwarding failed" and exits 255.
 - Forwarding the same `-L` again exits 0, and cancelling one that does not exist prints "port not forwarded" and also exits 0.
 - An IPv6 target is written `<p>:[::1]:<q>`, and works for a server bound to `::1` alone.
@@ -96,10 +101,11 @@ Modified:
 
 **Interfaces:**
 - `canopy-host probe --server <name> --home-id <id> --ports` adds `"ports": [{"port": 5173, "address": "127.0.0.1", "processes": [{"pid": 812, "name": "node", "ancestors": [800, 1], "folder": "/home/u/x"}]}]`, from `ss -ltnpH`; lines without `users:` (other users' sockets) are skipped; the same port on several addresses is one entry, with the loopback-friendly address by the rule in Decisions; ports in the ephemeral range are left out.
-  Ancestors come from the `ps -A -o pid=,ppid=,tpgid=,comm=` table the probe already reads; folders from `/proc/<pid>/cwd`, else `lsof -a -p <pid> -d cwd -Fn` when there is no `/proc` (the fake host is the Mac).
+  Ancestors come from the `ps -A -o pid=,ppid=,tpgid=,comm=` table the probe already reads; folders from `/proc/<pid>/cwd`, else libproc's `proc_pidinfo` on macOS (the fake host is the Mac), else `lsof -a -p <pid> -d cwd -Fn`.
   Without `ss`, `ports` is `[]`; when `ss` fails or takes longer than 5 seconds, `ports` is `null`.
 - Each session in the probe also carries `pid` (the pane's shell), which it already prints.
-- `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"stopped": [pids], "killed": [pids]}`, the pids it signalled and those it killed. Pids not listening on the port are left alone.
+- `canopy-host stop-port --port <n> --pid <pid>...`: for each pid that `ss` shows listening on the port, SIGTERM then SIGCONT; waits up to 3 seconds for them to let go; SIGKILLs those still listening; prints `{"stopped": [pids], "killed": [pids]}`, the pids it signalled and those it killed.
+  Pids not listening on the port are left alone.
 - `HostProbe.Report` (which already has `sessions` and `pending`) gains `shells: [String: Int32]` (session to shell pid) and `ports: [RemoteListeningPort]`, and `HostProbe.command(homeID:ports:)` adds `--ports` when asked.
   The argument check in `canopy-host` accepts `--ports` only as the last argument of `probe`.
 - `HostFiles.version` changes, so hosts reinstall.
@@ -141,7 +147,7 @@ Modified:
 - `HostMonitor` asks for ports when 5 seconds have passed for that host, attributes them with the host's remote rows and the panes' sessions, applies the forwards, and keeps `remotePorts: [String /* host */: [PortGroup]]`, which drops a host once it is no longer connected.
 - `fake-ssh -O forward -L local:target:port` starts a detached Python TCP proxy from `127.0.0.1:local` and `[::1]:local` to `target:port`, records its pid with its own start time beside the control path, and fails with exit 255 and ssh's "Port forwarding failed" text only when it can bind neither, as real ssh does; `-O cancel -L` and the master's exit stop the proxies they recorded, only after checking each pid still runs that proxy; a proxy also exits once its master has, as a master the app kills runs no clean-up.
   The proxy (`scripts/fake-ssh-forward.py`) runs in `/`, so no local row claims its sockets.
-- `FakeHost(listsPorts: true)` puts `scripts/fake-ss` on the host's PATH as `ss`; without `FAKE_SS_LINES` it prints this Mac's listening sockets of this user from `lsof`.
+- `FakeHost(listsPorts: true)` puts `scripts/fake-ss` on the host's PATH as `ss`; without `FAKE_SS_LINES` it prints this Mac's listening sockets of this user from `netstat -anv`.
 
 **Tests:** on the fake host, a Python HTTP server started in a remote row's tmux session is forwarded, and a GET through the Mac port answers; a busy Mac port (a test listener) moves the forward to the next; the server stopping cancels the forward and frees the Mac port; dropping the master clears the forwards, and a reconnect forwards again; a server in no remote row is not forwarded; with a stand-in runner, two hosts wanting the same Mac port get two ports (the chooser's `taken` spans every host's forwards, kept by the workspace), and a failed forward moves to the next port, keeping ssh's message once it gives up.
 
