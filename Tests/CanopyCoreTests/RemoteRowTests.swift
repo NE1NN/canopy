@@ -893,7 +893,13 @@ struct RemoteReplayTests {
 
         #expect(await eventually { setup.relay.runs == ["\(setup.pane) agent-hook"] })
         #expect(!FileManager.default.fileExists(atPath: setup.pending))
-        await monitor.probe()
+        // A round skips the host while its ports probe still runs, so rounds go on until one probed it.
+        let probed = monitor.probes["box"] ?? 0
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return monitor.probes["box"] ?? 0 > probed
+            })
         #expect(setup.relay.runs == ["\(setup.pane) agent-hook"])
         await setup.stop()
     }

@@ -54,7 +54,7 @@ public final class HostMonitor {
     private let portsStaleAfter: Duration
     private let clock: any HostClock
     /// Each host's session probes that it answered.
-    private var probes: [String: Int] = [:]
+    private(set) var probes: [String: Int] = [:]
     /// Each host's worktree listing under way. It can wait behind a row being made, so probes go on without it.
     private var listing: [String: Task<Void, Never>] = [:]
     /// Each host's kept reports being replayed, which can each take seconds.
