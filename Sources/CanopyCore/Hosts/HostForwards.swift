@@ -121,7 +121,11 @@ final class HostForwards {
         var forwards: [UInt16: PortForward] = [:]
         for port in wanted.sorted(by: { $0.port < $1.port }) where forwards[port.port] == nil {
             if let forward = held[port.port] {
-                forwards[port.port] = PortForward(local: forward.local, error: nil)
+                // One whose cancel failed still reaches the old address, where nothing listens now.
+                forwards[port.port] =
+                    forward.target == port.target
+                    ? PortForward(local: forward.local, error: nil)
+                    : PortForward(local: nil, error: Self.stillMoving)
                 continue
             }
             // Trying again on the next Mac port would take one more each round while the master does not answer.
@@ -138,6 +142,8 @@ final class HostForwards {
         }
         return forwards
     }
+
+    static let stillMoving = "Canopy is still moving this forward."
 
     static func noAnswer(_ local: UInt16) -> String {
         "ssh did not answer while forwarding port \(local)."

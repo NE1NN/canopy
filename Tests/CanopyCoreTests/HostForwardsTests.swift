@@ -215,7 +215,8 @@ struct HostForwardsTests {
     }
 
     /// A server that moved address while the old forward could not be cancelled keeps that forward, rather than
-    /// getting a second one on the next Mac port beside it.
+    /// getting a second one on the next Mac port beside it. It shows as not forwarded meanwhile, since the old
+    /// forward reaches an address the server no longer listens on.
     @Test func aChangedTargetWhoseCancelFailsGetsNoSecondForward() async throws {
         let dir = try TempDir()
         let host = Host("box", in: dir)
@@ -225,7 +226,8 @@ struct HostForwardsTests {
 
         let kept = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
 
-        #expect(kept == [3000: PortForward(local: 3000, error: nil)])
+        #expect(kept == [3000: PortForward(local: nil, error: "Canopy is still moving this forward.")])
+        #expect(await host.connection.forwardedPorts == [3000])
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000"])
         host.launcher.failCancels = false
         let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
