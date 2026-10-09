@@ -84,9 +84,9 @@ final class FakeHostLauncher: HostProcessLauncher {
         var heldChecks: [CheckedContinuation<Void, Never>] = []
         /// What `canopy-host probe` prints, by kind, when set.
         var probeOutput: [Probe: String] = [:]
-        /// Probes of these kinds wait until released.
+        /// Probes of these kinds wait until released, or until the task waiting for them is cancelled.
         var heldKinds: Set<Probe> = []
-        var heldProbes: [Probe: [CheckedContinuation<Void, Never>]] = [:]
+        var heldProbes: [Probe: [UUID: CheckedContinuation<Void, Never>]] = [:]
     }
 
     /// `canopy-host probe`, and with `--ports`, its ports probe.
@@ -180,10 +180,15 @@ final class FakeHostLauncher: HostProcessLauncher {
     func release(_ kind: Probe) {
         let held = state.withLock { state in
             state.heldKinds.remove(kind)
-            defer { state.heldProbes[kind] = [] }
-            return state.heldProbes[kind] ?? []
+            defer { state.heldProbes[kind] = [:] }
+            return state.heldProbes[kind] ?? [:]
         }
-        for probe in held { probe.resume() }
+        for probe in held.values { probe.resume() }
+    }
+
+    /// The probes of `kind` waiting to be released.
+    func heldProbeCount(_ kind: Probe) -> Int {
+        state.withLock { $0.heldProbes[kind]?.count ?? 0 }
     }
 
     /// The probes of `kind` run so far, held ones included.
@@ -265,13 +270,18 @@ final class FakeHostLauncher: HostProcessLauncher {
                 timedOut: false)
         }
         if let kind = Probe(argv) {
-            await withCheckedContinuation { continuation in
-                let held = state.withLock { state in
-                    let held = state.heldKinds.contains(kind)
-                    if held { state.heldProbes[kind, default: []].append(continuation) }
-                    return held
+            let id = UUID()
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    let held = state.withLock { state in
+                        let held = state.heldKinds.contains(kind) && !Task.isCancelled
+                        if held { state.heldProbes[kind, default: [:]][id] = continuation }
+                        return held
+                    }
+                    if !held { continuation.resume() }
                 }
-                if !held { continuation.resume() }
+            } onCancel: {
+                state.withLock { $0.heldProbes[kind]?.removeValue(forKey: id) }?.resume()
             }
             if let output = state.withLock({ $0.probeOutput[kind] }) {
                 return SubprocessResult(status: 0, stdout: Data(output.utf8), stderr: Data(), timedOut: false)

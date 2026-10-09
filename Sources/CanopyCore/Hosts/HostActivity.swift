@@ -64,8 +64,11 @@ public final class HostMonitor {
     private var lastPorts: [String: ContinuousClock.Instant] = [:]
     /// When each host's ports were last listed.
     private var listed: [String: ContinuousClock.Instant] = [:]
-    /// The hosts a probe is under way on, which another call skips.
-    private var probing: Set<String> = []
+    /// Each host's probes under way, its session probe and then its ports, which another round skips.
+    private var probing: [String: Task<Void, Never>] = [:]
+
+    /// Whether no work a round started is still under way.
+    var isSettled: Bool { probing.isEmpty && listing.isEmpty && replaying.isEmpty && forwarding.isEmpty }
 
     public init(
         workspace: Workspace, terminals: TerminalStore, portsEvery: Duration = .seconds(5),
@@ -79,11 +82,25 @@ public final class HostMonitor {
     }
 
     /// Starts a round every `interval` until cancelled, without waiting for the last, so a host still probing is
-    /// skipped and a slow one holds up no other.
+    /// skipped and a slow one holds up no other. Once cancelled, it cancels the work its rounds started and returns
+    /// when that is done, so none outlives it.
     public func watch(every interval: Duration) async {
-        while !Task.isCancelled {
-            Task { await self.probe() }
-            try? await Task.sleep(for: interval)
+        await withDiscardingTaskGroup { group in
+            while !Task.isCancelled {
+                group.addTask { await self.probe() }
+                try? await Task.sleep(for: interval)
+            }
+        }
+        await settle()
+    }
+
+    /// Cancels the work rounds started, and waits for it. Each task leaves its list as it ends.
+    func settle() async {
+        while let task = probing.values.first ?? listing.values.first ?? replaying.values.first
+            ?? forwarding.values.first
+        {
+            task.cancel()
+            await task.value
         }
     }
 
@@ -102,15 +119,25 @@ public final class HostMonitor {
         var sessions: [Task<Bool, Never>] = []
         for connection in connected {
             let alias = connection.alias
-            guard probing.insert(alias).inserted else { continue }
+            guard probing[alias] == nil else { continue }
             let probed = Task { await self.probeSessions(on: connection) }
             sessions.append(probed)
-            Task {
-                if await probed.value { await self.probePorts(on: connection) }
-                self.probing.remove(alias)
+            probing[alias] = Task {
+                let answered = await withTaskCancellationHandler {
+                    await probed.value
+                } onCancel: {
+                    probed.cancel()
+                }
+                if answered, !Task.isCancelled { await self.probePorts(on: connection) }
+                self.probing[alias] = nil
             }
         }
-        for probed in sessions { _ = await probed.value }
+        let started = sessions
+        await withTaskCancellationHandler {
+            for probed in started { _ = await probed.value }
+        } onCancel: {
+            for probed in started { probed.cancel() }
+        }
     }
 
     /// The host's sessions, onto its panes. Returns whether the host answered.

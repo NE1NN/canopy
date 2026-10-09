@@ -77,6 +77,7 @@ struct HostMonitorRoundTests {
                 await monitor.probe()
                 try? await Task.sleep(for: .milliseconds(10))
             }
+            await monitor.settle()
         }
     }
 
@@ -115,6 +116,22 @@ struct HostMonitorRoundTests {
         #expect(await eventually { hosts["slow"].probes(.sessions) >= 2 })
         watching.cancel()
         await watching.value
+        await hosts.stop()
+    }
+
+    /// Ending the watch ends the rounds it started and waits for them, so none outlives the hosts they probe.
+    @Test func endingTheWatchEndsTheRoundsItStarted() async throws {
+        let hosts = try await Hosts(["slow", "quick"])
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        hosts["slow"].hold(.sessions)
+        let watching = Task { await monitor.watch(every: .milliseconds(10)) }
+        #expect(await eventually { hosts["slow"].heldProbeCount(.sessions) == 1 })
+
+        watching.cancel()
+        await watching.value
+
+        #expect(hosts["slow"].heldProbeCount(.sessions) == 0)
+        #expect(monitor.isSettled)
         await hosts.stop()
     }
 
