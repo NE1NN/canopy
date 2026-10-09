@@ -43,7 +43,7 @@ public enum HostActivity {
 @MainActor
 public final class HostMonitor {
     /// How often a host's worktrees are listed again, in its session probes.
-    static let listEvery = 15
+    private let listEvery: Int
 
     let workspace: Workspace
     let terminals: TerminalStore
@@ -72,10 +72,11 @@ public final class HostMonitor {
 
     public init(
         workspace: Workspace, terminals: TerminalStore, portsEvery: Duration = .seconds(5),
-        portsStaleAfter: Duration = .seconds(60), clock: any HostClock = SystemHostClock()
+        portsStaleAfter: Duration = .seconds(60), listEvery: Int = 15, clock: any HostClock = SystemHostClock()
     ) {
         self.workspace = workspace
         self.terminals = terminals
+        self.listEvery = max(listEvery, 1)
         self.portsEvery = portsEvery
         self.portsStaleAfter = portsStaleAfter
         self.clock = clock
@@ -163,7 +164,7 @@ public final class HostMonitor {
             quietFor: summary.quietFor)
         let probed = probes[alias, default: 0] + 1
         probes[alias] = probed
-        if probed % Self.listEvery == 0, listing[alias] == nil {
+        if probed % listEvery == 0, listing[alias] == nil {
             let workspace = workspace
             listing[alias] = Task {
                 await workspace.refreshRemote(host: alias)

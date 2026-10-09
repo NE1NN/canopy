@@ -601,7 +601,8 @@ struct HostMonitorListingTests {
         _ = try await workspace.createRemoteRow(repoPath: setup.repo, host: "box", branch: "feat/probed")
         try await workspace.prepareHost(try await workspace.connection(for: "box"))
         let terminals = Fixture.terminals(setup.dir)
-        let monitor = HostMonitor(workspace: workspace, terminals: terminals)
+        // Every other probe lists, so a starved runner reaches the listing in a few rounds rather than fifteen.
+        let monitor = HostMonitor(workspace: workspace, terminals: terminals, listEvery: 2)
         #expect(!FileManager.default.fileExists(atPath: started))
 
         // A round skips the host while its ports probe runs, so it takes more rounds than probes.
