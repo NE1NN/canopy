@@ -53,7 +53,7 @@ struct GroupHeaderView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
         .onHover { isHovering = $0 }
-        .help(group.name)
+        .help(AgentDot.help(group.name, dot: agentDot, tasks: backgroundTasks))
         .contextMenu { GroupMenuItems(rename: { isRenaming = true }, delete: requestDelete) }
         .popover(isPresented: $isRenaming, arrowEdge: .trailing) {
             GroupNamePopover(

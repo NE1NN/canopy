@@ -81,7 +81,7 @@ struct PluginRowLineView: View {
         }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .help(row.path)
+        .help(AgentDot.help(row.path, dot: agentDot, tasks: backgroundTasks))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

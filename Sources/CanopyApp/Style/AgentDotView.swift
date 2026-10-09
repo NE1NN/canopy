@@ -16,9 +16,9 @@ struct AgentDotView: View {
         Group {
             switch dot {
             case .working where !reduceMotion:
-                PulsingDot(look: .working, size: size)
+                PulsingDot(look: .working, size: size, help: dot.help(tasks: tasks))
             case .background where !reduceMotion:
-                PulsingDot(look: .background, size: size)
+                PulsingDot(look: .background, size: size, help: dot.help(tasks: tasks))
             case .background:
                 Circle()
                     .strokeBorder(Color(nsColor: Style.agentBackgroundRing), lineWidth: Self.ringLine)
@@ -75,6 +75,13 @@ extension AgentDot {
     func help(tasks: [String]) -> String {
         self == .background ? BackgroundWork.summary(tasks) : label(tasks: tasks)
     }
+
+    /// A row's or header's own tooltip with the dot's under it. A container's tooltip covers its children's, so the
+    /// dot's tooltip shows only where nothing around it has one.
+    static func help(_ base: String, dot: AgentDot?, tasks: [String]) -> String {
+        guard let dot else { return base }
+        return base + "\n" + dot.help(tasks: tasks)
+    }
 }
 
 /// The working dot and the background ring. Core Animation runs the pulse outside the app, where a SwiftUI animation
@@ -82,12 +89,18 @@ extension AgentDot {
 private struct PulsingDot: NSViewRepresentable {
     let look: PulsingDotView.Look
     let size: Double
+    /// AppKit shows the tooltip of the view under the pointer, so the hosted view carries its own.
+    let help: String
 
     func makeNSView(context: Context) -> PulsingDotView {
-        PulsingDotView(look: look, size: size)
+        let view = PulsingDotView(look: look, size: size)
+        view.toolTip = help
+        return view
     }
 
-    func updateNSView(_ view: PulsingDotView, context: Context) {}
+    func updateNSView(_ view: PulsingDotView, context: Context) {
+        view.toolTip = help
+    }
 }
 
 private final class PulsingDotView: NSView {
