@@ -253,15 +253,15 @@ extension RemotePortForwardingTests {
         let localPorts = RecordingLocalPorts()
         let (handler, _) = handler(setup, localPorts: localPorts)
         try setup.serve(port)
-        let old = try #require(await setup.forwarded(port)?.processes.first?.pid)
+        #expect(await setup.forwarded(port) != nil)
+        // No ports probe may be under way, which could find the port gone and leave the stop nothing to match.
+        await setup.monitor.settle()
         try setup.keys(["C-c"])
+        // The fake host's processes are this Mac's, so the old server is gone once the port is free here, and the
+        // one listening after it is the new one.
+        #expect(await eventually { LocalPortChooser.isFree(port) })
         try setup.serve(port)
-        // The fake host's processes are this Mac's, so the scan sees the new server.
-        #expect(
-            await eventually {
-                let pids = PortScanner.listeningPorts().filter { $0.port == port }.map(\.pid)
-                return !pids.isEmpty && !pids.contains(old)
-            })
+        #expect(await eventually { !LocalPortChooser.isFree(port) })
 
         let stopped = try await call(
             handler, PortMethod.stop, PortsStopParams(port: Int(port), target: TargetHint(envRowPath: setup.row.path)),
