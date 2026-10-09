@@ -160,6 +160,43 @@ struct HostForwardsTests {
         #expect(host.launcher.localForwards("forward") == ["3000:[::1]:3000", "3000:127.0.0.1:3000"])
     }
 
+    /// A forward moving to its server's new address keeps its Mac port throughout, so another host forwarding
+    /// meanwhile cannot take it and leave a browser tab on it reaching that host's server.
+    @Test func aMovingForwardKeepsItsMacPortFromOtherHosts() async throws {
+        let dir = try TempDir()
+        let macPorts = MacPortReservations()
+        let host = Host("box", in: dir, macPorts: macPorts)
+        let other = Host("other", in: dir, macPorts: macPorts)
+        try await host.connection.connect()
+        try await other.connection.connect()
+        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")])
+        host.launcher.holdForwards = true
+        // The new port's forward comes first, between the moved one's cancel and its forward again.
+        let moving = Task { await host.connection.forwardPorts([Self.port(2000), Self.port(3000, on: "0.0.0.0")]) }
+        #expect(await eventually { host.launcher.heldForwardCount() == 1 })
+
+        let taking = await other.connection.forwardPorts([Self.port(3000)])
+        host.launcher.releaseForwards()
+
+        #expect(taking == [3000: PortForward(local: 3001, error: nil)])
+        #expect(await moving.value?[3000] == PortForward(local: 3000, error: nil))
+    }
+
+    /// A moved forward that ends up on another Mac port gives its old one back.
+    @Test func aMovedForwardOnAnotherPortGivesItsOldOneBack() async throws {
+        let dir = try TempDir()
+        let macPorts = MacPortReservations()
+        let host = Host("box", in: dir, macPorts: macPorts)
+        try await host.connection.connect()
+        _ = await host.connection.forwardPorts([Self.port(3000, on: "::1")])
+        host.launcher.refuse([3000])
+
+        let moved = await host.connection.forwardPorts([Self.port(3000, on: "0.0.0.0")])
+
+        #expect(moved == [3000: PortForward(local: 3001, error: nil)])
+        #expect(macPorts.held == [3001])
+    }
+
     /// A forward whose cancel failed may still run in the master, so it is kept and cancelled again next round.
     @Test func aForwardWhoseCancelFailsIsKeptAndCancelledNextRound() async throws {
         let dir = try TempDir()

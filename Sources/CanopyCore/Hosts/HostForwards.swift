@@ -111,8 +111,12 @@ final class HostForwards {
             guard let cancelled = await cancel(forward, port: port, run: run), epoch == start else { return nil }
             guard cancelled else { continue }
             held[port] = nil
-            macPorts.release(forward.local, for: ObjectIdentifier(self))
-            if wantedTargets[port] != nil { moved[port] = forward.local }
+            // A forward moving keeps its Mac port, so no other host takes it while it is forwarded again.
+            if wantedTargets[port] != nil {
+                moved[port] = forward.local
+            } else {
+                macPorts.release(forward.local, for: ObjectIdentifier(self))
+            }
         }
         var forwards: [UInt16: PortForward] = [:]
         for port in wanted.sorted(by: { $0.port < $1.port }) where forwards[port.port] == nil {
@@ -120,10 +124,11 @@ final class HostForwards {
                 forwards[port.port] = PortForward(local: forward.local, error: nil)
                 continue
             }
-            guard
-                let made = await forward(port, from: moved[port.port] ?? port.port, isFree: isFree, run: run),
-                epoch == start
-            else { return nil }
+            let made = await forward(port, from: moved[port.port] ?? port.port, isFree: isFree, run: run)
+            if let old = moved[port.port], made?.local != old, !localPorts.contains(old) {
+                macPorts.release(old, for: ObjectIdentifier(self))
+            }
+            guard let made, epoch == start else { return nil }
             forwards[port.port] = made
         }
         return forwards
