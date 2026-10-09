@@ -229,3 +229,35 @@ An independent review of `git diff 731e714..896a45e` found twelve issues, each f
     The connect moving off the accept loop has no test of its own, since a target that is slow to connect cannot be made on this Mac without a network that drops packets.
 12. The `5173 → 5174` and `(not forwarded)` label was written in both the panel and the CLI.
     `RowPort.label`, `PortInfo.label`, and `RowPort.forwardProblem` in CanopyCore now give it to both, so the panel's badge also reads `5173 (not forwarded)` for a port without a forward.
+
+### Second review
+
+A second independent review of the first review's fixes found seven minor issues, CI on PR 38 found two more, and CodeRabbit two, each fixed test-first where it is code.
+
+1. A stale port list counted as use forever: a server that died while `ss` kept failing kept its host's master and panes up, and so did a port with no forward.
+   `HostMonitor` now counts a port as use only when it has a forward and the host's last successful ports listing is under `portsStaleAfter` old, 60 seconds unless a test sets it, on a clock a test can pass.
+   Tests let a listing go stale while `ss` fails, and refuse every forward, and see the host stop its master.
+2. A forward moving to its server's new address gave its Mac port back between the cancel and the forward again, so another host could take it and a browser tab on it would reach that host's server.
+   The move keeps the reservation, and gives it back only when the forward ends up on another port; a test holds the move while another host forwards the same port.
+3. A master that did not answer took one more Mac port each round, as each timed-out forward whose cancel failed was kept aside and the port tried again on the next Mac port.
+   A port is not forwarded again while it has such a forward, and shows ssh's message; a test runs three rounds against a wedged stand-in and sees one Mac port held.
+4. A changed target whose cancel failed showed as forwarded, though its forward reached an address nothing listened on.
+   It now shows as not forwarded, with "Canopy is still moving this forward.", so the panel dims it and the table says so.
+5. `aKeptReportAProbeSeesIsRelayedOnce` could pass without its second probe reaching the host, which a round skips while its ports probe runs.
+   It now probes until the host's session probe count rises.
+6. Ending `HostMonitor.watch` left the rounds it started running, which could outlive the hosts and the test's folder.
+   The rounds run in a task group, each host's probes are kept as a task and pass cancellation to its session probe, and the watch cancels and waits for every task its rounds started once it ends.
+   The stand-in's held probes end when cancelled, as a killed ssh would, and a test ends the watch with a probe held and sees nothing left under way.
+7. From milestone 2, a replay of a kept report under way during `host rm` could start a master no monitor would stop, since `run` connects.
+   A stopped `HostConnection` now refuses to connect, saying Canopy stopped using the host, and stops a master that comes up as it stops.
+8. On CI, `stoppingAPortWhoseServerRestartedSinceTheProbeReportsNothingStopped` found no port to stop, as a ports probe still under way from the wait for the forward read the port while the old server was gone and the new one not yet up.
+   The test now waits for the monitor's work to settle before stopping the server, for the old server's port to free, and for the new one to listen, rather than on a scan of every process.
+   It is not a bug for users: a stop in that moment finds what the last probe found, and says so.
+9. The tests took 660 seconds on CI's 3 CPUs, against 182 for milestone 2, with the forwarding suite running one test at a time for all of it.
+   Each ports probe on the fake host ran `lsof` twice, in `fake-ss` and in `canopy-host`'s folders, and `lsof` takes over a second on a Mac however few processes it is asked about, so the probe loops kept the CPUs busy with it.
+   `fake-ss` now reads `netstat -anv` and `ps`, `canopy-host` reads folders on macOS with libproc's `proc_pidinfo`, keeping `lsof` for other systems without `/proc`, and the forwarding suite runs its tests at once, each host's rows claiming only their own servers.
+   Two host-down tests retried real fake-ssh masters for five minutes of test clock; one now uses a stand-in whose masters never come up, and the other's wake brings the host up.
+   Locally, the forwarding suite went from 128 seconds to 7, and a full run with CI's 8 tests at once from 148 seconds and 469 CPU seconds to 79 and 225.
+10. `ports stop` threw the first host's failure and dropped what other hosts, or this Mac, had stopped.
+    It now returns what stopped with a `failures` list, left out when every stop went through, and the CLI prints what stopped, then an error for each host that could not, and exits 1; when nothing could be stopped, the first failure is still the error.
+11. Six lines of this plan held two sentences each, and now hold one; the spec had none.
