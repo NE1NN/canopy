@@ -148,7 +148,8 @@ final class AppModel {
 
     private func startControlServer() async {
         let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
-        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: bridge, phones: await startPhones())
+        let phones = await makePhones()
+        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: bridge, phones: phones)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         do {
             try await server.start()
@@ -156,11 +157,13 @@ final class AppModel {
         } catch {
             show("The canopy CLI is unavailable: \(error)")
         }
+        // After the socket opens, so nothing the network does can keep the CLI out.
+        Task { await phones.start() }
     }
 
-    /// Listens for the iPhone app on this Mac's Tailscale addresses. A dev build may listen elsewhere instead, through
-    /// CANOPY_PHONE_LISTEN, so tests reach it over loopback. A release build never does.
-    private func startPhones() async -> PhoneService {
+    /// The iPhone app's service. A release build listens on this Mac's Tailscale addresses. A dev build listens only where
+    /// CANOPY_PHONE_LISTEN says, so tests reach it over loopback and it never takes the tailnet port from the release app.
+    private func makePhones() async -> PhoneService {
         #if DEBUG
             let allowsOverride = true
         #else
@@ -171,7 +174,6 @@ final class AppModel {
         let hub = PhoneHub(terminals: terminals, snapshot: snapshot, updates: await workspace.updates())
         hub.start()
         let service = PhoneService(home: home, hub: hub, activity: activity, listen: listen, macName: Self.macName)
-        await service.start()
         phoneHub = hub
         phones = service
         return service

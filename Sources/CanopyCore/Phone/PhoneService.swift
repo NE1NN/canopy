@@ -15,6 +15,8 @@ public final class PhoneService: Sendable {
     private let lastRefreshError = Mutex<String?>(nil)
     /// Each connection's inbox subscription, so a second `phone.subscribe` replaces the first.
     private let subscriptions = Mutex<[ObjectIdentifier: UUID]>([:])
+    /// Lets the listener's handler reach the service until `stop`.
+    private let handle: ServiceHandle
 
     public init(
         home: CanopyHome, hub: PhoneHub, activity: ActivityLog, listen: PhoneListenAddress, macName: String,
@@ -28,15 +30,20 @@ public final class PhoneService: Sendable {
         self.listen = listen
         self.tailscaleAddresses = tailscaleAddresses
         self.dnsName = dnsName
-        let override = listen.override
-        let handle = Mutex<PhoneService?>(nil)
+        let handle = ServiceHandle()
         listener = PhoneListener(
             port: listen.port,
-            addresses: { override.map { [$0] } ?? tailscaleAddresses() },
+            addresses: {
+                switch listen {
+                case .tailscale: tailscaleAddresses()
+                case .address(let address, _): [address]
+                case .closed: []
+                }
+            },
             gate: PhoneGate(
                 registry: registry, macName: macName,
                 handler: { request, session in
-                    guard let service = handle.withLock({ $0 }) else {
+                    guard let service = handle.service.withLock({ $0 }) else {
                         return PhoneReply(
                             .failure(
                                 id: request.id, error: ControlError(code: "internal", message: "Canopy is quitting.")))
@@ -46,7 +53,8 @@ public final class PhoneService: Sendable {
                 onPaired: { phone in
                     activity.record(ActivityType.phonePaired, source: .phone, data: ["phone": .string(phone.name)])
                 }))
-        handle.withLock { $0 = self }
+        self.handle = handle
+        handle.service.withLock { $0 = self }
     }
 
     /// Listens, and follows network changes so the listener opens when Tailscale comes up and closes when it goes.
@@ -66,6 +74,7 @@ public final class PhoneService: Sendable {
             $0 = nil
         }
         listener.stop()
+        handle.service.withLock { $0 = nil }
     }
 
     public func refresh() async {
@@ -85,13 +94,15 @@ public final class PhoneService: Sendable {
             let inbox = await hub.inbox
             let connection = ObjectIdentifier(session.connection)
             let reply = ControlResponse.success(id: request.id, result: (try? .from(inbox)) ?? .null)
+            // Runs after the response, in the connection's order, so two subscribes never interleave here.
             return PhoneReply(reply) { [self] in
-                let id = await hub.subscribe(after: inbox) { inbox in
+                let previous = subscriptions.withLock { $0[connection] }
+                let id = await hub.subscribe(after: inbox, replacing: previous) { inbox in
                     guard let data = try? JSONValue.from(inbox) else { return }
                     session.send(PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: data))
                 }
-                let replaced = subscriptions.withLock { $0.updateValue(id, forKey: connection) }
-                if let replaced { await hub.unsubscribe(replaced) }
+                subscriptions.withLock { $0[connection] = id }
+                guard previous == nil else { return }
                 session.onClose { [self] in
                     let current = subscriptions.withLock { $0.removeValue(forKey: connection) }
                     if let current { Task { await hub.unsubscribe(current) } }
@@ -114,7 +125,7 @@ public final class PhoneService: Sendable {
                 code: "phone_listener_closed",
                 message: "Canopy is not listening for phones. \(closedReason) canopy phone status says more.")
         }
-        let name = listen.override == nil ? await dnsName() : nil
+        let name = listen.isTailscale ? await dnsName() : nil
         let code = await registry.newCode()
         let link = PairingLink(
             host: name ?? endpoint.address, port: endpoint.port, code: code.code, address: endpoint.address)
@@ -143,13 +154,13 @@ public final class PhoneService: Sendable {
     public func status() async -> PhonesStatusResult {
         let endpoints = listener.endpoints
         var problem: String?
-        if let ignored = listen.ignoredOverride {
-            problem = "CANOPY_PHONE_LISTEN=\(ignored) is ignored: \(listen.overrideRefusal)"
+        if case .tailscale(_, let ignored?) = listen {
+            problem = "CANOPY_PHONE_LISTEN=\(ignored) is ignored: release builds listen only on Tailscale."
         }
         if endpoints.isEmpty {
             problem = [closedReason, problem].compactMap { $0 }.joined(separator: " ")
         }
-        let name = endpoints.isEmpty || listen.override != nil ? nil : await dnsName()
+        let name = !endpoints.isEmpty && listen.isTailscale ? await dnsName() : nil
         return PhonesStatusResult(
             listening: !endpoints.isEmpty, endpoints: endpoints, host: name, problem: problem, phones: await list(),
             notifications: PhonesStatusResult.noPushKey)
@@ -159,10 +170,17 @@ public final class PhoneService: Sendable {
         if let error = lastRefreshError.withLock({ $0 }) {
             return "It could not listen: \(error)."
         }
-        if listen.override != nil {
-            return "It could not listen on \(listen.override ?? "")."
+        switch listen {
+        case .tailscale:
+            return "Tailscale is not running on this Mac, or is signed out, so the Mac has no Tailscale address."
+        case .address(let address, _):
+            return "It could not listen on \(address)."
+        case .closed(let malformed?):
+            return "CANOPY_PHONE_LISTEN=\(malformed) is not an address and port, such as 127.0.0.1:7123."
+        case .closed(nil):
+            return
+                "This dev build listens for phones only where CANOPY_PHONE_LISTEN says, such as 127.0.0.1:7123, so it never takes the tailnet port from the release app."
         }
-        return "Tailscale is not running on this Mac, or is signed out, so the Mac has no Tailscale address."
     }
 
     /// IPv4 first, since every phone's network reaches it.
@@ -171,16 +189,13 @@ public final class PhoneService: Sendable {
     }
 }
 
-extension PhoneListenAddress {
-    /// Why a build would not take the override.
-    var overrideRefusal: String {
-        Self.isAddress(ignoredOverride ?? "")
-            ? "release builds listen only on Tailscale."
-            : "it is not an address and port, such as 127.0.0.1:7123."
-    }
+private final class ServiceHandle: Sendable {
+    let service = Mutex<PhoneService?>(nil)
+}
 
-    private static func isAddress(_ text: String) -> Bool {
-        resolve(environment: [environmentKey: text], allowsOverride: true).override != nil
+extension PhoneListenAddress {
+    var isTailscale: Bool {
+        if case .tailscale = self { true } else { false }
     }
 }
 

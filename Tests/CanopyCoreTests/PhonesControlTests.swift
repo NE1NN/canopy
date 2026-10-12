@@ -26,7 +26,7 @@ struct PhonesControlTests {
             home: home,
             hub: PhoneHub(terminals: terminals, snapshot: WorkspaceSnapshot(), updates: AsyncStream { _ in }),
             activity: ActivityLog(folder: home.activityFolder),
-            listen: PhoneListenAddress(override: "127.0.0.1", port: 0, ignoredOverride: nil), macName: "studio")
+            listen: .address("127.0.0.1", port: 0), macName: "studio")
         await service.start()
         defer { service.stop() }
         let handler = try await handler(dir, phones: service)

@@ -2,6 +2,16 @@ import Foundation
 import Network
 import Synchronization
 
+public enum PhoneListenerError: Error, CustomStringConvertible {
+    case bindTimedOut(String)
+
+    public var description: String {
+        switch self {
+        case .bindTimedOut(let address): "Listening on \(address) did not start within 5 seconds."
+        }
+    }
+}
+
 /// Where the listener took its port, once it is listening.
 public struct PhoneEndpoint: Codable, Sendable, Equatable {
     public var address: String
@@ -17,6 +27,8 @@ public final class PhoneListener: Sendable {
     private let queue = DispatchQueue(label: "canopy.phone-listener")
     private let listeners = Mutex<[String: Bound]>([:])
     private let connections = Mutex<[ObjectIdentifier: PhoneConnection]>([:])
+    /// Set by `stop`, after which a refresh already queued binds nothing.
+    private let stopped = Mutex(false)
     /// Serializes `refresh` calls, which network changes can start close together.
     private let refreshing = Mutex<Task<Void, any Error>?>(nil)
 
@@ -58,7 +70,7 @@ public final class PhoneListener: Sendable {
     }
 
     private func reconcile() async throws {
-        let wanted = Set(addresses())
+        let wanted = stopped.withLock { $0 } ? [] : Set(addresses())
         let gone = listeners.withLock { bound in
             let gone = bound.filter { !wanted.contains($0.key) }
             for address in gone.keys { bound[address] = nil }
@@ -81,6 +93,7 @@ public final class PhoneListener: Sendable {
     }
 
     public func stop() {
+        stopped.withLock { $0 = true }
         let bound = listeners.withLock { bound in
             defer { bound = [:] }
             return bound
@@ -103,7 +116,14 @@ public final class PhoneListener: Sendable {
     }
 
     private func bind(_ address: String) async throws -> Bound {
-        let parameters = NWParameters.tcp
+        let tcp = NWProtocolTCP.Options()
+        // A phone that vanishes without closing, as when it sleeps or leaves Wi-Fi, is noticed within a minute.
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 30
+        tcp.keepaliveInterval = 10
+        tcp.keepaliveCount = 3
+        let parameters = NWParameters(tls: nil, tcp: tcp)
+        // Binds again at once after the address comes back, while the last listener's port may still be in TIME_WAIT.
         parameters.allowLocalEndpointReuse = true
         parameters.requiredLocalEndpoint = .hostPort(
             host: NWEndpoint.Host(address), port: NWEndpoint.Port(rawValue: port) ?? .any)
@@ -111,33 +131,37 @@ public final class PhoneListener: Sendable {
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection, on: address)
         }
-        let once = Mutex(false)
-        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
-            listener.stateUpdateHandler = { state in
-                let result: Result<UInt16, any Error>? =
-                    switch state {
-                    case .ready: .success(listener.port?.rawValue ?? 0)
-                    case .failed(let error): .failure(error)
-                    case .cancelled: .failure(CancellationError())
-                    default: nil
-                    }
-                guard let result,
-                    once.withLock({ claimed in
-                        defer { claimed = true }
-                        return !claimed
-                    })
-                else { return }
-                continuation.resume(with: result)
+        let started = Mutex<CheckedContinuation<UInt16, any Error>?>(nil)
+        let finish: @Sendable (Result<UInt16, any Error>) -> Void = { result in
+            started.withLock { continuation in
+                continuation?.resume(with: result)
+                continuation = nil
             }
-            listener.start(queue: queue)
         }
         listener.stateUpdateHandler = { [weak self] state in
-            // A listener that fails later, as when its address goes away, is bound again by the next refresh.
-            if case .failed = state {
+            switch state {
+            case .ready:
+                finish(.success(listener.port?.rawValue ?? 0))
+            case .waiting(let error), .failed(let error):
+                // Waiting means the address or port cannot be had now, as when another app holds it. The next refresh
+                // tries again, rather than leave a listener half started.
+                finish(.failure(error))
                 listener.cancel()
                 self?.listeners.withLock { bound in
                     if bound[address]?.listener === listener { bound[address] = nil }
                 }
+            case .cancelled:
+                finish(.failure(CancellationError()))
+            default:
+                break
+            }
+        }
+        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+            started.withLock { $0 = continuation }
+            listener.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 5) {
+                finish(.failure(PhoneListenerError.bindTimedOut(address)))
+                if listener.state != .ready { listener.cancel() }
             }
         }
         return Bound(listener: listener, port: port)
@@ -211,28 +235,35 @@ public enum TailscaleAddresses {
     }
 }
 
-/// Where the phone listener listens. A dev build takes one address from `CANOPY_PHONE_LISTEN`, such as
-/// `127.0.0.1:7123`, so tests and `make e2e` reach it over loopback on a Mac without Tailscale. A release build never
-/// does, so nothing but the tailnet ever reaches it.
-public struct PhoneListenAddress: Sendable, Equatable {
+/// Where the phone listener listens. A release build listens on every Tailscale address and nowhere else. A dev build
+/// listens only on the one address `CANOPY_PHONE_LISTEN` gives, such as `127.0.0.1:7123`, so tests and `make e2e` reach
+/// it over loopback, and it never takes the tailnet port from the release app.
+public enum PhoneListenAddress: Sendable, Equatable {
     public static let environmentKey = "CANOPY_PHONE_LISTEN"
 
-    /// The one address to listen on in place of the Tailscale addresses.
-    public var override: String?
-    public var port: UInt16
-    /// An override that was set but not used, because this build refuses it or it did not parse.
-    public var ignoredOverride: String?
+    /// `ignored` is an override this build refused.
+    case tailscale(port: UInt16, ignored: String?)
+    case address(String, port: UInt16)
+    /// A dev build without an override, or with one that is not an address and port.
+    case closed(malformed: String?)
 
     public static func resolve(environment: [String: String], allowsOverride: Bool) -> PhoneListenAddress {
-        let standard = PhoneListenAddress(override: nil, port: PhonePort.standard, ignoredOverride: nil)
-        guard let text = environment[environmentKey], !text.isEmpty else { return standard }
-        guard allowsOverride, let colon = text.lastIndex(of: ":"), let port = UInt16(text[text.index(after: colon)...])
-        else { return PhoneListenAddress(override: nil, port: PhonePort.standard, ignoredOverride: text) }
+        let text = environment[environmentKey].flatMap { $0.isEmpty ? nil : $0 }
+        guard allowsOverride else { return .tailscale(port: PhonePort.standard, ignored: text) }
+        guard let text else { return .closed(malformed: nil) }
+        guard let colon = text.lastIndex(of: ":"), let port = UInt16(text[text.index(after: colon)...]) else {
+            return .closed(malformed: text)
+        }
         var host = String(text[..<colon])
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
-        guard IPv4Address(host) != nil || IPv6Address(host) != nil else {
-            return PhoneListenAddress(override: nil, port: PhonePort.standard, ignoredOverride: text)
+        guard IPv4Address(host) != nil || IPv6Address(host) != nil else { return .closed(malformed: text) }
+        return .address(host, port: port)
+    }
+
+    var port: UInt16 {
+        switch self {
+        case .tailscale(let port, _), .address(_, let port): port
+        case .closed: 0
         }
-        return PhoneListenAddress(override: host, port: port, ignoredOverride: nil)
     }
 }

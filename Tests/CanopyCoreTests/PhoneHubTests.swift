@@ -88,11 +88,13 @@ struct PhoneHubTests {
 
     @Test func seeingADoneAgentIsSentOnTheNextPoll() async throws {
         let dir = try TempDir()
-        let harness = try Harness(dir, poll: .milliseconds(50))
+        let harness = try Harness(dir, poll: .milliseconds(100))
         defer { harness.close() }
         let pane = harness.terminals.openTab(for: PaneContext(row: harness.row, repoName: "r")).pane
-        pane.report(AgentReport(state: .done))
         _ = harness.subscribe()
+        pane.report(AgentReport(state: .done))
+        #expect(await eventually { harness.last?.rows.first?.agents.first?.unseen == true })
+        // Seeing a pane sends no agent event, so only the poll can carry it.
         pane.markSeen()
         #expect(await eventually { harness.last?.rows.first?.agents.first?.unseen == false })
     }

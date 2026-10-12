@@ -97,6 +97,13 @@ struct PhoneInboxTests {
         #expect(Self.inbox.rows.first { $0.name == "server" }?.lead?.pane == "p7")
     }
 
+    @Test func aStateFromANewerMacReadsAsNone() throws {
+        let json = #"{"pane":"p1","state":"thinking","unseen":false,"since":5}"#
+        #expect(try JSONDecoder().decode(PhoneAgent.self, from: Data(json.utf8)).state == AgentState.none)
+        let pr = #"{"number":1,"state":"queued","title":"t","url":"u"}"#
+        #expect(try JSONDecoder().decode(PhonePR.self, from: Data(pr.utf8)).state == .open)
+    }
+
     @Test func firstLaunchPinsMainRowsWithAnAgent() {
         #expect(Self.inbox.defaultPins == ["/w/main"])
     }

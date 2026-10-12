@@ -72,8 +72,10 @@ final class PhoneConnection: Sendable {
     private let lastStep = Mutex<Task<Void, Never>?>(nil)
     /// The last write in line. Answers and events leave in the order they were queued.
     private let lastSend = Mutex<Task<Void, Never>?>(nil)
-    /// Set by the listener, which forgets the connection once it closes.
-    let closedHandler = Mutex<(@Sendable () -> Void)?>(nil)
+    private let closedHandler = Mutex<(@Sendable () -> Void)?>(nil)
+    /// Events queued but not yet written, by event and subscription. A newer one replaces the one waiting, so a phone
+    /// that stops reading holds one inbox, not every inbox since.
+    private let waitingEvents = Mutex<[String: PhoneEvent]>([:])
 
     private struct State {
         var phone: PairedPhone?
@@ -91,6 +93,7 @@ final class PhoneConnection: Sendable {
         self.queue = queue
     }
 
+    /// Set by the listener, which forgets the connection once it closes.
     var onClosed: (@Sendable () -> Void)? {
         get { closedHandler.withLock { $0 } }
         set { closedHandler.withLock { $0 = newValue } }
@@ -136,8 +139,19 @@ final class PhoneConnection: Sendable {
     }
 
     func enqueue(_ event: PhoneEvent) {
-        guard !isClosed, let data = try? ControlCodec.encodeLine(event) else { return }
-        queueSend { await self.write(data) }
+        guard !isClosed else { return }
+        let key = event.event + "\u{0}" + event.subscription
+        let alreadyQueued = waitingEvents.withLock { waiting in
+            defer { waiting[key] = event }
+            return waiting[key] != nil
+        }
+        guard !alreadyQueued else { return }
+        queueSend {
+            guard let event = self.waitingEvents.withLock({ $0.removeValue(forKey: key) }),
+                let data = try? ControlCodec.encodeLine(event)
+            else { return }
+            await self.write(data)
+        }
     }
 
     private func startHelloTimer() {
@@ -256,7 +270,15 @@ final class PhoneConnection: Sendable {
                 state.phone = phone
                 state.helloTimer?.cancel()
             }
-            await gate.registry.connected(phone.id)
+            // Checked again once the phone is set, so a removal between the two checks either sees this connection
+            // or is seen here.
+            guard await gate.registry.connected(phone.id) else {
+                state.withLock { $0.phone = nil }
+                let error = ControlError(
+                    code: "unpaired", message: "This phone is not paired with \(gate.macName). Pair it again.")
+                refuse(id: request.id, error, closing: true)
+                return
+            }
             queueReply(.success(id: request.id, result: (try? .from(greeting(phone))) ?? .null))
         default:
             let error = ControlError(code: "not_authenticated", message: "Send phone.hello first.")

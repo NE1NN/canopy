@@ -16,8 +16,7 @@ struct PhoneServiceTests {
 
         init(
             _ dir: TempDir,
-            listen: PhoneListenAddress = PhoneListenAddress(
-                override: "127.0.0.1", port: 0, ignoredOverride: nil),
+            listen: PhoneListenAddress = .address("127.0.0.1", port: 0),
             tailscale: [String] = []
         ) throws {
             home = CanopyHome(path: dir.sub("home"))
@@ -158,7 +157,7 @@ struct PhoneServiceTests {
         let dir = try TempDir()
         // Loopback stands in for the Tailscale address, which this Mac may not have.
         let harness = try Harness(
-            dir, listen: PhoneListenAddress(override: nil, port: 0, ignoredOverride: nil), tailscale: ["127.0.0.1"])
+            dir, listen: .tailscale(port: 0, ignored: nil), tailscale: ["127.0.0.1"])
         await harness.start()
         defer { harness.close() }
         let pairing = try await harness.service.pair()
@@ -171,7 +170,7 @@ struct PhoneServiceTests {
 
     @Test func withoutTailscaleItStaysClosedAndSaysWhy() async throws {
         let dir = try TempDir()
-        let harness = try Harness(dir, listen: PhoneListenAddress(override: nil, port: 0, ignoredOverride: nil))
+        let harness = try Harness(dir, listen: .tailscale(port: 0, ignored: nil))
         await harness.start()
         defer { harness.close() }
         let status = await harness.service.status()
@@ -192,11 +191,26 @@ struct PhoneServiceTests {
     @Test func aReleaseBuildSaysItIgnoredTheOverride() async throws {
         let dir = try TempDir()
         let harness = try Harness(
-            dir, listen: PhoneListenAddress(override: nil, port: 0, ignoredOverride: "127.0.0.1:7000"))
+            dir, listen: .tailscale(port: 0, ignored: "127.0.0.1:7000"))
         await harness.start()
         defer { harness.close() }
         let status = await harness.service.status()
-        #expect(status.problem?.contains("CANOPY_PHONE_LISTEN") == true)
+        #expect(status.problem?.contains("CANOPY_PHONE_LISTEN=127.0.0.1:7000 is ignored") == true)
+    }
+
+    @Test func aDevBuildWithoutAnOverrideSaysHowToOpenIt() async throws {
+        let dir = try TempDir()
+        let harness = try Harness(dir, listen: .closed(malformed: nil), tailscale: ["127.0.0.1"])
+        await harness.start()
+        defer { harness.close() }
+        let status = await harness.service.status()
+        #expect(!status.listening)
+        #expect(status.problem?.contains("only where CANOPY_PHONE_LISTEN says") == true)
+        let malformed = try Harness(dir, listen: .closed(malformed: "nope"))
+        await malformed.start()
+        defer { malformed.close() }
+        #expect(
+            await malformed.service.status().problem?.contains("CANOPY_PHONE_LISTEN=nope is not an address") == true)
     }
 }
 

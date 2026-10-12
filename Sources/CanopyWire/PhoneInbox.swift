@@ -25,6 +25,17 @@ public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
         self.backgroundTasks = backgroundTasks
     }
 
+    /// A state a newer Mac sends that this phone does not know reads as none, so it cannot spoil the whole inbox.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pane = try container.decode(String.self, forKey: .pane)
+        state = AgentState(rawValue: try container.decode(String.self, forKey: .state)) ?? .none
+        unseen = try container.decodeIfPresent(Bool.self, forKey: .unseen) ?? false
+        since = try container.decode(Double.self, forKey: .since)
+        lastLine = try container.decodeIfPresent(String.self, forKey: .lastLine)
+        backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks)
+    }
+
     /// The same dot the Mac's sidebar shows for it.
     public var dot: AgentDot? {
         switch state {
@@ -91,6 +102,15 @@ public struct PhonePR: Codable, Sendable, Equatable, Hashable {
         self.state = state
         self.title = title
         self.url = url
+    }
+
+    /// A state this phone does not know reads as open.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        number = try container.decode(Int.self, forKey: .number)
+        state = PRState(rawValue: try container.decode(String.self, forKey: .state)) ?? .open
+        title = try container.decode(String.self, forKey: .title)
+        url = try container.decode(String.self, forKey: .url)
     }
 }
 

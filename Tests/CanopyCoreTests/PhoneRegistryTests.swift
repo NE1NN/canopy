@@ -70,6 +70,30 @@ struct PhoneRegistryTests {
         _ = try await registry.redeem(code: fresh.code, name: "x")
     }
 
+    @Test func fourWrongCodesVoidNothingAndARightOneStartsTheCountAgain() async throws {
+        let dir = try TempDir()
+        let registry = registry(dir)
+        let first = await registry.newCode()
+        let second = await registry.newCode()
+        for _ in 0..<4 {
+            await #expect(throws: PhoneRegistry.badCode) { try await registry.redeem(code: "AAAA-AAAA", name: "x") }
+        }
+        _ = try await registry.redeem(code: first.code, name: "a")
+        for _ in 0..<4 {
+            await #expect(throws: PhoneRegistry.badCode) { try await registry.redeem(code: "AAAA-AAAA", name: "x") }
+        }
+        _ = try await registry.redeem(code: second.code, name: "b")
+    }
+
+    @Test func aRemovedPhoneIsNotConnected() async throws {
+        let dir = try TempDir()
+        let registry = registry(dir)
+        let paired = try await registry.redeem(code: await registry.newCode().code, name: "a")
+        #expect(await registry.connected(paired.phone.id))
+        _ = try await registry.remove(name: "a")
+        #expect(await !registry.connected(paired.phone.id))
+    }
+
     @Test func theFileKeepsOnlyAHashOfTheToken() async throws {
         let dir = try TempDir()
         let clock = TestClock()

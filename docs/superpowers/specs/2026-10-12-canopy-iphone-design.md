@@ -90,11 +90,14 @@ A TCP listener in the app, on port 6974, bound only to the Mac's Tailscale addre
 It follows network changes through `NWPathMonitor`, so it binds when Tailscale comes up and closes when it goes down, with the connections on an address that went away.
 Without Tailscale it stays closed, and `canopy phone status` says why.
 
-Tests and `make e2e` run on Macs without Tailscale, so a dev build listens on one other address when `CANOPY_PHONE_LISTEN` names it, such as `127.0.0.1:7123`.
-The address must be a numeric IPv4 or IPv6 address with a port.
+Tests and `make e2e` run on Macs without Tailscale, so a dev build listens on the one address `CANOPY_PHONE_LISTEN` names, such as `127.0.0.1:7123`, and nowhere else.
+Without it, or with something that is not a numeric IPv4 or IPv6 address and a port, a dev build does not listen at all, so it never takes the tailnet port from the release app or answers a paired phone with `unpaired`.
 The CLI passes the variable on to the app it launches, as it passes `CANOPY_HOME`.
 A release build refuses the override at compile time: the app reads it only under `#if DEBUG`, which SwiftPM defines for debug builds and never for `-c release`, which `make release` and `make install` use.
 A release build that finds the variable set ignores it, and `canopy phone status` names it as ignored.
+The app opens its control socket before the listener starts, so nothing the network does can keep the CLI out, and an address the listener cannot have within 5 seconds, as when another app holds the port, counts as a failure that the next network change tries again.
+TCP keepalive notices a phone that vanished without closing, as when it sleeps or leaves Wi-Fi, within about a minute.
+A phone that stops reading holds one waiting inbox, the newest, not every inbox since.
 
 Each connection must send `phone.hello` with its device token first.
 Any other first message except `phone.pair`, a wrong token, or no `phone.hello` within 10 seconds closes the connection, after an error naming why: `not_authenticated`, `unpaired`, or `bad_pairing_code`.
@@ -246,6 +249,7 @@ Tapping a notification opens its row's conversation.
 
 - **The Mac is unreachable** because Tailscale is off, the Mac sleeps, or Canopy is not running: the app shows the last inbox it had, greyed, with "as of" and the time, and a banner naming what to check.
   It reconnects with backoff, and at once when the app comes to the foreground.
+- **The connection drops while pairing**, after the Mac saved the phone but before its token arrived: the Mac keeps a phone that can never connect, `canopy phone list` shows it never seen, and `canopy phone remove` clears it.
 - **The phone was removed** on the Mac: `phone.hello` fails with `unpaired`, and the app returns to Pairing.
 - **The pane closed** while its conversation is open: the conversation says the pane is gone and keeps what it showed.
 - **No transcript**, for an agent that is not Claude Code or a remote row: Chat says so and Terminal opens.
@@ -298,7 +302,7 @@ Milestone 1 (the listener and pairing):
 
 1. `.iOS(.v18)` goes on the whole package, since SwiftPM has no per-target platforms.
 2. `CanopyWire` also holds `AgentDot`, `PRState`, and the inbox's sorting, so the Mac's tests cover what the phone shows.
-3. A dev build takes `CANOPY_PHONE_LISTEN` under `#if DEBUG`; a release build ignores it and says so in `canopy phone status`.
+3. A dev build listens only where `CANOPY_PHONE_LISTEN` says, read under `#if DEBUG`, and not at all without it; a release build ignores it and says so in `canopy phone status`.
 4. `phone.pair` does not authenticate the connection; the phone says hello with its new token, as on every later connection.
 5. Five wrong pairing codes in a row void every outstanding code.
 6. The inbox is every row with its agents, sent whole on each change, rather than a list of changes.
@@ -306,3 +310,4 @@ Milestone 1 (the listener and pairing):
 8. The CLI calls `phones.*` methods on the control socket; the phone's own `phone.*` methods are served only by the listener.
 9. Events carry an `event` key and the ID of the request that started them.
 10. `canopy phone pair` waits for the phone and says which one paired; `--json` returns at once.
+11. The phone's own types read an agent or PR state they do not know as none or open, so a newer Mac cannot spoil an older phone's inbox while both speak protocol 1.

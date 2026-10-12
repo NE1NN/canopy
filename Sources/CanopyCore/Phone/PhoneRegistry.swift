@@ -114,10 +114,13 @@ public actor PhoneRegistry {
         return phone
     }
 
-    public func connected(_ id: String) {
-        guard let index = stored.firstIndex(where: { $0.id == id }) else { return }
+    /// Records that the phone connected, and returns whether it is still paired.
+    @discardableResult
+    public func connected(_ id: String) -> Bool {
+        guard let index = stored.firstIndex(where: { $0.id == id }) else { return false }
         stored[index].lastConnected = now()
         try? save()
+        return true
     }
 
     /// The phone that pairs with `code`, or nil once the code expires unused.
@@ -166,8 +169,11 @@ public actor PhoneRegistry {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(stored).write(to: temporary)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            guard
+                manager.createFile(
+                    atPath: temporary.path, contents: try encoder.encode(stored), attributes: [.posixPermissions: 0o600]
+                )
+            else { throw CocoaError(.fileWriteUnknown) }
             guard rename(temporary.path, file.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
         } catch {
             try? manager.removeItem(at: temporary)
@@ -180,11 +186,5 @@ extension Data {
     func base64URLEncodedString() -> String {
         base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-    }
-
-    init?(base64URLEncoded text: String) {
-        var base64 = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
-        self.init(base64Encoded: base64)
     }
 }

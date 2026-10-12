@@ -39,7 +39,7 @@ In the app, `PhoneService` owns the paired phones (`PhoneRegistry`), a TCP `Phon
 | Question | Choice | Why |
 |---|---|---|
 | iOS platform | `.iOS(.v18)` on the package | SwiftPM has no per-target platforms; only `CanopyWire` is built for iOS. |
-| Loopback for tests | `CANOPY_PHONE_LISTEN`, read only under `#if DEBUG` | `make release` builds with `-c release`, which never defines `DEBUG`, so a release build cannot be pointed off the tailnet. |
+| Loopback for tests | `CANOPY_PHONE_LISTEN`, read only under `#if DEBUG`; a dev build without it listens nowhere | `make release` builds with `-c release`, which never defines `DEBUG`, so a release build cannot be pointed off the tailnet, and a dev build never competes with the release app for 6974. |
 | Override in a release build | Ignored, and `phone status` names it | The author sees why the variable did nothing. |
 | Does pairing authenticate | No, the phone says hello next | One way in for every connection. |
 | Code guessing | Five wrong codes void every outstanding code | 30^8 codes and 5 minutes already make guessing hopeless; this bounds it outright. |
@@ -185,3 +185,29 @@ A failed save rolls the new phone back and throws, so a phone never holds a toke
 - `make lint`, `make build` (0 warnings), `make test` three times under load below the core count.
 - `make e2e`, which runs `scripts/e2e-phone.sh`.
 - The iOS build of `CanopyWire` waits for milestone 3's Xcode; until then `swift build` checks it, and it imports only Foundation.
+
+## After Review
+
+An independent opus review of `git diff main...feat/iphone` found nothing critical: no request reaches a phone handler without a valid token.
+Fixed:
+
+1. Major: `NWListener` can sit in `.waiting` for a port another app holds, and the first refresh never returned, which kept the control socket from opening because the app started phones first.
+   `bind` now treats `.waiting` as a failure, gives up after 5 seconds, and installs one state handler for the listener's whole life; the app opens the control socket first and starts the listener in a task of its own.
+   Test: `aTakenPortFailsTheRefreshInsteadOfHanging`.
+2. A hello whose token check passed just before `phone remove` could set its phone after the removal's disconnect looked, and stay in.
+   The connection now sets its phone first, then asks the registry whether the phone is still paired, closing with `unpaired` when not.
+   Test: `aRemovedPhoneIsNotConnected`.
+3. A dev build without the override listened on the tailnet port like the release app, and a mistyped override fell back to it.
+   `PhoneListenAddress` is now `.tailscale`, `.address`, or `.closed`; dev builds are closed unless the override parses.
+   Tests: `PhoneListenAddressTests`, `aDevBuildWithoutAnOverrideSaysHowToOpenIt`.
+4. A refresh queued before `stop()` could bind again; the listener now has a `stopped` flag the refresh chain reads.
+5. A second `phone.subscribe` left both subscriptions live for a moment; `PhoneHub.subscribe(after:replacing:_:)` swaps them in one main-actor step, and the close action is registered once per connection.
+6. No keepalive and an unbounded send queue: TCP keepalive (30 s idle, 3 probes 10 s apart), and events waiting to be written are kept newest only, per event and subscription.
+   Test: `theNewestEventAlwaysArrives`.
+7. A pairing whose reply never reached the phone leaves a phone that cannot connect: documented under Failures, since `phone remove` clears it and holding the save until the write completes would let a phone hold a token the Mac forgot.
+8. `seeingADoneAgentIsSentOnTheNextPoll` passed without the poll; it now waits for the done to go out first, and fails with a 60-second poll.
+9. The 300 ms hello timeout in `helloInTimeKeepsTheConnectionOpen` could flake on a loaded runner; it is 2 seconds now.
+10. `aWrongTokenIsUnpairedAndCloses` sends both lines in one write, so it exercises the gate's closing check.
+11. New tests: `pairingStartsTheHelloTimeAgain`, `helloAgainAnswersAgain`, `anOldProtocolBeforeHelloCloses`, `anOldProtocolAfterHelloIsRefusedAndTheConnectionStays`, `fourWrongCodesVoidNothingAndARightOneStartsTheCountAgain`.
+12. Nits: the service lets go of itself in `stop()`; `Data(base64URLEncoded:)` moved to the tests; the listener's close handler is private; `phones.json` is created at 0600 rather than set after; the hub's poll ends with the hub; the phone's types decode states they do not know.
+    Left: an unreadable `phones.json` still reads as no phones, which fails closed; Canopy has no log to note it in.

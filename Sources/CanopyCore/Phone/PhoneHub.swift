@@ -49,7 +49,8 @@ public final class PhoneHub {
             Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
-                    self?.publish()
+                    guard let self else { return }
+                    self.publish()
                 }
             })
     }
@@ -71,8 +72,10 @@ public final class PhoneHub {
         PhoneInboxBuilder.rows(snapshot, terminals: terminals)
     }
 
-    /// Sends the inbox to `send` each time it changes, starting now if it differs from `lastSent`.
-    public func subscribe(after lastSent: PhoneInbox, _ send: @escaping Send) -> UUID {
+    /// Sends the inbox to `send` each time it changes, starting now if it differs from `lastSent`. The subscription it
+    /// replaces, if any, ends in the same step, so no change reaches both.
+    public func subscribe(after lastSent: PhoneInbox, replacing previous: UUID? = nil, _ send: @escaping Send) -> UUID {
+        if let previous { subscribers[previous] = nil }
         let id = UUID()
         subscribers[id] = Subscriber(lastSent: lastSent, send: send)
         changed()
