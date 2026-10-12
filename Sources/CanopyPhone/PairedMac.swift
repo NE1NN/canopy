@@ -69,12 +69,16 @@ public struct KeychainCredentialStore: CredentialStore {
         return try? JSONDecoder().decode(PairedMac.self, from: data)
     }
 
+    /// Replaces the pairing in place, so a save that fails leaves the one before it.
     public func save(_ mac: PairedMac) throws {
-        clear()
-        var item = query
-        item[kSecValueData as String] = try JSONEncoder().encode(mac)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(item as CFDictionary, nil)
+        let data = try JSONEncoder().encode(mac)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = query
+            item[kSecValueData as String] = data
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
         guard status == errSecSuccess else {
             throw PhoneProblem(
                 title: "This iPhone could not keep its pairing.", detail: "The Keychain said \(status). Pair again.")

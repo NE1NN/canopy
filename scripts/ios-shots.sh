@@ -51,6 +51,7 @@ for appearance in $appearances; do
             fi
             if [[ -f "$requests/restart-mac" ]]; then
                 PHONE_FIXTURE_PORT=$port scripts/phone-fixture.sh start >/dev/null
+                # Only once it is all set up, so the script knows when it can stop it.
                 rm -f "$requests/restart-mac"
             fi
             sleep 0.3
@@ -64,7 +65,13 @@ for appearance in $appearances; do
         xcodebuild -project Apps/CanopyiOS/Canopy.xcodeproj -scheme Canopy -destination "id=$udid" \
         -derivedDataPath "$derived" test-without-building -only-testing:CanopyUITests/ScreenTour \
         -resultBundlePath "$results" -collect-test-diagnostics never -quiet || status=$?
+    # The tour ends once the phone is back at Pairing, which can be before the new Mac has finished setting up.
+    for _ in $(seq 1 600); do
+        [[ -f "$requests/stop-mac" || -f "$requests/restart-mac" ]] || break
+        sleep 0.1
+    done
     kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
     watcher=""
     scripts/phone-fixture.sh stop
     if [[ $status -ne 0 ]]; then

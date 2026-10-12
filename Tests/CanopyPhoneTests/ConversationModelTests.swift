@@ -389,6 +389,33 @@ struct ConversationModelTests {
             $0.method == PhoneMethod.transcript && (try? $0.decodeParams(PhoneTranscriptParams.self).limit) == 1
         }.count
     }
+
+    @Test func aNewPageThatStartsWhereThePhonesDoesKeepsItsOlderCursorAndPages() async throws {
+        let served = Mutex([Self.entry("a"), Self.entry("b")])
+        mac.on(PhoneMethod.transcript) { request in
+            let params = try? request.decodeParams(PhoneTranscriptParams.self)
+            if params?.before != nil {
+                return .result(
+                    (try? .from(PhoneTranscriptResult(pane: "p3", entries: [Self.entry("x")], older: nil))) ?? .null)
+            }
+            return .result(
+                (try? .from(PhoneTranscriptResult(pane: "p3", entries: served.withLock { $0 }, older: 500))) ?? .null)
+        }
+        let connection = try await connected(to: mac, inbox: Self.inbox(Self.waiting))
+        let model = ConversationModel(connection: connection, pane: "p3")
+        model.start()
+        #expect(await eventually { model.entries.map(\.id) == ["a", "b"] })
+        mac.goAway()
+        #expect(await eventually { connection.isUnreachable })
+        served.withLock { $0 = [Self.entry("a"), Self.entry("b"), Self.entry("c")] }
+        mac.comeBack()
+        connection.foreground()
+        #expect(await eventually { model.entries.map(\.id) == ["a", "b", "c"] })
+        #expect(model.older == 500)
+        #expect(model.epoch == 1)
+        await model.loadOlder()
+        #expect(model.entries.map(\.id) == ["x", "a", "b", "c"])
+    }
 }
 
 extension JSONValue {

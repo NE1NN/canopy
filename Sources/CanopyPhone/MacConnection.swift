@@ -104,7 +104,12 @@ public final class MacConnection {
                     let mac = PairedMac(
                         host: link.host, port: link.port, address: link.address, token: result.token, mac: result.mac,
                         phone: result.phone)
-                    try credentials.save(mac)
+                    do {
+                        try credentials.save(mac)
+                    } catch {
+                        // The Mac took the one-time code, so no other host can use it again.
+                        throw PairingKept(problem: PhoneProblem(error, mac: link.host))
+                    }
                     stop()
                     paired = mac
                     pairingNotice = nil
@@ -119,6 +124,8 @@ public final class MacConnection {
                 }
             } catch let error as ControlError {
                 throw PhoneProblem(error, mac: host)
+            } catch let kept as PairingKept {
+                throw kept.problem
             } catch {
                 lastError = error
             }
@@ -216,6 +223,8 @@ public final class MacConnection {
                 }
                 continue
             } catch let error as ControlError where error.code == "unpaired" {
+                // A loop that pairing again replaced may still hear its old token refused; only the current one counts.
+                guard !Task.isCancelled, self.paired?.token == paired.token else { return }
                 forget(notice: PhoneProblem(error, mac: paired.mac).title)
                 return
             } catch {
@@ -285,6 +294,11 @@ public final class MacConnection {
         self.inbox = inbox
         inboxAsOf = now()
     }
+}
+
+/// A pairing the Mac granted but the phone could not keep, which no other host may try again.
+private struct PairingKept: Error {
+    var problem: PhoneProblem
 }
 
 /// Runs the work, giving up with `PhoneTransportError.timedOut` after the timeout.

@@ -168,8 +168,7 @@ def finish(text):
     draw("", f"{BLUE}⏺{RESET} {text}", "", f"{GREY}>{RESET} ")
 
 
-def answered(answer):
-    tool_id, state["question"] = state["question"], None
+def answered(tool_id, answer):
     write(result(tool_id, f'Your questions have been answered: "{QUESTION["question"]}"="{answer}". '
                           "You can now continue with these answers in mind."))
     hook("PostToolUse", tool_name="AskUserQuestion",
@@ -178,8 +177,7 @@ def answered(answer):
     finish(f"Going with {answer}. I'll draft the listener next.")
 
 
-def allowed():
-    tool_id, state["permission"] = state["permission"], None
+def allowed(tool_id):
     write(result(tool_id, "Deployed to happy-otter-123."))
     hook("PostToolUse", tool_name="Bash", tool_input=DEPLOY)
     draw("", f"{BLUE}⏺{RESET} Bash(npx convex deploy)", f"{DIM}  ⎿  Deployed to happy-otter-123.{RESET}")
@@ -217,10 +215,13 @@ def listen():
             if key == "\x1b" and buffer.startswith("["):
                 buffer = buffer[2:]
                 continue
+            # Taken here, before the worker starts, so a key pressed twice answers once.
             if state["question"] and key in "12":
-                threading.Thread(target=answered, args=(QUESTION["options"][int(key) - 1]["label"],)).start()
+                tool_id, state["question"] = state["question"], None
+                threading.Thread(target=answered, args=(tool_id, QUESTION["options"][int(key) - 1]["label"])).start()
             elif state["permission"] and key == "\r":
-                threading.Thread(target=allowed).start()
+                tool_id, state["permission"] = state["permission"], None
+                threading.Thread(target=allowed, args=(tool_id,)).start()
             elif state["permission"] and key == "\x1b":
                 state["permission"] = None
                 draw("", f"{YELLOW}Interrupted · What should Claude do instead?{RESET}")

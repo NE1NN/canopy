@@ -59,16 +59,23 @@ public final class RowsModel {
     }
 
     private var fetchedGeneration = 0
+    /// Counts refreshes, so only the latest one's answer lands when several are on their way.
+    private var refreshes = 0
 
     public func refresh() async {
+        refreshes += 1
+        let refresh = refreshes
         isLoading = true
-        defer { isLoading = false }
+        defer { if refresh == refreshes { isLoading = false } }
         do {
             let generation = connection.generation
-            result = try await connection.liveClient().call(PhoneMethod.rows, as: PhoneRowsResult.self)
+            let rows = try await connection.liveClient().call(PhoneMethod.rows, as: PhoneRowsResult.self)
+            guard refresh == refreshes else { return }
+            result = rows
             fetchedGeneration = generation
             problem = nil
         } catch {
+            guard refresh == refreshes else { return }
             problem = connection.problem(error)
         }
     }

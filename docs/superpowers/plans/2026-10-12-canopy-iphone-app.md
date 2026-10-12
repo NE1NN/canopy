@@ -221,6 +221,19 @@ An independent opus review of `git diff origin/main...feat/iphone-app` found two
 The tours in light and dark then turned up one more problem, in the fixture: `phone-fixture.sh stop` deleted the folder while the dev build was still quitting, which wrote its home back, so the next `stop` refused the folder and the next start failed.
 It now waits for the app to quit, and knows its folder by name and home.
 
+CodeRabbit then found six smaller problems, all fixed:
+
+1. A page that starts where the phone's own does no longer counts as a new conversation, so it keeps the older cursor and an older page on its way.
+   Test: `aNewPageThatStartsWhereThePhonesDoesKeepsItsOlderCursorAndPages`.
+2. A pairing the Keychain cannot keep says so, rather than trying the used code on the next host and reading as expired.
+   Test: `aPairingTheKeychainCannotKeepSaysSoAndTriesNoOtherHost`.
+3. A loop that pairing again replaced cannot forget the new pairing when it hears its old token refused.
+4. The Keychain store replaces the pairing in place, so a save that fails leaves the one before it.
+5. Only the latest Rows refresh's answer lands.
+6. The stand-in Claude takes a repeated digit or Return once.
+
+The tours also showed the tour ending while the Mac that never paired was still setting up, so `ios-shots.sh` now waits for the tour's requests to finish before it stops the fixture.
+
 Left as is: `ConversationView`'s initializer builds its two models again each time SwiftUI rebuilds the destination, which `@State` then drops.
 They are two small objects with no work in their initializers, so holding them elsewhere would add a layer for nothing measurable.
 `SettingsView` builds its `SettingsModel` in `body`, which holds no state of its own.

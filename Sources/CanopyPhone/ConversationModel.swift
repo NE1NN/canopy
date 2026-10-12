@@ -48,7 +48,7 @@ public final class ConversationModel {
     /// Counts starts, so the observers of an earlier start end rather than run next to the new ones.
     private var starts = 0
     /// Counts the times the conversation was replaced whole, so an older page asked for before cannot join the new one.
-    private var epoch = 0
+    private(set) var epoch = 0
     /// Why the conversation could not be followed, other than the pane closing.
     public private(set) var transcriptProblem: PhoneProblem?
     /// The last older page failed; the next try goes on a tap.
@@ -168,15 +168,22 @@ public final class ConversationModel {
     private func merge(_ page: PhoneTranscriptResult) {
         let known = Set(entries.map(\.id))
         guard let meeting = page.entries.firstIndex(where: { known.contains($0.id) }),
-            let keep = entries.firstIndex(where: { $0.id == page.entries[meeting].id }), keep > 0
+            let keep = entries.firstIndex(where: { $0.id == page.entries[meeting].id })
         else {
+            // Nothing in common: the conversation is a new one, or moved on further than a page.
             entries = page.entries
             older = page.older
             epoch += 1
             notePrompts()
             return
         }
-        entries = Array(entries[..<keep]) + page.entries[meeting...]
+        if keep == 0 {
+            // The page reaches back at least as far as the phone did, so its cursor is the one to keep.
+            entries = page.entries
+            if meeting > 0 { older = page.older }
+        } else {
+            entries = Array(entries[..<keep]) + page.entries[meeting...]
+        }
         notePrompts()
     }
 

@@ -254,4 +254,25 @@ struct MacConnectionPairingAgainTests {
         await #expect(throws: MacConnection.NotPaired.self) { try await waiting.value }
         await #expect(throws: MacConnection.NotPaired.self) { try await connection.client() }
     }
+
+    @Test func aPairingTheKeychainCannotKeepSaysSoAndTriesNoOtherHost() async throws {
+        let connection = MacConnection(
+            transport: mac, credentials: FailingCredentialStore(), phoneName: "iPhone", sleep: ManualSleeper().sleep)
+        await #expect {
+            try await connection.pair(mac.link)
+        } throws: { error in
+            (error as? PhoneProblem)?.title == "This iPhone could not keep its pairing."
+        }
+        #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 1)
+        #expect(connection.paired == nil)
+    }
+}
+
+/// A Keychain that refuses every save.
+struct FailingCredentialStore: CredentialStore {
+    func load() -> PairedMac? { nil }
+    func save(_ mac: PairedMac) throws {
+        throw PhoneProblem(title: "This iPhone could not keep its pairing.", detail: "The Keychain said -25299.")
+    }
+    func clear() {}
 }
