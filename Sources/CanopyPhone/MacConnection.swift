@@ -127,6 +127,24 @@ public final class MacConnection {
         forget(notice: nil)
     }
 
+    /// The live connection, for something the author just did, which should fail at once rather than wait.
+    public func liveClient() throws -> PhoneClient {
+        guard let client, status == .connected else {
+            if case .unreachable(let problem) = status, paired != nil {
+                throw PhoneProblem(title: "Can't reach \(macName).", detail: problem.detail)
+            }
+            throw PhoneProblem(title: "Can't reach \(macName).", detail: PhoneProblem.checkTailscale)
+        }
+        return client
+    }
+
+    /// An error as the app says it, naming this Mac.
+    public func problem(_ error: any Error) -> PhoneProblem {
+        PhoneProblem(error, mac: macName)
+    }
+
+    public var macName: String { paired?.mac ?? "the Mac" }
+
     /// The live connection, waiting for one when there is none yet.
     public func client() async throws -> PhoneClient {
         if let client, status == .connected { return client }
