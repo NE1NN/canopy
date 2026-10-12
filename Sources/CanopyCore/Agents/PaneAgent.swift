@@ -1,15 +1,5 @@
 import Foundation
 
-/// What an agent in a pane is doing, as Claude Code's hooks or `canopy term state` report it.
-public enum AgentState: String, Codable, Sendable, CaseIterable {
-    case none
-    case working
-    case waiting
-    case done
-    /// The turn ended, but background work the agent started still runs, and the agent wakes when it ends.
-    case background
-}
-
 /// One report of an agent's state.
 public struct AgentReport: Sendable, Equatable {
     /// Nil for a report that only takes the pane for its session, as `SessionStart` does.
@@ -62,19 +52,6 @@ public struct AgentChange: Sendable, Equatable {
     /// A finish or a need for the author, which plays a sound.
     public var alerts: Bool {
         to == .done || to == .waiting
-    }
-}
-
-/// What stands for a pane's agent in the sidebar, the tab bar, and the pane header. Ordered by urgency, so the most
-/// urgent of several is their `max()`.
-public enum AgentDot: Int, Comparable, Sendable {
-    case background
-    case working
-    case done
-    case waiting
-
-    public static func < (lhs: AgentDot, rhs: AgentDot) -> Bool {
-        lhs.rawValue < rhs.rawValue
     }
 }
 

@@ -3,6 +3,7 @@ import CanopyCore
 import Foundation
 import Observation
 import SwiftUI
+import SystemConfiguration
 import WebKit
 
 @MainActor
@@ -36,6 +37,8 @@ final class AppModel {
     private(set) var ownsHome = false
     private var toastTask: Task<Void, Never>?
     private var server: ControlServer?
+    private var phones: PhoneService?
+    private var phoneHub: PhoneHub?
 
     init(home: CanopyHome) {
         self.home = home
@@ -137,13 +140,16 @@ final class AppModel {
         hostTask?.cancel()
         server?.stop()
         server = nil
+        phones?.stop()
+        phoneHub?.stop()
         terminals.closeAll()
         activity.flushNow()
     }
 
     private func startControlServer() async {
         let bridge = AppUIBridge { [weak self] path in await self?.select(path) }
-        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: bridge)
+        let phones = await makePhones()
+        let handler = WorkspaceControlHandler(rows: rows, plugins: plugins, ui: bridge, phones: phones)
         let server = ControlServer(socketPath: home.socketPath) { await handler.handle($0) }
         do {
             try await server.start()
@@ -151,6 +157,31 @@ final class AppModel {
         } catch {
             show("The canopy CLI is unavailable: \(error)")
         }
+        // After the socket opens, so nothing the network does can keep the CLI out.
+        Task { await phones.start() }
+    }
+
+    /// The iPhone app's service. A release build listens on this Mac's Tailscale addresses. A dev build listens only where
+    /// CANOPY_PHONE_LISTEN says, so tests reach it over loopback and it never takes the tailnet port from the release app.
+    private func makePhones() async -> PhoneService {
+        #if DEBUG
+            let allowsOverride = true
+        #else
+            let allowsOverride = false
+        #endif
+        let listen = PhoneListenAddress.resolve(
+            environment: ProcessInfo.processInfo.environment, allowsOverride: allowsOverride)
+        let hub = PhoneHub(terminals: terminals, snapshot: snapshot, updates: await workspace.updates())
+        hub.start()
+        let service = PhoneService(home: home, hub: hub, activity: activity, listen: listen, macName: Self.macName)
+        phoneHub = hub
+        phones = service
+        return service
+    }
+
+    /// The name Sharing settings give this Mac.
+    private static var macName: String {
+        (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? "Mac"
     }
 
     // MARK: Rows

@@ -8,6 +8,8 @@ public enum ActivitySource: String, Codable, Sendable {
     case cli
     /// A change Canopy noticed rather than made, such as git run in any terminal, or a PR changing on GitHub.
     case git
+    /// A paired phone, through the phone listener.
+    case phone
 
     /// Who is acting now. The control API runs each request as `.cli`, and work a request starts inherits it.
     @TaskLocal public static var current = ActivitySource.ui
@@ -42,6 +44,8 @@ public enum ActivityType {
     public static let hostDetached = "host.detached"
     public static let hostUnreachable = "host.unreachable"
     public static let hostWoken = "host.woken"
+    public static let phonePaired = "phone.paired"
+    public static let phoneRemoved = "phone.removed"
 
     /// `agent.working`, `agent.waiting`, `agent.done`, and `agent.background`, or `agent.cleared` when the state goes
     /// to none.

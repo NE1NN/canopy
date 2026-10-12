@@ -22,7 +22,7 @@ public enum ControlMethod {
     public static let readOnly: Set<String> = [
         status, repoList, rowList, prShow, prList, branchList, TermMethod.list, TermMethod.read, TermMethod.wait,
         PortMethod.list, GroupMethod.list, PluginMethod.list, PluginMethod.items, WebMethod.list,
-        HostMethod.list,
+        HostMethod.list, PhonesMethod.list, PhonesMethod.status, PhonesMethod.paired,
     ]
 
     /// Methods left out of `cli.call`: the read-only ones, and `term.state`, which hooks send on every tool call and
@@ -42,6 +42,8 @@ public enum ControlMethod {
         if [rowNew, rowRemove, repoClone, PluginMethod.new, HostMethod.add].contains(method) { return nil }
         if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
+        // Waits for a pairing code, which lasts five minutes.
+        if method == PhonesMethod.paired { return PhoneRegistry.codeLifetime + 30 }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
     }
 }

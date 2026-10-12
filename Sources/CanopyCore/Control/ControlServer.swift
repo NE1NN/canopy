@@ -85,13 +85,10 @@ private final class ResumeOnce: Sendable {
 }
 
 private final class ControlConnection: Sendable {
-    /// A line longer than this is not a request anyone meant to send.
-    static let maximumLine = 1 << 20
-
     private let connection: NWConnection
     private let queue: DispatchQueue
     private let handler: ControlServer.Handler
-    private let buffer = Mutex(Data())
+    private let buffer = Mutex(LineBuffer())
     /// The last reply in line. Requests are handled at once but answered in the order they came.
     private let lastReply = Mutex<Task<Void, Never>?>(nil)
     /// Set once the connection is being closed, after which nothing more is read.
@@ -130,18 +127,8 @@ private final class ControlConnection: Sendable {
     }
 
     private func consume(_ data: Data) {
-        let lines = buffer.withLock { buffer -> [Data] in
-            buffer.append(data)
-            var lines: [Data] = []
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                lines.append(Data(buffer[buffer.startIndex..<newline]))
-                buffer = Data(buffer[buffer.index(after: newline)...])
-            }
-            return lines
-        }
-        if buffer.withLock({ $0.count > Self.maximumLine }) {
+        guard let lines = buffer.withLock({ $0.append(data) }) else {
             closing.withLock { $0 = true }
-            buffer.withLock { $0 = Data() }
             reply(
                 ControlResponse.failure(
                     id: "", error: ControlError(code: "bad_request", message: "Request is too long.")))

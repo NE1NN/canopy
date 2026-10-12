@@ -375,20 +375,24 @@ struct FakeSSHForwardTests {
         }
     }
 
-    /// A Python process of the test's own listening on `address` at `port`.
+    /// A Python process of the test's own listening on `address` at `port`, returned once it listens. Checking the port
+    /// would not do: with the other loopback already taken, the port reads as busy before this one listens.
     static func listener(_ address: String, _ port: UInt16) async throws -> Process {
         let family = address.contains(":") ? "AF_INET6" : "AF_INET"
+        let ready = FileManager.default.temporaryDirectory.appending(path: "listening-\(UUID().uuidString)").path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [
             "-c",
-            "import socket, time; s = socket.socket(socket.\(family)); s.bind(('\(address)', \(port))); s.listen();"
-                + " time.sleep(120)",
+            "import socket, sys, time; s = socket.socket(socket.\(family)); s.bind(('\(address)', \(port))); s.listen();"
+                + " open(sys.argv[1], 'w').close(); time.sleep(120)",
+            ready,
         ]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        _ = await eventually { !LocalPortChooser.isFree(port) || !process.isRunning }
+        _ = await eventually { FileManager.default.fileExists(atPath: ready) || !process.isRunning }
+        try? FileManager.default.removeItem(atPath: ready)
         return process
     }
 

@@ -164,6 +164,10 @@ enum AppLocator {
         if let claude = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], !claude.isEmpty {
             environment.append("CLAUDE_CONFIG_DIR=\(claude)")
         }
+        // Dev builds listen for phones where this says, so tests reach them without Tailscale. Release builds ignore it.
+        if let listen = ProcessInfo.processInfo.environment[PhoneListenAddress.environmentKey], !listen.isEmpty {
+            environment.append("\(PhoneListenAddress.environmentKey)=\(listen)")
+        }
         let open = Process()
         open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         open.arguments = ["-g", "-n"] + environment.flatMap { ["--env", $0] } + [app.path]
