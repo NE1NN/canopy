@@ -78,6 +78,24 @@ struct PhoneListenerTests {
         #expect(rows.result == .object(["method": .string(PhoneMethod.rows)]))
     }
 
+    @Test func aHelloAndARequestSentTogetherBothCount() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let token = try await harness.pair()
+
+        let client = try harness.client()
+        var both = try ControlCodec.encodeLine(
+            ControlRequest(method: PhoneMethod.hello, params: try .from(PhoneHelloParams(token: token)), id: "h"))
+        both.append(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.rows, id: "r")))
+        try client.sendRaw(both)
+        let first = try await offPool { try client.next() }?.response
+        let second = try await offPool { try client.next() }?.response
+        #expect(first?.id == "h" && first?.error == nil)
+        #expect(second?.id == "r" && second?.error == nil)
+    }
+
     @Test func methodsOffTheListAreRefusedAndTheConnectionStays() async throws {
         let dir = try TempDir()
         let harness = Harness(dir)

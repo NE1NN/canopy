@@ -1,8 +1,9 @@
 # Canopy on iPhone design
 
 Date: 2026-10-12
-Status: draft for review.
+Status: approved, milestones 1 to 3 being built.
 The author approved the design in conversation on 2026-10-12, and this spec writes it down.
+Milestone 1's PR settled what the design left open once it met the code; "Decisions made while building" lists each.
 The author picked direction A from three mockups, kept outside git in the main checkout's `build/pages/canopy-iphone/`.
 
 ## Summary
@@ -73,33 +74,57 @@ A new library target with no platform-specific code, built for macOS 15 and iOS 
 It takes from `CanopyCore`:
 
 - `ControlRequest`, `ControlResponse`, `ControlError`, `ControlCodec`, and `JSONValue`.
-- The agent states the phone shows: working, waiting, done, background, and none.
+- The agent states the phone shows: working, waiting, done, background, and none, with `AgentDot`, which orders them by urgency.
+- `PRState`, for the PR numbers on the Rows tab.
 
-and adds the phone's own types: the inbox, transcript entries, prompts, and the `phone.*` method names and parameters.
-`CanopyCore` depends on `CanopyWire` and re-exports what it moved, so the CLI and app change only their imports where they must.
-`Package.swift` gains `.iOS(.v18)` for this target only.
+and adds the phone's own types: the inbox, transcript entries, prompts, pairing links, and the `phone.*` method names and parameters.
+The inbox's sorting into pinned rows, Needs you, Done, and Running lives here too, so the Mac's tests cover what the phone shows.
+`CanopyCore` depends on `CanopyWire` and re-exports it with `@_exported import`, so the CLI and app change no imports.
+`ControlError`'s initializers from `WorkspaceError` and the CLI's socket errors stay in `CanopyCore` as an extension.
+SwiftPM sets platforms for a whole package, so `Package.swift` adds `.iOS(.v18)` to the package's platforms and a `CanopyWire` library product.
+Only `CanopyWire` is ever built for iOS; the other targets still need macOS.
 
 ### PhoneListener
 
 A TCP listener in the app, on port 6974, bound only to the Mac's Tailscale addresses: those in `100.64.0.0/10` and `fd7a:115c:a1e0::/48` on a `utun` interface.
-It follows network changes, so it binds when Tailscale comes up and closes when it goes down.
+It follows network changes through `NWPathMonitor`, so it binds when Tailscale comes up and closes when it goes down, with the connections on an address that went away.
 Without Tailscale it stays closed, and `canopy phone status` says why.
 
+Tests and `make e2e` run on Macs without Tailscale, so a dev build listens on one other address when `CANOPY_PHONE_LISTEN` names it, such as `127.0.0.1:7123`.
+The address must be a numeric IPv4 or IPv6 address with a port.
+The CLI passes the variable on to the app it launches, as it passes `CANOPY_HOME`.
+A release build refuses the override at compile time: the app reads it only under `#if DEBUG`, which SwiftPM defines for debug builds and never for `-c release`, which `make release` and `make install` use.
+A release build that finds the variable set ignores it, and `canopy phone status` names it as ignored.
+
 Each connection must send `phone.hello` with its device token first.
-Any other first message except `phone.pair`, a wrong token, or no message within 10 seconds closes the connection.
-After `phone.hello` the connection may call only the methods in "Phone methods".
-Requests go to the same handlers the control socket uses, so the phone and the CLI never disagree about state.
+Any other first message except `phone.pair`, a wrong token, or no `phone.hello` within 10 seconds closes the connection, after an error naming why: `not_authenticated`, `unpaired`, or `bad_pairing_code`.
+`phone.pair` does not authenticate the connection: the phone sends `phone.hello` with its new token next, and the 10 seconds start again.
+Lines pass this gate one at a time and in order, so a phone may send `phone.hello` and its next request together.
+After `phone.hello` the connection may call only the methods in "Phone methods"; any other gets `method_not_allowed` and the connection stays open.
+Requests reach the same workspace and terminals the control socket's handlers use, so the phone and the CLI never disagree about state.
+The control socket does not answer `phone.*` methods.
+
+Streams send events, one JSON object per line like responses, told apart by their `event` key: `{"v": 1, "event": "phone.inbox", "subscription": "<the request's id>", "data": {...}}`.
+A stream's first event never comes before the response to the request that started it.
 
 ### Pairing
 
-`canopy phone pair` makes a one-time pairing code that expires after 5 minutes and prints a QR code in the terminal.
-The QR code holds `canopy-phone://pair?host=<MagicDNS name>&port=6974&code=<code>`, with the Tailscale address as a fallback host.
+`canopy phone pair` makes a one-time pairing code that expires after 5 minutes and prints a QR code in the terminal, black on white whatever the terminal's colors, then waits until a phone uses the code.
+`--json` prints the code and link without waiting.
+A code is eight letters and digits from an alphabet without 0, 1, I, L, O, or U, shown as `K7QX-M2PD`; case, spaces, and the dash do not matter.
+Five wrong codes in a row void every code outstanding, so none can be guessed.
+The QR code holds `canopy-phone://pair?host=<MagicDNS name>&port=6974&code=<code>&addr=<Tailscale address>`, and the phone tries `addr` when the name does not resolve.
+The MagicDNS name comes from `tailscale status --json`, through the Tailscale app's CLI at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` or Homebrew's; without it, `host` is the address too.
+The pairing code is refused while the listener is closed, with `phone_listener_closed`.
 The phone scans it, connects, sends `phone.pair` with the code and its name, and gets back a device token: 32 random bytes.
 The phone keeps the token in its Keychain.
-The Mac keeps only the token's SHA-256, with the device's name, its push token, and when it last connected, in `CANOPY_HOME/phones.json`, and compares tokens in constant time.
+The Mac keeps only the token's SHA-256, with the device's name, its push token, and when it last connected, in `CANOPY_HOME/phones.json`, readable only by the author, and compares tokens in constant time.
+A name another phone has gets a number, as `iPhone 2`.
 
 `canopy phone list` shows paired phones.
 `canopy phone remove <name>` forgets one and closes its connections at once.
+`canopy phone status` says where the listener listens or why it does not, how many phones are paired and connected, and whether notifications work.
+The commands reach the app through `phones.pair`, `phones.paired`, `phones.list`, `phones.remove`, and `phones.status` on the control socket, which only the author's own processes can open.
 
 ### Phone methods
 
@@ -107,8 +132,8 @@ The Mac keeps only the token's SHA-256, with the device's name, its push token, 
 |---|---|
 | `phone.hello` | Authenticates the connection. Returns the Mac's name and Canopy's version. |
 | `phone.pair` | Trades a pairing code for a device token. Allowed before `phone.hello`. |
-| `phone.subscribe` | Returns the inbox, then streams changes to it: agent states, last lines, and rows coming and going. |
-| `phone.rows` | Every row, by repo, with its agent states and PR numbers. |
+| `phone.subscribe` | Returns the inbox, then streams changes to it: agent states, last lines, and rows coming and going. A second call on the same connection replaces the first. |
+| `phone.rows` | Every row, by repo then plugin, with its agents and PR. |
 | `phone.transcript` | One page of a pane's conversation, newest first, with a cursor for older pages. Streams new entries while the conversation is open. |
 | `phone.reply` | Pastes text into a pane and presses Return. |
 | `phone.answer` | Answers the pane's open prompt: a question's option, Allow, or Deny. |
@@ -118,6 +143,11 @@ The Mac keeps only the token's SHA-256, with the device's name, its push token, 
 | `phone.seen` | Marks a done agent as seen, as looking at it on the Mac does. |
 
 Mode 2 adds `phone.newRow`, which takes the same options as `canopy row new` plus a brief to start an agent with.
+
+The inbox is every row in sidebar order, repos then plugins, each with its name, repo or plugin, whether it is the repo's own checkout, and an entry per pane whose agent is not none: its state, whether a done is unseen, when it reached the state, its last line, and what a background agent waits on.
+Each change sends the whole inbox again, since it is a few kilobytes and a phone that misses one cannot drift.
+Changes made together go out as one after 100 milliseconds, and a poll every 2 seconds sends what has no event of its own, such as the author seeing a done agent on the Mac.
+`phone.rows` adds PRs and groups rows by repo; the Rows tab lays live agent states from the inbox over it.
 
 ## Reading and answering agents
 
@@ -183,6 +213,9 @@ Screens, as in the mockups:
 - **Conversation**: Chat and Terminal, with chips for a question's options and a reply box.
 - **Settings**: the paired Mac, Face ID lock, and unpairing.
 
+Pins live on the phone.
+The first launch pins each repo's own checkout, its `main` row, when an agent runs there.
+
 The tab bar has Inbox and Rows.
 The inbox badge counts agents waiting for the author.
 Light and dark both follow the system, with Canopy's agent colors: the accent for working, yellow for waiting, green for done, and a green ring for background.
@@ -225,7 +258,8 @@ A paired phone can make any agent do anything that agent can do, so the token is
 Tailscale keeps the listener off every network but the tailnet.
 The token keeps other tailnet devices out, `phone remove` revokes a lost phone at once, and the method list keeps a phone from removing rows, repos, or hooks.
 Face ID guards the app, and lock-screen actions need an unlocked phone.
-The activity log records each phone method that changes something, with the phone's name, as it records CLI calls.
+The activity log records each phone method that changes something, with the phone's name, as it records CLI calls, under a new `phone` source.
+Pairing and removing a phone record `phone.paired` and `phone.removed`.
 
 ## Testing
 
@@ -257,3 +291,18 @@ Until then the app installs with free signing, which expires after 7 days.
 - Tailscale on the Mac and the iPhone, signed in to the same tailnet, before milestone 3 can be tried on the phone.
 - Full Xcode, before milestone 3.
 - A paid Apple Developer account and a push key, before milestone 4.
+
+## Decisions made while building
+
+Milestone 1 (the listener and pairing):
+
+1. `.iOS(.v18)` goes on the whole package, since SwiftPM has no per-target platforms.
+2. `CanopyWire` also holds `AgentDot`, `PRState`, and the inbox's sorting, so the Mac's tests cover what the phone shows.
+3. A dev build takes `CANOPY_PHONE_LISTEN` under `#if DEBUG`; a release build ignores it and says so in `canopy phone status`.
+4. `phone.pair` does not authenticate the connection; the phone says hello with its new token, as on every later connection.
+5. Five wrong pairing codes in a row void every outstanding code.
+6. The inbox is every row with its agents, sent whole on each change, rather than a list of changes.
+7. The first launch pins each repo's own checkout with an agent, since telling a repo's default branch needs git or GitHub.
+8. The CLI calls `phones.*` methods on the control socket; the phone's own `phone.*` methods are served only by the listener.
+9. Events carry an `event` key and the ID of the request that started them.
+10. `canopy phone pair` waits for the phone and says which one paired; `--json` returns at once.
