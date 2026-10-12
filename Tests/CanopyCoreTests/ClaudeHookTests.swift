@@ -57,7 +57,7 @@ struct ClaudeHookTests {
     @Test func questionsPermissionsAndDialogsMeanWaiting() {
         #expect(
             report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"}"#)
-                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .question, questions: [])))
+                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .question, questions: nil)))
         #expect(
             report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode"}"#)
                 == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .plan, tool: "ExitPlanMode")))

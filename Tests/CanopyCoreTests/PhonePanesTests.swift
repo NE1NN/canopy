@@ -113,20 +113,18 @@ struct PhonePanesTests {
         let dir = try TempDir()
         let recording = try await recording(dir)
         defer { recording.close() }
-        // The dialog's hook lands after the paste is read but before Return would go.
         let pane = recording.pane
-        pane.replyPause = .milliseconds(500)
-        Task {
-            try? await Task.sleep(for: .milliseconds(150))
-            pane.report(
-                AgentReport(
-                    state: .waiting, session: "s1", event: "PermissionRequest",
-                    prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf build")))
-        }
-        await #expect(throws: PhonePanes.promptOpen) {
-            try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "go"))
-        }
+        let panes = recording.panes
+        let id = recording.id
+        // Return waits long after the paste is read, and the dialog's hook lands in between.
+        pane.replyPause = .seconds(2)
+        let reply = Task { try await panes.reply(PhoneReplyParams(pane: id, text: "go")) }
         #expect(await eventually { !recording.reads.isEmpty })
+        pane.report(
+            AgentReport(
+                state: .waiting, session: "s1", event: "PermissionRequest",
+                prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf build")))
+        await #expect(throws: PhonePanes.promptOpen) { try await reply.value }
         try await Task.sleep(for: .milliseconds(300))
         #expect(!recording.reads.contains("<0d>"))
     }
