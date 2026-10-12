@@ -39,6 +39,9 @@ struct PhoneServicePaneTests {
         .pane
         pane.returnPatience = .seconds(60)
         #expect(await eventually { (pane.emulator as? FakeEmulator)?.text.contains("ready") == true })
+        // Replies go only where a Claude Code session holds the pane.
+        pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
+        pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
         return Setup(harness: harness, client: try await harness.pairedClient("Hindie's iPhone"), pane: pane)
     }
 
@@ -103,7 +106,7 @@ struct PhoneServicePaneTests {
         let response = try await setup.call(PhoneMethod.reply, PhoneReplyParams(pane: setup.id, text: "Tailscale"))
         let reply = try #require(response.result).decode(PhoneReplyResult.self)
         #expect(await eventually { setup.reads.last == "<0d>" })
-        setup.pane.report(AgentReport(state: .working, event: "UserPromptSubmit"))
+        setup.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
         let event = try #require(try await setup.next()?.event)
         #expect(event.event == PhoneEvent.delivered)
         #expect(try event.data.decode(PhoneDelivered.self) == PhoneDelivered(pane: setup.id, reply: reply.reply))

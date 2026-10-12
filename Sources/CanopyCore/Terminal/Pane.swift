@@ -174,6 +174,8 @@ public final class Pane: Identifiable {
     static let returnPause = Duration.milliseconds(200)
     /// How long Return waits for a program that is not reading, before it goes in behind the text anyway.
     @ObservationIgnored var returnPatience = Duration.seconds(2)
+    /// How long Return waits after a reply's paste has been read.
+    @ObservationIgnored var replyPause = Pane.returnPause
 
     /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
     /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
@@ -194,13 +196,17 @@ public final class Pane: Identifiable {
     /// Pastes text as one bracketed paste, then presses Return as a keystroke of its own, as `type(_:enter:)` does, so
     /// a long reply reaches a busy Claude Code whole. Newlines go in as Return, as a terminal pastes them, and escape
     /// characters are left out, so the text cannot end its own paste.
-    public func paste(_ text: String) async {
-        guard case .running = status, let process else { return }
+    /// Return goes only if `returnIf` still holds once the paste is read, checked in the same turn of the main actor
+    /// that writes it, so a dialog that opened meanwhile is never answered by it. Returns whether Return went.
+    public func paste(_ text: String, returnIf: () -> Bool) async -> Bool {
+        guard case .running = status, let process else { return false }
         let clean = Self.pasteable(text)
         await process.write(
-            Data("\u{1b}[200~\(clean)\u{1b}[201~".utf8), then: Data("\r".utf8), pause: Self.returnPause,
-            patience: returnPatience)
+            Data("\u{1b}[200~\(clean)\u{1b}[201~".utf8), then: Data(), pause: replyPause, patience: returnPatience)
+        guard case .running = status, returnIf() else { return false }
+        process.write(Data("\r".utf8))
         typed(Data("\r".utf8))
+        return true
     }
 
     static func pasteable(_ text: String) -> String {

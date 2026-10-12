@@ -20,7 +20,15 @@ struct PhonePanesTests {
         }
     }
 
+    /// A pane running the read recorder, whose agent a Claude Code session holds, as replies need.
     func recording(_ dir: TempDir) async throws -> Recording {
+        let recording = try await bareRecording(dir)
+        recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
+        recording.pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
+        return recording
+    }
+
+    func bareRecording(_ dir: TempDir) async throws -> Recording {
         let terminals = Fixture.terminals(dir)
         let command = ReadRecorder.command(try ReadRecorder.install(in: dir), paste: true)
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(command)).pane
@@ -83,6 +91,85 @@ struct PhonePanesTests {
         recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
         recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
         #expect(delivered.withLock { $0 } == ["first"])
+    }
+
+    @Test func aReplyNeverAnswersADialogThePhoneDidNotSee() async throws {
+        let dir = try TempDir()
+        let recording = try await recording(dir)
+        defer { recording.close() }
+        recording.pane.report(
+            AgentReport(
+                state: .waiting, session: "s1", event: "PermissionRequest",
+                prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf build")))
+
+        await #expect(throws: PhonePanes.promptOpen) {
+            try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "also check the migrations"))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(recording.reads.isEmpty)
+    }
+
+    @Test func aDialogOpeningDuringThePasteHoldsBackReturn() async throws {
+        let dir = try TempDir()
+        let recording = try await recording(dir)
+        defer { recording.close() }
+        // The dialog's hook lands after the paste is read but before Return would go.
+        let pane = recording.pane
+        pane.replyPause = .milliseconds(500)
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            pane.report(
+                AgentReport(
+                    state: .waiting, session: "s1", event: "PermissionRequest",
+                    prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf build")))
+        }
+        await #expect(throws: PhonePanes.promptOpen) {
+            try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "go"))
+        }
+        #expect(await eventually { !recording.reads.isEmpty })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!recording.reads.contains("<0d>"))
+    }
+
+    @Test func aReplyToAQuestionInTheMessageIsFine() async throws {
+        let dir = try TempDir()
+        let recording = try await recording(dir)
+        defer { recording.close() }
+        recording.pane.report(
+            AgentReport(
+                state: .waiting, session: "s1", event: "Stop", question: true,
+                prompt: AgentPrompt(kind: .reply, detail: "Should I?")))
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "yes"))
+        #expect(await eventually { recording.reads.last == "<0d>" })
+    }
+
+    @Test func aReplyNeedsClaudeCodeRunning() async throws {
+        let dir = try TempDir()
+        let recording = try await bareRecording(dir)
+        defer { recording.close() }
+        await #expect(throws: PhonePanes.agentNotRunning) {
+            try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "rm -rf ~"))
+        }
+        recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
+        recording.pane.report(AgentReport(state: AgentState.none, session: "s1", event: "SessionEnd", releases: true))
+        await #expect(throws: PhonePanes.agentNotRunning) {
+            try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "rm -rf ~"))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(recording.reads.isEmpty)
+    }
+
+    @Test func aReplyTheAgentNeverTookIsForgottenWhenItEnds() async throws {
+        let dir = try TempDir()
+        let recording = try await recording(dir)
+        defer { recording.close() }
+        let delivered = Shared(0)
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "go")) {
+            delivered.withLock { $0 += 1 }
+        }
+        recording.pane.report(AgentReport(state: AgentState.none, session: "s1", event: "SessionEnd", releases: true))
+        recording.pane.report(AgentReport(state: .working, session: "s2", event: "UserPromptSubmit"))
+        #expect(delivered.withLock { $0 } == 0)
     }
 
     @Test func anAnswerSendsItsKeysOneReadEachAndOnlyOnce() async throws {
@@ -154,17 +241,21 @@ struct PhonePanesTests {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
-        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("seq 1 100; sleep 60")).pane
+        let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("seq 1 100; exec sleep 60")).pane
         let emulator = try #require(pane.emulator as? FakeEmulator)
-        #expect(await eventually { emulator.lines.last == "100" })
+        #expect(await eventually { emulator.lines.contains("100") })
         let panes = PhonePanes(terminals: terminals)
 
         let screen = try panes.screen(PhonePaneParams(pane: pane.id.description), scrollback: 30)
         #expect(screen.columns == TerminalSize.standard.columns && screen.rows == TerminalSize.standard.rows)
-        #expect(screen.lines.last == "100")
         #expect(screen.lines.count == screen.rows)
-        #expect(screen.scrollback?.count == 30)
-        #expect(screen.scrollback?.last == String(100 - screen.rows))
+        #expect(screen.lines.contains("100"))
+        let scrollback = try #require(screen.scrollback)
+        #expect(scrollback.count == 30)
+        // The scrollback runs on into the screen without a gap.
+        let all = scrollback + screen.lines
+        let first = try #require(Int(all[0]))
+        #expect(Array(all.prefix(30)) == (first..<first + 30).map(String.init))
     }
 
     @Test func theTranscriptIsTheAgentsAndOnlyOnThisMac() async throws {

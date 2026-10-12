@@ -141,6 +141,35 @@ struct OpenPromptTests {
         #expect(agent.prompt == nil && agent.state == .working)
     }
 
+    @Test mutating func anyKeyAtTheMacClosesADialogsPrompt() throws {
+        for key in ["1", "2", "\u{1b}[B", "y"] {
+            var agent = PaneAgent()
+            apply(&agent, CapturedHook.bashPermission, at: 1)
+            #expect(agent.prompt != nil)
+            _ = agent.typed(Data(key.utf8), at: start + 2)
+            #expect(agent.prompt == nil, "after \(key.debugDescription)")
+            #expect(agent.state == .waiting)
+        }
+    }
+
+    @Test mutating func typingADraftLeavesAReplyPromptOpen() throws {
+        var agent = PaneAgent()
+        apply(&agent, CapturedHook.stopOnQuestion, at: 1)
+        _ = agent.typed(Data("y".utf8), at: start + 2)
+        #expect(agent.prompt?.kind == .reply)
+    }
+
+    @Test mutating func aPartlyReadPickerCannotBeAnswered() throws {
+        let input =
+            #"{"questions": [{"question": "A?", "options": [{"label": "x"}]}, {"question": 7}]}"#
+        let data = CapturedHook.hook("PreToolUse", tool: "AskUserQuestion", input: input)
+        let prompt = try #require(ClaudeHookMapping.report(from: data, startedAt: nil)?.prompt)
+        #expect(prompt.questions == nil)
+        #expect(throws: ControlError.self) {
+            try PhoneAnswerKeys.keys(for: prompt.opened(id: "q"), PhoneAnswer(options: [[0]]))
+        }
+    }
+
     @Test mutating func answeringClosesThePromptAtOnce() throws {
         var agent = PaneAgent()
         apply(&agent, CapturedHook.askQuestion, at: 1)

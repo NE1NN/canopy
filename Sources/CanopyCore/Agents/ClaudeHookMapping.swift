@@ -71,7 +71,14 @@ public enum ClaudeHookMapping {
         }
         switch tool {
         case "AskUserQuestion":
-            return AgentPrompt(kind: .question, questions: TranscriptParser.Builder.questions(input))
+            // A picker read only in part would take answers meant for another question, so it cannot be answered.
+            let questions = TranscriptParser.Builder.questions(input)
+            let complete =
+                questions.count
+                == input["questions"].map { value -> Int in
+                    if case .array(let items) = value { items.count } else { -1 }
+                }
+            return AgentPrompt(kind: .question, questions: complete ? questions : nil)
         case "ExitPlanMode":
             return AgentPrompt(kind: .plan, tool: tool, detail: text("plan"))
         default:

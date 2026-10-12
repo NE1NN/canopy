@@ -169,6 +169,10 @@ public struct PaneAgent: Sendable, Equatable {
             return change(to: .none, via: "key", session: nil, at: at, now: at)
         case .waiting where !waitsOnQuestion && data.contains(0x0D):
             return change(to: .working, via: "key", session: nil, at: at, now: at)
+        case .waiting where !waitsOnQuestion:
+            // Any other key in a dialog, a digit or an arrow, makes what the phone saw out of date.
+            prompt = nil
+            return nil
         default:
             return nil
         }

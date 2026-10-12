@@ -6,13 +6,21 @@ import Foundation
 public final class PhonePanes {
     public nonisolated static let promptGone = ControlError(
         code: "prompt_gone", message: "That prompt is no longer open: it was answered, or the agent moved on.")
+    public nonisolated static let promptOpen = ControlError(
+        code: "prompt_open",
+        message: "The agent is showing a dialog, which a reply's Return would answer. Answer the dialog first.")
+    public nonisolated static let agentNotRunning = ControlError(
+        code: "agent_not_running",
+        message: "Claude Code is not running in this pane, so a reply would go to whatever is. Use the Terminal tab.")
+    /// How long a reply waits to be taken before it is forgotten.
+    static let deliveryWindow: TimeInterval = 10 * 60
     public nonisolated static let noTranscript = ControlError(
         code: "no_transcript",
         message: "This pane has no Claude Code conversation on this Mac. Its terminal shows what it does.")
 
     private let terminals: TerminalStore
     /// Replies not yet delivered, oldest first, by pane.
-    private var waitingReplies: [PaneID: [@Sendable () -> Void]] = [:]
+    private var waitingReplies: [PaneID: [(sent: Date, delivered: @Sendable () -> Void)]] = [:]
     private var observer: UUID?
 
     public init(terminals: TerminalStore) {
@@ -24,11 +32,20 @@ public final class PhonePanes {
         observer = terminals.observeAgents { [weak self] event in
             switch event {
             case .prompted(let pane):
-                guard let self, var waiting = self.waitingReplies[pane.id], !waiting.isEmpty else { return }
-                let delivered = waiting.removeFirst()
+                guard let self else { return }
+                let cutoff = Date().addingTimeInterval(-Self.deliveryWindow)
+                var waiting = (self.waitingReplies[pane.id] ?? []).filter { $0.sent > cutoff }
+                guard !waiting.isEmpty else {
+                    self.waitingReplies[pane.id] = nil
+                    return
+                }
+                let reply = waiting.removeFirst()
                 self.waitingReplies[pane.id] = waiting.isEmpty ? nil : waiting
-                delivered()
+                reply.delivered()
             case .closed(let pane):
+                self?.waitingReplies[pane.id] = nil
+            case .changed(let pane, let change) where change.to == .none:
+                // The agent stopped or exited, so a reply it never took will not be its next prompt.
                 self?.waitingReplies[pane.id] = nil
             case .changed:
                 break
@@ -43,10 +60,20 @@ public final class PhonePanes {
     }
 
     /// Pastes the reply and presses Return. `delivered` runs when the agent takes it, as its next prompt.
+    /// Pastes the reply into Claude Code and presses Return. `delivered` runs when the agent takes it, as its next
+    /// prompt. A reply is refused while a dialog is open, and Return is held back if one opens during the paste.
     public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
-        waitingReplies[pane.id, default: []].append(delivered)
-        await pane.paste(params.text)
+        guard pane.agent.session != nil else { throw Self.agentNotRunning }
+        guard !Self.showsDialog(pane) else { throw Self.promptOpen }
+        let returned = await pane.paste(params.text) { pane.agent.session != nil && !Self.showsDialog(pane) }
+        guard returned else { throw Self.promptOpen }
+        waitingReplies[pane.id, default: []].append((Date(), delivered))
+    }
+
+    /// Waiting on a dialog that keys answer, rather than at its own input line after a question.
+    private static func showsDialog(_ pane: Pane) -> Bool {
+        pane.agent.state == .waiting && !pane.agent.waitsOnQuestion
     }
 
     public func answer(_ params: PhoneAnswerParams) async throws {
