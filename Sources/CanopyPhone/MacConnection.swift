@@ -38,7 +38,7 @@ public final class MacConnection {
     private var loop: Task<Void, Never>?
     private var nap: Task<Void, Never>?
     private var failures = 0
-    private var clientWaiters: [UUID: CheckedContinuation<PhoneClient, any Error>] = [:]
+    private var clientWaiters: [UUID: CheckedContinuation<(client: PhoneClient, generation: Int), any Error>] = [:]
 
     public init(
         transport: any PhoneTransport, credentials: any CredentialStore, phoneName: String,
@@ -147,7 +147,13 @@ public final class MacConnection {
 
     /// The live connection, waiting for one when there is none yet.
     public func client() async throws -> PhoneClient {
-        if let client, status == .connected { return client }
+        try await client(after: 0).client
+    }
+
+    /// The first connection newer than `generation`, waiting for one. A stream whose connection dropped passes the
+    /// generation it had, so it never gets that connection back.
+    public func client(after generation: Int) async throws -> (client: PhoneClient, generation: Int) {
+        if let client, status == .connected, self.generation > generation { return (client, self.generation) }
         guard paired != nil else { throw PhoneTransportError.closed }
         let id = UUID()
         return try await withTaskCancellationHandler {
@@ -260,7 +266,7 @@ public final class MacConnection {
         status = .connected
         generation += 1
         for waiter in clientWaiters.values {
-            waiter.resume(returning: client)
+            waiter.resume(returning: (client, generation))
         }
         clientWaiters = [:]
         for await event in subscription.events where event.event == PhoneEvent.inbox {
