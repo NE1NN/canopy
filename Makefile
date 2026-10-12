@@ -1,7 +1,7 @@
 TEST_FLAGS := $(shell scripts/test-flags.sh)
-SOURCES := Package.swift Sources Tests
+SOURCES := Package.swift Sources Tests Apps
 
-.PHONY: build test lint format app release install signing-cert e2e clean
+.PHONY: build test lint format app release install signing-cert e2e ios ios-install ios-shots clean
 
 build:
 	swift build
@@ -38,6 +38,19 @@ e2e: app
 	scripts/e2e-phone.sh
 	scripts/e2e-phone-claude.sh
 	scripts/e2e-hosts.sh
+
+# The iPhone app, built for the Simulator.
+ios:
+	xcodebuild -project Apps/CanopyiOS/Canopy.xcodeproj -scheme Canopy -destination 'generic/platform=iOS Simulator' \
+		-derivedDataPath build/ios -quiet build
+
+# The iPhone app, signed with your Apple ID's team and installed on the iPhone plugged into this Mac.
+ios-install:
+	scripts/ios-install.sh $(TEAM)
+
+# Every screen of the iPhone app in the Simulator, in light and dark, against a dev build.
+ios-shots: app
+	scripts/ios-shots.sh
 
 clean:
 	rm -rf .build build

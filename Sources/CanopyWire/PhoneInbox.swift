@@ -135,6 +135,11 @@ public struct PhoneInbox: Codable, Sendable, Equatable {
         public var row: PhoneRow
         public var agent: PhoneAgent
 
+        public init(row: PhoneRow, agent: PhoneAgent) {
+            self.row = row
+            self.agent = agent
+        }
+
         public var id: String { agent.pane }
     }
 

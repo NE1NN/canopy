@@ -55,6 +55,10 @@ public final class AppLock {
     /// Hides the app while it is not in front, so the app switcher never shows an agent.
     public private(set) var isCovered = false
     public private(set) var isUnlocking = false
+    /// Whether there is anything to guard: an unpaired phone reaches no agent, so it never locks.
+    public var isGuarding = true {
+        didSet { if !isGuarding { isLocked = false } }
+    }
 
     private let defaults: UserDefaults
     private let authenticator: any Authenticator
@@ -75,7 +79,7 @@ public final class AppLock {
     public var canLock: Bool { authenticator.isAvailable }
 
     public func launch() {
-        isLocked = isEnabled
+        isLocked = isEnabled && isGuarding
     }
 
     public func phaseChanged(to phase: Phase) {
@@ -87,7 +91,7 @@ public final class AppLock {
             if awaySince == nil { awaySince = now() }
         case .active:
             isCovered = false
-            if let awaySince, isEnabled, now().timeIntervalSince(awaySince) >= Self.grace {
+            if let awaySince, isEnabled, isGuarding, now().timeIntervalSince(awaySince) >= Self.grace {
                 isLocked = true
             }
             awaySince = nil

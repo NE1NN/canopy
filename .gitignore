@@ -2,5 +2,6 @@
 build/
 .swiftpm/
 *.xcodeproj
+!Apps/CanopyiOS/Canopy.xcodeproj
 xcuserdata/
 .DS_Store
