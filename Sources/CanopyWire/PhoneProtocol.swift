@@ -79,11 +79,14 @@ public struct PhoneTranscriptUpdate: Codable, Sendable, Equatable {
     public var pane: String
     public var entries: [TranscriptEntry]
     public var reset: Bool
+    /// After a reset, the cursor for the new conversation's next older page.
+    public var older: Int?
 
-    public init(pane: String, entries: [TranscriptEntry], reset: Bool = false) {
+    public init(pane: String, entries: [TranscriptEntry], reset: Bool = false, older: Int? = nil) {
         self.pane = pane
         self.entries = entries
         self.reset = reset
+        self.older = older
     }
 }
 

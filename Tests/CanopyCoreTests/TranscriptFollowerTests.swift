@@ -69,6 +69,28 @@ struct TranscriptFollowerTests {
         #expect(updates.last?.entries.map(\.text) == ["prompt 6"])
     }
 
+    @Test func aGroupThePhoneHasThatChangesLaterIsSentAgain() async throws {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("t.jsonl"))
+        let read = #"{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/r/a.swift"}}"#
+        try Data(
+            ([Self.line("a1", "assistant", read), Self.line("a2", "assistant", Self.bash("t1", "make test"))]
+                .joined(separator: "\n") + "\n").utf8
+        ).write(to: url)
+        let updates = Updates()
+        let follower = TranscriptFollower(
+            pane: "p1", following: url.path, path: { url.path },
+            sent: try TranscriptReader.page(of: url, before: nil, limit: 50).entries, interval: .milliseconds(20)
+        ) { update in updates.all.withLock { $0.append(update) } }
+        follower.start()
+        defer { follower.stop() }
+        let failed =
+            #"{"type":"user","uuid":"u9","timestamp":"2026-10-12T03:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"no such file","is_error":true}]}}"#
+        try append(url, [failed])
+        #expect(await eventually { updates.last?.entries.map(\.id) == ["r1"] })
+        #expect(updates.last?.entries.first?.failed == true)
+    }
+
     @Test func aNewSessionStartsOver() async throws {
         let dir = try TempDir()
         let first = URL(fileURLWithPath: dir.sub("a.jsonl"))
@@ -87,6 +109,7 @@ struct TranscriptFollowerTests {
         path.withLock { $0 = second.path }
         #expect(await eventually { updates.last?.reset == true })
         #expect(updates.last?.entries.map(\.text) == ["second"])
+        #expect(updates.last?.older == nil)
     }
 
     @Test func nothingChangedSendsNothing() async throws {

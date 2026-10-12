@@ -51,9 +51,11 @@ public struct PhoneSession: Sendable {
     public let phone: PairedPhone
     let connection: PhoneConnection
 
-    /// Queues an event after everything already queued. It is dropped once the connection has closed.
-    public func send(_ event: PhoneEvent) {
-        connection.enqueue(event)
+    /// Queues an event after everything already queued. It is dropped once the connection has closed. With
+    /// `latestOnly`, for events that each carry the whole of something, such as the inbox or a screen, a newer one
+    /// replaces one still waiting, so a phone that stops reading holds one, not every one since.
+    public func send(_ event: PhoneEvent, latestOnly: Bool = false) {
+        connection.enqueue(event, latestOnly: latestOnly)
     }
 
     /// Runs `action` once the connection closes, or at once if it already has.
@@ -72,13 +74,13 @@ final class PhoneConnection: Sendable {
     private let queue: DispatchQueue
     private let buffer = Mutex(LineBuffer())
     private let state = Mutex(State())
-    /// Lines go through the gate one at a time, in order, so a hello sent with the next request counts for it.
+    /// Lines are handled one at a time, in order, each answered before the next starts, so a hello sent with the next
+    /// request counts for it, keys go in in the order sent, and an unsubscribe finds the stream it names.
     private let lastStep = Mutex<Task<Void, Never>?>(nil)
     /// The last write in line. Answers and events leave in the order they were queued.
     private let lastSend = Mutex<Task<Void, Never>?>(nil)
     private let closedHandler = Mutex<(@Sendable () -> Void)?>(nil)
-    /// Events queued but not yet written, by event and subscription. A newer one replaces the one waiting, so a phone
-    /// that stops reading holds one inbox, not every inbox since.
+    /// Latest-only events queued but not yet written, by event and subscription.
     private let waitingEvents = Mutex<[String: PhoneEvent]>([:])
 
     private struct State {
@@ -142,8 +144,12 @@ final class PhoneConnection: Sendable {
         if ranAlready { action() }
     }
 
-    func enqueue(_ event: PhoneEvent) {
+    func enqueue(_ event: PhoneEvent, latestOnly: Bool) {
         guard !isClosed else { return }
+        guard latestOnly else {
+            if let data = try? ControlCodec.encodeLine(event) { queueSend { await self.write(data) } }
+            return
+        }
         let key = event.event + "\u{0}" + event.subscription
         let alreadyQueued = waitingEvents.withLock { waiting in
             defer { waiting[key] = event }
@@ -239,12 +245,11 @@ final class PhoneConnection: Sendable {
         }
         let session = PhoneSession(phone: phone, connection: self)
         let handler = gate.handler
-        let reply = Task { await handler(request, session) }
-        queueSend {
-            let reply = await reply.value
+        let reply = await handler(request, session)
+        await queueSend {
             if let data = try? ControlCodec.encodeLine(reply.response) { await self.write(data) }
             await reply.after?()
-        }
+        }.value
     }
 
     private func authenticate(_ request: ControlRequest) async {
@@ -305,13 +310,16 @@ final class PhoneConnection: Sendable {
         queueSend { await self.write(data) }
     }
 
-    private func queueSend(_ work: @escaping @Sendable () async -> Void) {
+    @discardableResult
+    private func queueSend(_ work: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
         lastSend.withLock { last in
             let previous = last
-            last = Task {
+            let next = Task {
                 await previous?.value
                 await work()
             }
+            last = next
+            return next
         }
     }
 

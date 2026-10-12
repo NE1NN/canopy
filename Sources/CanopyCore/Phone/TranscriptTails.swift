@@ -13,7 +13,9 @@ public final class TranscriptTails {
             return nil
         }
         if let cached = cache[path], cached.size == size { return cached.entry }
-        let entry = try? TranscriptReader.page(of: URL(fileURLWithPath: path), before: nil, limit: 1).entries.last
+        let entry = try? TranscriptReader.page(
+            of: URL(fileURLWithPath: path), before: nil, limit: 1, maxSpan: 256 * 1024
+        ).entries.last
         cache[path] = (size, entry)
         return entry
     }

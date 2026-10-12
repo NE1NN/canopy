@@ -148,6 +148,38 @@ struct TranscriptReaderTests {
         #expect(page.bytesRead < 200_000)
     }
 
+    @Test func aPageStartingInsideALineTakesAllOfItsEntries() throws {
+        let dir = try TempDir()
+        var text = ""
+        for index in 0..<5 {
+            text +=
+                #"{"type":"assistant","uuid":"a\#(index)","timestamp":"2026-10-12T03:00:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"about to run \#(index)"},{"type":"tool_use","id":"t\#(index)","name":"Bash","input":{"command":"make \#(index)"}}]}}"#
+                + "\n"
+            text +=
+                #"{"type":"user","uuid":"u\#(index)","timestamp":"2026-10-12T03:00:01.000Z","message":{"role":"user","content":"next \#(index)"}}"#
+                + "\n"
+        }
+        let url = URL(fileURLWithPath: dir.sub("t.jsonl"))
+        try Data(text.utf8).write(to: url)
+        // Three newest would start with the tool call of a line whose text came first.
+        let newest = try TranscriptReader.page(of: url, before: nil, limit: 3)
+        #expect(newest.entries.map(\.id) == ["a3", "t3", "u3", "a4", "t4", "u4"].suffix(newest.entries.count))
+        #expect(newest.entries.first?.id == "a3" || newest.entries.first?.id == "a4")
+        let older = try TranscriptReader.page(of: url, before: newest.older, limit: 50)
+        #expect((older.entries + newest.entries).map(\.id) == (0..<5).flatMap { ["a\($0)", "t\($0)", "u\($0)"] })
+    }
+
+    @Test func idsDoNotDependOnWhereReadingStarts() throws {
+        let lines = try Data(contentsOf: TranscriptFixture.url("edges")).split(separator: 0x0A).map { Data($0) }
+        let all = TranscriptParser.entries(from: lines)
+        for start in 1..<lines.count {
+            let later = TranscriptParser.entries(from: Array(lines[start...]))
+            for entry in later where entry.kind != .tools {
+                #expect(all.contains { $0.id == entry.id && $0.text == entry.text })
+            }
+        }
+    }
+
     @Test func aMissingFileIsNoTranscript() throws {
         let dir = try TempDir()
         #expect(throws: TranscriptReader.Failure.missing) {

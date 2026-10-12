@@ -7,6 +7,8 @@ import Synchronization
 public final class TranscriptFollower: Sendable {
     /// How many of the newest entries are compared each time the file grows.
     static let window = 100
+    /// How far back each check reads, so a few huge tool results cannot make every check parse megabytes.
+    static let maxSpan = 1 << 20
 
     private let pane: String
     private let path: @Sendable () async -> String?
@@ -71,7 +73,8 @@ public final class TranscriptFollower: Sendable {
             return (moved, !moved && state.size == size && size != nil)
         }
         if unchanged { return true }
-        guard let page = try? TranscriptReader.page(of: url, before: nil, limit: Self.window) else {
+        guard let page = try? TranscriptReader.page(of: url, before: nil, limit: Self.window, maxSpan: Self.maxSpan)
+        else {
             state.withLock { $0.size = size }
             return true
         }
@@ -81,11 +84,16 @@ public final class TranscriptFollower: Sendable {
             if moved {
                 state.path = current
                 state.sent = Dictionary(page.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-                return PhoneTranscriptUpdate(pane: pane, entries: Array(page.entries.suffix(50)), reset: true)
+                let first = (try? TranscriptReader.page(of: url, before: nil, limit: 50)) ?? page
+                return PhoneTranscriptUpdate(pane: pane, entries: first.entries, reset: true, older: first.older)
             }
-            // Entries before the newest the phone has are older pages', which the phone asks for itself.
+            // Entries before the newest the phone has are older pages', which the phone asks for itself, except those it
+            // has that changed, such as a group whose call failed after a later group was sent.
             let newest = page.entries.lastIndex { state.sent[$0.id] != nil } ?? page.entries.startIndex
-            let changed = page.entries[newest...].filter { state.sent[$0.id] != $0 }
+            let changed = page.entries.enumerated().filter { index, entry in
+                let held = state.sent[entry.id]
+                return held != entry && (index >= newest || held != nil)
+            }.map(\.element)
             for entry in changed { state.sent[entry.id] = entry }
             return changed.isEmpty ? nil : PhoneTranscriptUpdate(pane: pane, entries: changed)
         }

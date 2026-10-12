@@ -324,6 +324,50 @@ struct PhoneListenerTests {
         #expect(last == .number(200))
     }
 
+    @Test func eventsThatAreNotLatestOnlyAllArriveInOrder() async throws {
+        let dir = try TempDir()
+        let handler: PhoneHandler = { request, session in
+            PhoneReply(.success(id: request.id, result: "first")) {
+                for number in 1...200 {
+                    session.send(
+                        PhoneEvent(
+                            event: PhoneEvent.transcript, subscription: request.id, data: .number(Double(number))))
+                }
+            }
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        try client.send(PhoneMethod.transcript, id: "t")
+        var seen: [JSONValue] = []
+        while seen.count < 200, let message = try await offPool({ try client.next(timeout: .seconds(5)) }) {
+            if let event = message.event { seen.append(event.data) }
+        }
+        #expect(seen == (1...200).map { .number(Double($0)) })
+    }
+
+    @Test func aConnectionsRequestsRunOneAfterAnother() async throws {
+        let dir = try TempDir()
+        let order = Shared<[String]>([])
+        let handler: PhoneHandler = { request, _ in
+            order.withLock { $0.append("start \(request.id)") }
+            if request.id == "slow" { try? await Task.sleep(for: .milliseconds(300)) }
+            order.withLock { $0.append("end \(request.id)") }
+            return PhoneReply(.success(id: request.id, result: .null))
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        var both = try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.keys, id: "slow"))
+        both.append(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.keys, id: "fast")))
+        try client.sendRaw(both)
+        _ = try await offPool { try client.next() }
+        _ = try await offPool { try client.next() }
+        #expect(order.withLock { $0 } == ["start slow", "end slow", "start fast", "end fast"])
+    }
+
     @Test func notJSONCloses() async throws {
         let dir = try TempDir()
         let harness = Harness(dir)

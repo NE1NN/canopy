@@ -88,6 +88,31 @@ struct PhoneServicePaneTests {
         #expect(try await offPool { try client.isQuiet(for: .milliseconds(800)) })
     }
 
+    @Test func aTranscriptNotWrittenYetIsEmptyAndStillFollowed() async throws {
+        let dir = try TempDir()
+        let setup = try await setup(dir)
+        defer { setup.harness.close() }
+        let url = URL(fileURLWithPath: dir.sub("later.jsonl"))
+        setup.pane.report(AgentReport(state: .working, session: "s1", transcriptPath: url.path))
+        let page = try await setup.call(PhoneMethod.transcript, PhoneTranscriptParams(pane: setup.id, follow: true))
+        #expect(try #require(page.result).decode(PhoneTranscriptResult.self).entries.isEmpty)
+        let line =
+            #"{"type":"user","uuid":"first","timestamp":"2026-10-12T03:10:00.000Z","message":{"role":"user","content":"hello"}}"#
+        try Data((line + "\n").utf8).write(to: url)
+        let event = try #require(try await setup.next()?.event)
+        #expect(try event.data.decode(PhoneTranscriptUpdate.self).entries.map(\.text) == ["hello"])
+    }
+
+    @Test func followingStartsFromTheNewestPage() async throws {
+        let dir = try TempDir()
+        let setup = try await setup(dir)
+        defer { setup.harness.close() }
+        setup.pane.report(AgentReport(state: .working, session: "s1", transcriptPath: try transcript(dir).path))
+        let response = try await setup.call(
+            PhoneMethod.transcript, PhoneTranscriptParams(pane: setup.id, before: 100, follow: true))
+        #expect(response.error?.code == "bad_params")
+    }
+
     @Test func aPaneWithoutAConversationSaysSo() async throws {
         let dir = try TempDir()
         let setup = try await setup(dir)

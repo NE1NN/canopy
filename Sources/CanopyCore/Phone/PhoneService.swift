@@ -124,13 +124,14 @@ public final class PhoneService: Sendable {
             guard params.limit > 0, params.limit <= 500 else {
                 throw ControlError(code: "bad_params", message: "limit must be from 1 to 500.")
             }
-            let url = try await panes.transcriptURL(params.pane)
-            let page: TranscriptReader.Page
-            do {
-                page = try TranscriptReader.page(of: url, before: params.before, limit: params.limit)
-            } catch TranscriptReader.Failure.missing {
-                throw PhonePanes.noTranscript
+            guard !(params.follow && params.before != nil) else {
+                throw ControlError(code: "bad_params", message: "Follow the newest page, without before.")
             }
+            let url = try await panes.transcriptURL(params.pane)
+            // A session that has not written its transcript yet has an empty conversation, which may still grow.
+            let page =
+                (try? TranscriptReader.page(of: url, before: params.before, limit: params.limit))
+                ?? TranscriptReader.Page(entries: [], older: nil, bytesRead: 0)
             let result = PhoneTranscriptResult(pane: params.pane, entries: page.entries, older: page.older)
             guard params.follow else { return try success(result) }
             try streams.reserve(on: session)
@@ -153,7 +154,8 @@ public final class PhoneService: Sendable {
             try streams.reserve(on: session)
             let watcher = await ScreenWatcher(panes: panes, pane: params.pane, after: first.lines) { screen in
                 guard let data = try? JSONValue.from(screen) else { return }
-                session.send(PhoneEvent(event: PhoneEvent.screen, subscription: request.id, data: data))
+                session.send(
+                    PhoneEvent(event: PhoneEvent.screen, subscription: request.id, data: data), latestOnly: true)
             }
             return PhoneReply(.success(id: request.id, result: try .from(first))) { [streams] in
                 streams.add(request.id, on: session) { Task { await watcher.stop() } }
@@ -214,7 +216,8 @@ public final class PhoneService: Sendable {
             let previous = subscriptions.withLock { $0[connection]?.hub }
             let id = await hub.subscribe(after: inbox, replacing: previous) { inbox in
                 guard let data = try? JSONValue.from(inbox) else { return }
-                session.send(PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: data))
+                session.send(
+                    PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: data), latestOnly: true)
             }
             subscriptions.withLock { $0[connection] = (request.id, id) }
             guard previous == nil else { return }

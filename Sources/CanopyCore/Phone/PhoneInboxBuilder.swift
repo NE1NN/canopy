@@ -62,21 +62,25 @@ public enum PhoneInboxBuilder {
         }
     }
 
+    private static func short(_ text: String) -> String {
+        TranscriptParser.ToolKind.short(text)
+    }
+
     /// One line on what the agent does or wants: its prompt, what it waits on in the background, or its conversation's
     /// last entry.
     static func lastLine(_ agent: PaneAgent, tail: TranscriptEntry?) -> String? {
         if let prompt = agent.prompt {
             switch prompt.kind {
             case .permission where prompt.tool == "Bash":
-                return "Wants to run \(prompt.detail ?? "a command")"
+                return "Wants to run \(short(prompt.detail ?? "a command"))"
             case .permission:
-                return "Wants to use \(prompt.tool ?? "a tool")" + (prompt.detail.map { ": \($0)" } ?? "")
+                return "Wants to use \(prompt.tool ?? "a tool")" + (prompt.detail.map { ": \(short($0))" } ?? "")
             case .question:
-                return "Asks: \(prompt.questions?.first?.question ?? "a question")"
+                return "Asks: \(short(prompt.questions?.first?.question ?? "a question"))"
             case .plan:
                 return "Has a plan ready"
             case .reply:
-                return "Asks: \(prompt.detail ?? "a question")"
+                return "Asks: \(short(prompt.detail ?? "a question"))"
             }
         }
         if agent.state == .background, !agent.backgroundTasks.isEmpty {
@@ -85,11 +89,12 @@ public enum PhoneInboxBuilder {
         guard let tail else { return nil }
         switch tail.kind {
         case .text:
-            return tail.text.split(whereSeparator: \.isNewline).last { !$0.allSatisfy(\.isWhitespace) }.map(String.init)
+            return tail.text.split(whereSeparator: \.isNewline).last { !$0.allSatisfy(\.isWhitespace) }
+                .map { short(String($0)) }
         case .prompt:
-            return "You: " + (tail.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? tail.text)
+            return "You: " + short(tail.text)
         case .question:
-            return "Asked: \(tail.text)"
+            return "Asked: \(short(tail.text))"
         case .plan:
             return "Made a plan"
         case .tools, .notice:

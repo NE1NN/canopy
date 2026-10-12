@@ -133,6 +133,8 @@ public enum TranscriptParser {
         var lines: [Int] = []
         /// The line being added.
         var line = 0
+        /// Entries the line being added has made so far, which names a second text entry from the same line.
+        private var entriesInRecord = 0
         /// The tool calls in the last entry, when it is a `.tools` entry.
         private var group: (kind: ToolKind, calls: [(name: String, input: [String: JSONValue], id: String)])?
 
@@ -141,6 +143,7 @@ public enum TranscriptParser {
         }
 
         mutating func add(_ record: Record) {
+            entriesInRecord = 0
             if record.role == "user" {
                 addUser(record)
             } else {
@@ -225,7 +228,7 @@ public enum TranscriptParser {
             let text = texts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
             texts = []
             guard !text.isEmpty else { return }
-            let id = entries.contains { $0.id == record.id } ? record.id + "#\(entries.count)" : record.id
+            let id = entriesInRecord == 0 ? record.id : record.id + "#\(entriesInRecord)"
             append(TranscriptEntry(id: id, kind: .text, text: text, at: record.at))
         }
 
@@ -278,6 +281,7 @@ public enum TranscriptParser {
         }
 
         private mutating func append(_ entry: TranscriptEntry) {
+            entriesInRecord += 1
             entries.append(entry)
             lines.append(line)
             if entry.kind != .tools { group = nil }

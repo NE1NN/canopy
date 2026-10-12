@@ -20,12 +20,12 @@ final class PhoneStreams: Sendable {
 
     func add(_ id: String, on session: PhoneSession, cancel: @escaping @Sendable () -> Void) {
         let connection = ObjectIdentifier(session.connection)
-        let first = streams.withLock { streams in
+        let (first, replaced) = streams.withLock { streams in
             let first = streams[connection] == nil
-            streams[connection, default: [:]][id]?()
-            streams[connection, default: [:]][id] = cancel
-            return first
+            let replaced = streams[connection, default: [:]].updateValue(cancel, forKey: id)
+            return (first, replaced)
         }
+        replaced?()
         guard first else { return }
         session.onClose { [weak self] in
             let all = self?.streams.withLock { $0.removeValue(forKey: connection) } ?? [:]

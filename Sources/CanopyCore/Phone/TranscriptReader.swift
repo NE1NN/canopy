@@ -13,15 +13,16 @@ public enum TranscriptReader {
         /// Where the next older page ends, or nil at the start of the file.
         public var older: Int?
         /// How much of the file this page read, for tests.
-        public var bytesRead: Int
+        var bytesRead: Int
     }
 
     static let firstRead = 64 * 1024
     /// After the page's last line, how far to look for the results of its last calls.
     static let resultsWindow = 256 * 1024
 
-    /// The `limit` newest entries ending at byte `before`, or at the last complete line.
-    public static func page(of url: URL, before: Int?, limit: Int) throws -> Page {
+    /// The `limit` newest entries ending at byte `before`, or at the last complete line. With `maxSpan`, it reads no
+    /// further back than that many bytes, and returns what they hold.
+    public static func page(of url: URL, before: Int?, limit: Int, maxSpan: Int? = nil) throws -> Page {
         guard let handle = try? FileHandle(forReadingFrom: url) else { throw Failure.missing }
         defer { try? handle.close() }
         let size = Int(try handle.seekToEnd())
@@ -33,7 +34,7 @@ public enum TranscriptReader {
             bytesRead += tail.count
             guard let lastNewline = tail.lastIndex(of: 0x0A) else {
                 return end > firstRead
-                    ? try page(of: url, before: end - tail.count, limit: limit)
+                    ? try page(of: url, before: end - tail.count, limit: limit, maxSpan: maxSpan)
                     : Page(entries: [], older: nil, bytesRead: bytesRead)
             }
             end = end - tail.count + (lastNewline - tail.startIndex) + 1
@@ -49,10 +50,14 @@ public enum TranscriptReader {
             bytesRead += chunk.count
             let lines = completeLines(chunk, dropFirst: start > 0)
             let located = TranscriptParser.located(from: lines.map(\.line), following: followingLines)
-            if located.count > limit || start == 0 {
-                let kept = located.suffix(limit)
+            if located.count > limit || start == 0 || maxSpan.map({ span >= $0 }) == true {
+                var kept = located.suffix(limit)
                 guard let first = kept.first else {
-                    return Page(entries: [], older: nil, bytesRead: bytesRead)
+                    return Page(entries: [], older: start > 0 ? start : nil, bytesRead: bytesRead)
+                }
+                // A line can hold several entries, and a page starts at a line, so it takes all of its first line's.
+                if let lineStart = located.firstIndex(where: { $0.line == first.line }) {
+                    kept = located[lineStart...]
                 }
                 let older = start + lines[first.line].offset
                 return Page(entries: kept.map(\.entry), older: older > 0 ? older : nil, bytesRead: bytesRead)
