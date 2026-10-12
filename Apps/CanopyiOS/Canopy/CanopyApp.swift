@@ -28,14 +28,15 @@ struct CanopyApp: App {
     @MainActor
     private static func makeApp() -> PhoneApp {
         #if DEBUG
-            // The screen tour starts each run unpaired, on settings of its own, and says how Face ID answers.
+            // The screen tour starts each run unpaired, on settings of its own, with a stand-in Face ID, and locks as soon
+            // as it comes back, so it can check the lock without waiting 5 minutes.
             let arguments = ProcessInfo.processInfo.arguments
             if arguments.contains("-ScreenTour") {
                 let defaults = UserDefaults(suiteName: "ScreenTour")!
                 if arguments.contains("-ScreenTourReset") { defaults.removePersistentDomain(forName: "ScreenTour") }
                 return PhoneApp(
                     credentials: TourCredentialStore(defaults: defaults), defaults: defaults,
-                    authenticator: TourAuthenticator(), phoneName: "iPhone")
+                    authenticator: TourAuthenticator(), lockGrace: 0, phoneName: "iPhone")
             }
         #endif
         return PhoneApp(phoneName: UIDevice.current.name)

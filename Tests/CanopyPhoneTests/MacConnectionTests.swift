@@ -218,3 +218,40 @@ struct MacConnectionTests {
         #expect(await eventually { mac.openLinks.isEmpty })
     }
 }
+
+@MainActor
+struct MacConnectionPairingAgainTests {
+    let mac = FakeMac()
+
+    @Test func aFailedPairingWhilePairedKeepsTheConnection() async throws {
+        let connection = try await connected(to: mac)
+        let link = PairingLink(
+            host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: FakeMac.address)
+        await #expect(throws: PhoneProblem.self) { try await connection.pair(link) }
+        #expect(connection.status == .connected)
+        #expect(connection.paired?.token == "token-iPhone")
+        #expect(mac.openLinks.count == 1)
+    }
+
+    @Test func pairingAgainReplacesTheConnectionWithOneLoopOnly() async throws {
+        let connection = try await connected(to: mac)
+        // The scene comes back while the pairing waits, which must not start a second loop.
+        connection.foreground()
+        try await connection.pair(mac.link)
+        #expect(await eventually { connection.status == .connected && connection.paired?.token != "token-iPhone" })
+        #expect(await eventually { mac.openLinks.count == 1 })
+        mac.dropAll()
+        #expect(await eventually { mac.openLinks.count == 1 && connection.status == .connected })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(mac.openLinks.count == 1)
+    }
+
+    @Test func waitingForAClientEndsWhenThePhoneIsUnpaired() async throws {
+        let connection = try await connected(to: mac)
+        let waiting = Task { try await connection.client(after: connection.generation) }
+        try await Task.sleep(for: .milliseconds(20))
+        connection.unpair()
+        await #expect(throws: MacConnection.NotPaired.self) { try await waiting.value }
+        await #expect(throws: MacConnection.NotPaired.self) { try await connection.client() }
+    }
+}

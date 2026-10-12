@@ -41,10 +41,12 @@ public final class AppLock {
         case active, inactive, background
     }
 
-    static let grace: TimeInterval = 5 * 60
+    /// How long the app may be away before it locks.
+    public static let standardGrace: TimeInterval = 5 * 60
+    private let grace: TimeInterval
     private static let enabledKey = "lockEnabled"
 
-    public var isEnabled: Bool {
+    public private(set) var isEnabled: Bool {
         didSet {
             defaults.set(isEnabled, forKey: Self.enabledKey)
             if !isEnabled { isLocked = false }
@@ -67,9 +69,10 @@ public final class AppLock {
 
     public init(
         defaults: UserDefaults = .standard, authenticator: any Authenticator = LocalAuthenticator(),
-        now: @escaping @Sendable () -> Date = Date.init
+        grace: TimeInterval = AppLock.standardGrace, now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.defaults = defaults
+        self.grace = grace
         self.authenticator = authenticator
         self.now = now
         isEnabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
@@ -91,11 +94,20 @@ public final class AppLock {
             if awaySince == nil { awaySince = now() }
         case .active:
             isCovered = false
-            if let awaySince, isEnabled, isGuarding, now().timeIntervalSince(awaySince) >= Self.grace {
+            if let awaySince, isEnabled, isGuarding, now().timeIntervalSince(awaySince) >= grace {
                 isLocked = true
             }
             awaySince = nil
         }
+    }
+
+    /// Turning the lock off needs Face ID first, so whoever holds an unlocked phone cannot switch it off for later.
+    public func setEnabled(_ enabled: Bool) async {
+        guard enabled != isEnabled else { return }
+        if !enabled, authenticator.isAvailable {
+            guard await authenticator.authenticate(reason: "Turn off the lock for Canopy.") == .success else { return }
+        }
+        isEnabled = enabled
     }
 
     public func unlock() async {

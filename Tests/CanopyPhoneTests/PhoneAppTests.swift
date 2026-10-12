@@ -37,6 +37,26 @@ struct PairingModelTests {
         #expect(pairing.problem?.title == "Can't reach \(FakeMac.host).")
     }
 
+    @Test func aCodeThatFailedIsNotTriedAgainEachTimeTheCameraSeesIt() async throws {
+        let pairing = PairingModel(connection: connection())
+        let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
+        await pairing.pair(used.url, scanned: true)
+        await pairing.pair(used.url, scanned: true)
+        #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 1)
+        #expect(pairing.problem?.title == "That code expired or was already used.")
+        // A new code, or the same one pasted, is tried.
+        await pairing.pair(mac.link.url, scanned: true)
+        #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 2)
+    }
+
+    @Test func aPastedCodeIsTriedAgainEvenAfterItFailed() async throws {
+        let pairing = PairingModel(connection: connection())
+        let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
+        await pairing.pair(used.url, scanned: true)
+        await pairing.pair(text: used.url.absoluteString)
+        #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 2)
+    }
+
     @Test func theSameCodeScannedTwiceWhilePairingPairsOnce() async throws {
         let connection = connection()
         let pairing = PairingModel(connection: connection)
@@ -73,6 +93,19 @@ struct PhoneAppTests {
         app.open(mac.link.url)
         #expect(await eventually { app.connection.status == .connected })
         app.open(URL(string: "https://example.com")!)
+    }
+
+    @Test func aFailedLinkWhilePairedKeepsTheConnectionAndSaysWhy() async throws {
+        let app = app(credentials: MemoryCredentialStore(mac.paired()))
+        app.launch()
+        #expect(await eventually { app.connection.status == .connected })
+        let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
+        app.open(used.url)
+        #expect(await eventually { app.pairing.problem?.title == "That code expired or was already used." })
+        #expect(app.connection.status == .connected)
+        #expect(app.connection.paired?.token == "token-iPhone")
+        app.pairing.dismissProblem()
+        #expect(app.pairing.problem == nil)
     }
 
     @Test func goingAwayClosesTheConnectionAndComingBackOpensIt() async throws {

@@ -18,34 +18,47 @@
 ## Global Constraints
 
 - Swift 6 language mode with strict concurrency, no warnings, in the package and in the Xcode project (`SWIFT_TREAT_WARNINGS_AS_ERRORS`).
-- `CanopyWire` imports only Foundation; `CanopyPhone` imports only Foundation, Network, Observation, Security, and LocalAuthentication, so it builds and tests on macOS.
+- `CanopyWire` imports only Foundation; `CanopyPhone` imports only Foundation, Network, Observation, Security, Synchronization, and LocalAuthentication, so it builds and tests on macOS.
 - Bundle ID `com.ne1nn.Canopy.Phone`, iOS 18 and later, iPhone only.
-- Free signing keeps working: no push entitlement, no capability that needs a paid account. `phone.push` stays reserved for milestone 4.
+- Free signing keeps working: no push entitlement, no capability that needs a paid account.
+  `phone.push` stays reserved for milestone 4.
 - The app speaks protocol 1 exactly as the Mac serves it; it reads states, kinds, and fields it does not know the way `CanopyWire` already does.
 - Light and dark follow the system, with the mockup's colors: the accent for working, yellow for waiting, green for done, a green ring for background.
-- Markdown: one sentence per line, no em dashes. Conventional commits, no trailers.
+- Markdown: one sentence per line, no em dashes.
+  Conventional commits, no trailers.
 
 ## What the Mac serves
 
 Milestones 1 and 2 built the Mac side; nothing in it changes here.
 
 - Newline-delimited JSON over TCP; `PhoneMessage(line:)` tells responses from events.
-- `phone.pair {code, name}` answers `{token, phone, mac}` and does not authenticate; `phone.hello {token}` must follow within 10 s and answers `{mac, version, phone}`. Errors: `unpaired`, `bad_pairing_code`, `not_authenticated`.
+- `phone.pair {code, name}` answers `{token, phone, mac}` and does not authenticate; `phone.hello {token}` must follow within 10 s and answers `{mac, version, phone}`.
+  Errors: `unpaired`, `bad_pairing_code`, `not_authenticated`.
 - `phone.subscribe` answers the `PhoneInbox`, then `phone.inbox` events carry the whole inbox again.
 - `phone.rows` answers `PhoneRowsResult`.
-- `phone.transcript {pane, before?, limit, follow}` answers `{pane, entries, older}`; following sends `phone.transcript` events with `PhoneTranscriptUpdate {entries, reset, older}`. Errors: `no_transcript`, `pane_not_found`.
-- `phone.reply {pane, text}` answers `{reply}`, and `phone.delivered` follows with the reply's request ID as its subscription. Errors: `prompt_open`, `agent_not_running`.
+- `phone.transcript {pane, before?, limit, follow}` answers `{pane, entries, older}`; following sends `phone.transcript` events with `PhoneTranscriptUpdate {entries, reset, older}`.
+  Errors: `no_transcript`, `pane_not_found`.
+- `phone.reply {pane, text}` answers `{reply}`, and `phone.delivered` follows with the reply's request ID as its subscription.
+  Errors: `prompt_open`, `agent_not_running`.
 - `phone.answer {pane, prompt, answer}`; `prompt_gone` when the prompt moved on.
-- `phone.screen {pane}` answers a `PhoneScreen` with scrollback, then `phone.screen` events with the visible lines. `phone.keys {pane, text}`. `phone.seen {pane}`. `phone.unsubscribe {subscription}`.
+- `phone.screen {pane}` answers a `PhoneScreen` with scrollback, then `phone.screen` events with the visible lines.
+  `phone.keys {pane, text}`.
+  `phone.seen {pane}`.
+  `phone.unsubscribe {subscription}`.
 - A connection's requests run one at a time in order, and it may hold 16 conversation and screen streams.
 
 ## Review Focus
 
-1. A connection that drops while a conversation or terminal is open must come back by itself, with the conversation's entries kept and nothing shown twice. Pinned by `aConversationFollowsAgainAfterTheMacComesBack` and `aTerminalWatchesAgainAfterTheMacComesBack`.
-2. An event that arrives before the code waiting for it is ready, as a stream's first event right behind its response, must not be lost. Pinned by `eventsRightBehindTheResponseAreKept`.
-3. Keys typed fast in the Terminal tab must reach the pane in the order typed, even while an earlier `phone.keys` is still on its way. Pinned by `keysGoInTheOrderTyped`.
-4. A reply the Mac refuses, or that never reaches it because the connection dropped, must stay in the box with the reason, never vanish. Pinned by `aReplyThatFailsStaysInTheBox` and `aReplyCutOffByADropStaysInTheBox`.
-5. A Mac that removed the phone must send it back to Pairing once, with its token gone from the Keychain, and never loop reconnecting. Pinned by `anUnpairedPhoneGoesBackToPairingAndStopsTrying`.
+1. A connection that drops while a conversation or terminal is open must come back by itself, with the conversation's entries kept and nothing shown twice.
+   Pinned by `aConversationFollowsAgainAfterTheMacComesBack` and `aTerminalWatchesAgainAfterTheMacComesBack`.
+2. An event that arrives before the code waiting for it is ready, as a stream's first event right behind its response, must not be lost.
+   Pinned by `eventsRightBehindTheResponseAreKept`.
+3. Keys typed fast in the Terminal tab must reach the pane in the order typed, even while an earlier `phone.keys` is still on its way.
+   Pinned by `keysGoInTheOrderTyped`.
+4. A reply the Mac refuses, or that never reaches it because the connection dropped, must stay in the box with the reason, never vanish.
+   Pinned by `aReplyThatFailsStaysInTheBox` and `aReplyCutOffByADropStaysInTheBox`.
+5. A Mac that removed the phone must send it back to Pairing once, with its token gone from the Keychain, and never loop reconnecting.
+   Pinned by `anUnpairedPhoneGoesBackToPairingAndStopsTrying`.
 
 ## File Structure
 
@@ -68,12 +81,17 @@ New:
 | `Sources/CanopyPhone/StyledText.swift` | SGR escapes into styled runs |
 | `Sources/CanopyPhone/AppLock.swift` | Face ID after 5 minutes away |
 | `Sources/CanopyPhone/SettingsModel.swift` | the paired Mac, the lock, unpairing |
+| `Sources/CanopyPhone/PairingModel.swift` | a scanned, pasted, or opened link, traded for a token |
+| `Sources/CanopyPhone/PhoneApp.swift` | the models the screens share, and the app coming and going |
+| `Sources/CanopyPhone/Observing.swift` | calling back when what a model reads changes |
 | `Tests/CanopyPhoneTests/FakeMac.swift` | a `PhoneTransport` whose Mac a test scripts |
 | `Tests/CanopyPhoneTests/*Tests.swift` | one file per model, plus the client and the TCP transport |
 | `Apps/CanopyiOS/Canopy.xcodeproj` | the app and its UI tests, with a shared scheme |
 | `Apps/CanopyiOS/Canopy/*.swift` | the views |
 | `Apps/CanopyiOS/CanopyUITests/ScreenTour.swift` | every screen against a dev build, with screenshots |
 | `scripts/phone-fixture.sh` | a dev build with agents in every state and a pairing link |
+| `scripts/fake-claude.py` | a stand-in Claude Code: Claude Code's transcript format, `canopy agent-hook`, and answers to keys |
+| `scripts/ios-install.sh` | the app signed with the author's team, installed with `xcrun devicectl` |
 | `scripts/ios-shots.sh`, `scripts/make-app-icon.swift` | the tour in light and dark, and the icon |
 
 Modified: `Package.swift` (the `CanopyPhone` library and its tests), `Makefile` (`ios`, `ios-install`, `ios-shots`, lint and format over `Apps`), `.gitignore` (the checked-in project), `.github/workflows/ci.yml` (`make ios`), the spec.
@@ -122,7 +140,7 @@ Modified: `Package.swift` (the `CanopyPhone` library and its tests), `Makefile` 
 
 ### Task 6: The lock and settings
 
-**Interfaces:** `protocol Authenticator: Sendable { func authenticate(reason: String) async -> AuthResult }`, `AuthResult.success | .failed | .unavailable`; `LocalAuthenticator`; `@MainActor @Observable AppLock(defaults:authenticator:now:)` with `isEnabled`, `isLocked`, `isCovered`, `launch()`, `wentAway()`, `cameBack()`, `unlock()`; `@MainActor @Observable SettingsModel(connection:lock:)` with `mac`, `address`, `phone`, `version`, `status`, `unpair()`.
+**Interfaces:** `protocol Authenticator: Sendable { func authenticate(reason: String) async -> AuthResult; var isAvailable: Bool }`, `AuthResult.success | .failed | .unavailable`; `LocalAuthenticator`; `@MainActor @Observable AppLock(defaults:authenticator:now:)` with `isEnabled`, `isLocked`, `isCovered`, `isGuarding`, `canLock`, `launch()`, `phaseChanged(to: .active | .inactive | .background)`, `unlock()`; `@MainActor @Observable SettingsModel(connection:)` with `mac`, `host`, `address`, `phone`, `version`, `statusText`, `removeHint`, `unpair()`.
 
 **Tests:** locked at launch when on; back within 5 minutes needs nothing, after 5 minutes needs Face ID; covered while away either way, so the app switcher never shows an agent; a failed Face ID stays locked; a phone with no passcode cannot lock and opens; off means never locked; unpairing forgets the token, closes the connection, and returns to Pairing.
 
@@ -142,7 +160,11 @@ The views follow the mockup's sizes: 28 pt bold titles, 12 pt uppercase group la
 - `SettingsView`: the paired Mac, this phone, Face ID, and Unpair.
 - `LockView`, `Theme`, `AgentDotView`, and the icon from `scripts/make-app-icon.swift`.
 
+Two models join the package for the views: `PairingModel(connection:)` with `pair(text:)`, `pair(_ url:)`, `isPairing`, `problem`, `notice`, refusing what is not a pairing link and pairing once while the camera sees the code again and again; and `PhoneApp(transport:credentials:defaults:authenticator:phoneName:)` with `launch()`, `open(_ url:)`, `phaseChanged(to:)`, which closes the connection in the background and locks only while paired.
+Tests: a pasted link pairs; text that is not a link says so and connects nowhere; a failed pairing says why; the same code twice pairs once; an unpaired app never locks; the background closes the connection and the foreground opens it.
+
 `make ios` builds it for the Simulator; `make ios-install` builds it signed for a device with `TEAM=<team id>` and installs it with `xcrun devicectl`.
+DEBUG builds take `-ScreenTour`, which starts on settings of its own with a stand-in Face ID, for the screen tour; release builds have no such switch.
 `make lint` and `make format` cover `Apps`.
 CI runs `make ios`.
 
@@ -152,9 +174,10 @@ CI runs `make ios`.
 
 ### Task 8: Every screen in the Simulator
 
-`scripts/phone-fixture.sh` opens a dev build listening on loopback with two repos and a plugin row, reports agents through `canopy agent-hook` the way Claude Code's hooks do, with transcripts written in Claude Code's format: a permission prompt, a question with options, a plan, done, working, background, and idle rows, and prints a pairing link.
+`scripts/phone-fixture.sh` opens a dev build listening on loopback with a repo and a ticket row from the stand-in ticket-manager, and runs `scripts/fake-claude.py` in each agent's pane: it writes Claude Code's transcript format and reports through `canopy agent-hook` as Claude Code's hooks do, for a permission prompt, a question with options, done, working, background, and an idle row, and answers a reply, a digit, Return, and Escape as Claude Code would.
 `ScreenTour` (XCUITest) opens the link, then walks Pairing, the inbox, Rows, a conversation with chips, an answered question, Terminal with the key bar, a reply, Settings, and the unreachable inbox once the script stops the Mac, saving a screenshot of each.
-`scripts/ios-shots.sh` runs the tour in light and dark on a booted iPhone with the status bar at 9:41, and checks on the Mac side, through `canopy log --type phone.call`, that the answers and reply the tour sent reached their panes.
+`scripts/ios-shots.sh` runs the tour in light and dark on a booted iPhone with the status bar at 9:41, carries out its requests to stop the Mac and start one that never paired, and checks on the Mac side, through `canopy log --type phone.call`, that the tour's answer, reply, and Allow each reached its pane.
+It runs xcodebuild with `-collect-test-diagnostics never`, since a failure otherwise takes a sysdiagnose of about ten minutes.
 
 **Check:** the shots, compared with the mockups one by one, in light and dark.
 
@@ -165,3 +188,39 @@ CI runs `make ios`.
 - `make lint`, `make build` (0 warnings), `make test` three times under load below the core count.
 - `make ios` (0 warnings) and `scripts/ios-shots.sh` passing.
 - `make e2e`.
+
+## After Review
+
+An independent opus review of `git diff origin/main...feat/iphone-app` found two critical and two major problems, all fixed with tests:
+
+1. Critical: a phone the Mac removed while a conversation or terminal was open froze.
+   Their stream loops asked for a client again at once, which threw without suspending, so the main actor spun and SwiftUI never got to show Pairing.
+   `MacConnection.client(after:)` now throws `NotPaired` once the phone has no Mac, and both loops end on it.
+   Tests: `aConversationOpenWhenTheMacForgetsThePhoneStops`, `aTerminalOpenWhenTheMacForgetsThePhoneStops`, `waitingForAClientEndsWhenThePhoneIsUnpaired`.
+2. Critical: the lock was an overlay on the root view, so the Settings sheet stayed above it, usable, and its switch could turn the lock off.
+   The lock and the cover now show in a window of their own above sheets and the keyboard, and turning the lock off asks for Face ID first.
+   Tests: `turningTheLockOffAsksForFaceIDFirst`, and the screen tour's lock over Settings, which leaves the app with Settings open, comes back, and checks the switch cannot be reached.
+3. A pairing link opened while paired stopped the connection before pairing, left it stopped when pairing failed, and could leave a second reconnect loop running.
+   Pairing now keeps the old connection until the new pairing works, and only then replaces it, and a failure while paired shows in the inbox.
+   Tests: `aFailedPairingWhilePairedKeepsTheConnection`, `pairingAgainReplacesTheConnectionWithOneLoopOnly`, `aFailedLinkWhilePairedKeepsTheConnectionAndSaysWhy`.
+4. A conversation or screen left before its first answer kept streaming on the Mac, so after 16 of them every conversation opened empty.
+   `PhoneClient` now unsubscribes a stream whose caller gave up, once the Mac answers, and a conversation that cannot be followed says why instead of "Nothing said yet."
+   Tests: `aStreamCancelledBeforeItsResponseIsUnsubscribedOnceItStarts`, `aCancelledStreamTheMacRefusedNeedsNoUnsubscribe`, `aConversationThatCannotOpenSaysWhy`.
+5. A code that failed was tried again with every camera frame, which could void every outstanding code after five.
+   The camera now waits for a new code; a paste or a link always tries.
+   Tests: `aCodeThatFailedIsNotTriedAgainEachTimeTheCameraSeesIt`, `aPastedCodeIsTriedAgainEvenAfterItFailed`.
+6. A failed older page left a spinner at the top of Chat for good; it now offers to try again.
+   Test: `aFailedOlderPageCanBeTriedAgain`.
+7. An older page asked for before a reset could join the new session; it is now dropped.
+   Test: `anOlderPageFromBeforeAResetIsDropped`.
+8. The terminal streamed while Chat showed, holding a second stream and up to four screens a second; it now streams only on its tab.
+9. Leaving a conversation and coming back added another set of observers each time; each start now ends the last one's.
+   Test: `startingAgainDoesNotDoubleTheChecks`.
+10. Nits: the tour's assertions say what failed instead of drifting line numbers, and the plan has one sentence per line.
+
+The tours in light and dark then turned up one more problem, in the fixture: `phone-fixture.sh stop` deleted the folder while the dev build was still quitting, which wrote its home back, so the next `stop` refused the folder and the next start failed.
+It now waits for the app to quit, and knows its folder by name and home.
+
+Left as is: `ConversationView`'s initializer builds its two models again each time SwiftUI rebuilds the destination, which `@State` then drops.
+They are two small objects with no work in their initializers, so holding them elsewhere would add a layer for nothing measurable.
+`SettingsView` builds its `SettingsModel` in `body`, which holds no state of its own.

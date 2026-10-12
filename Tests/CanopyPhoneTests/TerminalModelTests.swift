@@ -116,4 +116,14 @@ struct TerminalModelTests {
         let unsubscribe = try #require(await mac.request(PhoneMethod.unsubscribe))
         #expect(try unsubscribe.decodeParams(PhoneUnsubscribeParams.self).subscription == request.id)
     }
+
+    @Test func aTerminalOpenWhenTheMacForgetsThePhoneStops() async throws {
+        serveScreen()
+        let (model, connection) = try await model()
+        #expect(await eventually { model.lineCount == 4 })
+        mac.forget(phone: "iPhone")
+        mac.dropAll()
+        #expect(await eventually { connection.paired == nil })
+        #expect(await eventually { !model.isWatching })
+    }
 }

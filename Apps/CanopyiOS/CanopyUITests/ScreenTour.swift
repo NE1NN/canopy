@@ -23,7 +23,7 @@ final class ScreenTour: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-ScreenTour", "-ScreenTourReset"]
         app.launch()
-        XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 10), "step at line 26")
+        XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 10), "no Pairing at first")
         shot("pairing")
 
         // The link opens the app as the camera's scan would, through its URL scheme.
@@ -32,43 +32,44 @@ final class ScreenTour: XCTestCase {
         if springboard.buttons["Open"].waitForExistence(timeout: 5) { springboard.buttons["Open"].tap() }
         XCTAssert(
             app.staticTexts.matching(identifier: "connection").firstMatch.waitForExistence(timeout: 15),
-            "step at line 33")
-        XCTAssert(wait { self.app.staticTexts["connection"].label.contains("connected") }, "step at line 34")
-        XCTAssert(app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 10), "step at line 35")
+            "the link did not pair")
+        XCTAssert(wait { self.app.staticTexts["connection"].label.contains("connected") }, "never connected")
+        XCTAssert(app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 10), "main is not pinned")
         shot("inbox")
 
         app.tabBars.buttons["Rows"].tap()
         XCTAssert(
-            app.descendants(matching: .any)["row-fix/hand-checks"].waitForExistence(timeout: 10), "step at line 39")
+            app.descendants(matching: .any)["row-fix/hand-checks"].waitForExistence(timeout: 10), "Rows has no idle row"
+        )
         shot("rows")
         app.tabBars.buttons["Inbox"].tap()
 
         // A question with options, answered with a chip.
         open("item-feat/ios-companion")
-        XCTAssert(app.buttons["option-Tailscale"].waitForExistence(timeout: 10), "step at line 45")
-        XCTAssert(text("It needs a way in from outside your network.").waitForExistence(timeout: 10), "step at line 46")
+        XCTAssert(app.buttons["option-Tailscale"].waitForExistence(timeout: 10), "no option chips")
+        XCTAssert(text("It needs a way in from outside your network.").waitForExistence(timeout: 10), "no transcript")
         shot("conversation")
 
         app.buttons["Terminal"].tap()
-        XCTAssert(app.descendants(matching: .any)["terminal"].waitForExistence(timeout: 10), "step at line 50")
-        XCTAssert(text("Tailscale").waitForExistence(timeout: 10), "step at line 51")
+        XCTAssert(app.descendants(matching: .any)["terminal"].waitForExistence(timeout: 10), "no terminal")
+        XCTAssert(text("Tailscale").waitForExistence(timeout: 10), "the terminal shows no screen")
         shot("terminal")
         app.buttons["Keyboard"].tap()
-        XCTAssert(app.keyboards.firstMatch.waitForExistence(timeout: 5), "step at line 54")
+        XCTAssert(app.keyboards.firstMatch.waitForExistence(timeout: 5), "no keyboard for the terminal")
         shot("terminal-keyboard")
         app.buttons["Hide keyboard"].tap()
         app.buttons["Chat"].tap()
 
         app.buttons["option-Tailscale"].tap()
-        XCTAssert(text("Going with Tailscale.").waitForExistence(timeout: 15), "step at line 60")
-        XCTAssertFalse(app.buttons["option-Tailscale"].exists, "step at line 61")
+        XCTAssert(text("Going with Tailscale.").waitForExistence(timeout: 15), "the answer never reached the agent")
+        XCTAssertFalse(app.buttons["option-Tailscale"].exists, "the answered question still offers options")
 
         // A reply, Sent and then Delivered as the agent takes it.
         let reply = app.textViews["reply"].exists ? app.textViews["reply"] : app.textFields["reply"]
         reply.tap()
         reply.typeText("Use port 6974, and keep the token in the Keychain.")
         app.buttons["send"].tap()
-        XCTAssert(text("On it: Use port 6974").waitForExistence(timeout: 15), "step at line 68")
+        XCTAssert(text("On it: Use port 6974").waitForExistence(timeout: 15), "the reply never reached the agent")
         // Scrolling the conversation puts the keyboard away.
         let chat = app.scrollViews["chat"]
         XCTAssert(chat.exists, "the chat has no scroll view")
@@ -79,37 +80,51 @@ final class ScreenTour: XCTestCase {
 
         // Allow straight from the list.
         let allow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'allow-'")).firstMatch
-        XCTAssert(allow.waitForExistence(timeout: 10), "step at line 76")
+        XCTAssert(allow.waitForExistence(timeout: 10), "no Allow in the inbox")
         allow.tap()
-        XCTAssert(wait(timeout: 20) { !allow.exists }, "step at line 78")
+        XCTAssert(wait(timeout: 20) { !allow.exists }, "Allow stayed")
         XCTAssert(
-            wait(timeout: 20) { self.text("Deployed. The usage page shows fresh totals now.").exists }, "no Deployed")
+            wait(timeout: 20) { self.text("Deployed. The usage page shows fresh totals now.").exists },
+            "the allowed command never ran")
         shot("inbox-answered")
 
         app.buttons["settings"].tap()
-        XCTAssert(app.navigationBars["Settings"].waitForExistence(timeout: 5), "step at line 85")
+        XCTAssert(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Settings did not open")
         shot("settings")
+        // Away and back with Settings open: the lock covers the sheet too, so its switch cannot turn the lock off.
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssert(app.staticTexts["Canopy is locked"].waitForExistence(timeout: 10), "no lock over Settings")
+        XCTAssertFalse(app.switches["lock-toggle"].isHittable, "the lock switch is usable under the lock")
+        shot("locked-over-settings")
+        app.buttons["unlock"].tap()
+        XCTAssert(wait { !self.app.staticTexts["Canopy is locked"].exists }, "Unlock did not open the app")
         app.navigationBars["Settings"].buttons["Done"].tap()
 
         // A later launch is paired, so it opens locked.
         app.terminate()
         app.launchArguments = ["-ScreenTour"]
         app.launch()
-        XCTAssert(app.staticTexts["Canopy is locked"].waitForExistence(timeout: 10), "step at line 93")
+        XCTAssert(app.staticTexts["Canopy is locked"].waitForExistence(timeout: 10), "a paired launch is not locked")
         shot("locked")
         app.buttons["unlock"].tap()
-        XCTAssert(app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 15), "step at line 96")
+        XCTAssert(
+            app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 15),
+            "Unlock did not open the inbox")
 
         // The Mac goes away: the last inbox stays, greyed, with what to check.
         request("stop-mac", in: requests)
-        XCTAssert(app.descendants(matching: .any)["banner"].waitForExistence(timeout: 30), "step at line 100")
-        XCTAssert(wait { self.app.staticTexts["connection"].label.hasPrefix("As of") }, "step at line 101")
+        XCTAssert(
+            app.descendants(matching: .any)["banner"].waitForExistence(timeout: 30), "no banner once the Mac stopped")
+        XCTAssert(
+            wait { self.app.staticTexts["connection"].label.hasPrefix("As of") },
+            "the inbox does not say when it is from")
         shot("unreachable")
 
         // A Mac that no longer knows the phone sends it back to Pairing.
         request("restart-mac", in: requests)
-        XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 90), "step at line 106")
-        XCTAssert(text("no longer knows this iPhone").exists, "step at line 107")
+        XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 90), "an unpaired phone stayed")
+        XCTAssert(text("no longer knows this iPhone").exists, "Pairing does not say why")
         shot("unpaired")
     }
 

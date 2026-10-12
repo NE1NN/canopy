@@ -32,11 +32,13 @@ stop)
         # Disconnecting deletes this home's token from the Keychain.
         "$cli" ticket disconnect --force >/dev/null 2>&1 || true
         kill "$pid" 2>/dev/null || true
+        # The app writes to its home as it quits, so the folder goes only once it has.
+        for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
     fi
     if [[ -n "${tm_pid:-}" && "$(ps -p "$tm_pid" -o command= 2>/dev/null)" == *ticket-manager-stand-in.py* ]]; then
         kill "$tm_pid" 2>/dev/null || true
     fi
-    if [[ "$(basename "$work")" != cnphone.* || ! -d "$work/transcripts" ]]; then
+    if [[ "$(basename "$work")" != cnphone.* || ! -d "$work/home" ]]; then
         echo "not deleting $work: it does not look like a phone fixture folder" >&2
         exit 1
     fi

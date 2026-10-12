@@ -300,4 +300,100 @@ struct ConversationModelTests {
         let unsubscribe = try #require(await mac.request(PhoneMethod.unsubscribe))
         #expect(try unsubscribe.decodeParams(PhoneUnsubscribeParams.self).subscription == follow.id)
     }
+
+    @Test func aConversationOpenWhenTheMacForgetsThePhoneStops() async throws {
+        serveTranscript(newest: [Self.entry("a")])
+        let model = try await model()
+        #expect(await eventually { model.entries.count == 1 })
+        mac.forget(phone: "iPhone")
+        mac.dropAll()
+        #expect(await eventually { model.connection.paired == nil })
+        #expect(await eventually { !model.isFollowing })
+        #expect(model.entries.map(\.id) == ["a"])
+    }
+
+    @Test func aConversationThatCannotOpenSaysWhy() async throws {
+        mac.on(PhoneMethod.transcript) { _ in .error("too_many_streams") }
+        let model = try await model()
+        #expect(await eventually { model.chatNote == "Too many conversations are open. Close one and try again." })
+    }
+
+    @Test func aFailedOlderPageCanBeTriedAgain() async throws {
+        let fails = Mutex(true)
+        mac.on(PhoneMethod.transcript) { request in
+            let params = try? request.decodeParams(PhoneTranscriptParams.self)
+            if params?.before != nil {
+                if fails.withLock({ was in
+                    defer { was = false }; return was
+                }) {
+                    return .error("internal")
+                }
+                return .result(
+                    (try? .from(PhoneTranscriptResult(pane: "p3", entries: [Self.entry("a")], older: nil))) ?? .null)
+            }
+            return .result(
+                (try? .from(PhoneTranscriptResult(pane: "p3", entries: [Self.entry("b")], older: 500))) ?? .null)
+        }
+        let model = try await model()
+        #expect(await eventually { model.older == 500 })
+        await model.loadOlder()
+        #expect(model.olderFailed)
+        #expect(model.entries.map(\.id) == ["b"])
+        await model.loadOlder()
+        #expect(!model.olderFailed)
+        #expect(model.entries.map(\.id) == ["a", "b"])
+    }
+
+    @Test func anOlderPageFromBeforeAResetIsDropped() async throws {
+        let mac = self.mac
+        mac.on(PhoneMethod.transcript) { request in
+            let params = try? request.decodeParams(PhoneTranscriptParams.self)
+            if params?.before != nil {
+                // The pane moves to a new session while the older page is on its way.
+                let follow = mac.requests.first { ($0.params?.decodeIfFollow ?? false) }
+                if let follow {
+                    mac.emit(
+                        PhoneEvent.transcript, subscription: follow.id,
+                        PhoneTranscriptUpdate(pane: "p3", entries: [Self.entry("new")], reset: true, older: nil))
+                }
+                return .result(
+                    (try? .from(PhoneTranscriptResult(pane: "p3", entries: [Self.entry("old")], older: nil))) ?? .null)
+            }
+            return .result(
+                (try? .from(PhoneTranscriptResult(pane: "p3", entries: [Self.entry("b")], older: 500))) ?? .null)
+        }
+        let model = try await model()
+        #expect(await eventually { model.older == 500 })
+        await model.loadOlder()
+        #expect(await eventually { model.entries.map(\.id) == ["new"] })
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(model.entries.map(\.id) == ["new"])
+    }
+
+    @Test func startingAgainDoesNotDoubleTheChecks() async throws {
+        serveTranscript(newest: [Self.entry("a")])
+        let model = try await model()
+        #expect(await eventually { model.entries.count == 1 })
+        model.stop()
+        model.start()
+        model.stop()
+        model.start()
+        mac.setInbox(Self.inbox(nil))
+        _ = await eventually { probes() >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probes() == 1)
+    }
+
+    func probes() -> Int {
+        mac.requests.filter {
+            $0.method == PhoneMethod.transcript && (try? $0.decodeParams(PhoneTranscriptParams.self).limit) == 1
+        }.count
+    }
+}
+
+extension JSONValue {
+    /// Whether these are the params of a request that follows a conversation.
+    var decodeIfFollow: Bool? {
+        (try? decode(PhoneTranscriptParams.self))?.follow
+    }
 }

@@ -80,7 +80,7 @@ struct PairingView: View {
         case .allowed:
             QRScanner { code in
                 guard let url = URL(string: code) else { return }
-                Task { await model.pair(url) }
+                Task { await model.pair(url, scanned: true) }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)

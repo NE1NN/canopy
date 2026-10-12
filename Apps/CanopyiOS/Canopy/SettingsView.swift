@@ -8,7 +8,7 @@ struct SettingsView: View {
 
     var body: some View {
         let settings = SettingsModel(connection: app.connection)
-        @Bindable var lock = app.lock
+        let lock = app.lock
         NavigationStack {
             Form {
                 Section("Mac") {
@@ -30,9 +30,12 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("Lock with Face ID", isOn: $lock.isEnabled)
-                        .disabled(!lock.canLock)
-                        .accessibilityIdentifier("lock-toggle")
+                    Toggle(
+                        "Lock with Face ID",
+                        isOn: Binding(get: { lock.isEnabled }, set: { on in Task { await lock.setEnabled(on) } })
+                    )
+                    .disabled(!lock.canLock)
+                    .accessibilityIdentifier("lock-toggle")
                 } footer: {
                     Text(
                         lock.canLock

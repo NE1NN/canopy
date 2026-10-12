@@ -15,11 +15,11 @@ public final class PhoneApp {
     public init(
         transport: any PhoneTransport = TCPTransport(), credentials: any CredentialStore = KeychainCredentialStore(),
         defaults: UserDefaults = .standard, authenticator: any Authenticator = LocalAuthenticator(),
-        phoneName: String
+        lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String
     ) {
         connection = MacConnection(transport: transport, credentials: credentials, phoneName: phoneName)
         pins = PinStore(defaults: defaults)
-        lock = AppLock(defaults: defaults, authenticator: authenticator)
+        lock = AppLock(defaults: defaults, authenticator: authenticator, grace: lockGrace)
         inbox = InboxModel(connection: connection, pins: pins)
         rows = RowsModel(connection: connection)
         pairing = PairingModel(connection: connection)

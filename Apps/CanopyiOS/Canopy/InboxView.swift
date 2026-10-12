@@ -42,6 +42,12 @@ struct InboxView: View {
                     if model.isStale, case .unreachable(let problem) = app.connection.status {
                         Banner(problem: problem, tint: Theme.yellow, icon: "wifi.slash")
                     }
+                    // A pairing link opened while paired fails here, since Pairing is not on screen.
+                    if let problem = app.pairing.problem {
+                        Banner(problem: problem, tint: Theme.red, icon: "exclamationmark.circle.fill") {
+                            app.pairing.dismissProblem()
+                        }
+                    }
                     if let notice = model.notice {
                         Banner(problem: notice, tint: Theme.red, icon: "exclamationmark.circle.fill") {
                             model.dismissNotice()

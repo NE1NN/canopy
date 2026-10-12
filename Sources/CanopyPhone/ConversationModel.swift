@@ -45,7 +45,17 @@ public final class ConversationModel {
     public private(set) var lastAgent: PhoneAgent?
 
     private var isStarted = false
+    /// Counts starts, so the observers of an earlier start end rather than run next to the new ones.
+    private var starts = 0
+    /// Counts the times the conversation was replaced whole, so an older page asked for before cannot join the new one.
+    private var epoch = 0
+    /// Why the conversation could not be followed, other than the pane closing.
+    public private(set) var transcriptProblem: PhoneProblem?
+    /// The last older page failed; the next try goes on a tap.
+    public private(set) var olderFailed = false
     private var following: Task<Void, Never>?
+    /// Whether the stream's loop runs, which ends for good once the phone has no Mac.
+    private(set) var isFollowing = false
     private var subscription: (client: PhoneClient, id: String)?
     private var selectionsPrompt: String?
     private var seenSince: Double?
@@ -73,6 +83,7 @@ public final class ConversationModel {
         if !hasTranscript {
             return "No conversation to show. Chat reads Claude Code's transcript, and this pane has none."
         }
+        if let transcriptProblem, entries.isEmpty { return transcriptProblem.title }
         if hasLoaded, entries.isEmpty, pending == nil { return "Nothing said yet." }
         return nil
     }
@@ -84,7 +95,9 @@ public final class ConversationModel {
     public func start() {
         guard !isStarted else { return }
         isStarted = true
-        let active: @MainActor () -> Bool = { [weak self] in self?.isStarted == true }
+        starts += 1
+        let start = starts
+        let active: @MainActor () -> Bool = { [weak self] in self?.isStarted == true && self?.starts == start }
         observe({ [weak self] in self?.agent }, while: active) { [weak self] agent in self?.agentChanged(agent) }
         observe({ [weak self] in self?.hasTranscript ?? false }, while: active) { [weak self] has in
             if has { self?.follow() }
@@ -106,6 +119,8 @@ public final class ConversationModel {
     }
 
     private func run() async {
+        isFollowing = true
+        defer { isFollowing = false }
         var generation = 0
         while !Task.isCancelled, !paneGone {
             do {
@@ -121,12 +136,19 @@ public final class ConversationModel {
                 subscription = (connected.client, stream.subscription)
                 merge(stream.result)
                 hasLoaded = true
+                transcriptProblem = nil
                 for await event in stream.events {
                     if let update = try? event.data.decode(PhoneTranscriptUpdate.self) { apply(update) }
                 }
                 subscription = nil
+            } catch is MacConnection.NotPaired {
+                return
             } catch let error as ControlError {
-                if error.code == "pane_not_found" { closePane() }
+                if error.code == "pane_not_found" {
+                    closePane()
+                } else if error.code != "no_transcript" {
+                    transcriptProblem = connection.problem(error)
+                }
                 hasLoaded = true
                 return
             } catch {
@@ -150,6 +172,7 @@ public final class ConversationModel {
         else {
             entries = page.entries
             older = page.older
+            epoch += 1
             notePrompts()
             return
         }
@@ -161,6 +184,7 @@ public final class ConversationModel {
         if update.reset {
             entries = update.entries
             older = update.older
+            epoch += 1
         } else {
             for entry in update.entries {
                 if let index = entries.firstIndex(where: { $0.id == entry.id }) {
@@ -177,14 +201,19 @@ public final class ConversationModel {
         guard let older, !isLoadingOlder else { return }
         isLoadingOlder = true
         defer { isLoadingOlder = false }
+        let asked = epoch
         do {
             let page = try await connection.liveClient().call(
                 PhoneMethod.transcript, PhoneTranscriptParams(pane: pane, before: older, limit: 50),
                 as: PhoneTranscriptResult.self)
+            olderFailed = false
+            guard epoch == asked else { return }
             let known = Set(entries.map(\.id))
             entries = page.entries.filter { !known.contains($0.id) } + entries
             self.older = page.older
-        } catch {}
+        } catch {
+            olderFailed = true
+        }
     }
 
     // MARK: The inbox

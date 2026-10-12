@@ -10,6 +10,8 @@ public final class RowsModel {
     public private(set) var isLoading = false
     public private(set) var problem: PhoneProblem?
     private var isStarted = false
+    /// Counts starts, so the observer of an earlier start ends rather than runs next to the new one.
+    private var starts = 0
 
     public init(connection: MacConnection) {
         self.connection = connection
@@ -34,11 +36,13 @@ public final class RowsModel {
     public func start() {
         guard !isStarted else { return }
         isStarted = true
+        starts += 1
+        let start = starts
         observe(
             { [connection] in
                 RowsKey(generation: connection.generation, paths: Set(connection.inbox?.rows.map(\.path) ?? []))
             },
-            while: { [weak self] in self?.isStarted == true }
+            while: { [weak self] in self?.isStarted == true && self?.starts == start }
         ) { [weak self] key in
             guard let self, connection.isConnected, key.paths != self.paths || key.generation != fetchedGeneration
             else { return }

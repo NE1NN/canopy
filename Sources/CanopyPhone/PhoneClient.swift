@@ -15,6 +15,8 @@ public actor PhoneClient {
     private var waiting: [String: CheckedContinuation<JSONValue, any Error>] = [:]
     private var streams: [String: AsyncStream<PhoneEvent>.Continuation] = [:]
     private var closedWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Streams whose requests went out but whose callers stopped waiting, which the Mac would otherwise keep sending.
+    private var abandoned: Set<String> = []
     /// Lines go out through one writer, in the order they were sent, so keys never pass each other.
     private let outgoing: AsyncStream<Data>.Continuation
     public private(set) var isClosed = false
@@ -87,6 +89,7 @@ public actor PhoneClient {
             return PhoneStream(result: result, subscription: request.id, events: events)
         } catch {
             forget(request.id)
+            if error is CancellationError { abandoned.insert(request.id) }
             throw error
         }
     }
@@ -133,6 +136,10 @@ public actor PhoneClient {
         // A line this phone cannot read, as from a newer Mac, is skipped rather than ending the connection.
         switch try? PhoneMessage(line: line) {
         case .response(let response):
+            if abandoned.remove(response.id) != nil {
+                if response.error == nil { stopAbandoned(response.id) }
+                return
+            }
             if let error = response.error {
                 resume(response.id, with: .failure(error))
             } else {
@@ -143,6 +150,13 @@ public actor PhoneClient {
         case nil:
             break
         }
+    }
+
+    /// Tells the Mac to stop a stream nobody waits for. Its answer finds no caller, and is dropped.
+    private func stopAbandoned(_ subscription: String) {
+        let request = ControlRequest(
+            method: PhoneMethod.unsubscribe, params: try? .from(PhoneUnsubscribeParams(subscription: subscription)))
+        if let line = try? ControlCodec.encodeLine(request) { outgoing.yield(line) }
     }
 
     private func closeDown() {

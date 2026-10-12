@@ -99,10 +99,22 @@ struct AppLockTests {
         #expect(!lock.canLock)
     }
 
+    @Test func turningTheLockOffAsksForFaceIDFirst() async {
+        let (lock, authenticator) = lock(.failed)
+        await lock.setEnabled(false)
+        #expect(lock.isEnabled)
+        authenticator.result.withLock { $0 = .success }
+        await lock.setEnabled(false)
+        #expect(!lock.isEnabled)
+        await lock.setEnabled(true)
+        #expect(lock.isEnabled)
+        #expect(authenticator.asked.withLock { $0 } == 2)
+    }
+
     @Test func offMeansNeverLockedAndItIsRemembered() async {
         let defaults = freshDefaults()
         let (lock, _) = lock(defaults: defaults)
-        lock.isEnabled = false
+        await lock.setEnabled(false)
         lock.launch()
         #expect(!lock.isLocked)
         lock.phaseChanged(to: .inactive)

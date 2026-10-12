@@ -32,6 +32,8 @@ public final class TerminalModel {
     public var ctrl = false
 
     private var watching: Task<Void, Never>?
+    /// Whether the stream's loop runs, which ends for good once the phone has no Mac.
+    private(set) var isWatching = false
     private var subscription: (client: PhoneClient, id: String)?
     /// Keys typed while an earlier send is on its way go out together, after it.
     private var unsent = ""
@@ -60,6 +62,8 @@ public final class TerminalModel {
     }
 
     private func run() async {
+        isWatching = true
+        defer { isWatching = false }
         var generation = 0
         while !Task.isCancelled {
             do {
@@ -77,6 +81,8 @@ public final class TerminalModel {
                     if let screen = try? event.data.decode(PhoneScreen.self) { show(screen, scrollback: false) }
                 }
                 subscription = nil
+            } catch is MacConnection.NotPaired {
+                return
             } catch let error as ControlError {
                 problem = connection.problem(error)
                 return

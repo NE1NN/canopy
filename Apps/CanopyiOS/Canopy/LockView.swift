@@ -4,7 +4,8 @@ import SwiftUI
 /// Covers the app while it is locked, or while it is away so the app switcher shows nothing.
 struct LockView: View {
     @Environment(PhoneApp.self) private var app
-    var locked: Bool
+
+    private var locked: Bool { app.lock.isLocked }
 
     var body: some View {
         VStack(spacing: 18) {

@@ -7,6 +7,9 @@ public typealias Sleep = @Sendable (Duration) async throws -> Void
 /// The phone's one connection to its Mac: pairing, hello, the inbox, and connecting again whenever it drops.
 @MainActor @Observable
 public final class MacConnection {
+    /// The phone has no Mac: it was never paired, or it was unpaired, so nothing will connect until it pairs again.
+    public struct NotPaired: Error, Equatable {}
+
     public enum Status: Equatable, Sendable {
         case connecting
         case connected
@@ -82,9 +85,9 @@ public final class MacConnection {
         stop()
     }
 
-    /// Trades the link's one-time code for a token, then says hello on the same connection and subscribes.
+    /// Trades the link's one-time code for a token, then says hello on the same connection and subscribes. A phone that
+    /// is already paired keeps its connection until the new pairing works.
     public func pair(_ link: PairingLink) async throws {
-        stop()
         var lastError: (any Error)?
         for host in link.hosts {
             do {
@@ -102,6 +105,7 @@ public final class MacConnection {
                         host: link.host, port: link.port, address: link.address, token: result.token, mac: result.mac,
                         phone: result.phone)
                     try credentials.save(mac)
+                    stop()
                     paired = mac
                     pairingNotice = nil
                     inbox = nil
@@ -154,7 +158,7 @@ public final class MacConnection {
     /// generation it had, so it never gets that connection back.
     public func client(after generation: Int) async throws -> (client: PhoneClient, generation: Int) {
         if let client, status == .connected, self.generation > generation { return (client, self.generation) }
-        guard paired != nil else { throw PhoneTransportError.closed }
+        guard paired != nil else { throw NotPaired() }
         let id = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -188,7 +192,7 @@ public final class MacConnection {
         pairingNotice = notice
         status = .connecting
         for waiter in clientWaiters.values {
-            waiter.resume(throwing: PhoneTransportError.closed)
+            waiter.resume(throwing: NotPaired())
         }
         clientWaiters = [:]
     }

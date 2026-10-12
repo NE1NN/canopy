@@ -12,6 +12,8 @@ public final class InboxModel {
     /// What went wrong with the last answer, until dismissed.
     public private(set) var notice: PhoneProblem?
     private var isStarted = false
+    /// Counts starts, so the observer of an earlier start ends rather than runs next to the new one.
+    private var starts = 0
 
     public init(connection: MacConnection, pins: PinStore) {
         self.connection = connection
@@ -22,8 +24,11 @@ public final class InboxModel {
     public func start() {
         guard !isStarted else { return }
         isStarted = true
+        starts += 1
+        let start = starts
         observe(
-            { [connection] in connection.inbox?.defaultPins ?? [] }, while: { [weak self] in self?.isStarted == true }
+            { [connection] in connection.inbox?.defaultPins ?? [] },
+            while: { [weak self] in self?.isStarted == true && self?.starts == start }
         ) {
             [pins] defaults in pins.adoptDefaults(defaults)
         }

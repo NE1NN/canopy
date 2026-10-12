@@ -163,4 +163,34 @@ struct PhoneClientTests {
         try channel.respond(to: request, PhoneRowsResult(sections: []))
         #expect(try await rows == PhoneRowsResult(sections: []))
     }
+
+    @Test func aStreamCancelledBeforeItsResponseIsUnsubscribedOnceItStarts() async throws {
+        let channel = PipeChannel()
+        let client = PhoneClient(channel: channel)
+        let started = Task {
+            try await client.stream(PhoneMethod.screen, PhonePaneParams(pane: "p1"), as: PhoneScreen.self)
+        }
+        let request = try #require(await channel.request(PhoneMethod.screen))
+        started.cancel()
+        await #expect(throws: CancellationError.self) { try await started.value }
+        try channel.respond(to: request, PhoneScreen(pane: "p1", columns: 80, rows: 24, lines: []))
+        let unsubscribe = try #require(await channel.request(PhoneMethod.unsubscribe))
+        #expect(try unsubscribe.decodeParams(PhoneUnsubscribeParams.self).subscription == request.id)
+    }
+
+    @Test func aCancelledStreamTheMacRefusedNeedsNoUnsubscribe() async throws {
+        let channel = PipeChannel()
+        let client = PhoneClient(channel: channel)
+        let started = Task {
+            try await client.stream(PhoneMethod.screen, PhonePaneParams(pane: "p1"), as: PhoneScreen.self)
+        }
+        let request = try #require(await channel.request(PhoneMethod.screen))
+        started.cancel()
+        _ = try? await started.value
+        try channel.fail(request, code: "pane_not_found")
+        let rows = Task { try await client.call(PhoneMethod.rows, as: PhoneRowsResult.self) }
+        try channel.respond(to: try #require(await channel.request(PhoneMethod.rows)), PhoneRowsResult(sections: []))
+        _ = try await rows.value
+        #expect(!channel.requests.contains { $0.method == PhoneMethod.unsubscribe })
+    }
 }

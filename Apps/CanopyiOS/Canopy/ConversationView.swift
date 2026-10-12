@@ -70,7 +70,11 @@ struct ConversationView: View {
         }
         .onAppear {
             conversation.start()
-            terminal.start()
+            if conversation.tab == .terminal { terminal.start() }
+        }
+        // The screen streams only while it shows, as it changes up to four times a second.
+        .onChange(of: conversation.tab) { _, tab in
+            if tab == .terminal { terminal.start() } else { terminal.stop() }
         }
         .onDisappear {
             conversation.stop()
@@ -87,9 +91,15 @@ private struct ChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if model.older != nil {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .onAppear { Task { await model.loadOlder() } }
+                    if model.olderFailed {
+                        Button("Couldn't load earlier messages. Try again") { Task { await model.loadOlder() } }
+                            .font(.footnote)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .onAppear { Task { await model.loadOlder() } }
+                    }
                 }
                 ForEach(model.entries) { entry in
                     EntryView(entry: entry)
