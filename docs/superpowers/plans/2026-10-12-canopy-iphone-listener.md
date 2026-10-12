@@ -219,3 +219,7 @@ CodeRabbit, five comments, all fixed:
 3. `PhoneHub.stop()` clears its pending publish, and a cancelled one returns before touching state.
 4. An unreadable `phones.json` (not a missing one) now refuses pairing and removal with `phones_unreadable` and is never written over, rather than reading as no phones and being replaced on the next pairing. Test: `anUnreadableFileIsLeftAloneAndPairsNothing`.
 5. A removal that cannot save puts the phone back. Test: `aRemovalThatCannotSaveKeepsThePhone`.
+
+CI's first run failed in `FakeSSHForwardTests.aForwardFailsOnlyWhenBothLoopbacksAreTaken`, a test this PR does not touch.
+Its listener helper waited for the port to read as busy, which it already did once the IPv4 listener held it, so on a slow runner the forward ran before the IPv6 listener listened and succeeded.
+The helper now waits for the listener's own signal, a file it writes after `listen()`.
