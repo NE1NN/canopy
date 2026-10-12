@@ -8,11 +8,12 @@ public enum ClaudeHookMapping {
         guard let hook = try? JSONDecoder().decode(HookInput.self, from: input) else { return nil }
         func report(
             _ state: AgentState?, question: Bool = false, takesOver: Bool = false, releases: Bool = false,
-            backgroundTasks: [String] = []
+            backgroundTasks: [String] = [], prompt: AgentPrompt? = nil
         ) -> AgentReport {
             AgentReport(
                 state: state, session: hook.sessionID, event: hook.event, at: startedAt, question: question,
-                takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks)
+                takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks,
+                transcriptPath: hook.transcriptPath, prompt: prompt)
         }
         let fromMainAgent = hook.agentID == nil
         switch hook.event {
@@ -25,9 +26,10 @@ public enum ClaudeHookMapping {
         case "PostToolUse", "PostToolUseFailure":
             return fromMainAgent ? report(.working) : nil
         case "PreToolUse":
-            return ["AskUserQuestion", "ExitPlanMode"].contains(hook.toolName) ? report(.waiting) : nil
+            return ["AskUserQuestion", "ExitPlanMode"].contains(hook.toolName)
+                ? report(.waiting, prompt: prompt(for: hook)) : nil
         case "PermissionRequest":
-            return fromMainAgent ? report(.waiting) : nil
+            return fromMainAgent ? report(.waiting, prompt: prompt(for: hook)) : nil
         case "Elicitation":
             return report(.waiting)
         case "Notification":
@@ -44,7 +46,8 @@ public enum ClaudeHookMapping {
                 return report(.working)
             }
             if let message = hook.lastAssistantMessage, endsOnQuestion(message) {
-                return report(.waiting, question: true)
+                return report(
+                    .waiting, question: true, prompt: AgentPrompt(kind: .reply, detail: lastParagraph(message)))
             }
             // Shells and monitors can run for good, like a dev server, so the turn is over, but the agent will wake.
             let running = (hook.backgroundTasks ?? []).filter { !$0.isAgent && $0.isRunning }
@@ -57,6 +60,38 @@ public enum ClaudeHookMapping {
         default:
             return nil
         }
+    }
+
+    /// The open prompt a tool call waiting on the author makes.
+    static func prompt(for hook: HookInput) -> AgentPrompt? {
+        guard let tool = hook.toolName else { return nil }
+        let input = hook.toolInput ?? [:]
+        func text(_ key: String) -> String? {
+            if case .string(let value)? = input[key], !value.isEmpty { value } else { nil }
+        }
+        switch tool {
+        case "AskUserQuestion":
+            return AgentPrompt(kind: .question, questions: TranscriptParser.Builder.questions(input))
+        case "ExitPlanMode":
+            return AgentPrompt(kind: .plan, tool: tool, detail: text("plan"))
+        default:
+            if tool.hasPrefix("mcp__") {
+                return AgentPrompt(
+                    kind: .permission, tool: tool, detail: String(tool.split(separator: "__").last ?? ""))
+            }
+            let detail =
+                text("command") ?? text("file_path") ?? text("notebook_path") ?? text("url") ?? text("query")
+                ?? text("pattern") ?? text("description")
+            return AgentPrompt(kind: .permission, tool: tool, detail: detail)
+        }
+    }
+
+    /// The message's last paragraph, which holds the question it ended on.
+    static func lastParagraph(_ message: String) -> String {
+        let paragraphs = message.components(separatedBy: "\n\n").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return paragraphs.last { !$0.isEmpty } ?? message
     }
 
     /// Whether a message's last line that is not blank ends in a question mark, after closing marks such as `**`,
@@ -82,6 +117,8 @@ public enum ClaudeHookMapping {
         var notificationType: String?
         var lastAssistantMessage: String?
         var backgroundTasks: [BackgroundTask]?
+        var transcriptPath: String?
+        var toolInput: [String: JSONValue]?
 
         struct BackgroundTask: Decodable {
             var type: String?
@@ -123,6 +160,8 @@ public enum ClaudeHookMapping {
             toolName = try? container.decodeIfPresent(String.self, forKey: .toolName)
             notificationType = try? container.decodeIfPresent(String.self, forKey: .notificationType)
             lastAssistantMessage = try? container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+            transcriptPath = try? container.decodeIfPresent(String.self, forKey: .transcriptPath)
+            toolInput = try? container.decodeIfPresent([String: JSONValue].self, forKey: .toolInput)
             backgroundTasks = (try? container.decodeIfPresent([Lossy<BackgroundTask>].self, forKey: .backgroundTasks))?
                 .compactMap(\.value)
         }
@@ -145,6 +184,8 @@ public enum ClaudeHookMapping {
             case notificationType = "notification_type"
             case lastAssistantMessage = "last_assistant_message"
             case backgroundTasks = "background_tasks"
+            case transcriptPath = "transcript_path"
+            case toolInput = "tool_input"
         }
     }
 }
