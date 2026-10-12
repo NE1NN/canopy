@@ -3,10 +3,12 @@ import PackageDescription
 
 let package = Package(
     name: "Canopy",
-    platforms: [.macOS(.v15)],
+    // iOS is for CanopyWire alone, which the iPhone app builds. Every other target needs macOS.
+    platforms: [.macOS(.v15), .iOS(.v18)],
     products: [
         .executable(name: "CanopyApp", targets: ["CanopyApp"]),
         .executable(name: "canopy", targets: ["CanopyCLI"]),
+        .library(name: "CanopyWire", targets: ["CanopyWire"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -14,7 +16,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "CPty"),
-        .target(name: "CanopyCore", dependencies: ["CPty"]),
+        // What the Mac and the iPhone app both speak. It builds for iOS, so it has nothing platform-specific.
+        .target(name: "CanopyWire"),
+        .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire"]),
         // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
         .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
         .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
@@ -32,6 +36,7 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
+        .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
         .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"]),
         .testTarget(
             name: "CanopyCLITests",
