@@ -24,19 +24,20 @@ public struct PhoneGate: Sendable {
 
     public var registry: PhoneRegistry
     public var macName: String
-    /// How long a new connection has to say hello, counted again after a pairing.
-    public var helloTimeout: Duration
+    /// Waits out the time a new connection has to say hello, counted again after a pairing.
+    public var helloTimer: @Sendable () async -> Void
     public var handler: PhoneHandler
     /// Called when a code pairs a new phone, for the activity log.
     public var onPaired: @Sendable (PairedPhone) -> Void
 
     public init(
         registry: PhoneRegistry, macName: String, helloTimeout: Duration = .seconds(10),
-        handler: @escaping PhoneHandler, onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
+        helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
+        onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
     ) {
         self.registry = registry
         self.macName = macName
-        self.helloTimeout = helloTimeout
+        self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
         self.onPaired = onPaired
     }
@@ -155,9 +156,9 @@ final class PhoneConnection: Sendable {
     }
 
     private func startHelloTimer() {
-        let timeout = gate.helloTimeout
+        let wait = gate.helloTimer
         let timer = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
+            await wait()
             guard !Task.isCancelled, let self, self.phoneID == nil else { return }
             self.close()
         }

@@ -11,7 +11,10 @@ struct PhoneListenerTests {
         let addresses = Shared(["127.0.0.1"])
         let closedSessions = Shared<[String]>([])
 
-        init(_ dir: TempDir, helloTimeout: Duration = .seconds(10), handler: PhoneHandler? = nil) {
+        init(
+            _ dir: TempDir, helloTimeout: Duration = .seconds(10), helloTimer: (@Sendable () async -> Void)? = nil,
+            handler: PhoneHandler? = nil
+        ) {
             registry = PhoneRegistry(file: URL(fileURLWithPath: dir.sub("phones.json")))
             let addresses = self.addresses
             let closed = closedSessions
@@ -22,7 +25,8 @@ struct PhoneListenerTests {
             listener = PhoneListener(
                 port: 0, addresses: { addresses.withLock { $0 } },
                 gate: PhoneGate(
-                    registry: registry, macName: "studio", helloTimeout: helloTimeout, handler: handler ?? echo))
+                    registry: registry, macName: "studio", helloTimeout: helloTimeout, helloTimer: helloTimer,
+                    handler: handler ?? echo))
         }
 
         var port: UInt16 {
@@ -179,33 +183,57 @@ struct PhoneListenerTests {
         #expect(ContinuousClock.now - started < .seconds(10))
     }
 
-    @Test func helloInTimeKeepsTheConnectionOpen() async throws {
+    @Test func theWindowEndingAfterHelloLeavesTheConnectionOpen() async throws {
         let dir = try TempDir()
-        let harness = Harness(dir, helloTimeout: .seconds(2))
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
         try await harness.listener.refresh()
         defer { harness.listener.stop() }
 
         let client = try await harness.authenticated(try await harness.pair())
-        try await Task.sleep(for: .milliseconds(2500))
+        #expect(await eventually { timers.count == 3 })
+        timers.fireAll()
         let rows = try await offPool { try client.call(PhoneMethod.rows) }
         #expect(rows.error == nil)
     }
 
     @Test func pairingStartsTheHelloTimeAgain() async throws {
         let dir = try TempDir()
-        let harness = Harness(dir, helloTimeout: .seconds(2))
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
         try await harness.listener.refresh()
-        defer { harness.listener.stop() }
+        defer {
+            harness.listener.stop()
+            timers.fireAll()
+        }
         let code = await harness.registry.newCode().code
         let client = try harness.client()
-        try await Task.sleep(for: .milliseconds(1500))
         let paired = try await offPool {
             try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "a")))
         }
         let token = try #require(paired.result).decode(PhonePairResult.self).token
-        try await Task.sleep(for: .milliseconds(1000))
+        #expect(await eventually { timers.count == 2 })
+        // The connection's first window ends, but pairing started a second one, so it stays open.
+        timers.fire(0)
         let hello = try await offPool { try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token))) }
         #expect(hello.error == nil)
+    }
+
+    @Test func theSecondWindowEndingClosesAPairedConnectionThatNeverSaidHello() async throws {
+        let dir = try TempDir()
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
+        try await harness.listener.refresh()
+        defer {
+            harness.listener.stop()
+            timers.fireAll()
+        }
+        let code = await harness.registry.newCode().code
+        let client = try harness.client()
+        _ = try await offPool { try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "a"))) }
+        #expect(await eventually { timers.count == 2 })
+        timers.fire(1)
+        #expect(try await offPool { try client.untilClosed() }.isEmpty)
     }
 
     @Test func helloAgainAnswersAgain() async throws {
@@ -269,7 +297,8 @@ struct PhoneListenerTests {
         defer { listener.stop() }
         let started = ContinuousClock.now
         await #expect(throws: (any Error).self) { try await listener.refresh() }
-        #expect(ContinuousClock.now - started < .seconds(10))
+        // It gives up after 5 seconds at most; the bound only shows it does not hang, on however busy a machine.
+        #expect(ContinuousClock.now - started < .seconds(60))
         #expect(listener.endpoints.isEmpty)
     }
 

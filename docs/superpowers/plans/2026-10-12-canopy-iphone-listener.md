@@ -206,8 +206,9 @@ Fixed:
    Test: `theNewestEventAlwaysArrives`.
 7. A pairing whose reply never reached the phone leaves a phone that cannot connect: documented under Failures, since `phone remove` clears it and holding the save until the write completes would let a phone hold a token the Mac forgot.
 8. `seeingADoneAgentIsSentOnTheNextPoll` passed without the poll; it now waits for the done to go out first, and fails with a 60-second poll.
-9. The 300 ms hello timeout in `helloInTimeKeepsTheConnectionOpen` could flake on a loaded runner; it is 2 seconds now.
+9. The 300 ms hello timeout in `helloInTimeKeepsTheConnectionOpen` could flake on a loaded runner. `PhoneGate` takes a `helloTimer`, and the window tests end it by hand with `ManualTimers`, so they hold on any machine (`theWindowEndingAfterHelloLeavesTheConnectionOpen`, `pairingStartsTheHelloTimeAgain`, `theSecondWindowEndingClosesAPairedConnectionThatNeverSaidHello`).
+   `aTakenPortFailsTheRefreshInsteadOfHanging` took 11.8 s under the full suite, so its bound only shows it does not hang.
 10. `aWrongTokenIsUnpairedAndCloses` sends both lines in one write, so it exercises the gate's closing check.
-11. New tests: `pairingStartsTheHelloTimeAgain`, `helloAgainAnswersAgain`, `anOldProtocolBeforeHelloCloses`, `anOldProtocolAfterHelloIsRefusedAndTheConnectionStays`, `fourWrongCodesVoidNothingAndARightOneStartsTheCountAgain`.
+11. New tests: `helloAgainAnswersAgain`, `anOldProtocolBeforeHelloCloses`, `anOldProtocolAfterHelloIsRefusedAndTheConnectionStays`, `fourWrongCodesVoidNothingAndARightOneStartsTheCountAgain`.
 12. Nits: the service lets go of itself in `stop()`; `Data(base64URLEncoded:)` moved to the tests; the listener's close handler is private; `phones.json` is created at 0600 rather than set after; the hub's poll ends with the hub; the phone's types decode states they do not know.
     Left: an unreadable `phones.json` still reads as no phones, which fails closed; Canopy has no log to note it in.
