@@ -163,7 +163,8 @@ public enum TranscriptParser {
                 case .tool, .result: break
                 }
             }
-            let text = parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = Self.unwrappingPastes(parts.joined(separator: "\n")).trimmingCharacters(
+                in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             if let notice = Self.notice(for: text) {
                 if !notice.isEmpty {
@@ -172,6 +173,12 @@ public enum TranscriptParser {
                 return
             }
             append(TranscriptEntry(id: record.id, kind: .prompt, text: text, at: record.at))
+        }
+
+        /// Claude Code keeps a paste in the prompt between `<pasted_content id="…">` and `</pasted_content id="…">`.
+        static func unwrappingPastes(_ text: String) -> String {
+            text.replacing(/<pasted_content id="[^"]*">\n?/, with: "")
+                .replacing(/\n?<\/pasted_content(?: id="[^"]*")?>/, with: "")
         }
 
         /// What a user line that is not the author's own words stands for, empty to leave it out, or nil for a prompt.

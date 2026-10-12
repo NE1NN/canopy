@@ -36,6 +36,7 @@ signing-cert:
 e2e: app
 	scripts/e2e.sh
 	scripts/e2e-phone.sh
+	scripts/e2e-phone-claude.sh
 	scripts/e2e-hosts.sh
 
 clean:

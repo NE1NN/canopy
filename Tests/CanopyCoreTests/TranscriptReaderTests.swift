@@ -80,6 +80,7 @@ struct TranscriptParserTests {
                 "Tests pass.\n\nShould I open the PR?",
                 "Interrupted",
                 "The conversation was compacted",
+                "Line 1\nLine 2",
             ])
         #expect(entries.map(\.kind).filter { $0 == .notice }.count == 4)
     }
