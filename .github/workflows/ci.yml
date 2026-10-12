@@ -25,4 +25,5 @@ jobs:
       - run: brew install tmux
       - run: make lint
       - run: make build
+      - run: make ios
       - run: scripts/ci-test.sh

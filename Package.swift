@@ -9,6 +9,7 @@ let package = Package(
         .executable(name: "CanopyApp", targets: ["CanopyApp"]),
         .executable(name: "canopy", targets: ["CanopyCLI"]),
         .library(name: "CanopyWire", targets: ["CanopyWire"]),
+        .library(name: "CanopyPhone", targets: ["CanopyPhone"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -18,6 +19,8 @@ let package = Package(
         .target(name: "CPty"),
         // What the Mac and the iPhone app both speak. It builds for iOS, so it has nothing platform-specific.
         .target(name: "CanopyWire"),
+        // The iPhone app's models and its connection to the Mac, kept out of its views so they test on the Mac.
+        .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
         .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire"]),
         // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
         .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
@@ -37,6 +40,7 @@ let package = Package(
             ]
         ),
         .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
+        .testTarget(name: "CanopyPhoneTests", dependencies: ["CanopyPhone"]),
         .testTarget(
             name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"], resources: [.copy("Fixtures")]
         ),

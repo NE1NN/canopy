@@ -1,7 +1,7 @@
 # Canopy on iPhone design
 
 Date: 2026-10-12
-Status: approved, milestones 1 to 3 being built.
+Status: approved, milestones 1 to 3 built.
 The author approved the design in conversation on 2026-10-12, and this spec writes it down.
 Milestone 1's PR settled what the design left open once it met the code; "Decisions made while building" lists each.
 The author picked direction A from three mockups, kept outside git in the main checkout's `build/pages/canopy-iphone/`.
@@ -231,13 +231,15 @@ A connection may follow 16 conversations and screens at once.
 
 ## The iPhone app
 
-A SwiftUI app in `Apps/CanopyiOS`, with its Xcode project checked in, depending on `CanopyWire` through the local package.
-Bundle ID `com.ne1nn.Canopy.Phone`, iOS 18 and later.
-`make ios` builds it, and `make ios-install` installs it on the plugged-in iPhone with `xcrun devicectl`.
+A SwiftUI app in `Apps/CanopyiOS`, with its Xcode project checked in, depending on the local package.
+Its views live in the Xcode project; everything else, the connection, pairing, and each screen's model, lives in a `CanopyPhone` package target that builds for macOS and iOS, so `make test` covers it on the Mac against a fake Mac that speaks the real protocol.
+Bundle ID `com.ne1nn.Canopy.Phone`, iOS 18 and later, iPhone only.
+`make ios` builds it for the Simulator, and `make ios-install TEAM=<team id>` signs it with the author's Apple ID and installs it on the plugged-in iPhone with `xcrun devicectl`.
+`scripts/ios-shots.sh` walks every screen in the Simulator against a dev build, in light and dark.
 
 Screens, as in the mockups:
 
-- **Pairing**: a camera view that scans the QR code, and the error when the code expired or the Mac is unreachable.
+- **Pairing**: a camera view that scans the QR code, a Paste link button for `canopy phone pair --json`'s link, `canopy-phone://` links opening the app, and the error when the code expired or the Mac is unreachable.
 - **Inbox**: pinned rows, then Needs you, Done, and Running, each item with its dot, name, time, and last line.
   Needs you holds waiting agents, Done holds done agents not yet seen, and Running holds working and background agents.
   Permission prompts show Allow and Deny in the list.
@@ -246,11 +248,12 @@ Screens, as in the mockups:
 - **Rows**: every row by repo, with dots and PR numbers, for rows the inbox leaves out.
 - **Conversation**: Chat and Terminal, with chips for a question's options and a reply box.
 - **Settings**: the paired Mac, Face ID lock, and unpairing.
+  Unpairing forgets the token on the phone; the Mac lists the phone until `canopy phone remove`, which Settings names.
 
 Pins live on the phone.
 The first launch pins each repo's own checkout, its `main` row, when an agent runs there.
 
-The tab bar has Inbox and Rows.
+The tab bar has Inbox and Rows, and the inbox's title bar has the Settings button.
 The inbox badge counts agents waiting for the author.
 Light and dark both follow the system, with Canopy's agent colors: the accent for working, yellow for waiting, green for done, and a green ring for background.
 
@@ -279,10 +282,13 @@ Tapping a notification opens its row's conversation.
 ## Failures
 
 - **The Mac is unreachable** because Tailscale is off, the Mac sleeps, or Canopy is not running: the app shows the last inbox it had, greyed, with "as of" and the time, and a banner naming what to check.
-  It reconnects with backoff, and at once when the app comes to the foreground.
+  It reconnects with backoff, 1, 2, 4, 8, 16, then every 30 seconds, and at once when the app comes to the foreground.
+  In the background iOS suspends the app, so it closes the connection there and opens it again on the way back.
+  An open conversation or terminal follows again on the new connection, keeping what it showed.
 - **The connection drops while pairing**, after the Mac saved the phone but before its token arrived: the Mac keeps a phone that can never connect, `canopy phone list` shows it never seen, and `canopy phone remove` clears it.
 - **The phone was removed** on the Mac: `phone.hello` fails with `unpaired`, and the app returns to Pairing.
 - **The pane closed** while its conversation is open: the conversation says the pane is gone and keeps what it showed.
+  An agent that ends also leaves the inbox, so the phone asks the Mac, and only `pane_not_found` means the pane closed.
 - **No transcript**, for an agent that is not Claude Code or a remote row: Chat says so and Terminal opens.
 - **A reply or answer fails**: it stays in the reply box with the error, so nothing is lost.
 - **No push key**: notifications are off, `canopy phone status` says so, and the app's Settings says notifications need setup on the Mac.
@@ -354,3 +360,14 @@ Milestone 2 (reading and answering agents):
 17. Replies send newlines as Return and leave out escape characters.
 18. A reply is refused while a dialog is open, and needs a Claude Code session in the pane.
 19. A phone's requests on one connection run one at a time, in order.
+
+Milestone 3 (the iPhone app):
+
+20. The app's models live in a `CanopyPhone` package target, so `make test` and CI cover them without a Simulator; the Xcode project holds only views.
+21. The Xcode project syncs its folders, in the Xcode 16 project format, so a new view needs no project edit.
+22. Pairing also takes a pasted link and `canopy-phone://` links, since the Simulator has no camera and a link is quicker than a scan when the Mac is far away.
+23. Unpairing on the phone forgets its token only; revoking it stays with `canopy phone remove` on the Mac, which the phone cannot call.
+24. The app closes its connection in the background and opens it again in the foreground, since iOS suspends it anyway.
+25. The lock covers the app whenever it is not in front, so the app switcher never shows an agent; an unpaired app has nothing to lock; a phone with no passcode cannot lock and opens.
+26. The greyed compose button of the mockup waits for mode 2, since a button that does nothing reads as broken; the inbox's title bar has Settings instead.
+27. A reply is shown at the end of the chat as Sending, Sent, then Delivered until the transcript has the prompt, and one question with one choice answers on tap, while several questions or a multiple choice need Send answers.
