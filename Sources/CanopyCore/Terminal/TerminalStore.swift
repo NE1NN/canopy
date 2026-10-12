@@ -594,6 +594,7 @@ public final class TerminalStore {
         pane.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
+        pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
         pane.onOpenLink = { [weak self] pane, link in
             guard let self else { return }
             self.onFollowLink(pane, self.followLink(link, from: pane))

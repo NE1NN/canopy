@@ -47,6 +47,8 @@ public enum AgentEvent {
     case changed(Pane, AgentChange)
     /// Sent before the pane's agent state clears.
     case closed(Pane)
+    /// The pane's agent took a prompt, whether or not its state changed.
+    case prompted(Pane)
 }
 
 extension TerminalTab {

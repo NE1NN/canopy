@@ -39,6 +39,8 @@ public final class Pane: Identifiable {
     @ObservationIgnored public var onAgentChange: ((Pane, AgentChange) -> Void)?
     /// Called when the pane closes for good, before its agent state clears.
     @ObservationIgnored public var onClose: ((Pane) -> Void)?
+    /// Called when the pane's agent takes a prompt, as its `UserPromptSubmit` hook says.
+    @ObservationIgnored public var onPrompted: ((Pane) -> Void)?
     /// Called with a link the author ⌘-clicked in the terminal.
     @ObservationIgnored public var onOpenLink: ((Pane, String) -> Void)?
     /// When a key was last typed or text sent. Kept out of observation, so typing redraws no dot.
@@ -133,6 +135,9 @@ public final class Pane: Identifiable {
     @discardableResult
     public func report(_ report: AgentReport, now: Date = Date()) -> AgentChange? {
         let change = agent.apply(report, now: now)
+        if report.event == "UserPromptSubmit", report.session == nil || report.session == agent.session {
+            onPrompted?(self)
+        }
         // Takes note of the program now, so its exit clears the state even if no refresh saw it running.
         if agent.state != .none, isBusy, !isRunningProgram {
             isRunningProgram = true
@@ -184,6 +189,38 @@ public final class Pane: Identifiable {
         await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
         // Return reaches the key rules as the key of its own that the program gets.
         typed(Data("\r".utf8))
+    }
+
+    /// Pastes text as one bracketed paste, then presses Return as a keystroke of its own, as `type(_:enter:)` does, so
+    /// a long reply reaches a busy Claude Code whole. Newlines go in as Return, as a terminal pastes them, and escape
+    /// characters are left out, so the text cannot end its own paste.
+    public func paste(_ text: String) async {
+        guard case .running = status, let process else { return }
+        let clean = Self.pasteable(text)
+        await process.write(
+            Data("\u{1b}[200~\(clean)\u{1b}[201~".utf8), then: Data("\r".utf8), pause: Self.returnPause,
+            patience: returnPatience)
+        typed(Data("\r".utf8))
+    }
+
+    static func pasteable(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r")
+            .filter { $0 != "\u{1b}" }
+    }
+
+    /// Presses keys one at a time, each in a read of its own, as the author would.
+    public func press(_ keys: [String], pause: Duration = .milliseconds(150)) async {
+        for (index, key) in keys.enumerated() {
+            if index > 0 { try? await Task.sleep(for: pause) }
+            guard case .running = status, let process else { return }
+            process.write(key)
+            typed(Data(key.utf8))
+        }
+    }
+
+    /// Takes the answer to the agent's open prompt, if `id` still names it.
+    public func answerPrompt(id: String) -> Bool {
+        agent.answer(promptID: id)
     }
 
     /// Starts a new shell in the same folder after the last one exited.

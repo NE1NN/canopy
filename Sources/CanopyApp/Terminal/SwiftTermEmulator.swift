@@ -87,6 +87,60 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
         }
     }
 
+    /// The last `count` lines with their colors and styles as SGR sequences, for the phone's Terminal tab.
+    func styledLines(_ count: Int) -> [String] {
+        let terminal = terminalView.getTerminal()
+        let first = terminal.buffer.totalLinesTrimmed
+        var end = first
+        while terminal.getScrollInvariantLine(row: end) != nil {
+            end += 1
+        }
+        return (max(first, end - count)..<end).map { row in
+            guard let line = terminal.getScrollInvariantLine(row: row) else { return "" }
+            var text = ""
+            var current = Attribute.empty
+            var afterWide = false
+            for column in 0..<min(line.count, terminal.cols) {
+                let cell = line[column]
+                // A wide character takes two cells, and the second holds nothing.
+                if afterWide {
+                    afterWide = false
+                    continue
+                }
+                afterWide = cell.width == 2
+                if cell.attribute != current {
+                    text += Self.sgr(cell.attribute)
+                    current = cell.attribute
+                }
+                let character = terminal.getCharacter(for: cell)
+                text.append(character == "\0" ? " " : character)
+            }
+            if current != .empty { text += "\u{1b}[0m" }
+            return text
+        }
+    }
+
+    private static func sgr(_ attribute: Attribute) -> String {
+        var codes = ["0"]
+        let styles: [(CharacterStyle, String)] = [
+            (.bold, "1"), (.dim, "2"), (.italic, "3"), (.underline, "4"), (.inverse, "7"), (.crossedOut, "9"),
+        ]
+        codes += styles.filter { attribute.style.contains($0.0) }.map(\.1)
+        codes += color(attribute.fg, base: 30, bright: 90, extended: 38)
+        codes += color(attribute.bg, base: 40, bright: 100, extended: 48)
+        return "\u{1b}[" + codes.joined(separator: ";") + "m"
+    }
+
+    private static func color(_ color: Attribute.Color, base: Int, bright: Int, extended: Int) -> [String] {
+        switch color {
+        case .ansi256(let code) where code < 8: [String(base + Int(code))]
+        case .ansi256(let code) where code < 16: [String(bright + Int(code) - 8)]
+        case .ansi256(let code): ["\(extended);5;\(code)"]
+        case .trueColor(let red, let green, let blue): ["\(extended);2;\(red);\(green);\(blue)"]
+        case .defaultColor, .defaultInvertedColor: []
+        }
+    }
+
     /// Gives the terminal the keyboard, if it is on screen.
     func focus() {
         view.window?.makeFirstResponder(view)

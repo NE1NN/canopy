@@ -36,6 +36,7 @@ final class QuietEmulator: TerminalEmulator {
     func feed(_ data: Data) {}
     func screenText() -> String { "" }
     func recentText(lines: Int) -> String { "" }
+    func styledLines(_ count: Int) -> [String] { [] }
 }
 
 struct QuietEngine: TerminalEngine {

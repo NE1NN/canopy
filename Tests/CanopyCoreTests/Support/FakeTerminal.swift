@@ -33,6 +33,10 @@ final class FakeEmulator: TerminalEmulator {
         lines.suffix(count).joined(separator: "\n")
     }
 
+    func styledLines(_ count: Int) -> [String] {
+        Array(lines.suffix(count))
+    }
+
     func type(_ text: String) {
         onInput?(Data(text.utf8))
     }
