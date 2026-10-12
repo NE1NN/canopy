@@ -112,7 +112,7 @@ final class CloneRepoState {
         progress = nil
         error = nil
         let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        cloning = Task {
+        cloning = Task { [self] in
             do {
                 try await model.cloneRepo(text) { progress in
                     Task { @MainActor [weak self] in

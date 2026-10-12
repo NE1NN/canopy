@@ -47,7 +47,8 @@ class Phone:
         line, self.buffer = self.buffer.split(b"\n", 1)
         return json.loads(line)
 
-    def call(self, method, params=None):
+    def call(self, method, params=None, on_event=None):
+        """Answers to other requests and events that arrive first go to `on_event`."""
         request_id = self.send(method, params)
         while True:
             message = self.next()
@@ -55,6 +56,8 @@ class Phone:
                 raise SystemExit(f"the Mac closed the connection before answering {method}")
             if "event" not in message and message.get("id") == request_id:
                 return message
+            if on_event:
+                on_event(message)
 
     def hello(self, token_file):
         token = open(token_file).read().strip()

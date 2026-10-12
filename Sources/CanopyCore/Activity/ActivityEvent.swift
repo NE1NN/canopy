@@ -46,6 +46,8 @@ public enum ActivityType {
     public static let hostWoken = "host.woken"
     public static let phonePaired = "phone.paired"
     public static let phoneRemoved = "phone.removed"
+    /// A phone's call that changed something, such as a reply or an answer.
+    public static let phoneCall = "phone.call"
 
     /// `agent.working`, `agent.waiting`, `agent.done`, and `agent.background`, or `agent.cleared` when the state goes
     /// to none.

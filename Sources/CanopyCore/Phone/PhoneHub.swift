@@ -15,6 +15,7 @@ public final class PhoneHub {
     private var tasks: [Task<Void, Never>] = []
     private var observer: UUID?
     private var pending: Task<Void, Never>?
+    private let tails = TranscriptTails()
 
     private struct Subscriber {
         var lastSent: PhoneInbox
@@ -66,11 +67,11 @@ public final class PhoneHub {
     }
 
     public var inbox: PhoneInbox {
-        PhoneInboxBuilder.inbox(snapshot, terminals: terminals)
+        PhoneInboxBuilder.inbox(snapshot, terminals: terminals, tails: tails)
     }
 
     public var rows: PhoneRowsResult {
-        PhoneInboxBuilder.rows(snapshot, terminals: terminals)
+        PhoneInboxBuilder.rows(snapshot, terminals: terminals, tails: tails)
     }
 
     /// Sends the inbox to `send` each time it changes, starting now if it differs from `lastSent`. The subscription it
@@ -100,6 +101,7 @@ public final class PhoneHub {
 
     private func publish() {
         guard !subscribers.isEmpty else { return }
+        tails.keep(only: Set(terminals.panes.compactMap(\.agent.transcriptPath)))
         let current = inbox
         for (id, subscriber) in subscribers where subscriber.lastSent != current {
             subscribers[id]?.lastSent = current

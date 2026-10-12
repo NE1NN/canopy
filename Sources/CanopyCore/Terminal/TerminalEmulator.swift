@@ -20,6 +20,9 @@ public protocol TerminalEmulator: AnyObject {
     func screenText() -> String
     /// The last `count` lines, scrollback included, as plain text.
     func recentText(lines count: Int) -> String
+    /// The last `count` lines, scrollback included and the screen's blank rows kept, with SGR escape sequences for their
+    /// colors and styles.
+    func styledLines(_ count: Int) -> [String]
 }
 
 @MainActor

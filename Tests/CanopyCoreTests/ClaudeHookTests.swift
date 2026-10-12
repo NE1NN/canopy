@@ -13,11 +13,11 @@ struct ClaudeHookTests {
 
     func expected(
         _ state: AgentState?, _ event: String, question: Bool = false, takesOver: Bool = false,
-        releases: Bool = false, backgroundTasks: [String] = []
+        releases: Bool = false, backgroundTasks: [String] = [], prompt: AgentPrompt? = nil
     ) -> AgentReport {
         AgentReport(
             state: state, session: "abc123", event: event, at: started, question: question, takesOver: takesOver,
-            releases: releases, backgroundTasks: backgroundTasks)
+            releases: releases, backgroundTasks: backgroundTasks, prompt: prompt)
     }
 
     @Test func sessionsTakeAndLetGoOfThePane() {
@@ -55,17 +55,20 @@ struct ClaudeHookTests {
     }
 
     @Test func questionsPermissionsAndDialogsMeanWaiting() {
-        for tool in ["AskUserQuestion", "ExitPlanMode"] {
-            #expect(
-                report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "\#(tool)"}"#)
-                    == expected(.waiting, "PreToolUse"))
-        }
+        #expect(
+            report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"}"#)
+                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .question, questions: nil)))
+        #expect(
+            report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode"}"#)
+                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .plan, tool: "ExitPlanMode")))
         #expect(report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "Bash"}"#) == nil)
         #expect(
             report(
                 #"{"session_id": "abc123", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "rm -rf node_modules"}}"#
             )
-                == expected(.waiting, "PermissionRequest"))
+                == expected(
+                    .waiting, "PermissionRequest",
+                    prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf node_modules")))
         #expect(
             report(
                 #"{"session_id": "abc123", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "agent_id": "def456"}"#
@@ -104,7 +107,8 @@ struct ClaudeHookTests {
             report(
                 #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Done.\n\nShould I push it?\n"}"#
             )
-                == expected(.waiting, "Stop", question: true))
+                == expected(
+                    .waiting, "Stop", question: true, prompt: AgentPrompt(kind: .reply, detail: "Should I push it?")))
         #expect(report(#"{"session_id": "abc123", "hook_event_name": "Stop"}"#) == expected(.done, "Stop"))
         for type in ["subagent", "workflow"] {
             #expect(
@@ -164,7 +168,9 @@ struct ClaudeHookTests {
             report(
                 #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Tests run. Should I push?", "background_tasks": [\#(shell)]}"#
             )
-                == expected(.waiting, "Stop", question: true))
+                == expected(
+                    .waiting, "Stop", question: true,
+                    prompt: AgentPrompt(kind: .reply, detail: "Tests run. Should I push?")))
         #expect(
             report(
                 #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Both run.", "background_tasks": [\#(shell), {"id": "t2", "type": "subagent", "status": "running"}]}"#

@@ -12,11 +12,17 @@ public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
     public var lastLine: String?
     /// What a background agent waits on.
     public var backgroundTasks: [String]?
+    /// What a waiting agent waits on, which the phone can answer.
+    public var prompt: OpenPrompt?
+    /// Whether the pane has a transcript the phone can read.
+    public var hasTranscript: Bool
 
     public init(
         pane: String, state: AgentState, unseen: Bool = false, since: Double, lastLine: String? = nil,
-        backgroundTasks: [String]? = nil
+        backgroundTasks: [String]? = nil, prompt: OpenPrompt? = nil, hasTranscript: Bool = false
     ) {
+        self.prompt = prompt
+        self.hasTranscript = hasTranscript
         self.pane = pane
         self.state = state
         self.unseen = unseen
@@ -34,6 +40,8 @@ public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
         since = try container.decode(Double.self, forKey: .since)
         lastLine = try container.decodeIfPresent(String.self, forKey: .lastLine)
         backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks)
+        prompt = try? container.decodeIfPresent(OpenPrompt.self, forKey: .prompt)
+        hasTranscript = try container.decodeIfPresent(Bool.self, forKey: .hasTranscript) ?? false
     }
 
     /// The same dot the Mac's sidebar shows for it.

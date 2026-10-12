@@ -145,11 +145,16 @@ public struct TermStateParams: Codable, Sendable {
     public var releases: Bool
     /// The labels of what still runs, for a background report. Left out of the JSON when empty.
     public var backgroundTasks: [String]
+    public var transcriptPath: String?
+    public var prompt: AgentPrompt?
 
     public init(
         pane: String, state: AgentState?, session: String? = nil, event: String? = nil, at: Double? = nil,
-        question: Bool = false, takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = []
+        question: Bool = false, takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = [],
+        transcriptPath: String? = nil, prompt: AgentPrompt? = nil
     ) {
+        self.transcriptPath = transcriptPath
+        self.prompt = prompt
         self.pane = pane
         self.state = state
         self.session = session
@@ -165,7 +170,8 @@ public struct TermStateParams: Codable, Sendable {
         self.init(
             pane: pane, state: report.state, session: report.session, event: report.event,
             at: report.at?.timeIntervalSince1970, question: report.question, takesOver: report.takesOver,
-            releases: report.releases, backgroundTasks: report.backgroundTasks)
+            releases: report.releases, backgroundTasks: report.backgroundTasks, transcriptPath: report.transcriptPath,
+            prompt: report.prompt)
     }
 
     public init(from decoder: any Decoder) throws {
@@ -179,10 +185,13 @@ public struct TermStateParams: Codable, Sendable {
         takesOver = try container.decodeIfPresent(Bool.self, forKey: .takesOver) ?? false
         releases = try container.decodeIfPresent(Bool.self, forKey: .releases) ?? false
         backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
+        transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
+        // A prompt this build cannot read is left out rather than losing the state.
+        prompt = try? container.decodeIfPresent(AgentPrompt.self, forKey: .prompt)
     }
 
     enum CodingKeys: String, CodingKey {
-        case pane, state, session, event, at, question, takesOver, releases, backgroundTasks
+        case pane, state, session, event, at, question, takesOver, releases, backgroundTasks, transcriptPath, prompt
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -196,12 +205,15 @@ public struct TermStateParams: Codable, Sendable {
         try container.encode(takesOver, forKey: .takesOver)
         try container.encode(releases, forKey: .releases)
         if !backgroundTasks.isEmpty { try container.encode(backgroundTasks, forKey: .backgroundTasks) }
+        try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(prompt, forKey: .prompt)
     }
 
     public var report: AgentReport {
         AgentReport(
             state: state, session: session, event: event, at: at.map(Date.init(timeIntervalSince1970:)),
-            question: question, takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks)
+            question: question, takesOver: takesOver, releases: releases, backgroundTasks: backgroundTasks,
+            transcriptPath: transcriptPath, prompt: prompt)
     }
 }
 

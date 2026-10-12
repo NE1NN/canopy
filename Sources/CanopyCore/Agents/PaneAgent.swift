@@ -18,11 +18,18 @@ public struct AgentReport: Sendable, Equatable {
     public var releases: Bool
     /// What still runs for a background report, by the labels `BackgroundWork` shows.
     public var backgroundTasks: [String]
+    /// Claude Code's transcript of the session, which every hook names.
+    public var transcriptPath: String?
+    /// What a waiting agent waits on, when the hook says.
+    public var prompt: AgentPrompt?
 
     public init(
         state: AgentState?, session: String? = nil, event: String? = nil, at: Date? = nil, question: Bool = false,
-        takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = []
+        takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = [], transcriptPath: String? = nil,
+        prompt: AgentPrompt? = nil
     ) {
+        self.transcriptPath = transcriptPath
+        self.prompt = prompt
         self.state = state
         self.session = session
         self.event = event
@@ -55,6 +62,29 @@ public struct AgentChange: Sendable, Equatable {
     }
 }
 
+/// What a waiting agent waits on, before the pane gives it an ID.
+public struct AgentPrompt: Codable, Sendable, Equatable {
+    public var kind: OpenPrompt.Kind
+    public var questions: [PromptQuestion]?
+    public var tool: String?
+    public var detail: String?
+
+    public init(kind: OpenPrompt.Kind, questions: [PromptQuestion]? = nil, tool: String? = nil, detail: String? = nil) {
+        self.kind = kind
+        self.questions = questions
+        self.tool = tool
+        self.detail = detail
+    }
+
+    func opened(id: String) -> OpenPrompt {
+        OpenPrompt(id: id, kind: kind, questions: questions, tool: tool, detail: detail)
+    }
+
+    func describes(_ prompt: OpenPrompt) -> Bool {
+        opened(id: prompt.id) == prompt
+    }
+}
+
 /// A pane's agent state and the rules that change it. It knows nothing of processes or windows, so each rule can be
 /// tested on its own.
 public struct PaneAgent: Sendable, Equatable {
@@ -67,6 +97,11 @@ public struct PaneAgent: Sendable, Equatable {
     public private(set) var waitsOnQuestion = false
     /// The labels of the work still running while the pane is background.
     public private(set) var backgroundTasks: [String] = []
+    /// The transcript of the session that last held the pane. It stays after the agent exits, so its conversation can
+    /// still be read.
+    public private(set) var transcriptPath: String?
+    /// What the waiting agent waits on, while the author has not answered it.
+    public private(set) var prompt: OpenPrompt?
     /// When Canopy saw the pane reach its state.
     public private(set) var since = Date.distantPast
     /// When the last change happened, by the clock of whatever caused it. Hooks that started earlier are stale.
@@ -104,6 +139,7 @@ public struct PaneAgent: Sendable, Equatable {
         defer {
             if report.releases { session = nil }
         }
+        if let path = report.transcriptPath { transcriptPath = path }
         guard let next = report.state else { return nil }
         // A Monitor wakes the agent on each line it reads, and the turn can end background again with less running.
         if next == .background, state == .background {
@@ -111,10 +147,14 @@ public struct PaneAgent: Sendable, Equatable {
             changedAt = at
             return nil
         }
-        guard next != state || next == .done else { return nil }
+        guard next != state || next == .done else {
+            if next == .waiting { open(report.prompt) }
+            return nil
+        }
         waitsOnQuestion = next == .waiting && report.question
         let change = change(to: next, via: report.event ?? "term.state", session: report.session, at: at, now: now)
         if next == .background { backgroundTasks = report.backgroundTasks }
+        if next == .waiting { open(report.prompt) }
         return change
     }
 
@@ -129,6 +169,10 @@ public struct PaneAgent: Sendable, Equatable {
             return change(to: .none, via: "key", session: nil, at: at, now: at)
         case .waiting where !waitsOnQuestion && data.contains(0x0D):
             return change(to: .working, via: "key", session: nil, at: at, now: at)
+        case .waiting where !waitsOnQuestion:
+            // Any other key in a dialog, a digit or an arrow, makes what the phone saw out of date.
+            prompt = nil
+            return nil
         default:
             return nil
         }
@@ -139,6 +183,21 @@ public struct PaneAgent: Sendable, Equatable {
         session = nil
         guard state != .none else { return nil }
         return change(to: .none, via: "exit", session: nil, at: at, now: at)
+    }
+
+    /// Takes the answer to the open prompt, if `promptID` still names it. A prompt is answered once, and the hook that
+    /// follows the answer moves the state on.
+    public mutating func answer(promptID: String) -> Bool {
+        guard prompt?.id == promptID else { return false }
+        prompt = nil
+        return true
+    }
+
+    /// Keeps the open prompt while a hook describes it again, as the permission request after an AskUserQuestion does.
+    private mutating func open(_ next: AgentPrompt?) {
+        guard let next else { return }
+        if let prompt, next.describes(prompt) { return }
+        prompt = next.opened(id: UUID().uuidString)
     }
 
     /// The author saw the pane. Returns whether a green dot went away.
@@ -154,7 +213,10 @@ public struct PaneAgent: Sendable, Equatable {
         let change = AgentChange(from: state, to: next, via: via, session: session)
         state = next
         unseen = next == .done
-        if next != .waiting { waitsOnQuestion = false }
+        if next != .waiting {
+            waitsOnQuestion = false
+            prompt = nil
+        }
         backgroundTasks = []
         since = now
         changedAt = at

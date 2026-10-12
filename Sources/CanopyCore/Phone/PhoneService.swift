@@ -13,19 +13,27 @@ public final class PhoneService: Sendable {
     private let dnsName: @Sendable () async -> String?
     private let monitor = Mutex<NWPathMonitor?>(nil)
     private let lastRefreshError = Mutex<String?>(nil)
-    /// Each connection's inbox subscription, so a second `phone.subscribe` replaces the first.
-    private let subscriptions = Mutex<[ObjectIdentifier: UUID]>([:])
+    /// Each connection's inbox subscription, by the request that started it and the hub's ID, so a second
+    /// `phone.subscribe` replaces the first.
+    private let subscriptions = Mutex<[ObjectIdentifier: (request: String, hub: UUID)]>([:])
+    /// Each connection's conversations and screens being followed.
+    private let streams = PhoneStreams()
+    private let panes: PhonePanes
+    /// How much scrollback the first screen carries.
+    static let screenScrollback = 500
     /// Lets the listener's handler reach the service until `stop`.
     private let handle: ServiceHandle
 
     public init(
-        home: CanopyHome, hub: PhoneHub, activity: ActivityLog, listen: PhoneListenAddress, macName: String,
+        home: CanopyHome, hub: PhoneHub, panes: PhonePanes, activity: ActivityLog, listen: PhoneListenAddress,
+        macName: String,
         tailscaleAddresses: @escaping @Sendable () -> [String] = TailscaleAddresses.current,
         dnsName: @escaping @Sendable () async -> String? = TailscaleStatus.dnsName
     ) {
         let registry = PhoneRegistry(file: home.phonesFile)
         self.registry = registry
         self.hub = hub
+        self.panes = panes
         self.activity = activity
         self.listen = listen
         self.tailscaleAddresses = tailscaleAddresses
@@ -89,32 +97,156 @@ public final class PhoneService: Sendable {
     // MARK: The phone's methods
 
     private func handle(_ request: ControlRequest, _ session: PhoneSession) async -> PhoneReply {
+        do {
+            return try await respond(to: request, session)
+        } catch let error as WorkspaceError {
+            return PhoneReply(.failure(id: request.id, error: ControlError(error)))
+        } catch let error as ControlError {
+            return PhoneReply(.failure(id: request.id, error: error))
+        } catch {
+            return PhoneReply(.failure(id: request.id, error: ControlError(code: "internal", message: "\(error)")))
+        }
+    }
+
+    private func respond(to request: ControlRequest, _ session: PhoneSession) async throws -> PhoneReply {
+        func success(_ value: some Encodable) throws -> PhoneReply {
+            PhoneReply(.success(id: request.id, result: try .from(value)))
+        }
         switch request.method {
         case PhoneMethod.subscribe:
-            let inbox = await hub.inbox
-            let connection = ObjectIdentifier(session.connection)
-            let reply = ControlResponse.success(id: request.id, result: (try? .from(inbox)) ?? .null)
-            // Runs after the response, in the connection's order, so two subscribes never interleave here.
-            return PhoneReply(reply) { [self] in
-                let previous = subscriptions.withLock { $0[connection] }
-                let id = await hub.subscribe(after: inbox, replacing: previous) { inbox in
-                    guard let data = try? JSONValue.from(inbox) else { return }
-                    session.send(PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: data))
-                }
-                subscriptions.withLock { $0[connection] = id }
-                guard previous == nil else { return }
-                session.onClose { [self] in
-                    let current = subscriptions.withLock { $0.removeValue(forKey: connection) }
-                    if let current { Task { await hub.unsubscribe(current) } }
-                }
-            }
+            return try subscribeToInbox(request, session, inbox: await hub.inbox)
+
         case PhoneMethod.rows:
-            let rows = await hub.rows
-            return PhoneReply(.success(id: request.id, result: (try? .from(rows)) ?? .null))
+            return try success(await hub.rows)
+
+        case PhoneMethod.transcript:
+            let params = try request.decodeParams(PhoneTranscriptParams.self)
+            guard params.limit > 0, params.limit <= 500 else {
+                throw ControlError(code: "bad_params", message: "limit must be from 1 to 500.")
+            }
+            guard !(params.follow && params.before != nil) else {
+                throw ControlError(code: "bad_params", message: "Follow the newest page, without before.")
+            }
+            let url = try await panes.transcriptURL(params.pane)
+            // A session that has not written its transcript yet has an empty conversation, which may still grow.
+            let page =
+                (try? TranscriptReader.page(of: url, before: params.before, limit: params.limit))
+                ?? TranscriptReader.Page(entries: [], older: nil, bytesRead: 0)
+            let result = PhoneTranscriptResult(pane: params.pane, entries: page.entries, older: page.older)
+            guard params.follow else { return try success(result) }
+            try streams.reserve(on: session)
+            let panes = self.panes
+            let follower = TranscriptFollower(
+                pane: params.pane, following: url.path,
+                path: { try? await panes.transcriptURL(params.pane).path }, sent: page.entries
+            ) { update in
+                guard let data = try? JSONValue.from(update) else { return }
+                session.send(PhoneEvent(event: PhoneEvent.transcript, subscription: request.id, data: data))
+            }
+            return PhoneReply(.success(id: request.id, result: try .from(result))) { [streams] in
+                streams.add(request.id, on: session) { follower.stop() }
+                follower.start()
+            }
+
+        case PhoneMethod.screen:
+            let params = try request.decodeParams(PhonePaneParams.self)
+            let first = try await panes.screen(params, scrollback: PhoneService.screenScrollback)
+            try streams.reserve(on: session)
+            let watcher = await ScreenWatcher(panes: panes, pane: params.pane, after: first.lines) { screen in
+                guard let data = try? JSONValue.from(screen) else { return }
+                session.send(
+                    PhoneEvent(event: PhoneEvent.screen, subscription: request.id, data: data), latestOnly: true)
+            }
+            return PhoneReply(.success(id: request.id, result: try .from(first))) { [streams] in
+                streams.add(request.id, on: session) { Task { await watcher.stop() } }
+                await watcher.start()
+            }
+
+        case PhoneMethod.reply:
+            let params = try request.decodeParams(PhoneReplyParams.self)
+            try await panes.reply(params) {
+                guard let data = try? JSONValue.from(PhoneDelivered(pane: params.pane, reply: request.id)) else {
+                    return
+                }
+                session.send(PhoneEvent(event: PhoneEvent.delivered, subscription: request.id, data: data))
+            }
+            record(
+                request, session, pane: params.pane, extra: activity.logsCommands ? ["text": .string(params.text)] : [:]
+            )
+            return try success(PhoneReplyResult(reply: request.id))
+
+        case PhoneMethod.answer:
+            let params = try request.decodeParams(PhoneAnswerParams.self)
+            try await panes.answer(params)
+            record(request, session, pane: params.pane, extra: ["answer": (try? .from(params.answer)) ?? .null])
+            return try success(PhonePaneParams(pane: params.pane))
+
+        case PhoneMethod.keys:
+            let params = try request.decodeParams(PhoneKeysParams.self)
+            try await panes.keys(params)
+            record(request, session, pane: params.pane)
+            return try success(PhonePaneParams(pane: params.pane))
+
+        case PhoneMethod.seen:
+            let params = try request.decodeParams(PhonePaneParams.self)
+            try await panes.seen(params)
+            return try success(params)
+
+        case PhoneMethod.unsubscribe:
+            let params = try request.decodeParams(PhoneUnsubscribeParams.self)
+            if let hubID = inboxSubscription(session, id: params.subscription) {
+                await hub.unsubscribe(hubID)
+            } else {
+                streams.remove(params.subscription, on: session)
+            }
+            return try success(params)
+
         default:
-            let error = ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
-            return PhoneReply(.failure(id: request.id, error: error))
+            throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
         }
+    }
+
+    /// The inbox, then its changes. A second subscribe on the connection replaces the first.
+    private func subscribeToInbox(_ request: ControlRequest, _ session: PhoneSession, inbox: PhoneInbox) throws
+        -> PhoneReply
+    {
+        let connection = ObjectIdentifier(session.connection)
+        // Runs after the response, in the connection's order, so two subscribes never interleave here.
+        return PhoneReply(.success(id: request.id, result: try .from(inbox))) { [self] in
+            let previous = subscriptions.withLock { $0[connection]?.hub }
+            let id = await hub.subscribe(after: inbox, replacing: previous) { inbox in
+                guard let data = try? JSONValue.from(inbox) else { return }
+                session.send(
+                    PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: data), latestOnly: true)
+            }
+            subscriptions.withLock { $0[connection] = (request.id, id) }
+            guard previous == nil else { return }
+            session.onClose { [self] in
+                let current = subscriptions.withLock { $0.removeValue(forKey: connection) }
+                if let current { Task { await hub.unsubscribe(current.hub) } }
+            }
+        }
+    }
+
+    /// The hub's ID for the connection's inbox, when `id` names it, which it forgets.
+    private func inboxSubscription(_ session: PhoneSession, id: String) -> UUID? {
+        let connection = ObjectIdentifier(session.connection)
+        return subscriptions.withLock { subscriptions in
+            guard let current = subscriptions[connection], current.request == id else { return nil }
+            subscriptions[connection] = nil
+            return current.hub
+        }
+    }
+
+    /// Logs a phone's call that changed something, with the phone's name, as CLI calls are logged.
+    private func record(
+        _ request: ControlRequest, _ session: PhoneSession, pane: String, extra: [String: JSONValue] = [:]
+    ) {
+        var data = extra
+        data["method"] = .string(request.method)
+        data["phone"] = .string(session.phone.name)
+        data["pane"] = .string(pane)
+        activity.record(ActivityType.phoneCall, source: .phone, data: data)
     }
 
     // MARK: What `canopy phone` calls

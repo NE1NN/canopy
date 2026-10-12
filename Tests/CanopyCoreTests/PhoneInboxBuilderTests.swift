@@ -63,6 +63,65 @@ struct PhoneInboxBuilderTests {
         #expect(inbox.rows.first?.isMain == true)
     }
 
+    @Test func aWaitingAgentCarriesItsPromptAndSaysWhatItWants() throws {
+        let dir = try TempDir()
+        let setup = try Setup(dir)
+        defer { setup.terminals.closeAll() }
+        let pane = setup.terminals.openTab(for: PaneContext(row: setup.main, repoName: "canopy")).pane
+        let cases: [(AgentPrompt, String)] = [
+            (
+                AgentPrompt(kind: .permission, tool: "Bash", detail: "npx convex deploy"),
+                "Wants to run npx convex deploy"
+            ),
+            (AgentPrompt(kind: .permission, tool: "Write", detail: "/r/notes.md"), "Wants to use Write: /r/notes.md"),
+            (
+                AgentPrompt(
+                    kind: .question, questions: [PromptQuestion(question: "Tailscale or a tunnel?", options: [])]),
+                "Asks: Tailscale or a tunnel?"
+            ),
+            (AgentPrompt(kind: .plan, tool: "ExitPlanMode", detail: "# Plan"), "Has a plan ready"),
+            (AgentPrompt(kind: .reply, detail: "Should I open the PR?"), "Asks: Should I open the PR?"),
+        ]
+        for (prompt, line) in cases {
+            pane.report(AgentReport(state: .working))
+            pane.report(AgentReport(state: .waiting, prompt: prompt))
+            let agent = try #require(
+                PhoneInboxBuilder.inbox(setup.snapshot, terminals: setup.terminals).rows[0].agents.first)
+            #expect(agent.prompt?.kind == prompt.kind)
+            #expect(agent.prompt?.id == pane.agent.prompt?.id)
+            #expect(agent.lastLine == line)
+        }
+    }
+
+    @Test func otherwiseTheLastLineComesFromTheTranscript() throws {
+        let dir = try TempDir()
+        let setup = try Setup(dir)
+        defer { setup.terminals.closeAll() }
+        let transcript = dir.sub("t.jsonl")
+        let line =
+            #"{"type":"assistant","uuid":"a1","timestamp":"2026-10-12T03:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"All done.\n\nREADY: PR #41 open, CI green\n"}]}}"#
+        try Data((line + "\n").utf8).write(to: URL(fileURLWithPath: transcript))
+        let pane = setup.terminals.openTab(for: PaneContext(row: setup.main, repoName: "canopy")).pane
+        pane.report(AgentReport(state: .done, transcriptPath: transcript))
+        let tails = TranscriptTails()
+        let agent = try #require(
+            PhoneInboxBuilder.inbox(setup.snapshot, terminals: setup.terminals, tails: tails).rows[0].agents.first)
+        #expect(agent.lastLine == "READY: PR #41 open, CI green")
+        #expect(agent.hasTranscript)
+    }
+
+    @Test func anIdleClaudeStaysInTheInboxForItsConversation() throws {
+        let dir = try TempDir()
+        let setup = try Setup(dir)
+        defer { setup.terminals.closeAll() }
+        let pane = setup.terminals.openTab(for: PaneContext(row: setup.main, repoName: "canopy")).pane
+        pane.report(AgentReport(state: .working, session: "s1", transcriptPath: dir.sub("t.jsonl")))
+        pane.report(AgentReport(state: AgentState.none, session: "s1"))
+        let agents = PhoneInboxBuilder.inbox(setup.snapshot, terminals: setup.terminals).rows[0].agents
+        #expect(agents.map(\.state) == [AgentState.none])
+        #expect(agents.first?.hasTranscript == true)
+    }
+
     @Test func backgroundAgentsSayWhatTheyWaitOn() throws {
         let dir = try TempDir()
         let setup = try Setup(dir)
