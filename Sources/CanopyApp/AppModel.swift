@@ -39,6 +39,7 @@ final class AppModel {
     private var server: ControlServer?
     private var phones: PhoneService?
     private var phoneHub: PhoneHub?
+    private var phonePanes: PhonePanes?
 
     init(home: CanopyHome) {
         self.home = home
@@ -142,6 +143,7 @@ final class AppModel {
         server = nil
         phones?.stop()
         phoneHub?.stop()
+        phonePanes?.stop()
         terminals.closeAll()
         activity.flushNow()
     }
@@ -173,8 +175,12 @@ final class AppModel {
             environment: ProcessInfo.processInfo.environment, allowsOverride: allowsOverride)
         let hub = PhoneHub(terminals: terminals, snapshot: snapshot, updates: await workspace.updates())
         hub.start()
-        let service = PhoneService(home: home, hub: hub, activity: activity, listen: listen, macName: Self.macName)
+        let panes = PhonePanes(terminals: terminals)
+        panes.start()
+        let service = PhoneService(
+            home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: Self.macName)
         phoneHub = hub
+        phonePanes = panes
         phones = service
         return service
     }

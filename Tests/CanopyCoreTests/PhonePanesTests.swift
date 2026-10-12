@@ -36,7 +36,7 @@ struct PhonePanesTests {
         let recording = try await recording(dir)
         defer { recording.close() }
 
-        _ = try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "line one\nline two"))
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "line one\nline two"))
 
         let expected = ReadRecorder.escaped("\u{1b}[200~line one\rline two\u{1b}[201~")
         #expect(await eventually { recording.reads.last == "<0d>" })
@@ -49,7 +49,7 @@ struct PhonePanesTests {
         defer { recording.close() }
         let text = (1...200).map { "Line \($0): the quick brown fox jumps over the lazy dog." }.joined(separator: "\n")
 
-        _ = try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: text))
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: text))
 
         #expect(await eventually { recording.reads.last == "<0d>" })
         let pasted = text.replacingOccurrences(of: "\n", with: "\r")
@@ -61,7 +61,7 @@ struct PhonePanesTests {
         let recording = try await recording(dir)
         defer { recording.close() }
 
-        _ = try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "a\u{1b}[201~\u{1b}b\r\nc"))
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "a\u{1b}[201~\u{1b}b\r\nc"))
 
         #expect(await eventually { recording.reads.last == "<0d>" })
         #expect(recording.reads.dropLast().joined() == ReadRecorder.escaped("\u{1b}[200~a[201~b\rc\u{1b}[201~"))
@@ -73,13 +73,12 @@ struct PhonePanesTests {
         defer { recording.close() }
         let delivered = Shared<[String]>([])
 
-        let reply = try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "go")) {
+        try await recording.panes.reply(PhoneReplyParams(pane: recording.id, text: "go")) {
             delivered.withLock { list in
                 let label = list.isEmpty ? "first" : "again"
                 list.append(label)
             }
         }
-        #expect(!reply.reply.isEmpty)
         #expect(delivered.withLock { $0 }.isEmpty)
         recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
         recording.pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))

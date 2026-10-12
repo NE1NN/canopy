@@ -83,7 +83,9 @@ public final class TranscriptFollower: Sendable {
                 state.sent = Dictionary(page.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
                 return PhoneTranscriptUpdate(pane: pane, entries: Array(page.entries.suffix(50)), reset: true)
             }
-            let changed = page.entries.filter { state.sent[$0.id] != $0 }
+            // Entries before the newest the phone has are older pages', which the phone asks for itself.
+            let newest = page.entries.lastIndex { state.sent[$0.id] != nil } ?? page.entries.startIndex
+            let changed = page.entries[newest...].filter { state.sent[$0.id] != $0 }
             for entry in changed { state.sent[entry.id] = entry }
             return changed.isEmpty ? nil : PhoneTranscriptUpdate(pane: pane, entries: changed)
         }

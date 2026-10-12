@@ -4,9 +4,9 @@ import Foundation
 /// where terminals live.
 @MainActor
 public final class PhonePanes {
-    public static let promptGone = ControlError(
+    public nonisolated static let promptGone = ControlError(
         code: "prompt_gone", message: "That prompt is no longer open: it was answered, or the agent moved on.")
-    public static let noTranscript = ControlError(
+    public nonisolated static let noTranscript = ControlError(
         code: "no_transcript",
         message: "This pane has no Claude Code conversation on this Mac. Its terminal shows what it does.")
 
@@ -43,14 +43,10 @@ public final class PhonePanes {
     }
 
     /// Pastes the reply and presses Return. `delivered` runs when the agent takes it, as its next prompt.
-    public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws
-        -> PhoneReplyResult
-    {
+    public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
-        let id = UUID().uuidString
         waitingReplies[pane.id, default: []].append(delivered)
         await pane.paste(params.text)
-        return PhoneReplyResult(reply: id)
     }
 
     public func answer(_ params: PhoneAnswerParams) async throws {

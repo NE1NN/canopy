@@ -20,7 +20,10 @@ public struct PhoneReply: Sendable {
 /// What the listener lets in, and how.
 public struct PhoneGate: Sendable {
     /// What a phone may call after `phone.hello`. A lost phone must not remove rows, repos, or hooks.
-    public static let allowedMethods: Set<String> = [PhoneMethod.subscribe, PhoneMethod.rows]
+    public static let allowedMethods: Set<String> = [
+        PhoneMethod.subscribe, PhoneMethod.rows, PhoneMethod.transcript, PhoneMethod.reply, PhoneMethod.answer,
+        PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe,
+    ]
 
     public var registry: PhoneRegistry
     public var macName: String

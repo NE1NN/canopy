@@ -13,6 +13,7 @@ struct PhoneServiceTests {
         let service: PhoneService
         let row: Row
         let addresses: Shared<[String]>
+        let panes: PhonePanes
 
         init(
             _ dir: TempDir,
@@ -31,8 +32,10 @@ struct PhoneServiceTests {
                 updates: AsyncStream { _ in }, coalescing: .milliseconds(20))
             let addresses = Shared(tailscale)
             self.addresses = addresses
+            panes = PhonePanes(terminals: terminals)
+            panes.start()
             service = PhoneService(
-                home: home, hub: hub, activity: activity, listen: listen, macName: "studio",
+                home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: "studio",
                 tailscaleAddresses: { addresses.withLock { $0 } }, dnsName: { "studio.tail1234.ts.net" })
         }
 
@@ -42,6 +45,7 @@ struct PhoneServiceTests {
 
         func close() {
             service.stop()
+            panes.stop()
             terminals.closeAll()
             activity.flushNow()
         }

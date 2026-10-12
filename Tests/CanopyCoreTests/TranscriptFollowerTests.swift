@@ -52,6 +52,23 @@ struct TranscriptFollowerTests {
         #expect(updates.all.withLock { $0 }.allSatisfy { !$0.reset })
     }
 
+    @Test func olderEntriesThanThePhoneHasAreLeftForItsPages() async throws {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("t.jsonl"))
+        let lines = (1...5).map { Self.line("u\($0)", "user", "prompt \($0)") }
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
+        let updates = Updates()
+        let follower = TranscriptFollower(
+            pane: "p1", following: url.path, path: { url.path },
+            sent: try TranscriptReader.page(of: url, before: nil, limit: 1).entries, interval: .milliseconds(20)
+        ) { update in updates.all.withLock { $0.append(update) } }
+        follower.start()
+        defer { follower.stop() }
+        try append(url, [Self.line("u6", "user", "prompt 6")])
+        #expect(await eventually { updates.count == 1 })
+        #expect(updates.last?.entries.map(\.text) == ["prompt 6"])
+    }
+
     @Test func aNewSessionStartsOver() async throws {
         let dir = try TempDir()
         let first = URL(fileURLWithPath: dir.sub("a.jsonl"))
