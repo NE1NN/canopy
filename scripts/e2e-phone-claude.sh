@@ -25,7 +25,12 @@ app_pid() {
 cleanup() {
     local pid
     pid=$(app_pid)
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    if [[ -n "$pid" ]]; then
+        kill "$pid" 2>/dev/null || true
+        # Claude Code writes its last lines as the app's quit ends it, so the folder goes only after.
+        for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+        sleep 1
+    fi
     # Claude Code's transcripts of this run, under the throwaway folder's name.
     local projects
     projects="$HOME/.claude/projects/$(printf '%s' "$(cd "$work" && pwd -P)/demo" | tr '/.' '--')"

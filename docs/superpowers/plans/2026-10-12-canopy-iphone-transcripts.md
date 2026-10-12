@@ -129,3 +129,31 @@ It removes the run's transcripts from `~/.claude/projects` afterwards.
 
 - `make lint`, `make build` (0 warnings), `make test` three times under load below the core count.
 - `make e2e`, with `scripts/e2e-phone-claude.sh` passing against Claude Code 2.1.296.
+
+## After Review
+
+An independent opus review of `git diff origin/main...feat/iphone-transcripts` found one critical and four major problems, all fixed with tests:
+
+1. Critical: a reply's Return answered whatever dialog was open, allowing a command or approving a plan the phone never saw.
+   `PhonePanes.reply` now refuses with `prompt_open` while the agent waits on a dialog, and `Pane.paste(_:returnIf:)` checks again after the paste is read, in the same main-actor turn that writes Return.
+   Tests: `aReplyNeverAnswersADialogThePhoneDidNotSee`, `aDialogOpeningDuringThePasteHoldsBackReturn`, `aReplyToAQuestionInTheMessageIsFine`.
+2. A reply to a pane whose Claude Code had exited went to the shell, which runs a bracketed paste on Return.
+   Replies need a session holding the pane, else `agent_not_running`. Test: `aReplyNeedsClaudeCodeRunning`.
+3. Queued events were coalesced by subscription, which dropped transcript deltas the follower had already counted as sent.
+   Only the inbox and screens, which carry the whole of something, are sent latest-only now. Test: `eventsThatAreNotLatestOnlyAllArriveInOrder`.
+4. Keys typed into a dialog at the Mac, other than Return and Escape, left the prompt open for the phone to answer.
+   Any key into a dialog closes its prompt; a draft typed after a question in the message does not. Tests: `anyKeyAtTheMacClosesADialogsPrompt`, `typingADraftLeavesAReplyPromptOpen`.
+5. A connection's requests ran concurrently, so keys could reorder and an unsubscribe could miss a stream not yet added.
+   Each request is now handled, answered, and its `after` run before the next. Test: `aConnectionsRequestsRunOneAfterAnother`.
+6. Transcript reads could grow to megabytes: the follower reads at most 1 MB back and the inbox's tails 256 KB.
+7. Delivered could name a reply the agent never took: waiting replies are forgotten when the agent stops, and after 10 minutes. Test: `aReplyTheAgentNeverTookIsForgottenWhenItEnds`.
+8. A session switch's reset now carries its own `older` cursor, and following with `before` is refused. Test: `followingStartsFromTheNewestPage`.
+9. A group the phone has that changes later, as when an earlier call fails after a later group was sent, is sent again. Test: `aGroupThePhoneHasThatChangesLaterIsSentAgain`.
+10. A page starting inside a line with several entries takes all of them, and a line's second text entry is named by its place in the line, not in the parse. Tests: `aPageStartingInsideALineTakesAllOfItsEntries`, `idsDoNotDependOnWhereReadingStarts`.
+11. A picker read only in part cannot be answered, rather than sending answers meant for another question. Test: `aPartlyReadPickerCannotBeAnswered`.
+12. A transcript named by a hook but not written yet is an empty page that is still followed. Test: `aTranscriptNotWrittenYetIsEmptyAndStillFollowed`.
+13. The e2e no longer leaves screen streams open, and removes its transcripts only after the app and Claude Code have quit.
+14. Nits: the inbox's last lines are cut to one line of 80 characters; `PhoneStreams` cancels outside its lock; `Page.bytesRead` is internal.
+    Left: `styledLines` finds the buffer's end the same way `recentText` does, which is a few hundred line lookups four times a second while a screen is open.
+
+The screen test also ran into bash's "child setpgid" message landing after the output on a busy machine, so it checks the scrollback runs into the screen rather than which line is last.

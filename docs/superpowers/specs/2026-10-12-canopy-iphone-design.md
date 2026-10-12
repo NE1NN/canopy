@@ -97,7 +97,7 @@ A release build refuses the override at compile time: the app reads it only unde
 A release build that finds the variable set ignores it, and `canopy phone status` names it as ignored.
 The app opens its control socket before the listener starts, so nothing the network does can keep the CLI out, and an address the listener cannot have within 5 seconds, as when another app holds the port, counts as a failure that the next network change tries again.
 TCP keepalive notices a phone that vanished without closing, as when it sleeps or leaves Wi-Fi, within about a minute.
-A phone that stops reading holds one waiting inbox, the newest, not every inbox since.
+A phone that stops reading holds one waiting inbox or screen, the newest, not every one since; conversation updates, which each carry only what changed, are all kept.
 
 Each connection must send `phone.hello` with its device token first.
 Any other first message except `phone.pair`, a wrong token, or no `phone.hello` within 10 seconds closes the connection, after an error naming why: `not_authenticated`, `unpaired`, or `bad_pairing_code`.
@@ -107,6 +107,7 @@ After `phone.hello` the connection may call only the methods in "Phone methods";
 Requests reach the same workspace and terminals the control socket's handlers use, so the phone and the CLI never disagree about state.
 The control socket does not answer `phone.*` methods.
 
+A connection's requests are handled one at a time in the order they came, each answered before the next starts, so keys go in in the order sent and an unsubscribe finds the stream it names.
 Streams send events, one JSON object per line like responses, told apart by their `event` key: `{"v": 1, "event": "phone.inbox", "subscription": "<the request's id>", "data": {...}}`.
 A stream's first event never comes before the response to the request that started it.
 
@@ -190,6 +191,9 @@ A move to another session sends the new conversation with `reset`.
 Newlines go in as Return, as a terminal pastes them, and escape characters are left out, so a reply cannot end its own paste.
 The phone shows Sent when the Mac answers, and Delivered when `phone.delivered` arrives with the reply's request ID, sent when the pane's next `UserPromptSubmit` hook arrives.
 A reply to a working agent is allowed, and Claude Code queues it as it does at the Mac.
+A reply needs a Claude Code session holding the pane, or it answers `agent_not_running`, so it never runs as shell commands.
+While the agent shows a dialog that keys answer, a reply answers `prompt_open`, since its Return would answer the dialog; it is checked again just before Return, in the same turn of the main actor that writes it, so a dialog that opens during the paste keeps the text in Claude Code's input and gets no Return.
+A reply the agent never takes is forgotten when its agent stops or after 10 minutes, so a later prompt typed at the Mac never reads as its Delivered.
 Checked with Claude Code 2.1.296: a 40-line, 2,930-character reply lands whole in the transcript.
 
 ### Questions and permission prompts
@@ -202,7 +206,7 @@ When a pane goes to waiting, the Mac keeps what it is waiting on as the pane's o
 - A question in the agent's last message, found the way `endsOnQuestion` finds it: its last paragraph, with no options, answered only by a reply.
 
 Claude Code 2.1.296 sends `PreToolUse`, then a `PermissionRequest` for the same tool, then a `permission_prompt` `Notification` for one `AskUserQuestion` or `ExitPlanMode`, so a hook that describes the open prompt again keeps its ID, and a notification leaves it as it is.
-The prompt closes when the agent's state leaves waiting, by a hook or by keys typed at the Mac, and the moment `phone.answer` takes an answer, so a second answer to the same prompt gets `prompt_gone`.
+The prompt closes when the agent's state leaves waiting, by a hook, when any key is typed into the dialog at the Mac (a digit or an arrow makes what the phone saw out of date), and the moment `phone.answer` takes an answer, so a second answer to the same prompt gets `prompt_gone`.
 
 `phone.answer` takes the prompt's ID and the answer.
 If the pane's open prompt has a different ID, or none, it answers `prompt_gone` and sends nothing.
@@ -348,3 +352,5 @@ Milestone 2 (reading and answering agents):
 15. A multiple choice is answered with the toggles, Down to Submit, Return, and `1`, and "Type something" and "Chat about this" are not offered on the phone.
 16. Panes whose Claude Code is idle stay in the inbox, with state none, for their conversations.
 17. Replies send newlines as Return and leave out escape characters.
+18. A reply is refused while a dialog is open, and needs a Claude Code session in the pane.
+19. A phone's requests on one connection run one at a time, in order.

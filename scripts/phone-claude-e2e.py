@@ -76,6 +76,8 @@ class Session:
             self.inbox = message["data"]
         elif event == "phone.delivered":
             self.delivered.add(message["data"]["reply"])
+        elif event == "phone.screen":
+            pass
         elif event == "phone.transcript":
             for entry in message["data"]["entries"]:
                 self.transcript[entry["id"]] = entry
@@ -98,7 +100,19 @@ class Session:
         fail(f"timed out waiting for {what}; agent: {json.dumps(agent)}")
 
     def screen(self):
-        return "\n".join(self.call("phone.screen", {"pane": pane})["lines"])
+        request_id = self.phone.send("phone.screen", {"pane": pane})
+        self.phone.sock.settimeout(60)
+        while True:
+            message = self.phone.next()
+            if message is None:
+                fail("the Mac closed the connection")
+            if "event" not in message and message.get("id") == request_id:
+                break
+            self.take(message)
+        if message.get("error"):
+            fail(f"phone.screen: {message['error']}")
+        self.call("phone.unsubscribe", {"subscription": request_id})
+        return "\n".join(message["result"]["lines"])
 
     def entries(self):
         return list(self.transcript.values())
