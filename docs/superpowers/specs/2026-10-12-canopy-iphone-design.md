@@ -211,7 +211,7 @@ Screens, as in the mockups:
   Needs you holds waiting agents, Done holds done agents not yet seen, and Running holds working and background agents.
   Permission prompts show Allow and Deny in the list.
   A swipe pins or unpins a row.
-  The first launch pins rows on a repo's default branch that have an agent.
+  The first launch pins each repo's own checkout, its `main` row, when an agent runs there.
 - **Rows**: every row by repo, with dots and PR numbers, for rows the inbox leaves out.
 - **Conversation**: Chat and Terminal, with chips for a question's options and a reply box.
 - **Settings**: the paired Mac, Face ID lock, and unpairing.

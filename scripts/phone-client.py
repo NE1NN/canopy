@@ -14,6 +14,7 @@
 The link is the canopy-phone://pair URL `canopy phone pair --json` prints; only its host and port are used after pairing.
 """
 import json
+import os
 import socket
 import sys
 import time
@@ -73,7 +74,9 @@ def main(args):
         link, name, token_file = args[1:4]
         phone = Phone(link)
         result = result_or_exit(phone.call("phone.pair", {"code": phone.code, "name": name}))
-        with open(token_file, "w") as file:
+        descriptor = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w") as file:
             file.write(result["token"])
         print(json.dumps({"phone": result["phone"], "mac": result["mac"]}))
     elif command == "call":

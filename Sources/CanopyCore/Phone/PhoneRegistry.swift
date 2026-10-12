@@ -45,13 +45,32 @@ public actor PhoneRegistry {
     /// Which phone each used code paired, for `waitForPairing`.
     private var redeemed: [String: String] = [:]
     private var wrongCodes = 0
+    /// Why `phones.json` could not be read. No phone gets in meanwhile, and nothing writes over the file.
+    private let unreadable: String?
 
     public init(file: URL, now: @escaping @Sendable () -> Date = Date.init) {
         self.file = file
         self.now = now
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        stored = (try? decoder.decode([PairedPhone].self, from: Data(contentsOf: file))) ?? []
+        do {
+            stored = try decoder.decode([PairedPhone].self, from: Data(contentsOf: file))
+            unreadable = nil
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            stored = []
+            unreadable = nil
+        } catch {
+            stored = []
+            unreadable = "\(error)"
+        }
+    }
+
+    private func checkReadable() throws {
+        guard let unreadable else { return }
+        throw ControlError(
+            code: "phones_unreadable",
+            message: "Canopy could not read \(file.path), so it pairs and removes no phones until it can: \(unreadable)"
+        )
     }
 
     public var phones: [PairedPhone] { stored }
@@ -67,6 +86,7 @@ public actor PhoneRegistry {
 
     /// Trades a code for a new phone and its token. The token is returned this once and never kept.
     public func redeem(code: String, name: String) throws -> (phone: PairedPhone, token: String) {
+        try checkReadable()
         let key = Self.normalized(code)
         let current = now()
         codes = codes.filter { $0.value > current }
@@ -108,9 +128,15 @@ public actor PhoneRegistry {
     }
 
     public func remove(name: String) throws -> PairedPhone {
+        try checkReadable()
         guard let index = stored.firstIndex(where: { $0.name == name }) else { throw Self.notFound(name) }
         let phone = stored.remove(at: index)
-        try save()
+        do {
+            try save()
+        } catch {
+            stored.insert(phone, at: index)
+            throw ControlError(code: "internal", message: "Could not save the paired phones: \(error)")
+        }
         return phone
     }
 

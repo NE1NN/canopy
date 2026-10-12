@@ -211,4 +211,11 @@ Fixed:
 10. `aWrongTokenIsUnpairedAndCloses` sends both lines in one write, so it exercises the gate's closing check.
 11. New tests: `helloAgainAnswersAgain`, `anOldProtocolBeforeHelloCloses`, `anOldProtocolAfterHelloIsRefusedAndTheConnectionStays`, `fourWrongCodesVoidNothingAndARightOneStartsTheCountAgain`.
 12. Nits: the service lets go of itself in `stop()`; `Data(base64URLEncoded:)` moved to the tests; the listener's close handler is private; `phones.json` is created at 0600 rather than set after; the hub's poll ends with the hub; the phone's types decode states they do not know.
-    Left: an unreadable `phones.json` still reads as no phones, which fails closed; Canopy has no log to note it in.
+
+CodeRabbit, five comments, all fixed:
+
+1. The spec's Inbox bullet still said "default branch" for first-launch pins.
+2. `phone-client.py` writes the token file at 0600.
+3. `PhoneHub.stop()` clears its pending publish, and a cancelled one returns before touching state.
+4. An unreadable `phones.json` (not a missing one) now refuses pairing and removal with `phones_unreadable` and is never written over, rather than reading as no phones and being replaced on the next pairing. Test: `anUnreadableFileIsLeftAloneAndPairsNothing`.
+5. A removal that cannot save puts the phone back. Test: `aRemovalThatCannotSaveKeepsThePhone`.

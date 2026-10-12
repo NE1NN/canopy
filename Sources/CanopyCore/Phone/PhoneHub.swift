@@ -61,6 +61,7 @@ public final class PhoneHub {
         for task in tasks { task.cancel() }
         tasks = []
         pending?.cancel()
+        pending = nil
         subscribers = [:]
     }
 
@@ -91,6 +92,7 @@ public final class PhoneHub {
         let pause = coalescing
         pending = Task { [weak self] in
             try? await Task.sleep(for: pause)
+            guard !Task.isCancelled else { return }
             self?.pending = nil
             self?.publish()
         }

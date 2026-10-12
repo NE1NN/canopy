@@ -110,6 +110,32 @@ struct PhoneRegistryTests {
         #expect(await reloaded.authenticate(token: paired.token)?.name == "a")
     }
 
+    @Test func anUnreadableFileIsLeftAloneAndPairsNothing() async throws {
+        let dir = try TempDir()
+        try FileManager.default.createDirectory(atPath: dir.sub("home"), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: URL(fileURLWithPath: dir.sub("home/phones.json")))
+        let registry = registry(dir)
+        let code = await registry.newCode().code
+        do {
+            _ = try await registry.redeem(code: code, name: "a")
+            Issue.record("paired with an unreadable phones.json")
+        } catch let error as ControlError {
+            #expect(error.code == "phones_unreadable")
+        }
+        await #expect(throws: ControlError.self) { try await registry.remove(name: "a") }
+        #expect(try String(contentsOfFile: dir.sub("home/phones.json"), encoding: .utf8) == "not json")
+    }
+
+    @Test func aRemovalThatCannotSaveKeepsThePhone() async throws {
+        let dir = try TempDir()
+        let registry = registry(dir)
+        let paired = try await registry.redeem(code: await registry.newCode().code, name: "a")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.sub("home"))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.sub("home")) }
+        await #expect(throws: ControlError.self) { try await registry.remove(name: "a") }
+        #expect(await registry.authenticate(token: paired.token)?.name == "a")
+    }
+
     @Test func tokensAreLongAndDifferent() async throws {
         let dir = try TempDir()
         let registry = registry(dir)
