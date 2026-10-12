@@ -9,11 +9,14 @@ public struct WorkspaceControlHandler: Sendable {
     let rows: RowLifecycle
     let plugins: PluginHost
     let ui: any ControlUIBridge
+    /// Nil where the app has no phone listener, as in most tests.
+    let phones: PhoneService?
 
-    public init(rows: RowLifecycle, plugins: PluginHost, ui: any ControlUIBridge) {
+    public init(rows: RowLifecycle, plugins: PluginHost, ui: any ControlUIBridge, phones: PhoneService? = nil) {
         self.rows = rows
         self.plugins = plugins
         self.ui = ui
+        self.phones = phones
     }
 
     var workspace: Workspace { rows.workspace }
@@ -394,6 +397,23 @@ public struct WorkspaceControlHandler: Sendable {
             try await rows.closePage(params.page)
             return .object(["page": .string(params.page)])
 
+        case PhonesMethod.pair:
+            return try .from(try await phoneService().pair())
+
+        case PhonesMethod.paired:
+            let params = try request.decodeParams(PhonesPairedParams.self)
+            return try .from(PhonesPairedResult(phone: await phoneService().waitForPairing(code: params.code)))
+
+        case PhonesMethod.list:
+            return try .from(await phoneService().list())
+
+        case PhonesMethod.remove:
+            let params = try request.decodeParams(PhonesRemoveParams.self)
+            return try .from(try await phoneService().remove(name: params.name))
+
+        case PhonesMethod.status:
+            return try .from(await phoneService().status())
+
         case PluginMethod.list:
             return try .from(await plugins.list())
 
@@ -484,6 +504,13 @@ public struct WorkspaceControlHandler: Sendable {
         var info = info
         info.panes = await rows.paneIDs(inRows: info.rows)
         return info
+    }
+
+    private func phoneService() throws -> PhoneService {
+        guard let phones else {
+            throw ControlError(code: "phones_unavailable", message: "This Canopy has no phone listener.")
+        }
+        return phones
     }
 
     static func code(of error: any Error) -> String {

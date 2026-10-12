@@ -72,6 +72,16 @@ final class PhoneTestClient: Sendable {
         }
     }
 
+    /// Whether nothing arrives for `duration`, with the connection still open.
+    func isQuiet(for duration: Duration) throws -> Bool {
+        do {
+            _ = try next(timeout: duration)
+            return false
+        } catch ControlClientError.timedOut {
+            return true
+        }
+    }
+
     /// Reads until the Mac closes the connection, returning what came before.
     func untilClosed(timeout: Duration = .seconds(20)) throws -> [PhoneMessage] {
         var messages: [PhoneMessage] = []

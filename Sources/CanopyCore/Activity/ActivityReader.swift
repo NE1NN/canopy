@@ -165,6 +165,8 @@ extension ActivityEvent {
             let took = number("durationMs").map { " in \(Self.duration(milliseconds: $0))" } ?? ""
             let command = (text("cmd") ?? "").replacingOccurrences(of: "\n", with: " \u{21b5} ")
             return "\(pane) exit \(number("exit") ?? 0)\(took): \(command)"
+        case ActivityType.phonePaired, ActivityType.phoneRemoved:
+            return text("phone") ?? ""
         case ActivityType.webOpened:
             return "\(text("page") ?? "") \(text("placement") ?? ""): \(text("url") ?? "")"
         case ActivityType.webClosed:
