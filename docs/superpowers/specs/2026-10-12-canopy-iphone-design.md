@@ -144,10 +144,12 @@ The commands reach the app through `phones.pair`, `phones.paired`, `phones.list`
 | `phone.keys` | Sends keys from the Terminal tab's key bar or keyboard into a pane. |
 | `phone.push` | Registers or replaces the phone's push token. |
 | `phone.seen` | Marks a done agent as seen, as looking at it on the Mac does. |
+| `phone.unsubscribe` | Stops a stream another request started: the inbox, a conversation, or a screen. |
 
 Mode 2 adds `phone.newRow`, which takes the same options as `canopy row new` plus a brief to start an agent with.
 
-The inbox is every row in sidebar order, repos then plugins, each with its name, repo or plugin, whether it is the repo's own checkout, and an entry per pane whose agent is not none: its state, whether a done is unseen, when it reached the state, its last line, and what a background agent waits on.
+The inbox is every row in sidebar order, repos then plugins, each with its name, repo or plugin, whether it is the repo's own checkout, and an entry per pane whose agent is not none or that has a conversation to read: its state, whether a done is unseen, when it reached the state, its open prompt, whether it has a transcript, its last line, and what a background agent waits on.
+The last line is what the open prompt wants ("Wants to run npx convex deploy", "Asks: …", "Has a plan ready"), what a background agent waits on, or the conversation's last entry: the last line of the agent's text, a tool group's line, or "You: …".
 Each change sends the whole inbox again, since it is a few kilobytes and a phone that misses one cannot drift.
 Changes made together go out as one after 100 milliseconds, and a poll every 2 seconds sends what has no event of its own, such as the author seeing a done agent on the Mac.
 `phone.rows` adds PRs and groups rows by repo; the Rows tab lays live agent states from the inbox over it.
@@ -158,45 +160,70 @@ Changes made together go out as one after 100 milliseconds, and a poll every 2 s
 
 Claude Code's hooks pass `transcript_path` with every event.
 `ClaudeHookMapping` records it on the pane's agent next to the session ID, and it changes when the session does.
+It stays after the agent exits, so a conversation can still be read; a remote row's transcript lives on its host, so its panes have none.
+`canopy agent-hook` hands the path and the open prompt to the app in `term.state`'s params, as it hands the state.
 
-`TranscriptReader` in `CanopyCore` turns the JSONL file into entries:
+`TranscriptParser` and `TranscriptReader` in `CanopyCore` turn the JSONL file into entries, each with an ID that stays the same while the entry grows:
 
-- The author's prompts, as text.
-- The agent's text.
-- Each tool call as one line: "Ran make test", "Read ControlServer.swift and 3 more", "Edited 2 files".
-  Consecutive calls of the same kind fold together.
-  A failed call says so.
-- A question, permission prompt, or plan as a prompt entry with its options.
+- **prompt**: the author's words. A paste, which Claude Code keeps between `<pasted_content id="…">` tags, reads as the text pasted, and an image as `[image]`.
+- **text**: the agent's text.
+- **tools**: consecutive tool calls of the same kind as one line, by the first call: "Ran make test and 2 more", "Read ControlServer.swift and 3 more", "Edited 2 files", "Searched for …", "Fetched developer.apple.com", "Ran an agent: …", "Updated the to-do list", "Used notion-search".
+  A failed call adds ", failed", or ", 1 failed" to a group, and a call the author turned down at a permission prompt ", declined".
+- **question**: an `AskUserQuestion` call with its questions and options, and the answer once there is one ("Blue; Large", "Apple, Plum", or "Declined").
+- **plan**: an `ExitPlanMode` call with the plan, and "Approved" or "Declined".
+- **notice**: a slash command (`/clear`), an interrupt, a background task finishing, or the conversation being compacted.
 
-Tool output, thinking, subagent transcripts, and hook messages are left out.
-The reader reads backward from the end of the file for the first page, and follows the file's growth with a file-system source while a phone has the conversation open.
+Tool output, thinking, `ToolSearch`, subagent lines, meta lines, local command output, attachments, and system lines are left out.
 Lines it cannot parse are skipped, so a new Claude Code version degrades to missing entries instead of an error.
+
+`phone.transcript` reads backward from the end of the file in chunks from 64 KB, so the first page of a long session costs one read of its end.
+A page lists its entries oldest first, with `older`, the byte offset where the next older page ends.
+Results of the page's last calls are looked for up to 256 KB past it.
+A group of calls that straddles two pages shows as two groups.
+With `follow`, a `TranscriptFollower` checks the file's size every 300 ms, which also notices the pane moving to another session's file, and sends entries that are new or changed since the last it sent, newer than the newest the phone has: a group sent again as it grows replaces the one with its ID.
+A move to another session sends the new conversation with `reset`.
+`phone.unsubscribe` with the request's ID stops following, and so does closing the connection.
 
 ### Replies
 
-`phone.reply` sends the text wrapped in bracketed paste markers, then Return as its own write, which is how `term send --enter` already sends Return.
-The phone shows Sent when the Mac accepts it, and Delivered when the pane's next `UserPromptSubmit` hook arrives.
+`phone.reply` sends the text as one bracketed paste, then Return as its own write once the program has read the paste and 200 ms have passed, which is how `term send --enter` already sends Return.
+Newlines go in as Return, as a terminal pastes them, and escape characters are left out, so a reply cannot end its own paste.
+The phone shows Sent when the Mac answers, and Delivered when `phone.delivered` arrives with the reply's request ID, sent when the pane's next `UserPromptSubmit` hook arrives.
 A reply to a working agent is allowed, and Claude Code queues it as it does at the Mac.
+Checked with Claude Code 2.1.296: a 40-line, 2,930-character reply lands whole in the transcript.
 
 ### Questions and permission prompts
 
 When a pane goes to waiting, the Mac keeps what it is waiting on as the pane's open prompt, with an ID:
 
 - `AskUserQuestion`: its questions and options, from the `PreToolUse` hook's tool input.
-- A permission request: the tool and what it wants to run, from the `PermissionRequest` hook.
+- A permission request: the tool and what it wants to run (a command, a file, a URL, a query, or an MCP tool's name), from the `PermissionRequest` hook.
 - `ExitPlanMode`: the plan.
-- A question in the agent's last message, found the way `endsOnQuestion` finds it: no options, only a reply.
+- A question in the agent's last message, found the way `endsOnQuestion` finds it: its last paragraph, with no options, answered only by a reply.
+
+Claude Code 2.1.296 sends `PreToolUse`, then a `PermissionRequest` for the same tool, then a `permission_prompt` `Notification` for one `AskUserQuestion` or `ExitPlanMode`, so a hook that describes the open prompt again keeps its ID, and a notification leaves it as it is.
+The prompt closes when the agent's state leaves waiting, by a hook or by keys typed at the Mac, and the moment `phone.answer` takes an answer, so a second answer to the same prompt gets `prompt_gone`.
 
 `phone.answer` takes the prompt's ID and the answer.
 If the pane's open prompt has a different ID, or none, it answers `prompt_gone` and sends nothing.
-Otherwise it sends the keys the author would press: the option's number for a question, Return for Allow, Escape for Deny.
-The prompt closes on the next hook from that pane, whoever answered it.
+Otherwise it sends the keys the author would press, each as a write of its own 150 ms apart, as checked against Claude Code 2.1.296:
+
+| Prompt | Keys |
+|---|---|
+| One question | The option's digit, which picks and submits. |
+| Several questions | Each question's digit, then `1` on the review that follows to submit. |
+| A multiple choice | Each chosen option's digit, which toggles it, then Down past the options and "Type something" to Submit, Return, and `1` on the review. |
+| Permission | Return for Allow, the highlighted "Yes". Escape for Deny, which interrupts the agent with no hook, as at the Mac. |
+| Plan | Return to approve, which takes the dialog's first option, as Return does at the Mac. Escape to keep planning. |
+
+The phone offers only the options it was given; "Type something" and "Chat about this" are left to a reply or the Terminal tab.
 
 ### Terminal tab
 
-`phone.screen` streams the pane's visible screen and scrollback at the Mac's width.
+`phone.screen` answers with the pane's screen at the Mac's width and up to 500 lines of scrollback above it, each line with SGR escape sequences for its colors and styles, then sends the visible screen whenever it changes, four times a second at most, until `phone.unsubscribe`.
 The phone draws it in a monospaced font, scrolls sideways, and pinch-zooms.
-`phone.keys` sends the key bar's esc, tab, ctrl, and arrows, and whatever the author types.
+`phone.keys` sends the key bar's esc, tab, ctrl, and arrows, and whatever the author types, as they are.
+A connection may follow 16 conversations and screens at once.
 
 ## The iPhone app
 
@@ -262,7 +289,8 @@ A paired phone can make any agent do anything that agent can do, so the token is
 Tailscale keeps the listener off every network but the tailnet.
 The token keeps other tailnet devices out, `phone remove` revokes a lost phone at once, and the method list keeps a phone from removing rows, repos, or hooks.
 Face ID guards the app, and lock-screen actions need an unlocked phone.
-The activity log records each phone method that changes something, with the phone's name, as it records CLI calls, under a new `phone` source.
+The activity log records each phone method that changes something (`phone.reply`, `phone.answer`, `phone.keys`) as `phone.call`, with the phone's name and pane, under a new `phone` source.
+A reply's text is logged only while command logging is on, and keys never are.
 Pairing and removing a phone record `phone.paired` and `phone.removed`.
 
 ## Testing
@@ -311,3 +339,12 @@ Milestone 1 (the listener and pairing):
 9. Events carry an `event` key and the ID of the request that started them.
 10. `canopy phone pair` waits for the phone and says which one paired; `--json` returns at once.
 11. The phone's own types read an agent or PR state they do not know as none or open, so a newer Mac cannot spoil an older phone's inbox while both speak protocol 1.
+
+Milestone 2 (reading and answering agents):
+
+12. Following a conversation polls the transcript's size every 300 ms rather than a file-system source, which also notices the pane moving to another session's file.
+13. `phone.unsubscribe` is a new phone method, since a phone opens and leaves conversations and screens on one connection.
+14. Approving a plan sends Return, the dialog's first option, which Claude Code 2.1.296 labels "Yes, and use auto mode" where auto mode is on offer, as Return does at the Mac.
+15. A multiple choice is answered with the toggles, Down to Submit, Return, and `1`, and "Type something" and "Chat about this" are not offered on the phone.
+16. Panes whose Claude Code is idle stay in the inbox, with state none, for their conversations.
+17. Replies send newlines as Return and leave out escape characters.
