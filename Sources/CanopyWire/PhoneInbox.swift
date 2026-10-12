@@ -1,0 +1,176 @@
+import Foundation
+
+/// One pane's agent, as the phone shows it.
+public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
+    public var pane: String
+    public var state: AgentState
+    /// Done and not yet seen, on the Mac or the phone.
+    public var unseen: Bool
+    /// When the agent reached its state, in seconds since 1970.
+    public var since: Double
+    /// The agent's latest line, such as what it runs or asks.
+    public var lastLine: String?
+    /// What a background agent waits on.
+    public var backgroundTasks: [String]?
+
+    public init(
+        pane: String, state: AgentState, unseen: Bool = false, since: Double, lastLine: String? = nil,
+        backgroundTasks: [String]? = nil
+    ) {
+        self.pane = pane
+        self.state = state
+        self.unseen = unseen
+        self.since = since
+        self.lastLine = lastLine
+        self.backgroundTasks = backgroundTasks
+    }
+
+    /// The same dot the Mac's sidebar shows for it.
+    public var dot: AgentDot? {
+        switch state {
+        case .none: nil
+        case .working: .working
+        case .waiting: .waiting
+        case .done: unseen ? .done : nil
+        case .background: .background
+        }
+    }
+}
+
+/// A row and the agents in its panes.
+public struct PhoneRow: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var path: String
+    /// The branch, or a plugin row's title.
+    public var name: String
+    /// The repo's name. Nil for a plugin's row.
+    public var repo: String?
+    /// The plugin's name, for a plugin's row.
+    public var plugin: String?
+    /// The repo's own checkout rather than a worktree.
+    public var isMain: Bool
+    public var pr: PhonePR?
+    public var agents: [PhoneAgent]
+
+    public init(
+        path: String, name: String, repo: String? = nil, plugin: String? = nil, isMain: Bool = false,
+        pr: PhonePR? = nil, agents: [PhoneAgent] = []
+    ) {
+        self.path = path
+        self.name = name
+        self.repo = repo
+        self.plugin = plugin
+        self.isMain = isMain
+        self.pr = pr
+        self.agents = agents
+    }
+
+    public var id: String { path }
+
+    /// The agent the row shows: its most urgent, else the latest to change.
+    public var lead: PhoneAgent? {
+        agents.max { lhs, rhs in
+            let left = lhs.dot.map { $0.rawValue + 1 } ?? 0
+            let right = rhs.dot.map { $0.rawValue + 1 } ?? 0
+            return left == right ? lhs.since < rhs.since : left < right
+        }
+    }
+
+    public var dot: AgentDot? {
+        agents.compactMap(\.dot).max()
+    }
+}
+
+public struct PhonePR: Codable, Sendable, Equatable, Hashable {
+    public var number: Int
+    public var state: PRState
+    public var title: String
+    public var url: String
+
+    public init(number: Int, state: PRState, title: String, url: String) {
+        self.number = number
+        self.state = state
+        self.title = title
+        self.url = url
+    }
+}
+
+/// Every row, in the sidebar's order, with the agents in it. The Mac sends all of it on each change.
+public struct PhoneInbox: Codable, Sendable, Equatable {
+    public var rows: [PhoneRow]
+
+    public init(rows: [PhoneRow] = []) {
+        self.rows = rows
+    }
+
+    /// An agent and the row it is in.
+    public struct Item: Sendable, Equatable, Identifiable {
+        public var row: PhoneRow
+        public var agent: PhoneAgent
+
+        public var id: String { agent.pane }
+    }
+
+    public struct Sections: Sendable, Equatable {
+        /// Pinned rows in pin order, whatever their agents do.
+        public var pinned: [PhoneRow]
+        /// Waiting agents.
+        public var needsYou: [Item]
+        /// Done agents not yet seen.
+        public var done: [Item]
+        /// Working and background agents.
+        public var running: [Item]
+    }
+
+    /// The home screen. Agents in pinned rows show only with their row. Newest first in each section.
+    public func sections(pinned: [String]) -> Sections {
+        let byPath = Dictionary(rows.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        let pinnedSet = Set(pinned)
+        let items = rows.filter { !pinnedSet.contains($0.path) }
+            .flatMap { row in row.agents.map { Item(row: row, agent: $0) } }
+            .sorted { $0.agent.since > $1.agent.since }
+        return Sections(
+            pinned: pinned.compactMap { byPath[$0] },
+            needsYou: items.filter { $0.agent.state == .waiting },
+            done: items.filter { $0.agent.state == .done && $0.agent.unseen },
+            running: items.filter { $0.agent.state == .working || $0.agent.state == .background })
+    }
+
+    /// Agents waiting for the author, for the badge.
+    public var waitingCount: Int {
+        rows.flatMap(\.agents).filter { $0.state == .waiting }.count
+    }
+
+    /// Panes with an agent in any state.
+    public var agentCount: Int {
+        rows.flatMap(\.agents).filter { $0.state != .none }.count
+    }
+
+    /// What the first launch pins: each repo's own checkout, when an agent runs there.
+    public var defaultPins: [String] {
+        rows.filter { $0.isMain && $0.agents.contains { $0.state != .none } }.map(\.path)
+    }
+}
+
+/// What `phone.rows` answers: the sidebar's sections, repos first, then plugins.
+public struct PhoneRowsResult: Codable, Sendable, Equatable {
+    public struct Section: Codable, Sendable, Equatable, Identifiable {
+        /// The repo's or plugin's name.
+        public var name: String
+        public var isPlugin: Bool
+        public var rows: [PhoneRow]
+
+        public init(name: String, isPlugin: Bool, rows: [PhoneRow]) {
+            self.name = name
+            self.isPlugin = isPlugin
+            self.rows = rows
+        }
+
+        public var id: String { (isPlugin ? "plugin:" : "repo:") + name }
+    }
+
+    public var sections: [Section]
+
+    public init(sections: [Section]) {
+        self.sections = sections
+    }
+}

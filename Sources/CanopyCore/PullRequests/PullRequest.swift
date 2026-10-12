@@ -1,8 +1,6 @@
 import Foundation
 
-public enum PRState: String, Codable, Sendable {
-    case open, draft, merged, closed
-
+extension PRState {
     /// GitHub's state, with an open draft shown as draft.
     init(gitHub state: String, isDraft: Bool) {
         self =

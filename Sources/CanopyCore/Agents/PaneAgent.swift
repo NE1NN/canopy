@@ -55,19 +55,6 @@ public struct AgentChange: Sendable, Equatable {
     }
 }
 
-/// What stands for a pane's agent in the sidebar, the tab bar, and the pane header. Ordered by urgency, so the most
-/// urgent of several is their `max()`.
-public enum AgentDot: Int, Comparable, Sendable {
-    case background
-    case working
-    case done
-    case waiting
-
-    public static func < (lhs: AgentDot, rhs: AgentDot) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-}
-
 /// A pane's agent state and the rules that change it. It knows nothing of processes or windows, so each rule can be
 /// tested on its own.
 public struct PaneAgent: Sendable, Equatable {
