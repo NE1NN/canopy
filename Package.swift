@@ -37,7 +37,9 @@ let package = Package(
             ]
         ),
         .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
-        .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"]),
+        .testTarget(
+            name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"], resources: [.copy("Fixtures")]
+        ),
         .testTarget(
             name: "CanopyCLITests",
             dependencies: [
