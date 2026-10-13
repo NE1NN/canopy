@@ -17,7 +17,7 @@ public final class PhoneService: Sendable {
         dnsName: @escaping @Sendable () async -> String? = TailscaleStatus.dnsName
     ) {
         let settings = PhoneServerSettings(
-            registryFile: home.phonesFile, serverName: macName, version: CanopyVersion.current, port: listen.port,
+            registryFile: home.phonesFile, serverName: { macName }, version: CanopyVersion.current, port: listen.port,
             addresses: {
                 switch listen {
                 case .tailscale: tailscaleAddresses()

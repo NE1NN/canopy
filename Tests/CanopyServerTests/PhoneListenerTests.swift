@@ -28,7 +28,7 @@ struct PhoneListenerTests {
             listener = PhoneListener(
                 port: 0, addresses: { addresses.withLock { $0 } },
                 gate: PhoneGate(
-                    registry: registry, macName: "studio", version: "1.2.3", helloTimeout: helloTimeout,
+                    registry: registry, name: { "studio" }, version: "1.2.3", helloTimeout: helloTimeout,
                     helloTimer: helloTimer,
                     handler: handler ?? echo))
         }
@@ -80,7 +80,10 @@ struct PhoneListenerTests {
             try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: result.token)))
         }
         let greeting = try #require(hello.result).decode(PhoneHelloResult.self)
-        #expect(greeting == PhoneHelloResult(mac: "studio", version: "1.2.3", phone: "Hindie's iPhone"))
+        #expect(
+            greeting
+                == PhoneHelloResult(
+                    mac: "studio", version: "1.2.3", phone: "Hindie's iPhone", kind: PhoneServerKind.mac))
 
         let rows = try await offPool { try client.call(PhoneMethod.rows) }
         #expect(rows.result == .object(["method": .string(PhoneMethod.rows)]))
@@ -282,7 +285,7 @@ struct PhoneListenerTests {
         let registry = PhoneRegistry(file: URL(fileURLWithPath: dir.sub("phones.json")))
         let listener = PhoneListener(
             port: port, addresses: { ["127.0.0.1"] },
-            gate: PhoneGate(registry: registry, macName: "studio", version: "1.2.3") { request, _ in
+            gate: PhoneGate(registry: registry, name: { "studio" }, version: "1.2.3") { request, _ in
                 PhoneReply(.success(id: request.id, result: .null))
             })
         defer { listener.stop() }

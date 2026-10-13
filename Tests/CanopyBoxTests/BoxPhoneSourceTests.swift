@@ -23,11 +23,32 @@ struct BoxPhoneSourceTests {
         await daemon.report(pane: pane, AgentReport(state: .waiting, session: "s", prompt: Self.permission))
         let source = BoxPhoneSource(daemon: daemon)
         let inbox = await source.inbox()
-        #expect(inbox.sections.needsYou.map(\.agent.pane) == [pane])
+        #expect(inbox.rows.flatMap(\.agents).filter { $0.state == .waiting }.map(\.pane) == [pane])
         let rows = await source.rows()
         #expect(rows.sections.map(\.name) == ["demo"])
         #expect(rows.sections.first?.main?.path == home.clone)
         #expect(rows.sections.first?.others.map(\.path) == [made.row.path])
+    }
+
+    /// A done agent's line is what it last said, as on the Mac, not the prompt its screen ends on.
+    @Test func aDoneAgentsLineIsItsLastWords() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let transcript = home.dir.sub("t.jsonl")
+        let said: [String: Any] = [
+            "type": "assistant", "uuid": "u1", "timestamp": "2026-10-14T00:00:00.000Z", "sessionId": "s",
+            "message": [
+                "role": "assistant", "content": [["type": "text", "text": "Migrated.\n\nREADY: totals match"]],
+            ],
+        ]
+        try (JSONSerialization.data(withJSONObject: said) + Data("\n".utf8)).write(to: URL(fileURLWithPath: transcript))
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s", transcriptPath: transcript))
+        let source = BoxPhoneSource(daemon: daemon)
+
+        let agent = await source.inbox().rows.flatMap(\.agents).first
+
+        #expect(agent?.lastLine == "READY: totals match")
     }
 
     @Test func aTranscriptIsThePanesFile() async throws {
@@ -167,13 +188,35 @@ struct BoxPhoneSourceTests {
 
 /// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
 struct BoxPhonesMethodsTests {
+    /// `host upgrade` starts the daemon before it configures it, so the box's name for phones is its alias on the Mac
+    /// from then on, not the name it started with.
+    @Test func phonesSeeTheNameTheMacGaveTheBox() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon(configured: false)
+        try "127.0.0.1 0".write(toFile: home.paths.folder + "/phone-listen", atomically: true, encoding: .utf8)
+        let phones = BoxMain.phoneServer(daemon: daemon, paths: home.paths, environment: [:])
+        await phones.refresh()
+        defer { phones.stop() }
+        try BoxFiles.write(try JSONEncoder().encode(home.config), to: home.paths.configFile)
+        let port = try #require(await phones.status().endpoints.first?.port)
+        let code = await phones.registry.newCode().code
+
+        let client = try PhoneTestClient(port: port)
+        let paired = try await offPool {
+            try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "iPhone")))
+        }
+
+        let result = try #require(paired.result).decode(PhonePairResult.self)
+        #expect(result.mac == "box" && result.kind == PhoneServerKind.box)
+    }
+
     @Test func pairingGivesACodeAndListingShowsNoPhonesYet() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
         let phones = PhoneServer(
             source: BoxPhoneSource(daemon: daemon),
             settings: PhoneServerSettings(
-                registryFile: URL(fileURLWithPath: home.paths.folder + "/phones.json"), serverName: "box",
+                registryFile: URL(fileURLWithPath: home.paths.folder + "/phones.json"), serverName: { "box" },
                 version: "1", port: 0, addresses: { ["127.0.0.1"] }, tailnetName: { nil }, closedReason: { "off" },
                 record: { _ in }))
         await phones.refresh()

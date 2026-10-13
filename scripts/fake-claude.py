@@ -6,7 +6,7 @@ Code's transcript format, and reports to Canopy through `canopy agent-hook` as C
 
 Run it in a pane, which sets CANOPY_PANE. It answers the phone the way Claude Code would: a reply (a bracketed paste,
 then Return) becomes the next prompt, a digit answers its question, and Return allows its command.
-Scenarios: main, companion, drain, labels, lost, ticket.
+Scenarios: main, companion, drain, labels, lost, ticket, and migrate for a box.
 """
 import json
 import os
@@ -144,6 +144,15 @@ def start():
                                 "command": "scripts/e2e.sh"}])
         draw(f"{BLUE}⏺{RESET} The e2e run is going in the background. I'll look at its log when it ends.", "",
              f"{GREY}  ⏵⏵ 1 background task{RESET}")
+    elif SCENARIO == "migrate":
+        write(prompt("Run the usage migration on staging and check the totals."),
+              *ran("Bash", {"command": "npm run migrate -- --env staging"}, "Migrated 48,210 rows."),
+              *ran("Bash", {"command": "npm run check:usage"}, "Totals match."),
+              say("The migration ran on staging and the totals match.\n\nREADY: staging migrated, totals match"))
+        hook("UserPromptSubmit", prompt="Run the migration")
+        hook("Stop", last_assistant_message="READY: staging migrated, totals match")
+        draw(f"{BLUE}⏺{RESET} The migration ran on staging and the totals match.", "",
+             f"  {GREEN}READY:{RESET} staging migrated, totals match", "", f"{GREY}>{RESET} ")
     elif SCENARIO == "ticket":
         tool_id = "toolu_deploy"
         state["permission"] = tool_id

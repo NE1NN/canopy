@@ -16,7 +16,7 @@ struct TerminalModelTests {
         mac.on(PhoneMethod.keys) { .result($0.params ?? .null) }
     }
 
-    func model(sleeper: ManualSleeper = ManualSleeper()) async throws -> (TerminalModel, MacConnection) {
+    func model(sleeper: ManualSleeper = ManualSleeper()) async throws -> (TerminalModel, ServerConnection) {
         let connection = try await connected(
             to: mac, inbox: ConversationModelTests.inbox(ConversationModelTests.waiting), sleeper: sleeper)
         let model = TerminalModel(connection: connection, pane: "p3")
@@ -123,7 +123,7 @@ struct TerminalModelTests {
         #expect(await eventually { model.lineCount == 4 })
         mac.forget(phone: "iPhone")
         mac.dropAll()
-        #expect(await eventually { connection.paired == nil })
+        #expect(await eventually { !connection.isPaired })
         #expect(await eventually { !model.isWatching })
     }
 }

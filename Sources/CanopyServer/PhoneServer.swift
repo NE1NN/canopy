@@ -30,7 +30,7 @@ public final class PhoneServer: Sendable {
         listener = PhoneListener(
             port: settings.port, addresses: settings.addresses,
             gate: PhoneGate(
-                registry: registry, macName: settings.serverName, version: settings.version,
+                registry: registry, name: settings.serverName, kind: settings.kind, version: settings.version,
                 helloTimeout: helloTimeout,
                 handler: { request, session in
                     guard let server = handle.server.withLock({ $0 }) else {
@@ -224,7 +224,8 @@ public final class PhoneServer: Sendable {
         let name = await settings.tailnetName()
         let code = await registry.newCode()
         let link = PairingLink(
-            host: name ?? endpoint.address, port: endpoint.port, code: code.code, address: endpoint.address)
+            host: name ?? endpoint.address, port: endpoint.port, code: code.code, address: endpoint.address,
+            kind: settings.kind)
         return PhonesPairResult(
             code: code.code, link: link.url.absoluteString, expires: code.expires.timeIntervalSince1970)
     }

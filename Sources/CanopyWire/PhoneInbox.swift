@@ -69,10 +69,12 @@ public struct PhoneRow: Codable, Sendable, Equatable, Hashable, Identifiable {
     public var isMain: Bool
     public var pr: PhonePR?
     public var agents: [PhoneAgent]
+    /// The host a Mac's remote row lives on, by its alias there. Nil for a row on the server itself.
+    public var host: String?
 
     public init(
         path: String, name: String, repo: String? = nil, plugin: String? = nil, isMain: Bool = false,
-        pr: PhonePR? = nil, agents: [PhoneAgent] = []
+        pr: PhonePR? = nil, agents: [PhoneAgent] = [], host: String? = nil
     ) {
         self.path = path
         self.name = name
@@ -81,6 +83,7 @@ public struct PhoneRow: Codable, Sendable, Equatable, Hashable, Identifiable {
         self.isMain = isMain
         self.pr = pr
         self.agents = agents
+        self.host = host
     }
 
     public var id: String { path }
@@ -122,56 +125,13 @@ public struct PhonePR: Codable, Sendable, Equatable, Hashable {
     }
 }
 
-/// Every row, in the sidebar's order, with the agents in it. The Mac sends all of it on each change.
+/// Every row, in the sidebar's order, with the agents in it. The server sends all of it on each change, and the phone
+/// sorts out what wants the author.
 public struct PhoneInbox: Codable, Sendable, Equatable {
     public var rows: [PhoneRow]
 
     public init(rows: [PhoneRow] = []) {
         self.rows = rows
-    }
-
-    /// An agent and the row it is in.
-    public struct Item: Sendable, Equatable, Identifiable {
-        public var row: PhoneRow
-        public var agent: PhoneAgent
-
-        public init(row: PhoneRow, agent: PhoneAgent) {
-            self.row = row
-            self.agent = agent
-        }
-
-        public var id: String { agent.pane }
-    }
-
-    public struct Sections: Sendable, Equatable {
-        /// Waiting agents, the longest waiting first.
-        public var needsYou: [Item]
-        /// Done agents not yet seen, the newest first.
-        public var done: [Item]
-
-        public init(needsYou: [Item] = [], done: [Item] = []) {
-            self.needsYou = needsYou
-            self.done = done
-        }
-
-        /// What the tab's badge counts.
-        public var count: Int { needsYou.count + done.count }
-        public var isEmpty: Bool { count == 0 }
-    }
-
-    /// The Inbox: what wants the author. Agents with the same time keep the Mac's order.
-    public var sections: Sections {
-        let items = rows.flatMap { row in row.agents.map { Item(row: row, agent: $0) } }.enumerated()
-        let waiting = items.filter { $0.element.agent.state == .waiting }
-            .sorted { ($0.element.agent.since, $0.offset) < ($1.element.agent.since, $1.offset) }
-        let done = items.filter { $0.element.agent.state == .done && $0.element.agent.unseen }
-            .sorted { ($1.element.agent.since, $0.offset) < ($0.element.agent.since, $1.offset) }
-        return Sections(needsYou: waiting.map(\.element), done: done.map(\.element))
-    }
-
-    /// Working and background agents, which the Inbox leaves to Rows.
-    public var runningCount: Int {
-        rows.flatMap(\.agents).filter { $0.state == .working || $0.state == .background }.count
     }
 }
 
