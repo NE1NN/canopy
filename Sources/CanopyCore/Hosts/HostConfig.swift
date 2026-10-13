@@ -39,8 +39,13 @@ public struct HostEntry: Codable, Sendable, Equatable {
     /// The clone of a registered repo: the one saved under its name, or else under a name its path ends in, since
     /// display names grow a parent folder while two registered repos share a folder name.
     public func clonePath(repoName: String, repoPath: String) -> String? {
-        if let path = repos[repoName] { return path }
-        return repos.sorted { $0.key < $1.key }.first { repoPath.hasSuffix("/" + $0.key) }?.value
+        repoKey(repoName: repoName, repoPath: repoPath).flatMap { repos[$0] }
+    }
+
+    /// The name the host knows a registered repo by, as `clonePath` finds it, which canopy-box names its rows by.
+    public func repoKey(repoName: String, repoPath: String) -> String? {
+        if repos[repoName] != nil { return repoName }
+        return repos.keys.sorted().first { repoPath.hasSuffix("/" + $0) }
     }
 }
 

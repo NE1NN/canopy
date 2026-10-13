@@ -40,6 +40,25 @@ struct BoxRowsOnTheMacTests {
         #expect(await iterator.next()?.snapshot.rows.count == 3)
     }
 
+    /// Two repos share a folder name, so the Mac names them with their parent folder, while the host's settings know
+    /// the one it has by its folder name, which canopy-box names its rows by.
+    @Test func rowsOfARepoTheHostNamesByItsFolderShowUnderIt() async throws {
+        let dir = try TempDir()
+        let first = try await Fixture.repo(in: dir, name: "one/demo")
+        let second = try await Fixture.repo(in: dir, name: "two/demo")
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
+        try await workspace.start()
+        try await workspace.addRepo(path: first)
+        try await workspace.addRepo(path: second)
+        #expect(await workspace.snapshot.repo(path: first)?.name != "demo")
+        try HostsConfigFile(url: workspace.home.configFile).save(
+            "box", HostEntry(repos: ["demo": "/home/u/demo"], box: true))
+
+        await workspace.applyBoxSnapshot(Self.snapshot(["feat-a"]), host: "box")
+
+        #expect(await workspace.snapshot.repo(path: first)?.rows.map(\.rowClass) == [.main, .remote])
+    }
+
     @Test func aRowGoneFromTheBoxIsForgotten() async throws {
         let dir = try TempDir()
         let (workspace, repo) = try await setUp(dir)

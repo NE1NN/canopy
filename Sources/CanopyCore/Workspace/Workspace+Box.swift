@@ -138,7 +138,12 @@ extension Workspace {
         var gone: [String] = []
         var touched: Set<String> = []
         for (repoName, _) in entry.repos {
-            guard let index = state.repos.firstIndex(where: { self.repoName($0.path) == repoName }) else { continue }
+            // The box names rows by the host's key, which may be the repo's folder name rather than its name here.
+            guard
+                let index = state.repos.firstIndex(where: {
+                    entry.repoKey(repoName: self.repoName($0.path), repoPath: $0.path) == repoName
+                })
+            else { continue }
             var repoChanged = false
             let rows = snapshot.rows.filter { !$0.isMain && $0.repo == repoName }
             let paths = Set(rows.map(\.path))
@@ -203,7 +208,7 @@ extension Workspace {
         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
         let made: BoxRowNewResult = try await link.call(
             BoxMethod.rowNew,
-            BoxRowNewParams(repo: target.repoName, branch: branch, base: base, existing: existing))
+            BoxRowNewParams(repo: target.hostRepo, branch: branch, base: base, existing: existing))
         let index = try entryIndex(repoPath: repoPath)
         let entry = RemoteRowEntry(
             host: alias, path: made.row.path,
@@ -269,7 +274,8 @@ extension Workspace {
                 guard let repo = state.repos.first(where: { $0.remote.contains { $0.standIn == row.standIn } }) else {
                     return nil
                 }
-                return BoxAdoptedRow(repo: repoName(repo.path), path: row.path, branch: row.branch)
+                let name = entry.repoKey(repoName: repoName(repo.path), repoPath: repo.path) ?? repoName(repo.path)
+                return BoxAdoptedRow(repo: name, path: row.path, branch: row.branch)
             }
             let adopted: BoxAdoptResult = try await link.call(
                 BoxMethod.adopt, BoxAdoptParams(rows: rows, panes: panes, nextPane: 1))

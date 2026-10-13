@@ -58,6 +58,8 @@ extension Workspace {
         var connection: HostConnection
         var clone: String
         var repoName: String
+        /// The repo's name in the host's settings, which canopy-box knows it by.
+        var hostRepo: String
         var dirName: String
     }
 
@@ -66,13 +68,15 @@ extension Workspace {
         let name = snapshot.repo(path: repoPath)?.name ?? state.repos[index].dirName
         let hosts = self.hosts.hosts
         guard let entry = hosts[alias] else { throw WorkspaceError.hostNotFound(alias, known: hosts.keys.sorted()) }
-        guard let clone = entry.clonePath(repoName: name, repoPath: repoPath) else {
+        guard let clone = entry.clonePath(repoName: name, repoPath: repoPath),
+            let hostRepo = entry.repoKey(repoName: name, repoPath: repoPath)
+        else {
             let others = hosts.filter { $0.value.clonePath(repoName: name, repoPath: repoPath) != nil }.keys.sorted()
             throw WorkspaceError.hostHasNoRepo(alias, repo: name, hosts: others)
         }
         return RemoteTarget(
             alias: alias, connection: await connection(alias, entry), clone: clone, repoName: name,
-            dirName: state.repos[index].dirName)
+            hostRepo: hostRepo, dirName: state.repos[index].dirName)
     }
 
     private func createRemoteRowNow(
