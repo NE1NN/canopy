@@ -83,7 +83,7 @@ struct ChatSessionTests {
         chat.close()
     }
 
-    @Test func showsTextWhileItStreamsAtMostThirtyTimesASecond() async throws {
+    @Test func showsTextWhileItStreamsAtMostTwentyTimesASecond() async throws {
         let chat = session(environment: ["FAKE_CLAUDE_DELAY": "0.005"])
 
         chat.send("slow 200")

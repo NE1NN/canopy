@@ -114,8 +114,9 @@ public final class ChatSession {
 
     /// The oldest Claude Code chats were checked against.
     public static let minimumVersion = "2.1.296"
-    /// The shortest time between two draws of the text being written, about 30 a second.
-    static let streamingInterval = Duration.milliseconds(33)
+    /// The shortest time between two draws of the text being written, 20 a second. Each draw costs about the same
+    /// however little it adds, so this is what keeps a streaming reply within its CPU budget.
+    static let streamingInterval = Duration.milliseconds(50)
     static let returnKey = Data("\r".utf8)
     static let escapeKey = Data("\u{1b}".utf8)
     /// How many transcript lines the first page reads at least.

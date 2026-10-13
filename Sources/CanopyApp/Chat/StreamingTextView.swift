@@ -104,7 +104,9 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
         } else {
             languageLabel.isHidden = true
         }
-        needsLayout = true
+        // Placed now rather than marked for layout, which would have the window lay out every view above this one
+        // on each redraw.
+        if bounds.width > 0 { place() } else { needsLayout = true }
     }
 
     /// The row's height at `width`, with the space below it that every row has.
@@ -126,6 +128,10 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
+        place()
+    }
+
+    private func place() {
         guard let block else { return }
         let parts = Parts(block: block, lines: lines, width: bounds.width, scale: window?.backingScaleFactor ?? 2) {
             layoutPages(width: $0)
