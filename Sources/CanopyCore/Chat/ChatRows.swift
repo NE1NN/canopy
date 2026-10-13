@@ -11,10 +11,11 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     /// A block of the text Claude is writing. Settled blocks keep their key, so only the growing one redraws.
     case streaming(index: Int, block: ChatBlock, growth: Int)
     case queued(QueuedPrompt)
-    case permission(ChatPermission)
+    /// An open prompt, with how far its questions are answered, so moving on changes its key.
+    case permission(ChatPermission, step: Int = 0, ticked: Int = 0)
     case failure(ChatFailure)
     /// A command still running, with the last lines it printed.
-    case running(callID: String, command: String, lines: [String])
+    case running(callID: String, command: String, lines: [String], started: Date, printed: Int)
     /// Working, waiting, or done, with times and tokens.
     case status
 
@@ -25,9 +26,9 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         case .item(let item, _): item.id
         case .streaming(let index, _, _): "streaming-\(index)"
         case .queued(let prompt): "queued-" + prompt.id
-        case .permission(let permission): "permission-" + permission.id
+        case .permission(let permission, _, _): "permission-" + permission.id
         case .failure: "failure"
-        case .running(let callID, _, _): "running-" + callID
+        case .running(let callID, _, _, _, _): "running-" + callID
         case .status: "status"
         }
     }
@@ -39,7 +40,8 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
-        case .running(_, _, let lines): "\(id)#\(lines.count)#\(lines.last ?? "")"
+        case .permission(_, let step, let ticked): "\(id)#\(step)#\(ticked)"
+        case .running(_, _, _, _, let printed): "\(id)#\(printed)"
         default: id
         }
     }
@@ -59,7 +61,8 @@ public enum ChatRows {
                 rows.append(
                     .running(
                         callID: call.id, command: call.input["command"]?.text ?? call.name,
-                        lines: chat.tails[call.id] ?? []))
+                        lines: chat.tails[call.id] ?? [], started: chat.taskStarts[call.id] ?? Date(),
+                        printed: chat.tailCounts[call.id] ?? 0))
             }
         }
         // A saved conversation stays readable above the question.
@@ -71,7 +74,9 @@ public enum ChatRows {
             }
         }
         rows += chat.queued.map(ChatRow.queued)
-        if let permission = chat.permission { rows.append(.permission(permission)) }
+        if let permission = chat.permission {
+            rows.append(.permission(permission, step: chat.questionStep, ticked: chat.questionSelection.count))
+        }
         if let failure = chat.failure {
             rows.append(.failure(failure))
         } else if chat.isWorking || chat.lastTurn != nil {

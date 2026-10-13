@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-public struct ChatImage: Equatable, Sendable {
+public struct ChatImage: Equatable, Sendable, Identifiable {
+    public let id = UUID()
     public var mediaType: String
     public var data: Data
 
@@ -62,7 +63,9 @@ public struct ChatPermission: Identifiable, Equatable, Sendable {
         toolUse = request.toolUse
         self.asked = asked
         switch request.tool {
-        case "AskUserQuestion": kind = .question(TranscriptParser.Builder.questions(request.input))
+        case "AskUserQuestion":
+            let questions = TranscriptParser.Builder.questions(request.input)
+            kind = questions.isEmpty ? .permission : .question(questions)
         case "ExitPlanMode": kind = .plan(request.input["plan"]?.text ?? "")
         default: kind = .permission
         }
@@ -153,9 +156,14 @@ public final class ChatSession {
     public private(set) var tails: [String: [String]] = [:]
     /// How many lines a tail keeps.
     public static let tailLines = 5
+    /// How far from a task file's end a read starts at most.
+    static let tailWindow: UInt64 = 16 * 1024
     @ObservationIgnored private var tasks: [String: String] = [:]
     @ObservationIgnored private var tailOffsets: [String: UInt64] = [:]
-    @ObservationIgnored private var tailPartial: [String: String] = [:]
+    @ObservationIgnored private var tailPartial: [String: Data] = [:]
+    /// When each running command started, and how many lines it has printed, for its card.
+    public private(set) var taskStarts: [String: Date] = [:]
+    public private(set) var tailCounts: [String: Int] = [:]
     @ObservationIgnored private var tailPoll: Task<Void, Never>?
     @ObservationIgnored private var cwd: String?
     /// Where Claude Code writes running commands' output: `<root>/<folder>/<session>/tasks/<task>.output`.
@@ -181,7 +189,10 @@ public final class ChatSession {
     @ObservationIgnored public var onInput: (Data) -> Void = { _ in }
     @ObservationIgnored public var onTitle: () -> Void = {}
     /// Called with the model and mode when the author picks either, so new chats start with them.
-    @ObservationIgnored public var onPick: (String?, String) -> Void = { _, _ in }
+    /// Called with what the author picked, nil for what they left alone.
+    @ObservationIgnored public var onPick: (String?, String?) -> Void = { _, _ in }
+    /// Commands Claude runs in the background, by task ID.
+    @ObservationIgnored private var backgroundTasks: Set<String> = []
     @ObservationIgnored private var lastStreamingPublish: ContinuousClock.Instant?
     /// How many times `streaming` changed, and the shortest time between two changes, for tests.
     @ObservationIgnored private(set) var streamingPublishCount = 0
@@ -290,7 +301,8 @@ public final class ChatSession {
     /// Switches the permission mode, at once if Claude Code runs, or for when it starts.
     public func setMode(_ mode: String) {
         self.mode = mode
-        onPick(model, mode)
+        // Bypass and Plan are for one chat; a new chat never starts in them.
+        onPick(nil, ["default", "acceptEdits", "auto"].contains(mode) ? mode : nil)
         onChange()
         guard let stream, stream.isRunning else { return }
         Task { try? await stream.request("set_permission_mode", ["mode": .string(mode)]) }
@@ -300,14 +312,16 @@ public final class ChatSession {
     /// model, so an idle chat ends its Claude Code instead and the next message resumes the session on the new one.
     public func setModel(_ model: String) {
         self.model = model
-        onPick(model, mode)
+        onPick(model, nil)
         onChange()
         guard let stream, stream.isRunning else { return }
-        if isWorking {
+        if isWorking || !backgroundTasks.isEmpty {
+            // A background command dies with the process, so it keeps running and switches as it can.
             Task { try? await stream.request("set_model", ["model": .string(model)]) }
         } else {
             self.stream = nil
             stream.stop()
+            onEnded()
         }
     }
 
@@ -327,6 +341,12 @@ public final class ChatSession {
         } else {
             record(answer: question.options[index].label)
         }
+    }
+
+    /// Whether `index` is one of the current question's options, so a digit typed past them stays text.
+    public func canPick(_ index: Int) -> Bool {
+        guard let questions = openQuestions, questionStep < questions.count else { return false }
+        return questions[questionStep].options.indices.contains(index)
     }
 
     /// Sends a multiple choice's ticked options.
@@ -364,6 +384,12 @@ public final class ChatSession {
         pendingPermissions.removeFirst()
         resetQuestion()
         onInput(Self.returnKey)
+    }
+
+    /// Drops every open prompt and any half-answered question with them.
+    private func clearPrompts() {
+        pendingPermissions = []
+        resetQuestion()
     }
 
     private func resetQuestion() {
@@ -424,7 +450,8 @@ public final class ChatSession {
         stream?.stop()
         if stream != nil { onEnded() }
         isWorking = false
-        pendingPermissions = []
+        clearPrompts()
+        endTails()
     }
 
     /// Reads the next older page off the main actor and puts it in front. Older pages are smaller than the first, so
@@ -534,7 +561,7 @@ public final class ChatSession {
             if result.isError, result.kind != "error_during_execution", let text = result.text, !text.isEmpty {
                 builder.addNotice(text)
             }
-            pendingPermissions = []
+            clearPrompts()
             activity = .idle
             if queued.isEmpty {
                 isWorking = false
@@ -544,11 +571,16 @@ public final class ChatSession {
             rateLimitedUntil = allowed ? nil : resetsAt
         case .toolRequest(let request):
             received(request)
+        case .taskStarted(let task, _, true):
+            backgroundTasks.insert(task)
         case .taskStarted(let task, let toolUse?, false):
             runningCommands.insert(toolUse)
             tasks[toolUse] = task
+            taskStarts[toolUse] = Date()
             startTailing()
-        case .taskEnded(_, let toolUse?, _):
+        case .taskEnded(let task, let toolUse, _):
+            backgroundTasks.remove(task)
+            guard let toolUse else { break }
             runningCommands.remove(toolUse)
             endTail(toolUse)
         case .taskStarted, .taskEnded, .unknownRequest, .controlResponse:
@@ -617,7 +649,7 @@ public final class ChatSession {
         if failure == nil { failure = .exited(code: code, errors: errors) }
         isWorking = false
         activity = .idle
-        pendingPermissions = []
+        clearPrompts()
         returnQueuedToDraft()
         runningCommands = []
         endTails()
@@ -629,7 +661,8 @@ public final class ChatSession {
         guard tailPoll == nil else { return }
         tailPoll = Task { [weak self] in
             while !Task.isCancelled {
-                self?.readTails()
+                guard let self else { return }
+                self.readTails()
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
@@ -645,14 +678,24 @@ public final class ChatSession {
                 continue
             }
             defer { try? handle.close() }
-            let offset = tailOffsets[toolUse] ?? 0
-            guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty
+            // Only the end matters: a noisy command can write megabytes between reads.
+            guard let size = try? handle.seekToEnd() else { continue }
+            let offset = max(tailOffsets[toolUse] ?? 0, size > Self.tailWindow ? size - Self.tailWindow : 0)
+            guard size > offset, (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd()
             else { continue }
-            tailOffsets[toolUse] = offset + UInt64(data.count)
-            let text = (tailPartial[toolUse] ?? "") + String(decoding: data, as: UTF8.self)
-            var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            tailPartial[toolUse] = lines.removeLast()
+            tailOffsets[toolUse] = size
+            // Kept as bytes until a line ends, so a character split across reads stays whole; `\r` ends a line too,
+            // as a progress bar redraws it.
+            var pending = (tailPartial[toolUse] ?? Data()) + data
+            var lines: [String] = []
+            while let end = pending.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
+                lines.append(String(decoding: pending[pending.startIndex..<end], as: UTF8.self))
+                pending = Data(pending[pending.index(after: end)...])
+            }
+            tailPartial[toolUse] = Data(pending.suffix(Int(Self.tailWindow)))
+            lines = lines.filter { !$0.isEmpty }
             guard !lines.isEmpty else { continue }
+            tailCounts[toolUse, default: 0] += lines.count
             tails[toolUse] = Array(((tails[toolUse] ?? []) + lines).suffix(Self.tailLines))
         }
     }
@@ -662,6 +705,8 @@ public final class ChatSession {
         tails[toolUse] = nil
         tailOffsets[toolUse] = nil
         tailPartial[toolUse] = nil
+        taskStarts[toolUse] = nil
+        tailCounts[toolUse] = nil
         if tasks.isEmpty {
             tailPoll?.cancel()
             tailPoll = nil

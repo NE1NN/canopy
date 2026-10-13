@@ -51,4 +51,16 @@ As milestone 1, and: nothing a row shows may change without its key changing, or
 
 ## After Review
 
-Filled in after the independent review.
+An independent opus review found 3 high, 6 medium, and 4 low findings, plus the tail test's flake; all fixed:
+
+1. High: a Write that creates a file comes back with an empty patch, which blanked its card. A created file's content is its diff. Test: `aNewFileShowsItsContent`.
+2. High: a question card kept its height when it moved to the next question. Its row key carries the step and the ticks.
+3. High: a half-answered question carried over to the next prompt. Question state clears with the prompts, on close, at a turn's end, and on exit.
+4. Medium: digits typed as an answer picked options. A digit picks only an option that exists, and never while an input method composes.
+5. Medium: images went full size on the main thread. They are scaled to 1568 pixels and encoded off the main actor, as PNG or a JPEG under 5 MB, and thumbnails decode once.
+6. Medium: pasting text from apps that also copy a picture attached the picture. Text wins.
+7. Medium: picking a mode saved the reported model as the default, and Bypass or Plan became every new chat's mode. Only what the author picks is saved, and Bypass and Plan are never defaults.
+8. Medium: an idle model switch killed background commands. With one running, `set_model` is sent instead; a restart tells the pane its process ended.
+9. Medium: tail polling outlived a closed chat and read whole files. It stops with the chat, reads at most the last 16 KB, keeps a split character whole, and treats `\r` as a line end.
+10. The tail test's flake: it compared strings and raced the stand-in's command; the stand-in's `tail hold` now runs until the test sends its next message.
+11 to 16, low: the running card's clock and key come from the session; an empty question list falls back to a permission card; thumbnails are removed by ID; image drags are accepted by type; NotebookEdit shows its new source.

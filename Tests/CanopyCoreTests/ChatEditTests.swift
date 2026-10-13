@@ -29,6 +29,17 @@ struct ChatEditTests {
         #expect(edit.removed == 1)
     }
 
+    /// A Write that creates a file comes back with an empty patch and the file's content.
+    @Test func aNewFileShowsItsContent() throws {
+        let edit = try #require(
+            ChatEdit(
+                result: .object([
+                    "type": "create", "filePath": "/w/n.swift", "content": "a\nb", "structuredPatch": .array([]),
+                ])))
+        #expect(edit.added == 2)
+        #expect(ChatEdit(result: .object(["filePath": "/w/x", "structuredPatch": .array([])])) == nil)
+    }
+
     @Test func proposesAnEditFromItsInput() throws {
         let edit = try #require(
             ChatEdit(

@@ -25,6 +25,16 @@ public struct ChatEdit: Equatable, Sendable {
     public init?(result: JSONValue?) {
         guard let fields = result?.fields, case .array(let patches)? = fields["structuredPatch"] else { return nil }
         file = fields["filePath"]?.text ?? ""
+        // A new file's result has an empty patch; its content is the change.
+        if patches.isEmpty {
+            guard fields["type"]?.text == "create", let content = fields["content"]?.text else { return nil }
+            hunks = [
+                ChatHunk(
+                    oldStart: 0, newStart: 1,
+                    lines: content.split(separator: "\n", omittingEmptySubsequences: false).map { "+" + $0 })
+            ]
+            return
+        }
         hunks = patches.compactMap { patch in
             guard let fields = patch.fields, case .array(let lines)? = fields["lines"] else { return nil }
             return ChatHunk(
@@ -53,6 +63,8 @@ public struct ChatEdit: Equatable, Sendable {
                     oldStart: 0, newStart: 0,
                     lines: lines($0["old_string"]?.text, "-") + lines($0["new_string"]?.text, "+"))
             }
+        case "NotebookEdit":
+            hunks = [ChatHunk(oldStart: 0, newStart: 0, lines: lines(input["new_source"]?.text, "+"))]
         case "Write":
             hunks = [ChatHunk(oldStart: 0, newStart: 1, lines: lines(input["content"]?.text, "+"))]
         default:

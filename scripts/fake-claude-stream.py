@@ -15,7 +15,7 @@ What it does with a message depends on how the message starts:
   hold           asks to run `make test` and never ends the turn on its own
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
-  tail           runs a command that prints ten lines over two seconds, written to its task file as Claude Code does
+  tail [hold]    runs a command that prints ten lines over two seconds, written to its task file as Claude Code does
   agent          runs a subagent that makes three tool calls of its own
   plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
@@ -222,7 +222,7 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
-    elif text == "tail":
+    elif text == "tail" or text == "tail hold":
         tool_id, task = "toolu_" + uuid.uuid4().hex[:20], "b" + uuid.uuid4().hex[:8]
         emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": "count"}}]))
         root = os.environ.get("FAKE_CLAUDE_TASKS", "/tmp/claude-%d" % os.getuid())
@@ -236,7 +236,13 @@ def turn(text):
                 out.write("line %d\n" % n)
                 out.flush()
                 time.sleep(0.2)
-        time.sleep(0.5)
+        if text == "tail hold":
+            # Runs until the next message comes, so a test decides when it ends.
+            deadline = time.time() + 120
+            while messages.qsize() < 1 and time.time() < deadline:
+                time.sleep(0.05)
+        else:
+            time.sleep(0.5)
         os.remove(path)
         emit({"type": "system", "subtype": "task_notification", "task_id": task, "tool_use_id": tool_id,
               "status": "completed"})

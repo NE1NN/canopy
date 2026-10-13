@@ -33,7 +33,7 @@ struct ChatRowView: View {
             MarkdownView(blocks: [block])
         case .queued(let queued):
             PromptBubble(prompt: queued.prompt, waitsForStep: queued.waitsForStep)
-        case .permission(let permission):
+        case .permission(let permission, _, _):
             switch permission.kind {
             case .permission: PermissionCard(permission: permission, chat: chat)
             case .question(let questions): QuestionCard(questions: questions, chat: chat)
@@ -43,8 +43,8 @@ struct ChatRowView: View {
             FailureCard(failure: failure, chat: chat)
         case .status:
             ChatStatusLine(chat: chat)
-        case .running(_, let command, let lines):
-            RunningCard(command: command, lines: lines)
+        case .running(_, let command, let lines, let started, _):
+            RunningCard(command: command, lines: lines, started: started)
         }
     }
 }
@@ -763,7 +763,7 @@ private struct PlanCard: View {
 private struct RunningCard: View {
     let command: String
     let lines: [String]
-    @State private var started = Date()
+    let started: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

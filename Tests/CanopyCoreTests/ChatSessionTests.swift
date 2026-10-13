@@ -157,11 +157,16 @@ struct ChatSessionTests {
         let tasks = try TempDir()
         let chat = session(environment: ["FAKE_CLAUDE_TASKS": tasks.path], tasksRoot: URL(fileURLWithPath: tasks.path))
 
-        chat.send("tail")
+        chat.send("tail hold")
 
-        #expect(await soon { (chat.tails.values.first?.last.map { $0 >= "line 3" }) == true })
-        #expect(chat.tails.values.first?.count ?? 0 <= ChatSession.tailLines)
-        #expect(ChatRows.rows(for: chat).contains { if case .running = $0 { true } else { false } })
+        // Seen together while the command runs: lines from its task file, and the row that shows them.
+        #expect(
+            await soon {
+                guard let lines = chat.tails.values.first, !lines.isEmpty else { return false }
+                return lines.count <= ChatSession.tailLines && lines.allSatisfy { $0.hasPrefix("line ") }
+                    && ChatRows.rows(for: chat).contains { if case .running = $0 { true } else { false } }
+            })
+        chat.send("say done")
         #expect(await soon { !chat.isWorking })
         #expect(chat.tails.isEmpty)
         chat.close()

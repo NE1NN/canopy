@@ -1,6 +1,8 @@
 import AppKit
 import CanopyCore
+import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The box at the bottom of a chat: what the author writes, then Stop or Send.
 struct ChatComposer: View {
@@ -20,8 +22,8 @@ struct ChatComposer: View {
             if !chat.draftImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(Array(chat.draftImages.enumerated()), id: \.offset) { index, image in
-                            ImageThumbnail(image: image) { chat.draftImages.remove(at: index) }
+                        ForEach(chat.draftImages) { image in
+                            ImageThumbnail(image: image) { chat.draftImages.removeAll { $0.id == image.id } }
                         }
                     }
                 }
@@ -129,7 +131,9 @@ struct ChatComposer: View {
 
     /// With nothing written, a digit picks an option of an open question.
     private func digit(_ number: Int) -> Bool {
-        guard chat.draft.isEmpty, case .question? = chat.permission?.kind else { return false }
+        guard chat.draft.isEmpty, case .question? = chat.permission?.kind, chat.canPick(number - 1) else {
+            return false
+        }
         chat.pick(number - 1)
         return true
     }
@@ -194,27 +198,35 @@ final class ComposerNSTextView: NSTextView {
         return super.performDragOperation(sender)
     }
 
-    /// Images on the pasteboard, or image files dropped in, as PNG. False when there were none.
+    /// Image files dropped or pasted, or image data, prepared off the main thread. False when there were none, and
+    /// when the pasteboard holds text as well, which an app that copies a picture alongside its text means as text.
     private func takeImages(from pasteboard: NSPasteboard) -> Bool {
-        var images: [NSImage] = []
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
-            as? [URL]
+        let urls =
+            (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?
+            .filter { ["png", "jpg", "jpeg", "gif", "heic", "tiff", "webp"].contains($0.pathExtension.lowercased()) }
+            ?? []
+        var sources = urls.compactMap { try? Data(contentsOf: $0) }
+        if sources.isEmpty, pasteboard.string(forType: .string) == nil,
+            let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
         {
-            images += urls.compactMap { NSImage(contentsOf: $0) }
+            sources = [data]
         }
-        if images.isEmpty, let pasted = pasteboard.readObjects(forClasses: [NSImage.self]) as? [NSImage] {
-            images = pasted
+        guard !sources.isEmpty else { return false }
+        let datas = sources
+        Task { [weak self] in
+            let images = await Task.detached { datas.compactMap(ChatImagePrep.prepare) }.value
+            for image in images { self?.onImage(image) }
         }
-        let pngs = images.compactMap { image -> Data? in
-            guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-            return bitmap.representation(using: .png, properties: [:])
-        }
-        for png in pngs { onImage(ChatImage(mediaType: "image/png", data: png)) }
-        return !pngs.isEmpty
+        return true
+    }
+
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + [.fileURL, .png, .tiff]
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+        // An input method choosing a candidate with a digit keeps it.
+        if !hasMarkedText(), event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let characters = event.charactersIgnoringModifiers, characters.count == 1,
             let number = Int(characters), (1...9).contains(number), onDigit(number)
         {
@@ -412,9 +424,20 @@ private struct ImageThumbnail: View {
     let image: ChatImage
     let remove: () -> Void
 
+    /// Decoded once per image, not on every keystroke's redraw.
+    @MainActor private static var pictures: [UUID: NSImage] = [:]
+
+    @MainActor static func picture(_ image: ChatImage) -> NSImage? {
+        if let picture = pictures[image.id] { return picture }
+        let picture = NSImage(data: image.data)
+        if pictures.count > 32 { pictures = [:] }
+        pictures[image.id] = picture
+        return picture
+    }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            if let picture = NSImage(data: image.data) {
+            if let picture = ImageThumbnail.picture(image) {
                 Image(nsImage: picture)
                     .resizable()
                     .scaledToFill()
@@ -431,5 +454,36 @@ private struct ImageThumbnail: View {
             .padding(2)
             .help("Remove")
         }
+    }
+}
+
+/// Makes an image fit for Claude: at most 1568 pixels on its long side, as PNG, or JPEG when that is under 5 MB and
+/// PNG is not.
+enum ChatImagePrep {
+    static let longSide = 1568
+    static let limit = 5 * 1024 * 1024
+
+    static func prepare(_ data: Data) -> ChatImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: longSide,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+        else { return nil }
+        if let png = encode(image, "public.png", quality: nil), png.count < limit {
+            return ChatImage(mediaType: "image/png", data: png)
+        }
+        guard let jpeg = encode(image, "public.jpeg", quality: 0.85), jpeg.count < limit else { return nil }
+        return ChatImage(mediaType: "image/jpeg", data: jpeg)
+    }
+
+    private static func encode(_ image: CGImage, _ type: String, quality: Double?) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, type as CFString, 1, nil) else { return nil }
+        let options = quality.map { [kCGImageDestinationLossyCompressionQuality: $0] as CFDictionary }
+        CGImageDestinationAddImage(destination, image, options)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 }

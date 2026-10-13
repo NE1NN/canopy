@@ -356,7 +356,11 @@ public final class TerminalStore {
             trust: chatTrust(context))
         let pane = Pane(id: id, context: context, chat: chat, activity: activity)
         chat.onChange = { [weak self] in self?.onChange() }
-        chat.onPick = { [weak self] model, mode in self?.chatDefaults = ChatDefaults(model: model, mode: mode) }
+        chat.onPick = { [weak self] model, mode in
+            guard let self else { return }
+            self.chatDefaults = ChatDefaults(
+                model: model ?? self.chatDefaults.model, mode: mode ?? self.chatDefaults.mode)
+        }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
         pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
