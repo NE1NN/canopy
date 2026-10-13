@@ -148,8 +148,13 @@ public final class BoxPhoneSource: PhoneSource {
         guard let agent = await daemon.agent(of: params.pane) else { throw BoxErrors.paneNotFound(params.pane) }
         guard let prompt = agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
         let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
-        guard await daemon.takeAnswer(pane: params.pane, promptID: prompt.id) != nil else { throw Self.promptGone }
-        try await daemon.keys(BoxKeysParams(pane: params.pane, keys: keys))
+        guard let taken = await daemon.takeAnswer(pane: params.pane, promptID: prompt.id) else { throw Self.promptGone }
+        do {
+            try await daemon.keys(BoxKeysParams(pane: params.pane, keys: keys))
+        } catch {
+            await daemon.giveBack(taken, pane: params.pane)
+            throw error
+        }
     }
 
     public func keys(_ params: PhoneKeysParams) async throws {

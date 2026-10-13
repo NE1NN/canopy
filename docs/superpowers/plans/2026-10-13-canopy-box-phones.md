@@ -7,7 +7,7 @@
 
 **Architecture:** `BoxPhoneSource` implements `PhoneSource` over `BoxDaemon`: the inbox and rows from its snapshot, transcripts from each pane's transcript path, replies as a bracketed paste then Return, answers and keys through `PhoneAnswerKeys` and tmux, and screens from `tmux capture-pane -e`.
 `canopy-box serve` starts a `PhoneServer` on it, listening on the box's tailnet addresses, which `TailnetAddresses` reads with `getifaddrs` every 5 seconds, on `config.json`'s port or the standard one.
-The daemon answers `box.pair`, `box.phones`, and `box.phoneRemove`, which the Mac's CLI reaches through the link with `--on`.
+The daemon answers `box.phones.pair`, `box.phones.paired`, `box.phones.list`, `box.phones.remove`, and `box.phones.status`, which the Mac's CLI reaches through the link with `--on`.
 
 **Tech Stack:** Swift 6.4, Swift Testing, `PhoneTestClient`, tmux.
 
@@ -15,7 +15,7 @@ The daemon answers `box.pair`, `box.phones`, and `box.phoneRemove`, which the Ma
 
 ## Global Constraints
 
-- Nothing runs against hindie-box or its tailnet: tests and the e2e use loopback through `CANOPY_BOX_PHONE_ADDRESS`, which only tests set.
+- Nothing runs against hindie-box or its tailnet: tests and the e2e put the listener on loopback with the file `box/phone-listen`, which only tests write and which takes loopback only.
 - The phone protocol stays version 1; the box's `phone.hello` adds `kind: box`, which older phones ignore.
 - A box pane's `kind` is `terminal`, or left out.
 - Swift 6 language mode, strict concurrency, no warnings; markdown one sentence per line, no em dashes; conventional commits, no trailers.
@@ -44,18 +44,18 @@ The daemon answers `box.pair`, `box.phones`, and `box.phoneRemove`, which the Ma
 ### Task 2: Tailnet addresses and the listener
 
 - [ ] Tests: `onlyTailnetAddressesOnTailscale0Count` (a pure function over fake interface lists), `theNameComesFromTailscaleStatus` (a stand-in `tailscale`), `withoutTailscaleThereIsNoListenerAndStatusSaysWhy`.
-- [ ] `BoxMain.serve` starts a `PhoneServer` with `BoxPhoneSource`, `box/phones.json`, the host's name from `config.json`, the port from `config.json` or 6974, and `CANOPY_BOX_PHONE_ADDRESS` in place of the tailnet for tests.
+- [ ] `BoxMain.serve` starts a `PhoneServer` with `BoxPhoneSource`, `box/phones.json`, the host's name from `config.json`, the port from `config.json` or 6974, and `box/phone-listen` in place of the tailnet for tests.
 - [ ] Commit `feat: canopy-box listens for phones on the tailnet`.
 
 ### Task 3: Pairing from the Mac, and phones keeping the box on
 
-- [ ] `box.pair`, `box.phones`, `box.phoneRemove` on the daemon; `canopy phone pair|list|remove --on <host>` through the link.
+- [ ] `box.phones.pair`, `box.phones.paired`, `box.phones.list`, `box.phones.remove`, `box.phones.status` on the daemon; `canopy phone pair|list|remove --on <host>` through the link.
 - [ ] Tests: `pairingThroughTheLinkGivesALinkForTheBox`, `aPhonePairedWithTheBoxReadsItsInbox` (a `PhoneTestClient` over loopback), `aConnectedPhoneKeepsTheBoxOn`, `removingAPhoneEndsItsConnection`.
 - [ ] Commit `feat: phones pair with canopy-box from the Mac and keep the box on`.
 
 ### Task 4: The e2e
 
-- [ ] `scripts/e2e-hosts.sh`: after the upgrade, `phone pair --on fake-box` with `CANOPY_BOX_PHONE_ADDRESS=127.0.0.1`, a phone client pairs, reads the inbox with the box pane's waiting agent, replies, and the reply reaches the pane; `phone remove --on` drops it.
+- [ ] `scripts/e2e-hosts.sh`: after the upgrade, `phone pair --on fake-box` with `127.0.0.1` in `box/phone-listen`, a phone client pairs, reads the inbox with the box pane's waiting agent, replies, and the reply reaches the pane; `phone remove --on` drops it.
 - [ ] Commit `test: the hosts e2e pairs a phone with canopy-box`.
 
 ## Verification
@@ -76,7 +76,7 @@ An opus review found no critical issues and seven important ones:
 
 Before merging, `HostMonitorRoundTests.aStuckPortsProbeHoldsUpNoOtherHost` failed in two of three full runs.
 `make test`'s strict pool has one Swift concurrency thread, and samples of a full run showed it busy 94% of the time, over half of that in tests waiting for subprocesses and in `TempDir` deleting its folder.
-Each actor hop then waited up to a second, and milestone 3b's hop onto each connection to read its box flag pushed the test's rounds past its 20 second waits.
+Each actor hop then waited up to a second, and milestone 3b's hop onto each connection to read its box flag pushed the test's rounds past its 20-second waits.
 Tests now run subprocesses through `Subprocess.runOffPool`, `TempDir` deletes on a queue of its own, and `HostConnection.isBox` is read without a hop; the test's first wait went from over 20 seconds to about 10.
 `aPortNobodyHoldsIsFree`, which failed once along the way when another test's socket took the port it had just let go, tries a few ports.
 Left for later: `StateStore.save`'s fsync and `DirectoryWatcher`'s FSEvents setup still block the pool briefly in the app as in tests.

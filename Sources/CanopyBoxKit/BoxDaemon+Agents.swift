@@ -111,6 +111,13 @@ extension BoxDaemon {
         return prompt
     }
 
+    /// Opens a taken prompt again when its keys never reached the pane.
+    func giveBack(_ prompt: OpenPrompt, pane id: String) {
+        guard let index = state.panes.firstIndex(where: { $0.id == id }), state.panes[index].agent.reopen(prompt)
+        else { return }
+        changed()
+    }
+
     func agent(of id: String) -> PaneAgent? {
         pane(id)?.agent
     }

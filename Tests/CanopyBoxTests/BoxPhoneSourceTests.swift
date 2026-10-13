@@ -83,6 +83,22 @@ struct BoxPhoneSourceTests {
         await #expect(throws: BoxPhoneSource.promptGone) { try await source.answer(answer) }
     }
 
+    /// An answer whose keys never reached the pane leaves the prompt open, so it can be answered again.
+    @Test func anAnswerThatFailsToTypeKeepsThePrompt() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        await daemon.report(pane: pane, AgentReport(state: .waiting, session: "s", prompt: Self.permission))
+        let prompt = try #require(await daemon.agent(of: pane)?.prompt)
+        await daemon.tmux.killSession(pane)
+        let source = BoxPhoneSource(daemon: daemon)
+
+        let answer = PhoneAnswerParams(pane: pane, prompt: prompt.id, answer: PhoneAnswer(allow: true))
+        await #expect(throws: (any Error).self) { try await source.answer(answer) }
+
+        #expect(await daemon.agent(of: pane)?.prompt?.id == prompt.id)
+    }
+
     @Test func theScreenHasColoursAndScrollback() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

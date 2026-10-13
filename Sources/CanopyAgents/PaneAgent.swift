@@ -207,6 +207,14 @@ public struct PaneAgent: Sendable, Equatable {
         return true
     }
 
+    /// Opens an answered prompt again, as when its answer never reached the pane. Returns whether it did: not once a hook
+    /// has moved the agent on.
+    public mutating func reopen(_ answered: OpenPrompt) -> Bool {
+        guard prompt == nil, state == .waiting else { return false }
+        prompt = answered
+        return true
+    }
+
     /// Keeps the open prompt while a hook describes it again, as the permission request after an AskUserQuestion does.
     private mutating func open(_ next: AgentPrompt?) {
         guard let next else { return }
