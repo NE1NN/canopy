@@ -164,6 +164,22 @@ struct ChatBuilderTests {
         #expect(builder.items.count == 1)
     }
 
+    /// A result that arrives while an older page loads off the main actor still reaches its call.
+    @Test func aResultArrivingWhileAnOlderPageLoadsIsKept() {
+        var builder = ChatBuilder()
+        builder.add(line: ChatLines.say("newer", uuid: "u3"))
+        let older = builder.olderPage(lines: [ChatLines.tool("t1", "Bash", ["command": "ls"])])
+
+        builder.add(line: ChatLines.result("t1", "late"))
+        builder.prepend(older)
+
+        guard case .tools(let group) = builder.items.first?.content else {
+            Issue.record("no group")
+            return
+        }
+        #expect(group.calls.first?.result == "late")
+    }
+
     /// An older page goes in front of what is there, and a call at its end takes its result from the newer lines.
     @Test func prependsAnOlderPage() {
         var builder = ChatBuilder()

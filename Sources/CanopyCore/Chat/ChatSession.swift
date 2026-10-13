@@ -98,7 +98,10 @@ public final class ChatSession {
     /// The text Claude is writing, redrawn at most about 30 times a second.
     public private(set) var streaming: ChatStreamText?
     public private(set) var queued: [QueuedPrompt] = []
-    public private(set) var permission: ChatPermission?
+    /// The permission prompt shown: the oldest of those waiting.
+    public var permission: ChatPermission? { pendingPermissions.first }
+    /// Claude can ask several at once, as parallel subagents do. Each needs its own answer.
+    public private(set) var pendingPermissions: [ChatPermission] = []
     public private(set) var sessionID: String?
     /// Nil until Claude Code says, for a chat that leaves the choice to its settings.
     public private(set) var model: String?
@@ -113,7 +116,8 @@ public final class ChatSession {
     public private(set) var contextWindow: Int?
     public private(set) var rateLimitedUntil: Date?
     public private(set) var failure: ChatFailure?
-    public private(set) var needsTrust: Bool
+    /// Read when the chat first shows, not for every restored chat at launch.
+    public private(set) var needsTrust = false
     public private(set) var hasOlder = false
     public private(set) var isLoadingOlder = false
     /// Commands running now, by tool call ID, as Claude Code's task events say.
@@ -136,8 +140,10 @@ public final class ChatSession {
     /// stop, so the pane's agent state follows them as it follows a terminal's keys.
     @ObservationIgnored public var onInput: (Data) -> Void = { _ in }
     @ObservationIgnored public var onTitle: () -> Void = {}
-    /// When `streaming` changed, for tests.
-    @ObservationIgnored private(set) var streamingPublishes: [ContinuousClock.Instant] = []
+    @ObservationIgnored private var lastStreamingPublish: ContinuousClock.Instant?
+    /// How many times `streaming` changed, and the shortest time between two changes, for tests.
+    @ObservationIgnored private(set) var streamingPublishCount = 0
+    @ObservationIgnored private(set) var shortestStreamingGap: Duration?
 
     private var builder = ChatBuilder()
     @ObservationIgnored private var stream: ClaudeStream?
@@ -164,7 +170,6 @@ public final class ChatSession {
         self.launcher = launcher
         self.transcript = transcript
         self.trust = trust
-        needsTrust = !trust.isTrusted()
     }
 
     /// Reads the newest page of a saved session's history, once, when the chat first shows, so restored chats that
@@ -172,6 +177,7 @@ public final class ChatSession {
     public func open() {
         guard !isOpen else { return }
         isOpen = true
+        needsTrust = !trust.isTrusted()
         if let sessionID { loadHistory(sessionID) }
     }
 
@@ -191,6 +197,8 @@ public final class ChatSession {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
         open()
+        if failure == .transcriptMissing { startFresh() }
+        if needsTrust { needsTrust = !trust.isTrusted() }
         deny()
         guard !needsTrust else { return }
         if !isWorking {
@@ -217,7 +225,7 @@ public final class ChatSession {
     public func allow() {
         guard let permission else { return }
         stream?.answer(ClaudeInput.allow(request: permission.id, input: permission.input))
-        self.permission = nil
+        pendingPermissions.removeFirst()
         onInput(Self.returnKey)
     }
 
@@ -226,18 +234,20 @@ public final class ChatSession {
         guard let permission else { return }
         stream?.answer(
             ClaudeInput.allow(request: permission.id, input: permission.input, permissions: permission.rules))
-        self.permission = nil
+        pendingPermissions.removeFirst()
         onInput(Self.returnKey)
     }
 
-    /// Denies the open prompt and stops the turn, as Esc does in the TUI.
+    /// Denies every open prompt and stops the turn, as Esc does in the TUI.
     public func deny() {
-        guard let permission else { return }
-        stream?.answer(
-            ClaudeInput.deny(
-                request: permission.id, message: "The user doesn't want to proceed with this tool use.",
-                interrupt: true))
-        self.permission = nil
+        guard !pendingPermissions.isEmpty else { return }
+        for permission in pendingPermissions {
+            stream?.answer(
+                ClaudeInput.deny(
+                    request: permission.id, message: "The user doesn't want to proceed with this tool use.",
+                    interrupt: true))
+        }
+        pendingPermissions = []
         onInput(Self.escapeKey)
     }
 
@@ -279,7 +289,7 @@ public final class ChatSession {
         stream?.stop()
         if stream != nil { onEnded() }
         isWorking = false
-        permission = nil
+        pendingPermissions = []
     }
 
     /// Reads the next older page off the main actor and puts it in front. Older pages are smaller than the first, so
@@ -379,13 +389,15 @@ public final class ChatSession {
             received(message)
         case .result(let result):
             endStreaming()
+            // Claude Code drops what was queued when a turn is interrupted, so it goes back to the composer.
+            if interrupting { returnQueuedToDraft() }
             interrupting = false
             runningCommands = []
             if let window = result.contextWindow { contextWindow = window }
             if result.isError, result.kind != "error_during_execution", let text = result.text, !text.isEmpty {
                 builder.addNotice(text)
             }
-            permission = nil
+            pendingPermissions = []
             activity = .idle
             if queued.isEmpty {
                 isWorking = false
@@ -415,6 +427,14 @@ public final class ChatSession {
         builder.add(line: message.line)
     }
 
+    /// Puts messages Claude never took back in the composer, so nothing the author wrote is lost.
+    private func returnQueuedToDraft() {
+        guard !queued.isEmpty else { return }
+        let texts = queued.map(\.prompt.text) + (draft.isEmpty ? [] : [draft])
+        draft = texts.joined(separator: "\n\n")
+        queued = []
+    }
+
     /// Claude Code echoes the messages it takes, and messages that queued up during a turn come back as one.
     private func taken(_ line: Data) {
         guard !queued.isEmpty else { return }
@@ -423,8 +443,10 @@ public final class ChatSession {
             guard case .text(let text) = block else { return nil }
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // An echo with no text of its own, such as a command's output, takes nothing.
+        guard !texts.isEmpty else { return }
         var matched = false
-        for text in texts {
+        for text in texts + [texts.joined(separator: "\n")] {
             if let index = queued.firstIndex(where: { $0.prompt.text == text }) {
                 queued.remove(at: index)
                 matched = true
@@ -454,7 +476,7 @@ public final class ChatSession {
                     message: "This chat cannot show plans yet. Write the plan as text and ask the author to approve it."
                 ))
         default:
-            permission = ChatPermission(request)
+            pendingPermissions.append(ChatPermission(request))
         }
     }
 
@@ -465,8 +487,8 @@ public final class ChatSession {
         if failure == nil { failure = .exited(code: code, errors: errors) }
         isWorking = false
         activity = .idle
-        permission = nil
-        queued = []
+        pendingPermissions = []
+        returnQueuedToDraft()
         runningCommands = []
         interrupting = false
         onEnded()
@@ -475,7 +497,7 @@ public final class ChatSession {
     /// Draws the new text now if the last draw was at least `streamingInterval` ago, or else once it is.
     private func publishStreamingSoon() {
         let now = ContinuousClock.now
-        guard let last = streamingPublishes.last, now - last < Self.streamingInterval else {
+        guard let last = lastStreamingPublish, now - last < Self.streamingInterval else {
             publishStreaming()
             return
         }
@@ -497,7 +519,12 @@ public final class ChatSession {
         text.append(pendingText)
         pendingText = ""
         streaming = text
-        streamingPublishes.append(.now)
+        let now = ContinuousClock.now
+        if let last = lastStreamingPublish {
+            shortestStreamingGap = min(shortestStreamingGap ?? now - last, now - last)
+        }
+        lastStreamingPublish = now
+        streamingPublishCount += 1
     }
 
     private func endStreaming() {

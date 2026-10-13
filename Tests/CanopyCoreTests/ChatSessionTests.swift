@@ -81,11 +81,9 @@ struct ChatSessionTests {
         chat.send("slow 200")
 
         #expect(await soon { !chat.isWorking })
-        let publishes = chat.streamingPublishes
-        #expect(publishes.count >= 1)
-        #expect(publishes.count < 200)
-        let gaps = zip(publishes, publishes.dropFirst()).map { $1 - $0 }
-        #expect(gaps.allSatisfy { $0 >= ChatSession.streamingInterval })
+        #expect(chat.streamingPublishCount >= 1)
+        #expect(chat.streamingPublishCount < 200)
+        #expect(chat.shortestStreamingGap.map { $0 >= ChatSession.streamingInterval } ?? true)
         #expect(chat.turnTokens == 200)
         chat.close()
     }
@@ -179,6 +177,34 @@ struct ChatSessionTests {
 
         #expect(await soon { chat.queued.isEmpty && !chat.isWorking })
         #expect(texts(chat).filter { $0.hasPrefix("You: ") } == ["You: pause 2", "You: say one\nsay two"])
+        chat.close()
+    }
+
+    /// Parallel subagents ask at once, and each request needs its own answer.
+    @Test func answersPermissionsAskedTogetherOneByOne() async throws {
+        let chat = session()
+
+        chat.send("two")
+        #expect(await soon { chat.pendingPermissions.count == 2 })
+        #expect(chat.permission?.subject == "ls a")
+        chat.allow()
+        #expect(chat.permission?.subject == "ls b")
+        chat.allow()
+
+        #expect(await soon { !chat.isWorking })
+        #expect(texts(chat).last == "Both answered.")
+        chat.close()
+    }
+
+    @Test func stopDeniesEveryOpenPrompt() async throws {
+        let chat = session()
+
+        chat.send("two")
+        #expect(await soon { chat.pendingPermissions.count == 2 })
+        chat.interrupt()
+
+        #expect(chat.pendingPermissions.isEmpty)
+        #expect(await soon { !chat.isWorking })
         chat.close()
     }
 
@@ -331,6 +357,7 @@ struct ChatSessionTests {
     @Test func asksForTrustBeforeStarting() async throws {
         var granted = 0
         let chat = session(trusted: false, granted: { granted += 1 })
+        chat.open()
         #expect(chat.needsTrust)
 
         chat.send("say hi")

@@ -92,13 +92,12 @@ public final class ClaudeStream {
             },
             onExit: { [weak self] code in self?.exited(code) })
         isRunning = true
-        Task {
-            guard let answer = try? await request("initialize"), case .object(let fields) = answer,
-                let list = fields["commands"], let commands = try? list.decode([ClaudeCommand].self)
-            else { return }
-            self.commands = commands
-        }
+        // Written before anything else, so it reaches Claude ahead of the first message.
+        initializeRequest = "canopy-init-" + UUID().uuidString.prefix(8).lowercased()
+        process?.write(ClaudeInput.request(id: initializeRequest!, kind: "initialize"))
     }
+
+    private var initializeRequest: String?
 
     public func send(_ content: [ClaudeInput.Content]) {
         process?.write(ClaudeInput.user(content))
@@ -140,6 +139,14 @@ public final class ClaudeStream {
     private func received(_ line: Data) {
         guard let event = ClaudeEvent(line: line) else { return }
         switch event {
+        case .controlResponse(let id, _, let value) where id == initializeRequest:
+            initializeRequest = nil
+            if case .object(let fields)? = value, let list = fields["commands"],
+                let commands = try? list.decode([ClaudeCommand].self)
+            {
+                self.commands = commands
+            }
+            return
         case .controlResponse(let id, let error, let value):
             resolve(id, with: error.map { .failure(ClaudeStreamError.refused($0)) } ?? .success(value))
             return

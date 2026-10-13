@@ -15,6 +15,7 @@ What it does with a message depends on how the message starts:
   hold           asks to run `make test` and never ends the turn on its own
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
+  two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
   anything else  answers "You said: <message>"
 FAKE_CLAUDE_DELAY sets the seconds between streamed words (default 0.01), and FAKE_CLAUDE_VERSION the version it
@@ -216,6 +217,26 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "two":
+        asked = []
+        for command in ("ls a", "ls b"):
+            request_id, tool_id = str(uuid.uuid4()), "toolu_" + uuid.uuid4().hex[:20]
+            emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Bash",
+                                       "input": {"command": command}}]))
+            emit({"type": "control_request", "request_id": request_id, "request": {
+                "subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": command},
+                "tool_use_id": tool_id, "permission_suggestions": []}})
+            asked.append((request_id, tool_id))
+        for request_id, tool_id in asked:
+            with responses_lock:
+                while request_id not in responses:
+                    responses_lock.wait(0.1)
+                answer = responses.pop(request_id)
+            allowed = answer.get("behavior") == "allow"
+            emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id,
+                                  "content": "ran" if allowed else "denied", "is_error": not allowed}]))
+        stream("Both answered.")
+        finish("Both answered.")
     elif text == "callback":
         request_id = str(uuid.uuid4())
         emit({"type": "control_request", "request_id": request_id, "request": {"subtype": "mcp_message"}})

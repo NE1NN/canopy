@@ -148,6 +148,10 @@ struct ChatList: NSViewRepresentable {
             } else if followsBottom || forced {
                 scrollToBottom()
             }
+            // A first page that fits on screen never scrolls, so older history would be out of reach.
+            if chat.hasOlder, let scroll, table.bounds.height < scroll.contentView.bounds.height {
+                chat.loadOlder()
+            }
         }
 
         /// How many rows came in ahead of the old first one.

@@ -81,7 +81,10 @@ public enum ClaudeEvent: Equatable, Sendable {
         case "system": self.init(system: object)
         case "conversation_reset": self = .conversationReset
         case "assistant", "user": self.init(message: object, role: type, line: line)
-        case "stream_event": self.init(stream: object["event"]?.fields ?? [:])
+        case "stream_event":
+            // A subagent's own partial messages fold under its call, which comes with a later milestone.
+            if object["parent_tool_use_id"]?.text != nil { return nil }
+            self.init(stream: object["event"]?.fields ?? [:])
         case "result":
             var window: Int?
             if case .object(let models)? = object["modelUsage"] {

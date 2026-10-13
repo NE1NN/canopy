@@ -50,7 +50,9 @@ struct ChatRowsTests {
     }
 
     @Test func anUntrustedFolderAsksFirst() {
-        #expect(kinds(ChatRows.rows(for: session(trusted: false))) == ["trust"])
+        let chat = session(trusted: false)
+        chat.open()
+        #expect(kinds(ChatRows.rows(for: chat)) == ["trust"])
     }
 
     @Test func showsTheConversationThenWhatIsPendingThenTheStatus() async throws {

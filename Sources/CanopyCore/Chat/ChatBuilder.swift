@@ -39,6 +39,9 @@ public struct ChatBuilder: Sendable {
     }
 
     public mutating func prepend(_ older: ChatBuilder) {
+        // Results that arrived while the page loaded belong to its calls too.
+        let late = orphanResults.filter { older.callItems[$0.key] != nil }
+        defer { for (id, result) in late { addResult(id, result) } }
         for id in older.callItems.keys { orphanResults[id] = nil }
         items = older.items + items
         seen.formUnion(older.seen)

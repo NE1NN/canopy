@@ -121,6 +121,15 @@ struct ClaudeEventTests {
         #expect(event(usage) == .outputTokens(57))
     }
 
+    @Test func skipsASubagentsStreamedText() {
+        let line = """
+            {"type":"stream_event","event":{"type":"content_block_delta","index":0,\
+            "delta":{"type":"text_delta","text":"inner"}},"parent_tool_use_id":"toolu_9","session_id":"s"}
+            """
+
+        #expect(event(line) == nil)
+    }
+
     @Test func readsResults() {
         let line = """
             {"type":"result","subtype":"success","is_error":false,"duration_ms":18143,"result":"Done.",\

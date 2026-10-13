@@ -257,7 +257,9 @@ struct ChatStatusLine: View {
         }
         if chat.isWorking, let started = chat.turnStarted {
             var parts = [ChatFormat.duration(now.timeIntervalSince(started))]
-            if chat.turnTokens > 0 { parts.append("↓ " + ChatFormat.tokens(chat.turnTokens) + " tokens") }
+            if chat.turnTokens > 0 {
+                parts.append("↓ " + ChatFormat.tokens(chat.turnTokens) + (chat.turnTokens == 1 ? " token" : " tokens"))
+            }
             return parts.joined(separator: " · ")
         }
         return chat.lastTurn.map { "· " + ChatFormat.duration($0) } ?? ""

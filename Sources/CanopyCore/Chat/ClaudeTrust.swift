@@ -80,7 +80,9 @@ public enum ClaudeTrust {
 
     /// Nil when there is no file.
     private static func load(_ config: URL) throws -> [String: JSONValue]? {
-        guard let data = try? Data(contentsOf: config) else { return nil }
+        guard FileManager.default.fileExists(atPath: config.path) else { return nil }
+        // Any other read error is not "no file": rewriting then would replace the author's whole config.
+        let data = try Data(contentsOf: config)
         return try JSONDecoder().decode([String: JSONValue].self, from: data)
     }
 

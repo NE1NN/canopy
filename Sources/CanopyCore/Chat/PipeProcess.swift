@@ -122,10 +122,11 @@ public final class PipeProcess: @unchecked Sendable {
     /// Ends the program and everything in its process group: SIGTERM now, then SIGKILL if it has not exited after
     /// `grace`. Its exit is still reported.
     public func terminate(grace: Duration = .seconds(3)) {
-        closeInput()
+        // Signals first: closing the input waits behind any write still in progress.
         state.withLock { state in
             if !state.exited { kill(-pid, SIGTERM) }
         }
+        closeInput()
         readQueue.asyncAfter(deadline: .now() + grace / .seconds(1)) {
             self.state.withLock { state in
                 // Until the exit is reaped the pid and its group cannot be reused, so the signal reaches only them.
@@ -136,19 +137,17 @@ public final class PipeProcess: @unchecked Sendable {
 
     // MARK: writeQueue
 
+    /// Writes outside the lock, so a program that stops reading blocks only this queue, never the main actor. Only this
+    /// serial queue closes the descriptor, so it cannot close under the write.
     private func writeAll(_ data: Data) {
+        let fd = state.withLock { $0.input }
+        guard fd >= 0 else { return }
         var offset = 0
         while offset < data.count {
-            let (count, code) = state.withLock { state -> (Int, Int32) in
-                guard state.input >= 0 else { return (-1, EBADF) }
-                let count = data.withUnsafeBytes {
-                    Darwin.write(state.input, $0.baseAddress! + offset, $0.count - offset)
-                }
-                return (count, errno)
-            }
+            let count = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + offset, $0.count - offset) }
             if count > 0 {
                 offset += count
-            } else if code != EINTR {
+            } else if errno != EINTR {
                 return
             }
         }
