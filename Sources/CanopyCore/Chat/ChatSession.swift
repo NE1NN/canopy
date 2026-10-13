@@ -442,12 +442,33 @@ public final class ChatSession {
         }
         returnQueuedToDraft()
         let runs = shellRuns.filter { $0.shell.exitCode != nil }.map { run in
-            "I ran `\(run.shell.command)`" + (run.shell.exitCode == 0 ? "" : " (exit \(run.shell.exitCode ?? 0))")
-                + ":\n```\n\(run.shell.outputForClaude)\n```"
+            let output = run.shell.outputForClaude
+            let fence = String(repeating: "`", count: max(3, Self.longestBacktickRun(in: output) + 1))
+            return "I ran `\(run.shell.command)`"
+                + (run.shell.exitCode == 0 ? "" : " (exit \(run.shell.exitCode ?? 0))")
+                + ":\n\(fence)\n\(output)\n\(fence)"
         }
         let parts = runs + (draft.isEmpty ? [] : [draft])
+        let pid = stream?.pid
         close()
+        // The terminal's Claude Code must not start on the session while this one still runs.
+        if let pid {
+            let deadline = Date().addingTimeInterval(5)
+            while kill(pid, 0) == 0, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
+    static func longestBacktickRun(in text: String) -> Int {
+        var longest = 0
+        var run = 0
+        for character in text {
+            run = character == "`" ? run + 1 : 0
+            longest = max(longest, run)
+        }
+        return longest
     }
 
     /// Whether `index` is one of the current question's options, so a digit typed past them stays text.

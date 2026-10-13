@@ -275,6 +275,16 @@ struct ChatSessionTests {
         chat.close()
     }
 
+    @Test func handingOffFencesOutputThatHoldsAFence() async throws {
+        let chat = session(shell: true)
+        chat.send("!printf 'a\\n```\\nb\\n'")
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+
+        let unsent = await chat.handOff()
+
+        #expect(unsent == "I ran `printf 'a\\n```\\nb\\n'`:\n````\na\n```\nb\n````")
+    }
+
     @Test func countsASubagentsToolCallsOnItsLine() async throws {
         let chat = session()
 

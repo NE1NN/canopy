@@ -163,6 +163,10 @@ struct ChatComposer: View {
             onTerminalCommand("/" + item.name)
         } else if !item.argumentHint.isEmpty {
             chat.draft = "/" + item.name + " "
+        } else if chat.needsTrust {
+            // Trusting sends the draft, so the command waits in it.
+            chat.draft = "/" + item.name
+            onTrust()
         } else {
             chat.draft = ""
             chat.send("/" + item.name)

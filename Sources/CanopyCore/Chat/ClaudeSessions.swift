@@ -25,6 +25,12 @@ public enum ClaudeSessions {
         let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
         let files =
             (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys))) ?? []
+        // Forgets the folder's transcripts that are gone.
+        let paths = Set(files.map(\.path))
+        let prefix = root.path + "/"
+        cache.withLock { cache in
+            for path in cache.keys where path.hasPrefix(prefix) && !paths.contains(path) { cache[path] = nil }
+        }
         return files.filter { $0.pathExtension == "jsonl" }.compactMap { file in
             let values = try? file.resourceValues(forKeys: keys)
             let modified = values?.contentModificationDate ?? .distantPast

@@ -235,6 +235,13 @@ struct NewTabMenu: View {
     /// Read off the main thread when the row changes and as the pointer comes over the button, before the menu opens.
     @State private var conversations: [ClaudeSessionInfo] = []
 
+    /// Keeps only a list read for the row still selected, since an earlier row's read can finish last.
+    private func loadConversations() async {
+        let path = model.selection?.path
+        let found = await model.conversations()
+        if model.selection?.path == path { conversations = found }
+    }
+
     var body: some View {
         Menu {
             Button {
@@ -278,9 +285,12 @@ struct NewTabMenu: View {
         .foregroundStyle(isHovering ? .primary : .secondary)
         .onHover { hovering in
             isHovering = hovering
-            if hovering { Task { conversations = await model.conversations() } }
+            if hovering { Task { await loadConversations() } }
         }
-        .task(id: model.selection?.path) { conversations = await model.conversations() }
+        .task(id: model.selection?.path) {
+            conversations = []
+            await loadConversations()
+        }
         .help("New Tab")
         .accessibilityLabel("New Tab")
     }
