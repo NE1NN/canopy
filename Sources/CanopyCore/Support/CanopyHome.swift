@@ -1,9 +1,5 @@
 import Foundation
 
-public enum CanopyVersion {
-    public static let current = "0.1.0"
-}
-
 public struct CanopyHome: Sendable, Equatable {
     public static let environmentKey = "CANOPY_HOME"
     public static let infoPlistKey = "CanopyHome"
