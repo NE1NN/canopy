@@ -62,8 +62,12 @@ public enum InstanceMetadata {
         try await withCheckedThrowingContinuation { continuation in
             let answer = FirstAnswer(continuation)
             let work = Task {
-                answer.give(
-                    await Result { try await exchange(method, path, headers: headers, address: address, port: port) })
+                do {
+                    answer.give(
+                        .success(try await exchange(method, path, headers: headers, address: address, port: port)))
+                } catch {
+                    answer.give(.failure(error))
+                }
             }
             let timer = Task {
                 try? await Task.sleep(for: timeout)
