@@ -30,7 +30,8 @@ public final class PhoneServer: Sendable {
         listener = PhoneListener(
             port: settings.port, addresses: settings.addresses,
             gate: PhoneGate(
-                registry: registry, name: settings.serverName, kind: settings.kind, version: settings.version,
+                registry: registry, name: settings.serverName, kind: settings.kind, wake: settings.wake,
+                version: settings.version,
                 helloTimeout: helloTimeout,
                 handler: { request, session in
                     guard let server = handle.server.withLock({ $0 }) else {

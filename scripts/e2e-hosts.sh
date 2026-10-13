@@ -464,6 +464,25 @@ if ((with_box)); then
         $phone call "$link" "$work/box-token" phone.reply '{"pane": "'"$session"'", "text": "from-phone"}' >/dev/null \
             || fail "the phone's reply to the box was refused"
         wait_for 20 screen_has from-phone || fail "the phone's reply did not reach the box's pane"
+        step "a wake key reaches the phone with the instance canopy-box reads from the instance metadata service"
+        (exec /usr/bin/python3 -I "$PWD/scripts/fake-aws.py" --port-file "$work/aws.port" --lifetime 600 \
+            </dev/null >/dev/null 2>&1) &
+        aws_pid=$!
+        wait_for 10 test -s "$work/aws.port" || fail "the fake instance metadata service did not start"
+        on_host "echo '127.0.0.1 $(cat "$work/aws.port")' > ~/.canopy/${server#canopy-}/box/imds"
+        printf 'AKIAFAKEWAKEKEY\nwake-secret-e2e\n' | "$cli" host wake-key "$alias" >/dev/null || fail "host wake-key failed"
+        wake_instance() {
+            $phone hello-json "$link" "$work/box-token" | json '(d.get("wake") or {}).get("instanceID", "")'
+        }
+        wait_for 20 eval '[[ "$(wake_instance)" == i-0fake0box00000001 ]]' \
+            || fail "the phone's hello does not carry the wake key: $($phone hello-json "$link" "$work/box-token")"
+        if grep -rq wake-secret-e2e "$CANOPY_HOME/activity" 2>/dev/null \
+            || on_host "grep -q wake-secret-e2e ~/.canopy/${server#canopy-}/box/activity.jsonl" 2>/dev/null; then
+            fail "the wake key's secret was logged"
+        fi
+        "$cli" host wake-key "$alias" --clear >/dev/null || fail "host wake-key --clear failed"
+        wait_for 20 eval '[[ -z "$(wake_instance)" ]]' || fail "a cleared wake key still reaches the phone"
+        [[ "$(ps -o command= -p "$aws_pid" 2>/dev/null)" == *fake-aws.py* ]] && kill "$aws_pid"
         "$cli" phone remove e2e-phone --on "$alias" >/dev/null || fail "phone remove --on failed"
         [[ "$($phone hello "$link" "$work/box-token")" != ok ]] || fail "a removed phone still says hello to the box"
     fi

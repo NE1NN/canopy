@@ -10,6 +10,8 @@
 #   scripts/phone-fixture.sh start   launch it; prints the ports it listens on (PHONE_FIXTURE_PORT and
 #                                    PHONE_FIXTURE_BOX_PORT pick them)
 #   scripts/phone-fixture.sh link    a fresh pairing link; `link box` for the box
+#   scripts/phone-fixture.sh ec2     the fake EC2 endpoint that wakes the box, which has a wake key
+#   scripts/phone-fixture.sh stop-box, start-box   stop the box's canopy-box, as when it powers off, and start it
 #   scripts/phone-fixture.sh panes   each scenario's pane, as JSON
 #   scripts/phone-fixture.sh calls   what phones did to its panes, from the activity log
 #   scripts/phone-fixture.sh stop    quit it and delete its folder
@@ -32,14 +34,18 @@ stop)
     load
     # Only the dev build this script started: a pid can be reused once that app has quit.
     if [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *"Canopy Dev.app/Contents/MacOS/Canopy" ]]; then
-        # Disconnecting deletes this home's token from the Keychain.
+        # Disconnecting deletes this home's token from the Keychain, and clearing the box's wake key its key.
         "$cli" ticket disconnect --force >/dev/null 2>&1 || true
+        "$cli" host wake-key devbox --clear >/dev/null 2>&1 || true
         kill "$pid" 2>/dev/null || true
         # The app writes to its home as it quits, so the folder goes only once it has.
         for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
     fi
     if [[ -n "${tm_pid:-}" && "$(ps -p "$tm_pid" -o command= 2>/dev/null)" == *ticket-manager-stand-in.py* ]]; then
         kill "$tm_pid" 2>/dev/null || true
+    fi
+    if [[ -n "${aws_pid:-}" && "$(ps -p "$aws_pid" -o command= 2>/dev/null)" == *fake-aws.py* ]]; then
+        kill "$aws_pid" 2>/dev/null || true
     fi
     # The box's daemon and tmux server, found by this fixture's own host home and home id.
     if [[ "${host_home:-}" == /tmp/cnp-box.* && -n "${box_id:-}" ]]; then
@@ -60,6 +66,22 @@ link)
     on=()
     [[ "${2:-}" == box ]] && on=(--on devbox)
     "$cli" phone pair ${on[@]+"${on[@]}"} --json | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["link"])'
+    exit 0
+    ;;
+ec2)
+    load
+    echo "http://127.0.0.1:$(cat "$work/aws.port")/"
+    exit 0
+    ;;
+stop-box)
+    load
+    pkill -f "canopy-box serve --home-id $box_id" || true
+    exit 0
+    ;;
+start-box)
+    load
+    FAKE_SSH_HOME="$host_home" FAKE_SSH_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" scripts/fake-ssh -- devbox \
+        "nohup ~/.canopy/$box_id/bin/canopy-box serve --home-id $box_id </dev/null >/dev/null 2>&1 &"
     exit 0
     ;;
 panes)
@@ -174,7 +196,17 @@ if ((box)); then
     printf 'box_id=%s\n' "$box_id" >> "$state"
     mkdir -p "$host_home/.canopy/$box_id/box"
     echo "127.0.0.1 $box_port" > "$host_home/.canopy/$box_id/box/phone-listen"
+    # The box's instance metadata and EC2, whose StartInstances starts the box's daemon again.
+    (exec /usr/bin/python3 -I scripts/fake-aws.py --port-file "$work/aws.port" --log "$work/aws.log" \
+        --on-start "$PWD/scripts/phone-fixture.sh start-box" </dev/null >/dev/null 2>&1) &
+    printf 'aws_pid=%s\n' "$!" >> "$state"
+    for _ in $(seq 1 100); do
+        [[ -s "$work/aws.port" ]] && break
+        sleep 0.1
+    done
+    echo "127.0.0.1 $(cat "$work/aws.port")" > "$host_home/.canopy/$box_id/box/imds"
     "$cli" host upgrade devbox >/dev/null
+    printf 'AKIAFAKEWAKEKEY\nfixture-wake-secret\n' | "$cli" host wake-key devbox >/dev/null
     run=$(printf 'clear; exec /usr/bin/python3 -I %q %q migrate %q' "$PWD/scripts/fake-claude.py" \
         "$host_home/.local/bin/canopy" "$host_home/transcripts/migrate.jsonl")
     "$cli" row new feat/usage-migration --repo solis --on devbox --run "$run" >/dev/null

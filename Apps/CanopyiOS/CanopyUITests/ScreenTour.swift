@@ -24,6 +24,7 @@ final class ScreenTour: XCTestCase {
         let requests = try XCTUnwrap(environment["CANOPY_TOUR_DIR"].map(URL.init(fileURLWithPath:)), "CANOPY_TOUR_DIR")
 
         app = XCUIApplication()
+        app.launchEnvironment["CANOPY_TOUR_EC2"] = environment["CANOPY_TOUR_EC2"]
         app.launchArguments = ["-ScreenTour", "-ScreenTourReset"]
         app.launch()
         XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 10), "no Pairing at first")
@@ -82,6 +83,20 @@ final class ScreenTour: XCTestCase {
         shot("conversation-box")
         app.navigationBars.buttons["Inbox"].tap()
         XCTAssert(wait { !self.element("item-feat/usage-migration").exists }, "opening the box's agent left it unread")
+
+        // The box powers itself off: a card offers to wake it, and waking it through EC2 brings Canopy there back.
+        request("stop-box", in: requests)
+        XCTAssert(element("wake-devbox").waitForExistence(timeout: 30), "no Wake card once the box stopped")
+        shot("inbox-box-off")
+        let wake = app.buttons["wake-devbox"]
+        XCTAssert(wait { wake.isHittable }, "Wake cannot be tapped")
+        wake.tap()
+        XCTAssert(text("Waking devbox").waitForExistence(timeout: 5), "the card does not say it is waking")
+        shot("inbox-box-waking")
+        XCTAssert(wait(timeout: 90) { !self.element("wake-card-devbox").exists }, "the box never came back")
+        XCTAssert(
+            wait(timeout: 30) { self.app.staticTexts["connection"].label.contains("devbox connected") },
+            "the box did not connect again")
 
         // A question with options, answered with a chip.
         self.open("item-feat/ios-companion")

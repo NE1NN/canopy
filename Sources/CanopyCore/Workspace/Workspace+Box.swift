@@ -28,6 +28,38 @@ extension Workspace {
         return boxLinks[alias]
     }
 
+    /// What the Mac tells the host's canopy-box on every connect: its name, its repos, and its wake key.
+    /// A Keychain that will not say asks the box to keep its key, since sending none would take it from every phone.
+    nonisolated func boxConfig(for alias: String) -> BoxConfig {
+        let repos = hosts.hosts[alias]?.repos ?? [:]
+        do {
+            return BoxConfig(host: alias, repos: repos, wake: try hostTooling.wakeKeys.read(alias, home: home))
+        } catch {
+            return BoxConfig(host: alias, repos: repos, keepsWake: true)
+        }
+    }
+
+    /// Keeps the key phones start the host with, or forgets it, and hands the change to its canopy-box now when the link
+    /// is up. Returns whether it did; otherwise the link's next connect does.
+    public func setWakeKey(_ key: BoxWakeKey?, for alias: String) async throws -> Bool {
+        let hosts = self.hosts.hosts
+        guard let entry = hosts[alias] else { throw WorkspaceError.hostNotFound(alias, known: hosts.keys.sorted()) }
+        guard entry.box else {
+            throw ControlError(
+                code: "host_not_upgraded",
+                message:
+                    "\(alias) does not run canopy-box, which hands phones the key. Run `canopy host upgrade \(alias)` first."
+            )
+        }
+        if let key {
+            try hostTooling.wakeKeys.write(key, for: alias, home: home)
+        } else {
+            try hostTooling.wakeKeys.delete(alias, home: home)
+        }
+        guard let link = boxLinks[alias] else { return false }
+        return (try? await link.reconfigure()) != nil
+    }
+
     /// Brings up an upgraded host's link once per connection: the forward to its `box.sock` through the master, and
     /// the link itself, which connects and reconnects on its own.
     public func ensureBoxLink(_ connection: HostConnection) async {
@@ -62,7 +94,7 @@ extension Workspace {
         guard boxLinks[alias] == nil else { return }
         let link = BoxLink(alias: alias, socketPath: HostPaths.boxSocket(home: home, homeID: homeID, alias: alias)) {
             [weak self] in
-            BoxConfig(host: alias, repos: self?.hosts.hosts[alias]?.repos ?? [:])
+            self?.boxConfig(for: alias) ?? BoxConfig(host: alias)
         }
         boxLinks[alias] = link
         await link.start()

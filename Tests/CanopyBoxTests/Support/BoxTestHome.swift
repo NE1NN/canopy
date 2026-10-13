@@ -29,6 +29,10 @@ final class BoxTestHome: Sendable {
     func daemon(
         configured: Bool = true, git: @escaping @Sendable (String) -> GitClone = { GitFixture.clone($0) }
     ) async throws -> BoxDaemon {
+        // No test reaches the real instance metadata service: a test that wants one writes its own.
+        if !FileManager.default.fileExists(atPath: paths.folder + "/imds") {
+            try BoxFiles.write(Data("127.0.0.1 1".utf8), to: paths.folder + "/imds")
+        }
         let daemon = BoxDaemon(paths: paths, tmux: server.tmux, git: git)
         if configured, !FileManager.default.fileExists(atPath: paths.configFile) {
             try BoxFiles.write(try JSONEncoder().encode(config), to: paths.configFile)

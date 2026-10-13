@@ -47,7 +47,10 @@ final class AppModel {
         let activity = ActivityLog(folder: home.activityFolder, logsCommands: config.logCommands)
         let workspace = Workspace(
             home: home, activity: activity,
-            hostTooling: HostTooling(relayCLI: Self.bundledCLIDirectory().map { $0 + "/canopy" }))
+            hostTooling: HostTooling(
+                relayCLI: Self.bundledCLIDirectory().map { $0 + "/canopy" },
+                wakeKeys: HostWakeKeys(
+                    store: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")))
         let terminals = TerminalStore(
             engine: SwiftTermEngine(),
             settings: .current(

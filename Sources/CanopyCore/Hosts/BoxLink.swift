@@ -68,6 +68,12 @@ public actor BoxLink {
         return ready
     }
 
+    /// Sends the Mac's settings again, as after a change to them, while the link is up.
+    public func reconfigure() async throws {
+        guard ready else { throw notConnected() }
+        let _: Bool = try await call(BoxMethod.configure, config())
+    }
+
     /// Calls a method and decodes its result. Fails as `host_unreachable` without a link, and with the daemon's own
     /// error when it refuses.
     public func call<Result: Decodable>(

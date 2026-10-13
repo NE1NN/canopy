@@ -12,6 +12,9 @@ public actor BoxDaemon {
     let git: @Sendable (String) -> GitClone
 
     var config: BoxConfig?
+    /// The key the Mac set for phones to start the box with, kept in `wake.json`.
+    public private(set) var wakeKey: BoxWakeKey?
+    var instanceLearning: Task<Void, Never>?
     var state = BoxState()
     /// Each repo's clone, its main row on the host, by repo name.
     var mainRows: [String: StoredRow] = [:]
@@ -47,16 +50,29 @@ public actor BoxDaemon {
     /// Loads what was saved, brings it in line with git and tmux, and saves the result.
     public func start() async {
         config = Self.load(BoxConfig.self, from: paths.configFile)
+        wakeKey = Self.load(BoxWakeKey.self, from: paths.wakeFile)
         state = Self.load(BoxState.self, from: paths.stateFile) ?? BoxState()
         await reconcile()
         save()
         publish()
     }
 
-    /// Saves what the Mac decides and brings the rows in line with its repos.
+    /// Saves what the Mac decides and brings the rows in line with its repos. The wake key goes in a file of its own.
     public func configure(_ next: BoxConfig) async throws {
-        try BoxFiles.write(try JSONEncoder.box.encode(next), to: paths.configFile)
-        config = next
+        var settings = next
+        settings.wake = nil
+        settings.keepsWake = nil
+        try BoxFiles.write(try JSONEncoder.box.encode(settings), to: paths.configFile)
+        if next.keepsWake != true {
+            if let wake = next.wake {
+                try BoxFiles.write(try JSONEncoder.box.encode(wake), to: paths.wakeFile)
+            } else {
+                unlink(paths.wakeFile)
+            }
+            wakeKey = next.wake
+        }
+        config = settings
+        if wakeKey != nil { Task { await learnInstance() } }
         state.released = false
         await reconcile()
         changed()

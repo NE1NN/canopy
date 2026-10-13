@@ -1,3 +1,4 @@
+import CanopyAgents
 import Foundation
 
 public enum HostMethod {
@@ -5,6 +6,31 @@ public enum HostMethod {
     public static let list = "host.list"
     public static let remove = "host.remove"
     public static let upgrade = "host.upgrade"
+    public static let wakeKey = "host.wakeKey"
+}
+
+/// A host's wake key, or none to forget it.
+public struct HostWakeKeyParams: Codable, Sendable {
+    public var alias: String
+    public var key: BoxWakeKey?
+
+    public init(alias: String, key: BoxWakeKey?) {
+        self.alias = alias
+        self.key = key
+    }
+}
+
+public struct HostWakeKeyResult: Codable, Sendable, Equatable {
+    public var alias: String
+    public var isSet: Bool
+    /// Whether canopy-box has it now. Otherwise it gets it when the host next connects.
+    public var sent: Bool
+
+    public init(alias: String, isSet: Bool, sent: Bool) {
+        self.alias = alias
+        self.isSet = isSet
+        self.sent = sent
+    }
 }
 
 public struct HostUpgradeParams: Codable, Sendable {

@@ -28,6 +28,10 @@ public struct BoxPaths: Sendable, Equatable {
     public var socket: String { folder + "/box.sock" }
     public var stateFile: String { folder + "/state.json" }
     public var configFile: String { folder + "/config.json" }
+    /// The key phones start the box with, apart from the rest of the Mac's settings.
+    public var wakeFile: String { folder + "/wake.json" }
+    /// Which EC2 instance the box is, once the instance metadata service has said.
+    public var instanceFile: String { folder + "/instance.json" }
     /// Touched while the box should stay on.
     public var busyFile: String { folder + "/busy" }
     /// Hook reports kept while nothing could take them.

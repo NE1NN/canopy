@@ -25,11 +25,13 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     public var pairedAt: Date
     /// Why the server no longer counts as paired, once it forgot this phone, so it stays that way after a relaunch.
     public var unpairedNotice: String?
+    /// How to start a box that powered itself off, as its last hello said.
+    public var wake: PhoneWake?
 
     public init(
         id: String = UUID().uuidString, kind: String = PhoneServerKind.mac, name: String, host: String, port: UInt16,
         address: String?, token: String, phone: String, version: String? = nil, pairedAt: Date = Date(),
-        unpairedNotice: String? = nil
+        unpairedNotice: String? = nil, wake: PhoneWake? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -42,6 +44,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         self.version = version
         self.pairedAt = pairedAt
         self.unpairedNotice = unpairedNotice
+        self.wake = wake
     }
 
     public var isBox: Bool { kind == PhoneServerKind.box }
@@ -58,7 +61,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, name, host, port, address, token, phone, version, pairedAt, unpairedNotice
+        case id, kind, name, host, port, address, token, phone, version, pairedAt, unpairedNotice, wake
         /// The name's key from before several servers, when the one server was always the Mac.
         case mac
     }
@@ -78,6 +81,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         version = try container.decodeIfPresent(String.self, forKey: .version)
         pairedAt = try container.decodeIfPresent(Date.self, forKey: .pairedAt) ?? .distantPast
         unpairedNotice = try container.decodeIfPresent(String.self, forKey: .unpairedNotice)
+        wake = try container.decodeIfPresent(PhoneWake.self, forKey: .wake)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -93,6 +97,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         try container.encodeIfPresent(version, forKey: .version)
         try container.encode(pairedAt, forKey: .pairedAt)
         try container.encodeIfPresent(unpairedNotice, forKey: .unpairedNotice)
+        try container.encodeIfPresent(wake, forKey: .wake)
     }
 }
 

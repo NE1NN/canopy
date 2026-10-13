@@ -53,7 +53,7 @@ public struct WorkspaceControlHandler: Sendable {
 
     /// Logs calls that change something, with their params as sent and the error code if they failed. Commands typed
     /// into terminals are left out while command logging is off, and so is text starting with a space, which zsh keeps
-    /// out of history under hist_ignore_space. A `token` is never logged, wherever it is in the params.
+    /// out of history under hist_ignore_space. A `token` or a wake key's secret is never logged, wherever it is in the params.
     private func record(_ request: ControlRequest, _ response: ControlResponse) {
         var params = Self.withoutTokens(request.params ?? .object([:]))
         if case .object(var fields) = params {
@@ -259,6 +259,11 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(HostUpgradeParams.self)
             return try .from(
                 params.undo ? try await rows.undoUpgrade(params.alias) : try await rows.upgradeHost(params.alias))
+
+        case HostMethod.wakeKey:
+            let params = try request.decodeParams(HostWakeKeyParams.self)
+            let sent = try await workspace.setWakeKey(params.key, for: params.alias)
+            return try .from(HostWakeKeyResult(alias: params.alias, isSet: params.key != nil, sent: sent))
 
         case HostMethod.remove:
             let params = try request.decodeParams(HostRemoveParams.self)
@@ -533,11 +538,14 @@ public struct WorkspaceControlHandler: Sendable {
         (error as? WorkspaceError)?.code ?? "internal"
     }
 
-    /// The params with every `token` key taken out, at any depth.
+    /// Keys whose values are secrets, which never reach the activity log.
+    static let secretKeys: Set<String> = ["token", "secretAccessKey"]
+
+    /// The params with every secret key taken out, at any depth.
     static func withoutTokens(_ value: JSONValue) -> JSONValue {
         switch value {
         case .object(let fields):
-            .object(fields.filter { $0.key != "token" }.mapValues(withoutTokens))
+            .object(fields.filter { !secretKeys.contains($0.key) }.mapValues(withoutTokens))
         case .array(let items):
             .array(items.map(withoutTokens))
         default:

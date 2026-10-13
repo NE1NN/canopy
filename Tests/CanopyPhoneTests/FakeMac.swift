@@ -49,6 +49,8 @@ final class FakeMac: PhoneTransport, Sendable {
         var refused: Set<String> = []
         var hanging: Set<String> = []
         var codes: Set<String>
+        /// What hello hands the phone to start this box with.
+        var wake: PhoneWake?
         var tokens: [String: String] = [:]
         var inbox = PhoneInbox()
         var rows = PhoneRowsResult(sections: [])
@@ -176,7 +178,10 @@ final class FakeMac: PhoneTransport, Sendable {
             else { return .error("unpaired") }
             link.authenticated()
             return .result(
-                (try? .from(PhoneHelloResult(mac: name, version: "0.9", phone: phone, kind: kind))) ?? .null)
+                (try? .from(
+                    PhoneHelloResult(
+                        mac: name, version: "0.9", phone: phone, kind: kind, wake: state.withLock { $0.wake })))
+                    ?? .null)
         case PhoneMethod.subscribe:
             link.inboxSubscription = request.id
             return .result((try? .from(state.withLock { $0.inbox })) ?? .null)

@@ -13,19 +13,23 @@ public struct HostTooling: Sendable {
     public var boxBinaries: BoxBinaries = .current()
     /// What runs each host's ssh, by alias; nil runs `sshExecutable`.
     public var launcher: (@Sendable (String) -> any HostProcessLauncher)?
+    /// The keys phones start upgraded hosts with.
+    public var wakeKeys: HostWakeKeys
 
     public init(
         sshExecutable: String = SSHCommand.executable(),
         environment: @escaping @Sendable () -> [String: String] = { GitEnvironment.current },
         clock: any HostClock = SystemHostClock(),
         relayCLI: String? = nil,
-        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil
+        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil,
+        wakeKeys: HostWakeKeys = .inMemory()
     ) {
         self.sshExecutable = sshExecutable
         self.environment = environment
         self.clock = clock
         self.relayCLI = relayCLI
         self.launcher = launcher
+        self.wakeKeys = wakeKeys
     }
 }
 
@@ -212,6 +216,8 @@ extension Workspace {
         preparedHosts[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
         await stopBoxLink(alias)
+        // A host added again under the alias, maybe another machine, never gets this one's key.
+        try? hostTooling.wakeKeys.delete(alias, home: home)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 

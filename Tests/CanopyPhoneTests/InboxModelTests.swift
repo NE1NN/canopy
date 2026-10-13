@@ -283,10 +283,10 @@ struct InboxAcrossServersTests {
         #expect(!model.isStale)
         #expect(model.sections.needsYou.map(\.row.name) == ["feat/box", "feat/ios-companion"])
         // One server's banner is its own problem, a dropped connection or one that cannot be made.
-        #expect(model.staleBanner?.title.hasSuffix("hindie-box.") == true)
+        #expect(model.staleBanner()?.title.hasSuffix("hindie-box.") == true)
         mac.goAway()
         #expect(await eventually { model.isStale })
-        #expect(model.staleBanner?.title == "Can't reach Studio and hindie-box.")
+        #expect(model.staleBanner()?.title == "Can't reach Studio and hindie-box.")
     }
 
     @Test func theLineAboveTheInboxNamesWhatIsOutOfReach() async throws {

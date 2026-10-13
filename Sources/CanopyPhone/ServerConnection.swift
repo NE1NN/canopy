@@ -188,6 +188,8 @@ public final class ServerConnection: Identifiable {
         inboxAsOf = nil
         status = .unpaired(notice)
         server.unpairedNotice = notice
+        // A phone the box forgot keeps no key to start it.
+        server.wake = nil
         try? credentials.save(server)
         failWaiters()
     }
@@ -260,6 +262,8 @@ public final class ServerConnection: Identifiable {
         updated.phone = hello.phone
         updated.version = hello.version
         if let kind = hello.kind { updated.kind = kind }
+        // A box with no key now, as after `host wake-key --clear`, takes the phone's away too.
+        updated.wake = hello.wake
         if updated != server {
             try? credentials.save(updated)
             self.server = updated

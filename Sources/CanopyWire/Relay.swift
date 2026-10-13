@@ -57,10 +57,12 @@ public enum RelayInput: String, Sendable, CaseIterable {
     /// The first line, as `ticket connect` reads a token: byte by byte, within the same wait and length as
     /// `TokenInput`, so what follows stays for the next reader.
     case firstLine = "line"
+    /// The first two lines, the same way, as `host wake-key` reads a key id and its secret.
+    case twoLines = "lines2"
 
     /// The CLI's commands that read standard input, by their words.
     public static let commands: [(words: [String], input: RelayInput)] = [
-        (["agent-hook"], .hookReport), (["ticket", "connect"], .firstLine),
+        (["agent-hook"], .hookReport), (["ticket", "connect"], .firstLine), (["host", "wake-key"], .twoLines),
     ]
 
     /// The CLI's help flags, with which a command prints its help and reads nothing.
