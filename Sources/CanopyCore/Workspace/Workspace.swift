@@ -66,6 +66,8 @@ public actor Workspace {
     /// Each upgraded host's link to its canopy-box, and the connection generation its socket was forwarded for.
     var boxLinks: [String: BoxLink] = [:]
     var boxForwarded: [String: Int] = [:]
+    /// Each host's link start under way, which other callers wait for rather than forwarding its socket again.
+    var boxLinkStarts: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     /// The connection generation each upgraded host's canopy-box was last checked and started for.
     var boxInstalled: [String: Int] = [:]
     /// Hosts being upgraded, whose snapshots from before the box took their rows say nothing of them.

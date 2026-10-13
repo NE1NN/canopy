@@ -378,6 +378,36 @@ struct HostBoxLifecycleTests {
         await setup.workspace.stop()
     }
 
+    /// A second forward while the first is under way would unlink the socket the first is making.
+    @Test func linkStartsAtOnceForwardOnce() async throws {
+        let setup = try await HostControlTests.Setup()
+        let forwards = setup.dir.sub("forwards")
+        let script = setup.dir.sub("counting-ssh")
+        try """
+        #!/bin/bash
+        [[ "$*" == *"-O forward"* ]] && echo x >> '\(forwards)'
+        exec '\(FakeHost.script)' "$@"
+        """.write(toFile: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+        var tooling = HostTooling(sshExecutable: script, environment: { setup.host.environment })
+        tooling.boxBinaries = BoxBinaries(folder: "/nonexistent-canopy-box")
+        let workspace = Workspace(
+            home: CanopyHome(path: setup.dir.sub("home2")), git: Fixture.git, hostTooling: tooling)
+        try await workspace.start()
+        try HostsConfigFile(url: workspace.home.configFile).save("box", HostEntry(repos: [:], box: true))
+        let connection = try await workspace.connection(for: "box")
+        try await connection.connect()
+
+        async let first: Void = workspace.ensureBoxLink(connection)
+        async let second: Void = workspace.ensureBoxLink(connection)
+        async let third: Void = workspace.ensureBoxLink(connection)
+        _ = await (first, second, third)
+
+        #expect(try String(contentsOfFile: forwards, encoding: .utf8) == "x\n")
+        await workspace.stop()
+        await setup.workspace.stop()
+    }
+
     /// The box's service would otherwise run on with no Mac. A host that is off is not woken for it.
     @Test func removingAnUpgradedHostThatIsOffWarnsWithoutWakingIt() async throws {
         let setup = try await HostControlTests.Setup()

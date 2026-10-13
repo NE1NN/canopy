@@ -64,8 +64,22 @@ extension Workspace {
     }
 
     /// Brings up an upgraded host's link once per connection: the forward to its `box.sock` through the master, and
-    /// the link itself, which connects and reconnects on its own.
+    /// the link itself, which connects and reconnects on its own. A caller while a start is under way waits for it,
+    /// as a second forward would unlink the socket the first one is making.
     public func ensureBoxLink(_ connection: HostConnection) async {
+        let alias = connection.alias
+        while let running = boxLinkStarts[alias] { await running.task.value }
+        let id = UUID()
+        // The start leaves the table itself before it ends, so a caller its end wakes finds it gone.
+        let start = Task {
+            await self.startBoxLink(connection)
+            if self.boxLinkStarts[alias]?.id == id { self.boxLinkStarts[alias] = nil }
+        }
+        boxLinkStarts[alias] = (id, start)
+        await start.value
+    }
+
+    private func startBoxLink(_ connection: HostConnection) async {
         let alias = connection.alias
         guard hosts.hosts[alias]?.box == true, await connection.state == .connected else { return }
         let generation = await connection.generation
