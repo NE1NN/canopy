@@ -239,8 +239,13 @@ wait_for 10 eval '[[ "$(agent_state)" == waiting ]]' || fail "the pane's agent i
 background='{"session_id": "e2e", "hook_event_name": "Stop", "last_assistant_message": "It runs.", "background_tasks": [{"type": "shell", "status": "running", "command": "npm test"}]}'
 in_pane background-hook "printf '%s' '$background' | canopy agent-hook"
 succeeded background-hook
-wait_for 10 eval '[[ "$(agent_state)" == background ]]' || fail "the pane's agent is $(agent_state), not background"
-"$cli" term list --json | grep -q '"npm test"' || fail "term list does not name the remote pane's background work"
+# One read for both: the host's probe can clear the agent soon after, once it sees the hook's command has exited.
+background_work() {
+    "$cli" term list --json |
+        json 'next((t.get("agent"), t.get("backgroundTasks")) for t in d if t["pane"] == "'"$pane"'") == ("background", ["npm test"])' |
+        grep -q True
+}
+wait_for 10 background_work || fail "the pane's agent is $(agent_state), and term list does not name its background work"
 
 step "web open and xdg-open of an artifact link in the remote pane open pages in the remote row"
 pages() { "$cli" web list --repo demo --row e2e/remote --json | json '" ".join(p["url"] for p in d)'; }
@@ -317,7 +322,8 @@ time.sleep(600)' "$held" "canopy-e2e-listener-$id" </dev/null >/dev/null 2>&1) &
 listener=$!
 disown
 taken() { ! /usr/bin/python3 -c "$binds" "$1"; }
-wait_for 10 taken "$held" || fail "the local listener did not take port $held"
+# A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load.
+wait_for 30 taken "$held" || fail "the local listener did not take port $held"
 serve "$held" 127.0.0.1
 wait_for 60 forwarded "$held" || fail "port $held on the host was not forwarded: $(ports_json)"
 held_mac=$(mac_port "$held")

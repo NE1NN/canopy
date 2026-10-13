@@ -1,3 +1,4 @@
+import CanopyTestSupport
 import Foundation
 
 /// A program that puts its terminal in raw mode, asks for bracketed paste if told to, then prints each read it gets

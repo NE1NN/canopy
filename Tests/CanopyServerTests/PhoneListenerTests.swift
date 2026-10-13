@@ -1,0 +1,464 @@
+import CanopySystem
+import CanopyTestSupport
+import CanopyWire
+import Foundation
+import Synchronization
+import Testing
+
+@testable import CanopyServer
+
+struct PhoneListenerTests {
+    final class Harness: Sendable {
+        let registry: PhoneRegistry
+        let listener: PhoneListener
+        let addresses = Shared(["127.0.0.1"])
+        let closedSessions = Shared<[String]>([])
+
+        init(
+            _ dir: TempDir, helloTimeout: Duration = .seconds(10), helloTimer: (@Sendable () async -> Void)? = nil,
+            handler: PhoneHandler? = nil
+        ) {
+            registry = PhoneRegistry(file: URL(fileURLWithPath: dir.sub("phones.json")))
+            let addresses = self.addresses
+            let closed = closedSessions
+            let echo: PhoneHandler = { request, session in
+                session.onClose { closed.withLock { $0.append(session.phone.name) } }
+                return PhoneReply(.success(id: request.id, result: .object(["method": .string(request.method)])))
+            }
+            listener = PhoneListener(
+                port: 0, addresses: { addresses.withLock { $0 } },
+                gate: PhoneGate(
+                    registry: registry, macName: "studio", version: "1.2.3", helloTimeout: helloTimeout,
+                    helloTimer: helloTimer,
+                    handler: handler ?? echo))
+        }
+
+        var port: UInt16 {
+            get throws { try #require(listener.endpoints.first?.port) }
+        }
+
+        func client() throws -> PhoneTestClient {
+            try PhoneTestClient(port: try port)
+        }
+
+        /// A paired phone's token.
+        func pair(_ name: String = "iPhone") async throws -> String {
+            let code = await registry.newCode().code
+            let client = try client()
+            let response = try await offPool {
+                try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: name)))
+            }
+            return try #require(response.result).decode(PhonePairResult.self).token
+        }
+
+        /// A connection that said hello.
+        func authenticated(_ token: String) async throws -> PhoneTestClient {
+            let client = try client()
+            let response = try await offPool {
+                try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token)))
+            }
+            #expect(response.error == nil)
+            return client
+        }
+    }
+
+    @Test func aPairedPhoneSaysHelloAndCallsPhoneMethods() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let code = await harness.registry.newCode().code
+        let client = try harness.client()
+        let paired = try await offPool {
+            try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "Hindie's iPhone")))
+        }
+        let result = try #require(paired.result).decode(PhonePairResult.self)
+        #expect(result.phone == "Hindie's iPhone" && result.mac == "studio")
+
+        let hello = try await offPool {
+            try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: result.token)))
+        }
+        let greeting = try #require(hello.result).decode(PhoneHelloResult.self)
+        #expect(greeting == PhoneHelloResult(mac: "studio", version: "1.2.3", phone: "Hindie's iPhone"))
+
+        let rows = try await offPool { try client.call(PhoneMethod.rows) }
+        #expect(rows.result == .object(["method": .string(PhoneMethod.rows)]))
+    }
+
+    @Test func aHelloAndARequestSentTogetherBothCount() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let token = try await harness.pair()
+
+        let client = try harness.client()
+        var both = try ControlCodec.encodeLine(
+            ControlRequest(method: PhoneMethod.hello, params: try .from(PhoneHelloParams(token: token)), id: "h"))
+        both.append(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.rows, id: "r")))
+        try client.sendRaw(both)
+        let first = try await offPool { try client.next() }?.response
+        let second = try await offPool { try client.next() }?.response
+        #expect(first?.id == "h" && first?.error == nil)
+        #expect(second?.id == "r" && second?.error == nil)
+    }
+
+    @Test func methodsOffTheListAreRefusedAndTheConnectionStays() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+
+        for method in ["row.remove", "repo.remove", "hooks.install", PhoneMethod.pair] {
+            let refused = try await offPool { try client.call(method) }
+            #expect(refused.error?.code == "method_not_allowed")
+        }
+        let rows = try await offPool { try client.call(PhoneMethod.rows) }
+        #expect(rows.error == nil)
+    }
+
+    @Test func aWrongTokenIsUnpairedAndCloses() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        _ = try await harness.pair()
+
+        let client = try harness.client()
+        var both = try ControlCodec.encodeLine(
+            ControlRequest(method: PhoneMethod.hello, params: try .from(PhoneHelloParams(token: "not-a-token"))))
+        both.append(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.rows)))
+        try client.sendRaw(both)
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["unpaired"])
+    }
+
+    @Test(arguments: [PhoneMethod.rows, PhoneMethod.subscribe, "status"])
+    func anyOtherFirstMessageCloses(_ method: String) async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try harness.client()
+        try client.send(method)
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["not_authenticated"])
+    }
+
+    @Test func pairingAloneDoesNotLetAPhoneIn() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let code = await harness.registry.newCode().code
+        let client = try harness.client()
+        _ = try await offPool { try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "a"))) }
+        try client.send(PhoneMethod.rows)
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["not_authenticated"])
+    }
+
+    @Test func aBadPairingCodeCloses() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try harness.client()
+        try client.send(PhoneMethod.pair, try .from(PhonePairParams(code: "AAAA-AAAA", name: "a")))
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["bad_pairing_code"])
+    }
+
+    @Test func silenceClosesTheConnection() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir, helloTimeout: .milliseconds(300))
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try harness.client()
+        let started = ContinuousClock.now
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.isEmpty)
+        #expect(ContinuousClock.now - started < .seconds(10))
+    }
+
+    @Test func theWindowEndingAfterHelloLeavesTheConnectionOpen() async throws {
+        let dir = try TempDir()
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try await harness.authenticated(try await harness.pair())
+        #expect(await eventually { timers.count == 3 })
+        timers.fireAll()
+        let rows = try await offPool { try client.call(PhoneMethod.rows) }
+        #expect(rows.error == nil)
+    }
+
+    @Test func pairingStartsTheHelloTimeAgain() async throws {
+        let dir = try TempDir()
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
+        try await harness.listener.refresh()
+        defer {
+            harness.listener.stop()
+            timers.fireAll()
+        }
+        let code = await harness.registry.newCode().code
+        let client = try harness.client()
+        let paired = try await offPool {
+            try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "a")))
+        }
+        let token = try #require(paired.result).decode(PhonePairResult.self).token
+        #expect(await eventually { timers.count == 2 })
+        // The connection's first window ends, but pairing started a second one, so it stays open.
+        timers.fire(0)
+        let hello = try await offPool { try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token))) }
+        #expect(hello.error == nil)
+    }
+
+    @Test func theSecondWindowEndingClosesAPairedConnectionThatNeverSaidHello() async throws {
+        let dir = try TempDir()
+        let timers = ManualTimers()
+        let harness = Harness(dir, helloTimer: { await timers.wait() })
+        try await harness.listener.refresh()
+        defer {
+            harness.listener.stop()
+            timers.fireAll()
+        }
+        let code = await harness.registry.newCode().code
+        let client = try harness.client()
+        _ = try await offPool { try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "a"))) }
+        #expect(await eventually { timers.count == 2 })
+        timers.fire(1)
+        #expect(try await offPool { try client.untilClosed() }.isEmpty)
+    }
+
+    @Test func helloAgainAnswersAgain() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let token = try await harness.pair()
+        let client = try await harness.authenticated(token)
+        let again = try await offPool { try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token))) }
+        #expect(try #require(again.result).decode(PhoneHelloResult.self).phone == "iPhone")
+    }
+
+    @Test func anOldProtocolBeforeHelloCloses() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try harness.client()
+        try client.sendRaw(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.hello, v: 0)))
+        #expect(
+            try await offPool { try client.untilClosed() }.compactMap(\.response?.error?.code) == ["version_mismatch"])
+    }
+
+    @Test func anOldProtocolAfterHelloIsRefusedAndTheConnectionStays() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        try client.sendRaw(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.rows, id: "old", v: 0)))
+        #expect(try await offPool { try client.next() }?.response?.error?.code == "version_mismatch")
+        #expect(try await offPool { try client.call(PhoneMethod.rows) }.error == nil)
+    }
+
+    @Test func aTakenPortFailsTheRefreshInsteadOfHanging() async throws {
+        let dir = try TempDir()
+        let holder = try TCPListener(address: "127.0.0.1", port: 0) { _ in }
+        defer { holder.close() }
+        let port = holder.port
+
+        let registry = PhoneRegistry(file: URL(fileURLWithPath: dir.sub("phones.json")))
+        let listener = PhoneListener(
+            port: port, addresses: { ["127.0.0.1"] },
+            gate: PhoneGate(registry: registry, macName: "studio", version: "1.2.3") { request, _ in
+                PhoneReply(.success(id: request.id, result: .null))
+            })
+        defer { listener.stop() }
+        let started = ContinuousClock.now
+        await #expect(throws: (any Error).self) { try await listener.refresh() }
+        // The bound only shows it does not hang, on however busy a machine.
+        #expect(ContinuousClock.now - started < .seconds(60))
+        #expect(listener.endpoints.isEmpty)
+    }
+
+    @Test func theNewestEventAlwaysArrives() async throws {
+        let dir = try TempDir()
+        let handler: PhoneHandler = { request, session in
+            PhoneReply(.success(id: request.id, result: "first")) {
+                for number in 1...200 {
+                    session.send(
+                        PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: .number(Double(number))))
+                }
+            }
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        try client.send(PhoneMethod.subscribe, id: "s")
+        var last: JSONValue?
+        while last != .number(200), let message = try await offPool({ try client.next(timeout: .seconds(5)) }) {
+            if let event = message.event { last = event.data }
+        }
+        #expect(last == .number(200))
+    }
+
+    @Test func eventsThatAreNotLatestOnlyAllArriveInOrder() async throws {
+        let dir = try TempDir()
+        let handler: PhoneHandler = { request, session in
+            PhoneReply(.success(id: request.id, result: "first")) {
+                for number in 1...200 {
+                    session.send(
+                        PhoneEvent(
+                            event: PhoneEvent.transcript, subscription: request.id, data: .number(Double(number))))
+                }
+            }
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        try client.send(PhoneMethod.transcript, id: "t")
+        var seen: [JSONValue] = []
+        while seen.count < 200, let message = try await offPool({ try client.next(timeout: .seconds(5)) }) {
+            if let event = message.event { seen.append(event.data) }
+        }
+        #expect(seen == (1...200).map { .number(Double($0)) })
+    }
+
+    @Test func aConnectionsRequestsRunOneAfterAnother() async throws {
+        let dir = try TempDir()
+        let order = Shared<[String]>([])
+        let handler: PhoneHandler = { request, _ in
+            order.withLock { $0.append("start \(request.id)") }
+            if request.id == "slow" { try? await Task.sleep(for: .milliseconds(300)) }
+            order.withLock { $0.append("end \(request.id)") }
+            return PhoneReply(.success(id: request.id, result: .null))
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+        var both = try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.keys, id: "slow"))
+        both.append(try ControlCodec.encodeLine(ControlRequest(method: PhoneMethod.keys, id: "fast")))
+        try client.sendRaw(both)
+        _ = try await offPool { try client.next() }
+        _ = try await offPool { try client.next() }
+        #expect(order.withLock { $0 } == ["start slow", "end slow", "start fast", "end fast"])
+    }
+
+    @Test func notJSONCloses() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try harness.client()
+        try client.sendRaw(Data("hello\n".utf8))
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["bad_request"])
+    }
+
+    @Test func aHugeLineCloses() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+
+        let client = try await harness.authenticated(try await harness.pair())
+        let huge = Data(repeating: 0x61, count: LineBuffer.maximumLine + 1)
+        try? client.sendRaw(huge)
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.error?.code) == ["bad_request"])
+    }
+
+    @Test func removingAPhoneClosesItsConnectionsAtOnce() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let token = try await harness.pair("a")
+        let other = try await harness.authenticated(try await harness.pair("b"))
+        let client = try await harness.authenticated(token)
+        _ = try await offPool { try client.call(PhoneMethod.subscribe) }
+        _ = try await offPool { try other.call(PhoneMethod.subscribe) }
+
+        let removed = try await harness.registry.remove(name: "a")
+        harness.listener.disconnect(phoneID: removed.id)
+        #expect(try await offPool { try client.untilClosed() }.isEmpty)
+        #expect(await eventually { harness.closedSessions.withLock { $0 } == ["a"] })
+        #expect(try await offPool { try other.call(PhoneMethod.rows) }.error == nil)
+
+        let again = try harness.client()
+        try again.send(PhoneMethod.hello, try .from(PhoneHelloParams(token: token)))
+        #expect(try await offPool { try again.untilClosed() }.compactMap(\.response?.error?.code) == ["unpaired"])
+    }
+
+    @Test func eventsComeAfterTheAnswerThatStartedThem() async throws {
+        let dir = try TempDir()
+        let handler: PhoneHandler = { request, session in
+            PhoneReply(.success(id: request.id, result: "first")) {
+                session.send(PhoneEvent(event: PhoneEvent.inbox, subscription: request.id, data: "second"))
+            }
+        }
+        let harness = Harness(dir, handler: handler)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+
+        try client.send(PhoneMethod.subscribe, id: "s1")
+        let first = try await offPool { try client.next() }
+        let second = try await offPool { try client.next() }
+        #expect(first?.response?.result == "first")
+        #expect(second?.event?.data == "second" && second?.event?.subscription == "s1")
+    }
+
+    @Test func listensOnlyWhileItHasAnAddress() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        harness.addresses.withLock { $0 = [] }
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        #expect(harness.listener.endpoints.isEmpty)
+
+        harness.addresses.withLock { $0 = ["127.0.0.1"] }
+        try await harness.listener.refresh()
+        let port = try harness.port
+        let token = try await harness.pair()
+        let client = try await harness.authenticated(token)
+
+        harness.addresses.withLock { $0 = [] }
+        try await harness.listener.refresh()
+        #expect(harness.listener.endpoints.isEmpty)
+        #expect(try await offPool { try client.untilClosed() }.isEmpty)
+        #expect(throws: (any Error).self) { try PhoneTestClient(port: port) }
+    }
+
+    /// A phone that closes its side after a request and half of another still gets the answer, then the close.
+    @Test func answersWhatCameBeforeThePhoneClosedItsSide() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+
+        try client.send(PhoneMethod.rows, id: "last")
+        try client.sendRaw(Data(#"{"v": 1, "method": "phone.ro"#.utf8))
+        client.finishSending()
+
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.id) == ["last"])
+    }
+}

@@ -1,3 +1,4 @@
+import CanopyTestSupport
 import Foundation
 import Synchronization
 import Testing
@@ -133,12 +134,6 @@ enum Fixture {
     }
 }
 
-/// Runs blocking work (socket reads, lock waits) on its own thread. On a Swift concurrency thread it would
-/// hold one of the few threads the server needs to answer it, and a small CI machine deadlocks.
-func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-    try await onOwnThread { Result { try work() } }.get()
-}
-
 /// One test at a time takes every Dispatch thread, or two would each hold part of the pool and wait for the rest.
 private let everyDispatchThreadGate = DispatchSemaphore(value: 1)
 
@@ -173,21 +168,4 @@ func withEveryDispatchThreadBusy<T>(_ body: (_ isHolding: @escaping @Sendable ()
     let allStarted = try await offPool { (0..<limit).allSatisfy { _ in started.wait(timeout: deadline) == .success } }
     try #require(allStarted, "Dispatch never lent every thread, so the pool was never full")
     return try await body { letGo.withLock { $0 } == 0 }
-}
-
-/// Polls until `condition` holds or the timeout passes. Returns whether it held. The timeout is long because a loaded CI
-/// runner can take many seconds to start a process, and a condition that holds returns at once anyway.
-/// The condition runs on the caller's actor, so main-actor tests can read main-actor state.
-func eventually(
-    timeout: Duration = .seconds(20),
-    isolation: isolated (any Actor)? = #isolation,
-    _ condition: () async -> Bool
-) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now + timeout
-    while clock.now < deadline {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(50))
-    }
-    return await condition()
 }

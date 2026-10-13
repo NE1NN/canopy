@@ -1,4 +1,6 @@
+import CanopyTestSupport
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CanopyCore
@@ -367,11 +369,33 @@ struct FakeSSHForwardTests {
         }
     }
 
-    /// A port below this Mac's random range that nothing holds on either loopback.
+    /// A port below this Mac's random range that nothing holds on either loopback, with `count - 1` free ports after
+    /// it. Tests run in parallel and bind their ports a while after asking, so no two ever get ranges within
+    /// `margin` of each other, which leaves room for a forward that moves up to the next free port.
     static func freePort(count: UInt16 = 1) -> UInt16 {
+        let margin: UInt16 = 8
         while true {
             let first = UInt16.random(in: 20000..<40000)
+            let claim = first..<first + count + margin
+            let taken = handedOut.withLock { handedOut in
+                guard !handedOut.contains(where: { $0.overlaps(claim) }) else { return true }
+                handedOut.append(claim)
+                return false
+            }
+            guard !taken else { continue }
             if (first..<first + count).allSatisfy(LocalPortChooser.isFree) { return first }
+        }
+    }
+
+    private static let handedOut = Mutex<[Range<UInt16>]>([])
+
+    @Test func freePortsNeverOverlapWithinARun() {
+        let ranges = (0..<200).map { _ in
+            let first = Self.freePort(count: 3)
+            return first..<first + 3
+        }
+        for (index, range) in ranges.enumerated() {
+            #expect(!ranges[(index + 1)...].contains { $0.overlaps(range) })
         }
     }
 

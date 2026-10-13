@@ -1,3 +1,4 @@
+import CanopyTestSupport
 import CoreGraphics
 import Foundation
 import Testing

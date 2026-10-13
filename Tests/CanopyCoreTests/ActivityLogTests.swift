@@ -1,3 +1,4 @@
+import CanopyTestSupport
 import Foundation
 import Testing
 
@@ -114,5 +115,15 @@ struct ActivityLogTests {
         try #"{"logCommands": false}"#.write(to: url, atomically: true, encoding: .utf8)
         #expect(!GlobalConfig.load(from: url).logCommands)
         #expect(GlobalConfig.load(from: url).minPaneColumns == 80)
+    }
+}
+
+struct AgentActivityTypeTests {
+    @Test func eachStateHasAnActivityType() {
+        #expect(ActivityType.agent(.working) == "agent.working")
+        #expect(ActivityType.agent(.waiting) == "agent.waiting")
+        #expect(ActivityType.agent(.done) == "agent.done")
+        #expect(ActivityType.agent(.background) == "agent.background")
+        #expect(ActivityType.agent(.none) == "agent.cleared")
     }
 }
