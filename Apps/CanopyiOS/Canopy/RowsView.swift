@@ -24,12 +24,17 @@ struct RowsView: View {
                             GroupLabel(title: section.name)
                         }
                     } else {
+                        // Without a main row, the repo's rows sit right under its label.
                         Section {
-                            if let main = section.main { MainCard(row: main) }
+                            if let main = section.main {
+                                MainCard(row: main)
+                            } else {
+                                ForEach(section.others) { RowLine(row: $0) }
+                            }
                         } header: {
                             RepoLabel(name: section.name)
                         }
-                        if !section.others.isEmpty {
+                        if section.main != nil, !section.others.isEmpty {
                             Section {
                                 ForEach(section.others) { RowLine(row: $0) }
                             }

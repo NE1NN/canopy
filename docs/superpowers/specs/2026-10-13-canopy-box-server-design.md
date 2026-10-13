@@ -38,6 +38,8 @@ The phone's Inbox becomes a list of notifications, and its Rows tab groups rows 
   They stay on the Mac and work for box rows while the Mac is connected.
 - Reading the box's activity log from the Mac.
 - Waking the Mac.
+- Chat tabs on the box, from the chat tabs spec (`2026-10-13-canopy-chat-tabs-design.md` on `feat/chat-tabs`).
+  A later box chat would run headless `claude -p --input-format stream-json --output-format stream-json` under a small keeper process on the box, which keeps it alive through daemon restarts as tmux keeps terminals.
 
 ## Decisions
 
@@ -48,7 +50,7 @@ The phone's Inbox becomes a list of notifications, and its Rows tab groups rows 
 | How the phone wakes the box | The phone signs `ec2:StartInstances` with an IAM key that may only start that instance | Nothing to deploy or keep running. A lost phone's key can only start the box, and IAM revokes it. |
 | What keeps the box awake | Working and background agents, and a connected phone | The author's choice. Waiting and done agents do not hold a c8i.8xlarge on overnight, as today. |
 | Switching the existing box over | An explicit `canopy host upgrade hindie-box`, with `--undo` | The author's live rows switch only when the author says so, after testing on a throwaway home. |
-| What a task from the phone runs | One agent command per server, set from the Mac | A lost phone cannot run arbitrary commands on a server. |
+| What a task from the phone runs | One agent command per server, set from the Mac | The phone picks the brief, never the program. It can still direct that agent to do anything the box's user can, as a reply already can on the Mac. |
 | Reaching the box | Tailscale on the box | A fixed name and address on the tailnet, whatever public IP EC2 gives, and nothing on the public internet. |
 | Inbox | Notifications: agents waiting for the author, and done agents not yet read | The author's choice. Running agents live in Rows. |
 | Rows | Host, then repo, then the repo's main row as a large card, then its other rows | The author's choice. It replaces pins. |
@@ -114,6 +116,7 @@ It owns, for its home:
 - **Panes.** One tmux session per pane on `tmux -L canopy-<home id>`, with the variables a remote pane gets today.
   A pane's id is its session name.
   Panes the Mac made keep their `p<N>` names; panes `canopy-box` makes are `b<N>`, from its own counter, so the two never collide.
+  Every box pane is a terminal, so where the phone's wire types carry a pane `kind`, the daemon sends `terminal` or leaves it out.
 - **Agents.** Hook reports from the box's Claude Code update each pane's `PaneAgent`, transcript path, and open prompt.
 - **Transcripts.** They are files on the box, so box rows get Chat.
 - **Screens and keys.** `tmux capture-pane -p -e` gives a pane's screen with its colors, with up to 500 lines of history.
@@ -142,7 +145,7 @@ It speaks the control protocol's newline-delimited JSON, with these methods:
 | `box.send`, `box.keys`, `box.read`, `box.wait` | What `term send`, `term read`, and `term wait` do, for a box pane. |
 | `box.seen` | Marks a done agent seen. |
 | `box.prs` | The Mac's latest PR states for box rows, kept for the phone. |
-| `box.pair`, `box.phones`, `box.phoneRemove` | Pairing codes and paired phones, for `canopy phone pair|list|remove --on`. |
+| `box.pair`, `box.phones`, `box.phoneRemove` | Pairing codes and paired phones, for `canopy phone pair --on`, `phone list --on`, and `phone remove --on`. |
 | `box.adopt`, `box.release` | `host upgrade` and `host upgrade --undo`, below. |
 
 On an upgraded host the Mac stops relaying hook reports through its own CLI, running `canopy-host probe`, listing worktrees every 30 seconds, and running git on the box to make or remove rows.
@@ -317,7 +320,9 @@ New hosts added with `canopy host add` are upgraded from the start.
 
 `box.sock` lives in a folder only the user can open, so only the user's own processes on the box, and the Mac through ssh, reach it.
 Phones reach the daemon only over the tailnet, only with a token, and only through the `phone.*` method list.
-The agent command is fixed by the Mac, so `phone.newRow` cannot run anything else.
+The agent command is fixed by the Mac, so `phone.newRow` cannot start another program.
+It does not limit what that agent does: with the default command's bypassed permissions, a paired phone can direct it to do anything the box's user can, as a reply to any agent already can.
+The token, Tailscale, Face ID, and `canopy phone remove --on` are what guard that, and the box adds no sandbox of its own.
 The wake key can only start one instance.
 The daemon records `phone.call`, `phone.paired`, and `phone.removed` in its own activity log, under the same rules as the Mac.
 
@@ -365,6 +370,7 @@ This design replaces these parts of `2026-10-12-canopy-iphone-design.md`:
 ## Decisions to review
 
 - The default agent command is `claude --model 'opus[1m]' --permission-mode bypassPermissions` until the author sets one.
+- Agents started from the phone run with no sandbox beyond the box user's own rights, so a paired phone is as powerful on the box as the author's ssh login.
 - The wake key's only permission is `ec2:StartInstances`; the phone uses its answer to know the instance is starting, and polls Tailscale after that.
 - Daemon pane ids are their tmux session names, `b<N>` for new panes, so adopted `p<N>` sessions keep their names.
 - The box's clone is the repo's main row on the box, and cannot be removed.

@@ -185,7 +185,9 @@ Update the doc comment on `PhoneInbox.Item` users nowhere else; `PhoneClient.wai
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `make test 2>&1 | grep -E "error:|✘|Test run with" | head -20`
-Expected: `CanopyWireTests` passes. `CanopyPhone` and the app no longer build against `sections(pinned:)`; Task 2 fixes `CanopyPhone`, so run only `swift build --target CanopyWire` and the wire tests if `make test` stops on it: `swift test $(scripts/test-flags.sh) --filter "PhoneInboxTests|PhoneRowsResultTests"`.
+Expected: `CanopyWireTests` passes.
+`CanopyPhone` and the app no longer build against `sections(pinned:)`, and Task 2 fixes `CanopyPhone`.
+If `make test` stops on that, run the wire tests alone: `swift test $(scripts/test-flags.sh) --filter "PhoneInboxTests|PhoneRowsResultTests"`.
 
 - [ ] **Step 5: Commit**
 
@@ -362,20 +364,35 @@ public final class InboxModel {
         await markRead(sections.done)
     }
 
+    /// Each item is read once the Mac takes it, so one that fails comes back alone.
     private func markRead(_ items: [PhoneInbox.Item]) async {
         for item in items { read[item.agent.pane] = item.agent.since }
+        let client: PhoneClient
         do {
-            let client = try connection.liveClient()
-            for item in items {
+            client = try connection.liveClient()
+        } catch {
+            unread(items)
+            notice = connection.problem(error)
+            return
+        }
+        var problem: PhoneProblem?
+        for item in items {
+            do {
                 _ = try await client.call(
                     PhoneMethod.seen, PhonePaneParams(pane: item.agent.pane), as: PhonePaneParams.self)
+            } catch let error as ControlError where error.code == "pane_not_found" {
+                // The pane closed, so its agent leaves the inbox anyway.
+            } catch {
+                unread([item])
+                problem = connection.problem(error)
             }
-            notice = nil
-        } catch {
-            for item in items where read[item.agent.pane] == item.agent.since {
-                read[item.agent.pane] = nil
-            }
-            notice = connection.problem(error)
+        }
+        notice = problem
+    }
+
+    private func unread(_ items: [PhoneInbox.Item]) {
+        for item in items where read[item.agent.pane] == item.agent.since {
+            read[item.agent.pane] = nil
         }
     }
 
