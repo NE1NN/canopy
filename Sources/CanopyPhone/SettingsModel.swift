@@ -36,6 +36,10 @@ public struct ServerSettings: Identifiable {
     public var address: String? { connection.server.address.flatMap { $0 == host ? nil : $0 } }
     public var phone: String { connection.server.phone }
     public var version: String? { connection.server.version }
+    /// The instance a box's wake key starts, and its region, or nil without a key.
+    public var wakeInstance: String? {
+        connection.server.wake.map { "\($0.instanceID) in \($0.region)" }
+    }
 
     public var statusText: String {
         switch connection.status {

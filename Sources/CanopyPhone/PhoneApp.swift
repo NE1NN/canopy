@@ -10,17 +10,20 @@ public final class PhoneApp {
     public let inbox: InboxModel
     public let rows: RowsModel
     public let pairing: PairingModel
+    public let waker: Waker
 
     public init(
         transport: any PhoneTransport = TCPTransport(), credentials: any CredentialStore = KeychainCredentialStore(),
         defaults: UserDefaults = .standard, authenticator: any Authenticator = LocalAuthenticator(),
-        lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String
+        lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String,
+        http: any HTTPPosting = URLSessionPoster(), ec2Endpoint: @escaping @Sendable (String) -> URL = EC2Start.endpoint
     ) {
         servers = Servers(transport: transport, credentials: credentials, phoneName: phoneName)
         lock = AppLock(defaults: defaults, authenticator: authenticator, grace: lockGrace)
         inbox = InboxModel(servers: servers)
         rows = RowsModel(servers: servers)
         pairing = PairingModel(servers: servers)
+        waker = Waker(http: http, endpoint: ec2Endpoint)
     }
 
     public func launch() {
