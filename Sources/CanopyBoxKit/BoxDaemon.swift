@@ -14,7 +14,7 @@ public actor BoxDaemon {
     var config: BoxConfig?
     /// The key the Mac set for phones to start the box with, kept in `wake.json`.
     public private(set) var wakeKey: BoxWakeKey?
-    var learningInstance = false
+    var instanceLearning: Task<Void, Never>?
     var state = BoxState()
     /// Each repo's clone, its main row on the host, by repo name.
     var mainRows: [String: StoredRow] = [:]
@@ -61,15 +61,18 @@ public actor BoxDaemon {
     public func configure(_ next: BoxConfig) async throws {
         var settings = next
         settings.wake = nil
+        settings.keepsWake = nil
         try BoxFiles.write(try JSONEncoder.box.encode(settings), to: paths.configFile)
-        if let wake = next.wake {
-            try BoxFiles.write(try JSONEncoder.box.encode(wake), to: paths.wakeFile)
-        } else {
-            unlink(paths.wakeFile)
+        if next.keepsWake != true {
+            if let wake = next.wake {
+                try BoxFiles.write(try JSONEncoder.box.encode(wake), to: paths.wakeFile)
+            } else {
+                unlink(paths.wakeFile)
+            }
+            wakeKey = next.wake
         }
         config = settings
-        wakeKey = next.wake
-        if next.wake != nil { Task { await learnInstance() } }
+        if wakeKey != nil { Task { await learnInstance() } }
         state.released = false
         await reconcile()
         changed()

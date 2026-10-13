@@ -28,6 +28,10 @@ public enum EC2Start {
         case stillStopping
         /// AWS refused the key.
         case refused(String)
+        /// AWS refused the signature's time, as the phone's clock is off.
+        case clockWrong
+        /// No answer from AWS at all.
+        case unreachable(String)
         /// Anything else EC2 said, or nothing that reads as an answer.
         case failed(String)
     }
@@ -56,12 +60,15 @@ public enum EC2Start {
     public static func answer(status: Int, body: Data) -> Answer {
         let text = String(decoding: body, as: UTF8.self)
         if (200..<300).contains(status) {
-            let state = element("name", in: element("currentState", in: text) ?? "") ?? ""
+            guard let state = element("name", in: element("currentState", in: text) ?? ""), !state.isEmpty else {
+                return .failed("EC2 answered without saying what the instance is doing.")
+            }
             return ["pending", "running"].contains(state) ? .starting : .failed("The instance is \(state).")
         }
         let code = element("Code", in: text) ?? "HTTP \(status)"
         let message = element("Message", in: text) ?? code
         if code == "IncorrectInstanceState" { return .stillStopping }
+        if code == "RequestExpired" || code == "RequestTimeTooSkewed" { return .clockWrong }
         if refusals.contains(code) || status == 401 || status == 403 { return .refused(message) }
         return .failed(message)
     }

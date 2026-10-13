@@ -53,7 +53,7 @@ public struct WorkspaceControlHandler: Sendable {
 
     /// Logs calls that change something, with their params as sent and the error code if they failed. Commands typed
     /// into terminals are left out while command logging is off, and so is text starting with a space, which zsh keeps
-    /// out of history under hist_ignore_space. A `token` is never logged, wherever it is in the params.
+    /// out of history under hist_ignore_space. A `token` or a wake key's secret is never logged, wherever it is in the params.
     private func record(_ request: ControlRequest, _ response: ControlResponse) {
         var params = Self.withoutTokens(request.params ?? .object([:]))
         if case .object(var fields) = params {

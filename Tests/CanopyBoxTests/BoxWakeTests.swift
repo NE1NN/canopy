@@ -56,6 +56,40 @@ struct BoxWakeTests {
         #expect(BoxMain.phoneWake(home.paths) == nil)
     }
 
+    /// The box's files copied to another instance learn the new one at the next start.
+    @Test func theInstanceIsReadAgainAtStart() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        var config = home.config
+        config.wake = Self.key
+        try await daemon.configure(config)
+        try BoxFiles.write(
+            try JSONEncoder().encode(InstanceIdentity(instanceID: "i-old", region: "ap-southeast-2")),
+            to: home.paths.instanceFile)
+        let imds = try FakeIMDS()
+        try BoxFiles.write(Data("127.0.0.1 \(imds.port)".utf8), to: home.paths.folder + "/imds")
+
+        await daemon.learnInstance()
+        #expect(BoxDaemon.load(InstanceIdentity.self, from: home.paths.instanceFile)?.instanceID == "i-old")
+        await daemon.learnInstance(again: true)
+
+        #expect(BoxDaemon.load(InstanceIdentity.self, from: home.paths.instanceFile)?.instanceID == imds.instanceID)
+    }
+
+    /// A Mac whose Keychain would not say leaves the box's key as it was.
+    @Test func aConfigureThatKeepsTheKeyLeavesIt() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        var config = home.config
+        config.wake = Self.key
+        try await daemon.configure(config)
+
+        try await daemon.configure(BoxConfig(host: "box", repos: home.config.repos, keepsWake: true))
+
+        #expect(await daemon.wakeKey == Self.key)
+        #expect(BoxDaemon.load(BoxWakeKey.self, from: home.paths.wakeFile) == Self.key)
+    }
+
     @Test func theWakeKeyLivesInWakeJsonNotConfigJson() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

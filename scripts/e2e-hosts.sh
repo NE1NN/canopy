@@ -476,7 +476,10 @@ if ((with_box)); then
         }
         wait_for 20 eval '[[ "$(wake_instance)" == i-0fake0box00000001 ]]' \
             || fail "the phone's hello does not carry the wake key: $($phone hello-json "$link" "$work/box-token")"
-        if grep -rq wake-secret-e2e "$CANOPY_HOME/activity" 2>/dev/null; then fail "the wake key's secret was logged"; fi
+        if grep -rq wake-secret-e2e "$CANOPY_HOME/activity" 2>/dev/null \
+            || on_host "grep -q wake-secret-e2e ~/.canopy/${server#canopy-}/box/activity.jsonl" 2>/dev/null; then
+            fail "the wake key's secret was logged"
+        fi
         "$cli" host wake-key "$alias" --clear >/dev/null || fail "host wake-key --clear failed"
         wait_for 20 eval '[[ -z "$(wake_instance)" ]]' || fail "a cleared wake key still reaches the phone"
         [[ "$(ps -o command= -p "$aws_pid" 2>/dev/null)" == *fake-aws.py* ]] && kill "$aws_pid"

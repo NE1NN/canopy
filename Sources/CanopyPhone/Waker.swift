@@ -26,6 +26,10 @@ public final class Waker {
 
     /// Each box's wake under way or that failed, by server id.
     public private(set) var steps: [String: Step] = [:]
+    /// The connection each failure happened on, so a box that has connected since shows no old failure.
+    private var failedOn: [String: Int] = [:]
+    /// Whether the app is on screen. In the background a wake neither connects nor keeps trying.
+    public var isActive = true
 
     /// How often EC2 is asked again while the instance is still stopping, and for how long.
     static let stoppingEvery = Duration.seconds(10)
@@ -53,11 +57,19 @@ public final class Waker {
     /// One that answers has none, even before its wake notices.
     public func cards(for servers: Servers) -> [Card] {
         servers.paired.compactMap { server in
-            let step = steps[server.id]
+            let step = step(of: server)
             guard server.isBox, server.server.wake != nil, !server.isConnected, step != nil || server.isUnreachable
             else { return nil }
             return Card(server: server, step: step)
         }
+    }
+
+    /// The server's wake under way or failed, a failure only until the server connects again.
+    public func step(of server: ServerConnection) -> Step? {
+        if case .failed = steps[server.id], let generation = failedOn[server.id], server.generation > generation {
+            return nil
+        }
+        return steps[server.id]
     }
 
     public func isWaking(_ server: ServerConnection) -> Bool {
@@ -74,6 +86,7 @@ public final class Waker {
         let started = now()
         steps[id] = .starting(since: started)
         while true {
+            guard server.isPaired, isActive else { return fail(server, Self.stopped(server)) }
             let answer: EC2Start.Answer
             let url = endpoint(wake.region)
             let request = EC2Start.request(wake, endpoint: url, date: now())
@@ -81,26 +94,32 @@ public final class Waker {
                 let reply = try await http.post(url, headers: request.headers, body: request.body)
                 answer = EC2Start.answer(status: reply.status, body: reply.body)
             } catch {
-                answer = .failed(error.localizedDescription)
+                answer = .unreachable(error.localizedDescription)
             }
             switch answer {
             case .starting:
-                await connect(server, startedAt: now())
+                await connect(server, startedAt: started)
                 return
             case .stillStopping where now().timeIntervalSince(started) < Self.stoppingFor:
-                guard (try? await sleep(Self.stoppingEvery)) != nil else {
-                    return fail(id, Self.didNotStart(server, ""))
-                }
+                guard (try? await sleep(Self.stoppingEvery)) != nil else { return fail(server, Self.stopped(server)) }
             case .stillStopping:
-                return fail(id, Self.didNotStart(server, "It was still stopping after 2 minutes."))
+                return fail(server, Self.didNotStart(server, "It was still stopping after 2 minutes."))
             case .refused(let message):
                 return fail(
-                    id,
+                    server,
                     PhoneProblem(
                         title: "AWS refused \(server.name)'s wake key.",
                         detail: "\(message) Set a new key with canopy host wake-key \(server.name) on the Mac."))
+            case .clockWrong:
+                return fail(
+                    server,
+                    PhoneProblem(
+                        title: "AWS refused the wake, as this iPhone's clock is off.",
+                        detail: "Set the date and time to automatic in the iPhone's Settings, then wake again."))
+            case .unreachable(let message):
+                return fail(server, PhoneProblem(title: "Can't reach AWS to wake \(server.name).", detail: message))
             case .failed(let message):
-                return fail(id, Self.didNotStart(server, message))
+                return fail(server, Self.didNotStart(server, message))
             }
         }
     }
@@ -108,27 +127,33 @@ public final class Waker {
     /// Tries the box's connection now and every 10 seconds, until it answers or 5 minutes pass.
     private func connect(_ server: ServerConnection, startedAt: Date) async {
         steps[server.id] = .connecting(startedAt: startedAt)
-        while now().timeIntervalSince(startedAt) < Self.connectFor {
+        let connecting = now()
+        while now().timeIntervalSince(connecting) < Self.connectFor, server.isPaired {
             if server.isConnected {
                 steps[server.id] = nil
                 return
             }
-            server.foreground()
+            if isActive { server.foreground() }
             guard (try? await sleep(Self.connectEvery)) != nil else { break }
         }
         if server.isConnected {
             steps[server.id] = nil
         } else {
             fail(
-                server.id,
+                server,
                 PhoneProblem(
                     title: "\(server.name) started, and Canopy on it did not answer.",
                     detail: "Check that canopy-box runs there, and that Tailscale is up on it."))
         }
     }
 
-    private func fail(_ id: String, _ problem: PhoneProblem) {
-        steps[id] = .failed(problem)
+    private func fail(_ server: ServerConnection, _ problem: PhoneProblem) {
+        steps[server.id] = .failed(problem)
+        failedOn[server.id] = server.generation
+    }
+
+    private static func stopped(_ server: ServerConnection) -> PhoneProblem {
+        PhoneProblem(title: "Waking \(server.name) stopped.", detail: "Wake it again.")
     }
 
     private static func didNotStart(_ server: ServerConnection, _ message: String) -> PhoneProblem {

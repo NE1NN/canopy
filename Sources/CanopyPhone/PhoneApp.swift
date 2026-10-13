@@ -41,6 +41,7 @@ public final class PhoneApp {
     public func phaseChanged(to phase: AppLock.Phase) {
         lock.isGuarding = servers.isPaired
         lock.phaseChanged(to: phase)
+        waker.isActive = phase != .background
         switch phase {
         case .background: servers.background()
         case .active: servers.foreground()

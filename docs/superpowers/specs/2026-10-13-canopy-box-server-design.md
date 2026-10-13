@@ -105,7 +105,8 @@ It keeps its files under `~/.canopy/<home id>/box/`:
 | `state.json` | repos, rows, panes, agents, the next pane number, and the last PR states the Mac reported |
 | `phones.json` | paired phones: each token's SHA-256, name, and when it last connected, as on the Mac |
 | `config.json` | repos (name to clone path), the agent command, and the listener port, written by the Mac |
-| `wake.json` | the wake key, region, and instance id, mode 0600 |
+| `wake.json` | the wake key, mode 0600 |
+| `instance.json` | the instance id and region, from the instance metadata service |
 | `busy` | touched every 30 seconds while the box should stay on |
 | `activity/` | the daemon's activity log, in the Mac's JSONL format |
 

@@ -40,6 +40,37 @@ struct HostWakeKeyTests {
         #expect(setup.workspace.boxConfig(for: "box").wake == nil)
     }
 
+    @Test func removingAHostForgetsItsKey() async throws {
+        let dir = try TempDir()
+        let setup = try await setUp(dir)
+        defer { PluginControlTests().stop(setup) }
+        _ = try await setup.workspace.setWakeKey(Self.key, for: "box")
+
+        try await setup.workspace.removeHost(alias: "box")
+        try HostsConfigFile(url: setup.home.configFile).save("box", HostEntry(repos: [:], box: true))
+
+        #expect(setup.workspace.boxConfig(for: "box").wake == nil)
+    }
+
+    /// A Keychain that would not say must not take the key from the box and every phone.
+    @Test func aKeychainThatWillNotSayKeepsTheBoxsKey() throws {
+        struct Locked: SecretStore {
+            func read(service: String, account: String) throws -> String? {
+                throw SecretStoreError(status: -25308, description: "User interaction is not allowed.")
+            }
+            func write(_ value: String, service: String, account: String) throws {}
+            func delete(service: String, account: String) throws {}
+        }
+        let dir = try TempDir()
+        let workspace = Workspace(
+            home: CanopyHome(path: dir.sub("home")), git: Fixture.git,
+            hostTooling: HostTooling(wakeKeys: HostWakeKeys(store: Locked(), bundleID: "test")))
+
+        let config = workspace.boxConfig(for: "box")
+
+        #expect(config.wake == nil && config.keepsWake == true)
+    }
+
     @Test func aHostNotUpgradedRefusesAWakeKey() async throws {
         let dir = try TempDir()
         let setup = try await setUp(dir, upgraded: false)

@@ -257,22 +257,24 @@ public enum HostFiles {
                 return None
 
 
-        def first_line():
-            """Standard input's first line, base64, read a byte at a time so what follows stays for the next reader. Without
-            a whole line or the end of input within LINE_WAIT, none, as the Mac's CLI would give up too."""
+        def first_line(count=1):
+            """Standard input's first `count` lines, base64, read a byte at a time so what follows stays for the next reader.
+            Without whole lines or the end of input within LINE_WAIT, none, as the Mac's CLI would give up too."""
             descriptor = piped_input()
             if descriptor is None:
                 return None
             deadline = time.monotonic() + LINE_WAIT
             data = bytearray()
             try:
-                while len(data) <= LONGEST_LINE:
+                lines = 0
+                while len(data) <= LONGEST_LINE * count:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or not select.select([descriptor], [], [], remaining)[0]:
                         return None
                     byte = os.read(descriptor, 1)
                     data += byte
-                    if not byte or byte == b"\n":
+                    lines += byte == b"\n"
+                    if not byte or lines == count:
                         break
             except (OSError, ValueError):
                 return None
@@ -437,9 +439,13 @@ public enum HostFiles {
             if not path:
                 print("Run canopy in a Canopy terminal on this host.", file=sys.stderr)
                 return 1
-            if reads == "line" and typed_input():
-                return refuse_typed_token(arguments)
-            request = request_for(arguments, first_line() if reads == "line" else None)
+            if reads == "lines2" and "--clear" in arguments:
+                # Clearing a wake key reads nothing.
+                reads = None
+            if reads in ("line", "lines2") and typed_input():
+                return refuse_typed_token(arguments, reads)
+            lines = {"line": 1, "lines2": 2}.get(reads)
+            request = request_for(arguments, first_line(lines) if lines else None)
             try:
                 with connect(path, ACKNOWLEDGEMENT_WAIT) as connection:
                     lines, first = send(connection, request, ACKNOWLEDGEMENT_WAIT)
@@ -452,10 +458,14 @@ public enum HostFiles {
             return status
 
 
-        def refuse_typed_token(arguments):
+        def refuse_typed_token(arguments, reads):
             """Fails as the Mac's CLI does, since a token typed here would never reach it."""
-            message = ("A token cannot be typed through a host's terminal. Pipe it in: printf '%s\\n' \"$TOKEN\" | canopy "
-                       + " ".join(shlex.quote(argument) for argument in arguments))
+            command = " ".join(shlex.quote(argument) for argument in arguments)
+            if reads == "lines2":
+                message = ("A key cannot be typed through a host's terminal. Pipe it in: "
+                           + "printf '%s\\n%s\\n' \"$KEY_ID\" \"$SECRET\" | canopy " + command)
+            else:
+                message = "A token cannot be typed through a host's terminal. Pipe it in: printf '%s\\n' \"$TOKEN\" | canopy " + command
             options = arguments[:arguments.index("--")] if "--" in arguments else arguments
             if "--json" in options:
                 print(json.dumps({"error": {"code": "bad_params", "message": message}}, indent=2, sort_keys=True))

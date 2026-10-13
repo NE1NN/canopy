@@ -188,6 +188,8 @@ public final class ServerConnection: Identifiable {
         inboxAsOf = nil
         status = .unpaired(notice)
         server.unpairedNotice = notice
+        // A phone the box forgot keeps no key to start it.
+        server.wake = nil
         try? credentials.save(server)
         failWaiters()
     }

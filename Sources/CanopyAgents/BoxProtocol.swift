@@ -88,16 +88,19 @@ public struct BoxConfig: Codable, Sendable, Equatable {
     public var phonePort: UInt16?
     /// The key phones start the box's instance with. Nil when none is set.
     public var wake: BoxWakeKey?
+    /// The Mac could not read its key, so the box keeps the one it has rather than forgetting it.
+    public var keepsWake: Bool?
 
     public init(
         host: String, repos: [String: String] = [:], agentCommand: String? = nil, phonePort: UInt16? = nil,
-        wake: BoxWakeKey? = nil
+        wake: BoxWakeKey? = nil, keepsWake: Bool? = nil
     ) {
         self.host = host
         self.repos = repos
         self.agentCommand = agentCommand
         self.phonePort = phonePort
         self.wake = wake
+        self.keepsWake = keepsWake
     }
 }
 

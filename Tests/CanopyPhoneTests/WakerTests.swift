@@ -64,6 +64,10 @@ struct SigV4Tests {
             answer(400, FakeEC2.error("InvalidInstanceID.NotFound", "No such instance."))
                 == .failed("No such instance."))
         #expect(answer(503, "") == .failed("HTTP 503"))
+        #expect(answer(400, FakeEC2.error("RequestExpired", "Request has expired.")) == .clockWrong)
+        #expect(
+            answer(200, "<StartInstancesResponse/>")
+                == .failed("EC2 answered without saying what the instance is doing."))
     }
 }
 
@@ -220,6 +224,58 @@ struct WakerTests {
             return
         }
         #expect(problem.title == "hindie-box started, and Canopy on it did not answer.")
+    }
+
+    @Test func anInstanceStillStoppingAfterTwoMinutesSaysSo() async throws {
+        let (_, connection) = try await offBox()
+        let clock = Mutex(Date())
+        let waker = Waker(
+            http: FakeEC2([(400, FakeEC2.error("IncorrectInstanceState", "stopping"))]),
+            endpoint: { _ in URL(string: "https://ec2.test/")! },
+            sleep: { duration in clock.withLock { $0 += TimeInterval(duration.components.seconds) } },
+            now: { clock.withLock { $0 } })
+
+        await waker.wake(connection)
+
+        #expect(
+            waker.steps[connection.id]
+                == .failed(
+                    PhoneProblem(
+                        title: "hindie-box's instance did not start.", detail: "It was still stopping after 2 minutes.")
+                ))
+    }
+
+    /// A failure shows until the box connects again, then no more, so a later power-off shows the box as off.
+    @Test func aFailureGoesOnceTheBoxConnects() async throws {
+        let (servers, connection) = try await offBox()
+        let waker = waker(FakeEC2([(400, FakeEC2.error("InvalidInstanceID.NotFound", "No such instance."))]))
+        await waker.wake(connection)
+        guard case .failed = waker.cards(for: servers).first?.step else {
+            Issue.record("no failed card")
+            return
+        }
+
+        box.comeBack()
+        servers.foreground()
+        #expect(await eventually { connection.isConnected })
+        box.goAway()
+        #expect(await eventually { connection.isUnreachable })
+
+        #expect(waker.cards(for: servers).map(\.step) == [nil])
+    }
+
+    /// A box that forgot the phone takes its key away, so the phone can no longer start it.
+    @Test func aForgottenBoxLeavesNoKey() async throws {
+        let (servers, connection) = try await offBox()
+        box.comeBack()
+        servers.foreground()
+        #expect(await eventually { connection.isConnected })
+
+        box.forget(phone: "iPhone")
+        box.dropAll()
+
+        #expect(await eventually { !connection.isPaired })
+        #expect(connection.server.wake == nil)
     }
 
     @Test func aSecondTapWhileWakingDoesNothing() async throws {

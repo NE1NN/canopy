@@ -34,8 +34,9 @@ stop)
     load
     # Only the dev build this script started: a pid can be reused once that app has quit.
     if [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *"Canopy Dev.app/Contents/MacOS/Canopy" ]]; then
-        # Disconnecting deletes this home's token from the Keychain.
+        # Disconnecting deletes this home's token from the Keychain, and clearing the box's wake key its key.
         "$cli" ticket disconnect --force >/dev/null 2>&1 || true
+        "$cli" host wake-key devbox --clear >/dev/null 2>&1 || true
         kill "$pid" 2>/dev/null || true
         # The app writes to its home as it quits, so the folder goes only once it has.
         for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done

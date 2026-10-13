@@ -98,7 +98,15 @@ private struct ServerDetail: View {
             if server.isBox {
                 Section {
                     LabeledContent("Wake key", value: server.wakeInstance ?? "None")
-                    if server.wakeInstance != nil {
+                    switch app.waker.step(of: server.connection) {
+                    case .starting, .connecting:
+                        LabeledContent("Waking") { ProgressView() }
+                    case .failed(let problem):
+                        Text(problem.title).foregroundStyle(Theme.red)
+                    case nil:
+                        EmptyView()
+                    }
+                    if server.wakeInstance != nil, server.connection.isPaired {
                         Button("Wake now") { Task { await app.waker.wake(server.connection) } }
                             .disabled(server.connection.isConnected || app.waker.isWaking(server.connection))
                             .accessibilityIdentifier("wake-now")

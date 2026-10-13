@@ -25,7 +25,7 @@ The phone's `Waker` signs `StartInstances` with AWS Signature Version 4 using Cr
 
 - The Mac's Keychain is where the key lives; `box.configure` carries it on every link connect, so the box's `wake.json` follows the Mac, and `canopy host wake-key <host> --clear` removes it from both.
   `host wake-key` needs an upgraded host, since only `canopy-box` hands keys to phones.
-- `canopy-box` reads the instance id and region with IMDSv2 over plain HTTP to `169.254.169.254`, once at start and again when a hello finds them missing; tests point it at loopback with `box/imds`, `<address> <port>`, loopback only, as `box/phone-listen` does.
+- `canopy-box` reads the instance id and region with IMDSv2 over plain HTTP to `169.254.169.254`, at start, when a key arrives, and every minute while it has a key and does not know them; tests point it at loopback with `box/imds`, `<address> <port>`, loopback only, as `box/phone-listen` does.
   Without an instance id the box sends no wake key, since the phone could not use it.
 - The phone repeats `StartInstances` every 10 seconds while EC2 answers `IncorrectInstanceState`, for at most 2 minutes, then asks the box's connection to retry every 10 seconds for at most 5 minutes.
 - A failure names its step: AWS refused the key (`AuthFailure`, `UnauthorizedOperation`, `InvalidClientTokenId`, `SignatureDoesNotMatch`, or HTTP 401 or 403), the instance did not start (anything else, or `IncorrectInstanceState` past 2 minutes), or it started and Canopy did not answer.
@@ -90,3 +90,24 @@ The phone's `Waker` signs `StartInstances` with AWS Signature Version 4 using Cr
 ### Checks
 
 - `make lint`, `make build`, `make test` three times, `make linux`, `make ios`, `scripts/ios-shots.sh`, `make e2e`, an opus review with After Review, CI.
+
+## As built
+
+- The instance id and region live in `instance.json`, apart from the Mac's key in `wake.json`: one is the box's own fact, the other the Mac's setting.
+- `host wake-key` reads two lines, so the host's relay gains a `lines2` input mode, and `--clear` reads none.
+- The fake EC2 in `scripts/fake-aws.py` starts the fixture's box a few seconds after answering, as an instance takes a while to boot, so the tour sees the card waking.
+- The tour's debug build posts to the fake EC2 over a plain socket, `TourPoster`, so the app keeps App Transport Security.
+
+## After Review
+
+An opus review found one critical issue, five important ones, and seven minor ones.
+
+- Critical: a Keychain error on the Mac read as no key, so a reconnect would have taken the key from the box and every phone.
+  `HostWakeKeys.read` throws, and a Mac that cannot read it sends `keepsWake`, which leaves the box's key as it is (`aKeychainThatWillNotSayKeepsTheBoxsKey`, `aConfigureThatKeepsTheKeyLeavesIt`).
+- `instance.json` was never read again, so a box's files on another instance would wake the old one; the box asks again at each start (`theInstanceIsReadAgainAtStart`).
+- A second `learnInstance` returned at once instead of waiting for the first, which made a test race and let tests reach the real metadata address; it now waits, and test homes point at a closed loopback port.
+- A phone the box removed kept the key; it is dropped with the pairing, and Wake now shows only for a paired box (`aForgottenBoxLeavesNoKey`).
+- A failure stayed until the next wake; it now goes once the box connects again (`aFailureGoesOnceTheBoxConnects`).
+- `host rm` left the key in the Keychain for a host added again under the alias (`removingAHostForgetsItsKey`); the fixture clears its key as it stops.
+- Minor: the card's time counts from the tap throughout; a wake stops when its server goes or the app is in the background; a skewed clock, a network failure, and an empty answer each say what they are; the metadata request cancels its timer and reads the body by its length; tests for an instance still stopping after 2 minutes and for the box's own log; Settings shows a wake under way or failed; the spec's files table names `instance.json`.
+

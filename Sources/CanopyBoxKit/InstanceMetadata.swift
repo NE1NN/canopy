@@ -65,10 +65,15 @@ public enum InstanceMetadata {
                 answer.give(
                     await Result { try await exchange(method, path, headers: headers, address: address, port: port) })
             }
-            Task {
+            let timer = Task {
                 try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
                 work.cancel()
                 answer.give(.failure(TimedOut()))
+            }
+            Task {
+                _ = await work.value
+                timer.cancel()
             }
         }
     }
@@ -125,9 +130,19 @@ public enum InstanceMetadata {
         let text = String(decoding: data, as: UTF8.self)
         guard let split = text.range(of: "\r\n\r\n") else { throw Malformed() }
         let head = text[..<split.lowerBound]
-        let statusLine = head.split(separator: "\r\n", maxSplits: 1).first ?? ""
-        let parts = statusLine.split(separator: " ")
+        let lines = head.components(separatedBy: "\r\n")
+        let parts = (lines.first ?? "").split(separator: " ")
         guard parts.count >= 2, parts[0].hasPrefix("HTTP/"), let status = Int(parts[1]) else { throw Malformed() }
-        return Response(status: status, body: String(text[split.upperBound...]))
+        let fields = lines.dropFirst().compactMap { line -> (String, String)? in
+            guard let colon = line.firstIndex(of: ":") else { return nil }
+            return (line[..<colon].lowercased(), line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces))
+        }
+        // The service sends a length; a chunked body would read as its chunk sizes.
+        if fields.contains(where: { $0.0 == "transfer-encoding" }) { throw Malformed() }
+        var body = Substring(text[split.upperBound...])
+        if let length = fields.first(where: { $0.0 == "content-length" }).flatMap({ Int($0.1) }) {
+            body = Substring(String(decoding: Data(body.utf8).prefix(length), as: UTF8.self))
+        }
+        return Response(status: status, body: String(body))
     }
 }

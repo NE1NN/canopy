@@ -30,6 +30,8 @@ struct BoxLinkTests {
                 paths: BoxPaths(root: dir.path, homeID: "11112222"),
                 tmux: Tmux(server: "link-\(UUID().uuidString.prefix(6))", config: nil, environment: environment),
                 git: { GitFixture.clone($0) })
+            // Never the real instance metadata service.
+            try BoxFiles.write(Data("127.0.0.1 1".utf8), to: dir.sub("11112222/box/imds"))
             await daemon.start()
             let started = try BoxServer(daemon: daemon, socketPath: socket)
             server.withLock { $0 = started }

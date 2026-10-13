@@ -216,6 +216,8 @@ extension Workspace {
         preparedHosts[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
         await stopBoxLink(alias)
+        // A host added again under the alias, maybe another machine, never gets this one's key.
+        try? hostTooling.wakeKeys.delete(alias, home: home)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 

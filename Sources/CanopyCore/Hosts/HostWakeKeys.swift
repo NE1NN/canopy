@@ -21,9 +21,10 @@ public struct HostWakeKeys: Sendable {
         "\(alias)@\(home.root.path)"
     }
 
-    public func read(_ alias: String, home: CanopyHome) -> BoxWakeKey? {
-        guard let text = try? store.read(service: service, account: account(alias, home: home)) else { return nil }
-        return try? JSONDecoder().decode(BoxWakeKey.self, from: Data(text.utf8))
+    /// The host's key, nil when none is set, or an error when the Keychain would not say, as when it is locked.
+    public func read(_ alias: String, home: CanopyHome) throws -> BoxWakeKey? {
+        guard let text = try store.read(service: service, account: account(alias, home: home)) else { return nil }
+        return try JSONDecoder().decode(BoxWakeKey.self, from: Data(text.utf8))
     }
 
     public func write(_ key: BoxWakeKey, for alias: String, home: CanopyHome) throws {

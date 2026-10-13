@@ -209,9 +209,10 @@ public enum BoxMain {
                 }
             }
             group.addTask {
+                await daemon.learnInstance(again: true)
                 while true {
-                    await daemon.learnInstance()
                     try? await Task.sleep(for: instanceEvery)
+                    await daemon.learnInstance()
                 }
             }
         }
