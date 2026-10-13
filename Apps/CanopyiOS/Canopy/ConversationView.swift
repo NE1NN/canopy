@@ -2,14 +2,32 @@ import CanopyPhone
 import CanopyWire
 import SwiftUI
 
+/// A pane's conversation, on its own server, or what to say when that server was removed meanwhile.
+struct PaneDestination: View {
+    @Environment(PhoneApp.self) private var app
+    var ref: PaneRef
+
+    var body: some View {
+        if let connection = app.servers.connection(id: ref.server) {
+            ConversationView(
+                connection: connection, pane: ref.pane, host: app.servers.connections.count > 1 ? connection.name : nil)
+        } else {
+            ContentUnavailableView("This server was removed.", systemImage: "xmark.circle")
+        }
+    }
+}
+
 /// A pane's agent: its conversation as text, or its terminal, with the reply box and answers to its prompt.
 struct ConversationView: View {
     @State private var conversation: ConversationModel
     @State private var terminal: TerminalModel
+    /// The row's host, named under the title once the phone has more than one server.
+    private let host: String?
 
-    init(app: PhoneApp, pane: String) {
-        _conversation = State(initialValue: ConversationModel(connection: app.connection, pane: pane))
-        _terminal = State(initialValue: TerminalModel(connection: app.connection, pane: pane))
+    init(connection: ServerConnection, pane: String, host: String?) {
+        _conversation = State(initialValue: ConversationModel(connection: connection, pane: pane))
+        _terminal = State(initialValue: TerminalModel(connection: connection, pane: pane))
+        self.host = host
     }
 
     var body: some View {
@@ -56,6 +74,9 @@ struct ConversationView: View {
                             AgentDotView(dot: dot, small: true).frame(width: 7, height: 7)
                         }
                         Text(conversation.paneGone ? "closed" : (conversation.agent?.state ?? .none).phrase)
+                        if let host {
+                            Text(verbatim: "· \(host)")
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)

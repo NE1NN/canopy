@@ -9,21 +9,27 @@ public struct HostTooling: Sendable {
     public var clock: any HostClock
     /// The app's bundled CLI. Without one, hosts' calls are refused.
     public var relayCLI: String?
+    /// The canopy-box binaries `host upgrade` installs.
+    public var boxBinaries: BoxBinaries = .current()
     /// What runs each host's ssh, by alias; nil runs `sshExecutable`.
     public var launcher: (@Sendable (String) -> any HostProcessLauncher)?
+    /// The keys phones start upgraded hosts with.
+    public var wakeKeys: HostWakeKeys
 
     public init(
         sshExecutable: String = SSHCommand.executable(),
         environment: @escaping @Sendable () -> [String: String] = { GitEnvironment.current },
         clock: any HostClock = SystemHostClock(),
         relayCLI: String? = nil,
-        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil
+        launcher: (@Sendable (String) -> any HostProcessLauncher)? = nil,
+        wakeKeys: HostWakeKeys = .inMemory()
     ) {
         self.sshExecutable = sshExecutable
         self.environment = environment
         self.clock = clock
         self.relayCLI = relayCLI
         self.launcher = launcher
+        self.wakeKeys = wakeKeys
     }
 }
 
@@ -74,7 +80,8 @@ extension Workspace {
     /// join the ones it has, and `wake` and `idleDetachMinutes` replace theirs when given.
     @discardableResult
     public func addHost(
-        alias: String, repos requested: [String: String], wake: String?, idleDetachMinutes: Int?
+        alias: String, repos requested: [String: String], wake: String?, idleDetachMinutes: Int?,
+        agentCommand: String? = nil
     ) async throws -> HostInfo {
         guard !alias.isEmpty, !alias.hasPrefix("-"), !alias.contains(where: \.isWhitespace) else {
             throw WorkspaceError.hostUnknown(alias)
@@ -92,6 +99,16 @@ extension Workspace {
         var entry = saved ?? HostEntry()
         if let wake { entry.wake = wake }
         if let idleDetachMinutes { entry.idleDetachMinutes = max(idleDetachMinutes, 0) }
+        if let agentCommand = agentCommand?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            guard !agentCommand.isEmpty else {
+                throw ControlError(
+                    code: "bad_params",
+                    message:
+                        "The agent command is empty. canopy phone agent --on \(alias) --default goes back to the standard one."
+                )
+            }
+            entry.agentCommand = agentCommand
+        }
         // Connecting already uses the new settings, so a new wake command can start the host.
         let connection = await connection(alias, entry)
         let facts: HostFacts
@@ -110,6 +127,8 @@ extension Workspace {
             throw error
         }
         await connection.update(entry)
+        // An upgraded host's canopy-box takes changed repos and agent command now, not at its next connect.
+        if entry.box, entry != saved, let link = boxLinks[alias] { _ = try? await link.reconfigure() }
         activity.record(ActivityType.hostAdded, data: ["host": .string(alias)])
         var added = await info(alias, entry)
         added.warnings = HostChecks.warnings(facts, alias: alias)
@@ -198,18 +217,35 @@ extension Workspace {
         return String(decoding: result.stdout, as: UTF8.self)
     }
 
-    /// Forgets a host without rows. Its files on the host stay.
-    public func removeHost(alias: String) async throws {
-        guard hosts.hosts[alias] != nil else {
+    /// Forgets a host without rows. Its files on the host stay. An upgraded host's canopy-box stops first, as its
+    /// service would otherwise run on with no Mac; the host is not woken for it. Returns what could not be done.
+    @discardableResult
+    public func removeHost(alias: String) async throws -> [String] {
+        guard let entry = hosts.hosts[alias] else {
             throw WorkspaceError.hostNotFound(alias, known: hosts.hosts.keys.sorted())
         }
         let rows = state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.standIn)
         guard rows.isEmpty else { throw WorkspaceError.hostHasRows(alias, rows: rows) }
+        var warnings: [String] = []
+        removingHosts.insert(alias)
+        defer { removingHosts.remove(alias) }
+        if entry.box {
+            // A link start under way, as the host monitor's, would install and start canopy-box again after it stops.
+            while let running = boxLinkStarts[alias] { await running.task.value }
+            if let warning = await stopBox(alias, entry) { warnings.append(warning) }
+        }
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
+        await stopBoxLink(alias)
+        // A host added again under the alias counts its connections from the start, so these must not say done.
+        boxInstalled[alias] = nil
+        boxForwarded[alias] = nil
+        // A host added again under the alias, maybe another machine, never gets this one's key.
+        try? hostTooling.wakeKeys.delete(alias, home: home)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
+        return warnings
     }
 
     public func hostListing() async -> HostListing {
@@ -227,7 +263,7 @@ extension Workspace {
             alias: alias, state: await connection?.state ?? .idle, repos: entry.repos, wake: entry.wake,
             idleDetachMinutes: entry.idleDetachMinutes,
             rows: state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.standIn),
-            tmuxServer: HostPaths.tmuxServer(homeID: homeID), error: await connection?.lastError)
+            tmuxServer: HostPaths.tmuxServer(homeID: homeID), error: await connection?.lastError, box: entry.box)
     }
 
     /// Lets every host go, as Canopy quits. Sessions on hosts only detach.
@@ -240,6 +276,7 @@ extension Workspace {
             server.stop()
         }
         relayServers.removeAll()
+        for alias in Array(boxLinks.keys) { await stopBoxLink(alias) }
     }
 }
 

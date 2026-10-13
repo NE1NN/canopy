@@ -326,7 +326,7 @@ struct MasterWatchdogTests {
     @Test func aMasterStopsOnceWhoeverStartedItIsGone() async throws {
         let wrapped = SubprocessHostLauncher.watched(["/bin/sleep", "300"])
         // The shell starts the master and exits at once, as a Canopy that crashed would.
-        let started = try Subprocess.run(
+        let started = try await Subprocess.runOffPool(
             "/bin/sh", ["-c", SSHCommand.shellQuoted(wrapped) + " >/dev/null 2>&1 & echo $!"],
             environment: ["PATH": "/usr/bin:/bin"], directory: nil, timeout: .seconds(10))
         let watchdog = try #require(
@@ -337,8 +337,8 @@ struct MasterWatchdogTests {
         #expect(ended)
     }
 
-    @Test func aWatchedMasterReportsItsOwnExit() throws {
-        let result = try Subprocess.run(
+    @Test func aWatchedMasterReportsItsOwnExit() async throws {
+        let result = try await Subprocess.runOffPool(
             "/bin/sh",
             [
                 "-c",

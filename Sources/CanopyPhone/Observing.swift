@@ -12,3 +12,33 @@ func observe<Value: Equatable>(
     }
     changed(current)
 }
+
+/// Returns once `condition` holds, checking it again each time something it reads changes, or once the task is
+/// cancelled.
+@MainActor
+func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+    while !condition(), !Task.isCancelled {
+        let once = ResumeOnce()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                once.continuation = continuation
+                let met = withObservationTracking(condition) {
+                    Task { @MainActor in once.resume() }
+                }
+                if met || Task.isCancelled { once.resume() }
+            }
+        } onCancel: {
+            Task { @MainActor in once.resume() }
+        }
+    }
+}
+
+@MainActor
+private final class ResumeOnce {
+    var continuation: CheckedContinuation<Void, Never>?
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
+    }
+}

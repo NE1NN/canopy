@@ -5,28 +5,33 @@ import Observation
 /// Everything the app's screens share, and what happens as the app comes and goes.
 @MainActor @Observable
 public final class PhoneApp {
-    public let connection: MacConnection
+    public let servers: Servers
     public let lock: AppLock
     public let inbox: InboxModel
     public let rows: RowsModel
     public let pairing: PairingModel
+    public let waker: Waker
+    public let newTask: NewTaskModel
 
     public init(
         transport: any PhoneTransport = TCPTransport(), credentials: any CredentialStore = KeychainCredentialStore(),
         defaults: UserDefaults = .standard, authenticator: any Authenticator = LocalAuthenticator(),
-        lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String
+        lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String,
+        http: any HTTPPosting = URLSessionPoster(), ec2Endpoint: @escaping @Sendable (String) -> URL = EC2Start.endpoint
     ) {
-        connection = MacConnection(transport: transport, credentials: credentials, phoneName: phoneName)
+        servers = Servers(transport: transport, credentials: credentials, phoneName: phoneName)
         lock = AppLock(defaults: defaults, authenticator: authenticator, grace: lockGrace)
-        inbox = InboxModel(connection: connection)
-        rows = RowsModel(connection: connection)
-        pairing = PairingModel(connection: connection)
+        inbox = InboxModel(servers: servers)
+        rows = RowsModel(servers: servers)
+        pairing = PairingModel(servers: servers)
+        waker = Waker(http: http, endpoint: ec2Endpoint)
+        newTask = NewTaskModel(servers: servers, rows: rows, waker: waker, defaults: defaults)
     }
 
     public func launch() {
-        lock.isGuarding = connection.paired != nil
+        lock.isGuarding = servers.isPaired
         lock.launch()
-        connection.start()
+        servers.start()
         rows.start()
     }
 
@@ -36,11 +41,12 @@ public final class PhoneApp {
     }
 
     public func phaseChanged(to phase: AppLock.Phase) {
-        lock.isGuarding = connection.paired != nil
+        lock.isGuarding = servers.isPaired
         lock.phaseChanged(to: phase)
+        waker.isActive = phase != .background
         switch phase {
-        case .background: connection.background()
-        case .active: connection.foreground()
+        case .background: servers.background()
+        case .active: servers.foreground()
         case .inactive: break
         }
     }

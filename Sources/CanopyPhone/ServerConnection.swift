@@ -4,26 +4,27 @@ import Observation
 
 public typealias Sleep = @Sendable (Duration) async throws -> Void
 
-/// The phone's one connection to its Mac: pairing, hello, the inbox, and connecting again whenever it drops.
+/// The phone's connection to one server: hello, the inbox, and connecting again whenever it drops.
 @MainActor @Observable
-public final class MacConnection {
-    /// The phone has no Mac: it was never paired, or it was unpaired, so nothing will connect until it pairs again.
+public final class ServerConnection: Identifiable {
+    /// The server forgot this phone, or it was removed here, so nothing will connect until it pairs again.
     public struct NotPaired: Error, Equatable {}
 
     public enum Status: Equatable, Sendable {
         case connecting
         case connected
-        /// The Mac could not be reached, or the connection dropped. The phone keeps trying.
+        /// The server could not be reached, or the connection dropped. The phone keeps trying.
         case unreachable(PhoneProblem)
+        /// The server no longer knows this phone's token, as after `canopy phone remove`. It says why.
+        case unpaired(String)
     }
 
-    public private(set) var paired: PairedMac?
+    public nonisolated let id: String
+    public private(set) var server: PairedServer
     public private(set) var status: Status = .connecting
-    /// The last inbox the Mac sent, kept while the Mac is out of reach.
+    /// The last inbox the server sent, kept while it is out of reach.
     public private(set) var inbox: PhoneInbox?
     public private(set) var inboxAsOf: Date?
-    /// Why the phone is back at Pairing, when the Mac forgot it.
-    public private(set) var pairingNotice: String?
     /// Counts connections, so a stream knows to start again on a new one.
     public private(set) var generation = 0
 
@@ -32,29 +33,35 @@ public final class MacConnection {
 
     private let transport: any PhoneTransport
     private let credentials: any CredentialStore
-    private let phoneName: String
     private let timeout: Duration
+    /// Set by `foreground` while a try is under way, so the next goes at once.
+    private var retriesAtOnce = false
     private let sleep: Sleep
     private let now: @Sendable () -> Date
 
     private var client: PhoneClient?
     private var loop: Task<Void, Never>?
+    private var nap: Task<Void, Never>?
     private var failures = 0
     private var clientWaiters: [UUID: CheckedContinuation<(client: PhoneClient, generation: Int), any Error>] = [:]
 
     public init(
-        transport: any PhoneTransport, credentials: any CredentialStore, phoneName: String,
+        server: PairedServer, transport: any PhoneTransport, credentials: any CredentialStore,
         timeout: Duration = .seconds(10), sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
+        id = server.id
+        self.server = server
+        if let notice = server.unpairedNotice { status = .unpaired(notice) }
         self.transport = transport
         self.credentials = credentials
-        self.phoneName = phoneName
         self.timeout = timeout
         self.sleep = sleep
         self.now = now
-        paired = credentials.load()
     }
+
+    public var name: String { server.name }
+    public var isBox: Bool { server.isBox }
 
     public var isConnected: Bool { status == .connected }
 
@@ -63,20 +70,27 @@ public final class MacConnection {
         return false
     }
 
-    /// Connects, when paired, and keeps connecting.
+    /// Whether the server still knows this phone, as far as the phone knows.
+    public var isPaired: Bool {
+        if case .unpaired = status { return false }
+        return true
+    }
+
+    /// Connects, and keeps connecting.
     public func start() {
-        guard paired != nil, loop == nil else { return }
+        guard isPaired, loop == nil else { return }
         loop = Task { await self.run(opened: nil) }
     }
 
-    /// Back on screen: try at once, rather than wait out the backoff or an attempt begun before that may hang or fail.
+    /// Back on screen: try at once rather than waiting out the backoff, also when a try is under way, whose failure
+    /// would otherwise start one.
     public func foreground() {
         failures = 0
         if loop == nil {
             start()
-        } else if isUnreachable {
-            loop?.cancel()
-            loop = Task { await self.run(opened: nil) }
+        } else {
+            retriesAtOnce = true
+            nap?.cancel()
         }
     }
 
@@ -85,76 +99,51 @@ public final class MacConnection {
         stop()
     }
 
-    /// Trades the link's one-time code for a token, then says hello on the same connection and subscribes. A phone that
-    /// is already paired keeps its connection until the new pairing works.
-    public func pair(_ link: PairingLink) async throws {
-        var lastError: (any Error)?
-        for host in link.hosts {
-            do {
-                let channel = try await within(timeout) { [transport] in
-                    try await transport.connect(host: host, port: link.port)
-                }
-                let client = PhoneClient(channel: channel)
-                do {
-                    let result = try await within(timeout) { [phoneName] in
-                        try await client.call(
-                            PhoneMethod.pair, PhonePairParams(code: link.code, name: phoneName),
-                            as: PhonePairResult.self)
-                    }
-                    let mac = PairedMac(
-                        host: link.host, port: link.port, address: link.address, token: result.token, mac: result.mac,
-                        phone: result.phone)
-                    do {
-                        try credentials.save(mac)
-                    } catch {
-                        // The Mac took the one-time code, so no other host can use it again.
-                        throw PairingKept(problem: PhoneProblem(error, mac: link.host))
-                    }
-                    stop()
-                    paired = mac
-                    pairingNotice = nil
-                    inbox = nil
-                    inboxAsOf = nil
-                    status = .connecting
-                    loop = Task { await self.run(opened: client) }
-                    return
-                } catch {
-                    await client.close()
-                    throw error
-                }
-            } catch let error as ControlError {
-                throw PhoneProblem(error, mac: host)
-            } catch let kept as PairingKept {
-                throw kept.problem
-            } catch {
-                lastError = error
-            }
-        }
-        throw PhoneProblem(lastError ?? PhoneTransportError.closed, mac: link.host)
+    /// Takes a new pairing with this server, already open on `opened`, in place of the old one.
+    func pairAgain(with server: PairedServer, opened: PhoneClient) {
+        stop()
+        self.server = server
+        inbox = nil
+        inboxAsOf = nil
+        status = .connecting
+        loop = Task { await self.run(opened: opened) }
     }
 
-    /// Forgets the Mac. It still lists this phone until `canopy phone remove`.
-    public func unpair() {
-        forget(notice: nil)
+    /// Starts on a connection pairing just opened.
+    func start(opened: PhoneClient) {
+        guard isPaired, loop == nil else { return }
+        loop = Task { await self.run(opened: opened) }
+    }
+
+    /// Stops for good, as when the server is removed here, so nothing waits for it again.
+    func end() {
+        stop()
+        status = .unpaired("\(name) was removed from this iPhone.")
+        failWaiters()
     }
 
     /// The live connection, for something the author just did, which should fail at once rather than wait.
     public func liveClient() throws -> PhoneClient {
         guard let client, status == .connected else {
-            if case .unreachable(let problem) = status, paired != nil {
-                throw PhoneProblem(title: "Can't reach \(macName).", detail: problem.detail)
+            switch status {
+            case .unreachable(let problem):
+                throw PhoneProblem(title: "Can't reach \(name).", detail: problem.detail)
+            case .unpaired(let notice):
+                throw PhoneProblem(title: notice, detail: "Pair it again with \(pairCommand) on the Mac.")
+            case .connecting, .connected:
+                throw PhoneProblem(title: "Can't reach \(name).", detail: PhoneProblem.checkTailscale)
             }
-            throw PhoneProblem(title: "Can't reach \(macName).", detail: PhoneProblem.checkTailscale)
         }
         return client
     }
 
-    /// An error as the app says it, naming this Mac.
+    /// An error as the app says it, naming this server.
     public func problem(_ error: any Error) -> PhoneProblem {
-        PhoneProblem(error, mac: macName)
+        PhoneProblem(error, server: name, pairCommand: pairCommand)
     }
 
-    public var macName: String { paired?.mac ?? "the Mac" }
+    /// What pairs this server again, run on the Mac.
+    public var pairCommand: String { isBox ? "canopy phone pair --on \(name)" : "canopy phone pair" }
 
     /// The live connection, waiting for one when there is none yet.
     public func client() async throws -> PhoneClient {
@@ -165,7 +154,7 @@ public final class MacConnection {
     /// generation it had, so it never gets that connection back.
     public func client(after generation: Int) async throws -> (client: PhoneClient, generation: Int) {
         if let client, status == .connected, self.generation > generation { return (client, self.generation) }
-        guard paired != nil else { throw NotPaired() }
+        guard isPaired else { throw NotPaired() }
         let id = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -183,67 +172,82 @@ public final class MacConnection {
     private func stop() {
         loop?.cancel()
         loop = nil
+        nap?.cancel()
         let client = client
         self.client = nil
         Task { await client?.close() }
         if status == .connected { status = .connecting }
     }
 
-    private func forget(notice: String?) {
-        stop()
-        credentials.clear()
-        paired = nil
-        inbox = nil
-        inboxAsOf = nil
-        pairingNotice = notice
-        status = .connecting
+    private func failWaiters() {
         for waiter in clientWaiters.values {
             waiter.resume(throwing: NotPaired())
         }
         clientWaiters = [:]
     }
 
+    private func forgotten(notice: String) {
+        stop()
+        inbox = nil
+        inboxAsOf = nil
+        status = .unpaired(notice)
+        server.unpairedNotice = notice
+        // A phone the box forgot keeps no key to start it.
+        server.wake = nil
+        try? credentials.save(server)
+        failWaiters()
+    }
+
     private func run(opened: PhoneClient?) async {
         var opened = opened
-        while !Task.isCancelled, let paired {
+        while !Task.isCancelled, isPaired {
+            let server = server
             do {
                 let client: PhoneClient
                 if let opened {
                     client = opened
                 } else {
-                    client = try await open(paired)
+                    client = try await open(server)
                 }
                 opened = nil
-                try await serve(client, paired: paired)
+                try await serve(client, server: server)
                 failures = 0
                 // The connection was good until now, so the first try after a drop goes at once.
                 if !Task.isCancelled {
-                    status = .unreachable(PhoneProblem(PhoneTransportError.closed, mac: paired.mac))
+                    status = .unreachable(PhoneProblem(PhoneTransportError.closed, server: server.name))
                 }
                 continue
             } catch let error as ControlError where error.code == "unpaired" {
                 // A loop that pairing again replaced may still hear its old token refused; only the current one counts.
-                guard !Task.isCancelled, self.paired?.token == paired.token else { return }
-                forget(notice: PhoneProblem(error, mac: paired.mac).title)
+                guard !Task.isCancelled, self.server.token == server.token else { return }
+                forgotten(notice: problem(error).title)
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                status = .unreachable(PhoneProblem(error, mac: paired.mac))
+                status = .unreachable(PhoneProblem(error, server: server.name))
+            }
+            if retriesAtOnce {
+                retriesAtOnce = false
+                continue
             }
             let wait = Self.backoff[min(failures, Self.backoff.count - 1)]
             failures += 1
-            try? await sleep(wait)
+            let sleep = self.sleep
+            nap = Task { try? await sleep(wait) }
+            await nap?.value
+            nap = nil
+            retriesAtOnce = false
         }
     }
 
     /// Connects to the first host that answers.
-    private func open(_ paired: PairedMac) async throws -> PhoneClient {
+    private func open(_ server: PairedServer) async throws -> PhoneClient {
         var lastError: any Error = PhoneTransportError.closed
-        for host in paired.hosts {
+        for host in server.hosts {
             try Task.checkCancellation()
             do {
                 let channel = try await within(timeout) { [transport] in
-                    try await transport.connect(host: host, port: paired.port)
+                    try await transport.connect(host: host, port: server.port)
                 }
                 return PhoneClient(channel: channel)
             } catch {
@@ -254,22 +258,26 @@ public final class MacConnection {
     }
 
     /// Says hello, subscribes, and keeps the inbox until the connection ends.
-    private func serve(_ client: PhoneClient, paired: PairedMac) async throws {
+    private func serve(_ client: PhoneClient, server: PairedServer) async throws {
         defer { Task { await client.close() } }
-        let hello = try await within(timeout) { [paired] in
-            try await client.call(PhoneMethod.hello, PhoneHelloParams(token: paired.token), as: PhoneHelloResult.self)
+        let hello = try await within(timeout) { [server] in
+            try await client.call(PhoneMethod.hello, PhoneHelloParams(token: server.token), as: PhoneHelloResult.self)
         }
         let subscription = try await within(timeout) {
             try await client.stream(PhoneMethod.subscribe, as: PhoneInbox.self)
         }
         try Task.checkCancellation()
-        var updated = paired
-        updated.mac = hello.mac
+        var updated = server
+        updated.name = hello.mac
         updated.phone = hello.phone
         updated.version = hello.version
-        if updated != paired {
+        if let kind = hello.kind { updated.kind = kind }
+        // A box with no key now, as after `host wake-key --clear`, takes the phone's away too.
+        updated.wake = hello.wake
+        updated.agentCommand = hello.agentCommand
+        if updated != server {
             try? credentials.save(updated)
-            self.paired = updated
+            self.server = updated
         }
         self.client = client
         receive(subscription.result)
@@ -291,11 +299,6 @@ public final class MacConnection {
         self.inbox = inbox
         inboxAsOf = now()
     }
-}
-
-/// A pairing the Mac granted but the phone could not keep, which no other host may try again.
-private struct PairingKept: Error {
-    var problem: PhoneProblem
 }
 
 /// Runs the work, giving up with `PhoneTransportError.timedOut` after the timeout.

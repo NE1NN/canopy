@@ -53,7 +53,7 @@ public struct WorkspaceControlHandler: Sendable {
 
     /// Logs calls that change something, with their params as sent and the error code if they failed. Commands typed
     /// into terminals are left out while command logging is off, and so is text starting with a space, which zsh keeps
-    /// out of history under hist_ignore_space. A `token` is never logged, wherever it is in the params.
+    /// out of history under hist_ignore_space. A `token` or a wake key's secret is never logged, wherever it is in the params.
     private func record(_ request: ControlRequest, _ response: ControlResponse) {
         var params = Self.withoutTokens(request.params ?? .object([:]))
         if case .object(var fields) = params {
@@ -223,9 +223,24 @@ public struct WorkspaceControlHandler: Sendable {
 
         case HostMethod.add:
             let params = try request.decodeParams(HostAddParams.self)
-            let info = try await workspace.addHost(
+            let isNew = workspace.hosts.hosts[params.alias] == nil
+            var info = try await workspace.addHost(
                 alias: params.alias, repos: params.repos, wake: params.wake,
-                idleDetachMinutes: params.idleDetachMinutes)
+                idleDetachMinutes: params.idleDetachMinutes, agentCommand: params.agentCommand)
+            // A new host runs canopy-box from the start. One that cannot stays on this Mac's relay, as it was added.
+            if isNew, params.box != false {
+                do {
+                    let upgraded = try await rows.upgradeHost(params.alias)
+                    info.box = true
+                    info.warnings += upgraded.warnings
+                } catch {
+                    let reason =
+                        (error as? WorkspaceError)?.message ?? (error as? ControlError)?.message ?? "\(error)"
+                    info.warnings.append(
+                        "canopy-box did not start on \(params.alias), so the host runs through this Mac. "
+                            + "Run `canopy host upgrade \(params.alias)` to try again. \(reason)")
+                }
+            }
             return try .from(await withPanes(info))
 
         case HostAttachMethod.attach:
@@ -255,10 +270,20 @@ public struct WorkspaceControlHandler: Sendable {
             listing.hosts = infos
             return try .from(listing)
 
+        case HostMethod.upgrade:
+            let params = try request.decodeParams(HostUpgradeParams.self)
+            return try .from(
+                params.undo ? try await rows.undoUpgrade(params.alias) : try await rows.upgradeHost(params.alias))
+
+        case HostMethod.wakeKey:
+            let params = try request.decodeParams(HostWakeKeyParams.self)
+            let sent = try await workspace.setWakeKey(params.key, for: params.alias)
+            return try .from(HostWakeKeyResult(alias: params.alias, isSet: params.key != nil, sent: sent))
+
         case HostMethod.remove:
             let params = try request.decodeParams(HostRemoveParams.self)
-            try await workspace.removeHost(alias: params.alias)
-            return .object(["alias": .string(params.alias)])
+            let warnings = try await workspace.removeHost(alias: params.alias)
+            return .object(["alias": .string(params.alias), "warnings": .array(warnings.map(JSONValue.string))])
 
         case GroupMethod.list:
             let params = try request.decodeParams(GroupListParams.self)
@@ -411,20 +436,34 @@ public struct WorkspaceControlHandler: Sendable {
             return .object(["page": .string(params.page)])
 
         case PhonesMethod.pair:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesPair, JSONValue.object([:]))
+            }
             return try .from(try await phoneService().pair())
 
         case PhonesMethod.paired:
             let params = try request.decodeParams(PhonesPairedParams.self)
+            if let on = params.on { return try await boxPhones(on, BoxMethod.phonesPaired, params) }
             return try .from(PhonesPairedResult(phone: await phoneService().waitForPairing(code: params.code)))
 
         case PhonesMethod.list:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesList, JSONValue.object([:]))
+            }
             return try .from(await phoneService().list())
 
         case PhonesMethod.remove:
             let params = try request.decodeParams(PhonesRemoveParams.self)
+            if let on = params.on { return try await boxPhones(on, BoxMethod.phonesRemove, params) }
             return try .from(try await phoneService().remove(name: params.name))
 
+        case PhonesMethod.agent:
+            return try .from(try await workspace.agentCommand(request.decodeParams(PhonesAgentParams.self)))
+
         case PhonesMethod.status:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesStatus, JSONValue.object([:]))
+            }
             return try .from(await phoneService().status())
 
         case PluginMethod.list:
@@ -530,11 +569,14 @@ public struct WorkspaceControlHandler: Sendable {
         (error as? WorkspaceError)?.code ?? "internal"
     }
 
-    /// The params with every `token` key taken out, at any depth.
+    /// Keys whose values are secrets, which never reach the activity log.
+    static let secretKeys: Set<String> = ["token", "secretAccessKey"]
+
+    /// The params with every secret key taken out, at any depth.
     static func withoutTokens(_ value: JSONValue) -> JSONValue {
         switch value {
         case .object(let fields):
-            .object(fields.filter { $0.key != "token" }.mapValues(withoutTokens))
+            .object(fields.filter { !secretKeys.contains($0.key) }.mapValues(withoutTokens))
         case .array(let items):
             .array(items.map(withoutTokens))
         default:
@@ -597,5 +639,27 @@ private enum RowStart {
         if params.existing { throw refuse("--existing is for a branch name. --pr always uses the PR's branch.") }
         guard let reference = PRReference(text) else { throw WorkspaceError.invalidPullRequest(text) }
         self = .pullRequest(reference)
+    }
+}
+
+extension WorkspaceControlHandler {
+    /// The host a phone command names with `--on`, from params that may be null.
+    private func onHost(_ request: ControlRequest) throws -> String? {
+        guard let params = request.params, params != .null else { return nil }
+        return try request.decodeParams(PhonesOnParams.self).on
+    }
+
+    /// A phone command for a host's canopy-box, through its link.
+    private func boxPhones(_ alias: String, _ method: String, _ params: some Encodable) async throws -> JSONValue {
+        guard let link = await workspace.boxLink(for: alias) else {
+            throw ControlError(
+                code: "host_not_upgraded",
+                message: "\(alias) does not run canopy-box. Run `canopy host upgrade \(alias)` first.")
+        }
+        guard await link.waitUntilConnected(within: .seconds(30)) else {
+            throw ControlError(WorkspaceError.hostUnreachable(alias, reason: "canopy-box is not answering."))
+        }
+        let value = try JSONValue.from(params)
+        return try await link.call(method, value, as: JSONValue.self)
     }
 }

@@ -13,36 +13,6 @@ public struct AgentViewing: Sendable, Equatable {
     }
 }
 
-/// Which states `canopy term wait` waits for.
-public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
-    case done
-    case waiting
-    /// A turn that ended with background work still running.
-    case background
-    /// Done or waiting. Coordinators wait on a row to learn it finished, and a background row has not.
-    case any
-    /// Done, waiting, or background: the turn is over, whatever it left running.
-    case ended
-
-    public func matches(_ state: AgentState) -> Bool {
-        switch self {
-        case .done: state == .done
-        case .waiting: state == .waiting
-        case .background: state == .background
-        case .any: state == .done || state == .waiting
-        case .ended: state == .done || state == .waiting || state == .background
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .any: "done or waiting"
-        case .ended: "done, waiting, or background"
-        default: rawValue
-        }
-    }
-}
-
 public enum AgentEvent {
     case changed(Pane, AgentChange)
     /// Sent before the pane's agent state clears.

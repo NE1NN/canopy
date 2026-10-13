@@ -24,7 +24,7 @@ public final class ConversationModel {
         public var state: State
     }
 
-    public let connection: MacConnection
+    public let connection: ServerConnection
     public let pane: String
     public private(set) var entries: [TranscriptEntry] = []
     /// The cursor for the next older page, or nil at the start of the conversation.
@@ -61,7 +61,7 @@ public final class ConversationModel {
     private var seenSince: Double?
     private var promptsBeforeReply: Set<String> = []
 
-    public init(connection: MacConnection, pane: String) {
+    public init(connection: ServerConnection, pane: String) {
         self.connection = connection
         self.pane = pane
         let found = Self.find(pane, in: connection.inbox)
@@ -144,7 +144,7 @@ public final class ConversationModel {
                     if let update = try? event.data.decode(PhoneTranscriptUpdate.self) { apply(update) }
                 }
                 subscription = nil
-            } catch is MacConnection.NotPaired {
+            } catch is ServerConnection.NotPaired {
                 return
             } catch let error as ControlError {
                 if error.code == "pane_not_found" {

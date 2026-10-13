@@ -21,7 +21,7 @@ public enum TerminalKey: Sendable, CaseIterable {
 /// The Terminal tab: the pane's screen at the Mac's width, and keys typed into it.
 @MainActor @Observable
 public final class TerminalModel {
-    public let connection: MacConnection
+    public let connection: ServerConnection
     public let pane: String
     public private(set) var columns = 80
     public private(set) var scrollback: [[StyledRun]] = []
@@ -39,7 +39,7 @@ public final class TerminalModel {
     private var unsent = ""
     private var isSending = false
 
-    public init(connection: MacConnection, pane: String) {
+    public init(connection: ServerConnection, pane: String) {
         self.connection = connection
         self.pane = pane
     }
@@ -81,7 +81,7 @@ public final class TerminalModel {
                     if let screen = try? event.data.decode(PhoneScreen.self) { show(screen, scrollback: false) }
                 }
                 subscription = nil
-            } catch is MacConnection.NotPaired {
+            } catch is ServerConnection.NotPaired {
                 return
             } catch let error as ControlError {
                 problem = connection.problem(error)

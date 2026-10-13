@@ -5,7 +5,8 @@ import SwiftUI
 struct InboxView: View {
     @Environment(PhoneApp.self) private var app
     @State private var showsSettings = false
-    @State private var path: [PaneLink] = []
+    @State private var showsNewTask = false
+    @State private var path: [PaneRef] = []
 
     private var model: InboxModel { app.inbox }
 
@@ -26,15 +27,19 @@ struct InboxView: View {
                 if model.hasInbox, model.sections.isEmpty {
                     CaughtUp(detail: model.caughtUpDetail)
                         .opacity(model.isStale ? 0.55 : 1)
-                } else if !model.hasInbox, app.connection.isUnreachable {
+                } else if !model.hasInbox, model.connectionLine.state == .unreachable {
                     ContentUnavailableView(
-                        "Can't reach \(app.connection.macName)", systemImage: "wifi.slash",
+                        model.connectionLine.text, systemImage: "wifi.slash",
                         description: Text(verbatim: PhoneProblemText.checkTailscale))
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
-                    if model.isStale, case .unreachable(let problem) = app.connection.status {
+                    let cards = app.waker.cards(for: app.servers)
+                    ForEach(cards) { card in
+                        WakeCardView(card: card)
+                    }
+                    if let problem = model.staleBanner(apart: Set(cards.map(\.id))) {
                         Banner(problem: problem, tint: Theme.yellow, icon: "wifi.slash")
                     }
                     // A pairing link opened while paired fails here, since Pairing is not on screen.
@@ -54,32 +59,35 @@ struct InboxView: View {
             .backButtonTitle("Inbox")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("New task", systemImage: "square.and.pencil") { showsNewTask = true }
+                        .disabled(app.servers.paired.isEmpty)
+                        .accessibilityIdentifier("new-task")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") { showsSettings = true }
                         .accessibilityIdentifier("settings")
                 }
             }
-            .navigationDestination(for: PaneLink.self) { link in
-                ConversationView(app: app, pane: link.pane)
+            .navigationDestination(for: PaneRef.self) { ref in
+                PaneDestination(ref: ref)
             }
-            .refreshable { app.connection.foreground() }
+            .refreshable { app.servers.foreground() }
             .sheet(isPresented: $showsSettings) {
                 SettingsView()
             }
+            .sheet(isPresented: $showsNewTask) {
+                NewTaskView { path.append($0) }
+            }
         }
-        .environment(\.openPane, OpenPaneAction { path.append(PaneLink(pane: $0)) })
+        .environment(\.openPane, OpenPaneAction { path.append($0) })
     }
-}
-
-/// Opens a pane's conversation.
-struct PaneLink: Hashable {
-    var pane: String
 }
 
 /// Pushes a pane's conversation onto the tab's navigation stack.
 struct OpenPaneAction {
-    var open: @MainActor (String) -> Void
+    var open: @MainActor (PaneRef) -> Void
 
-    @MainActor func callAsFunction(_ pane: String) {
+    @MainActor func callAsFunction(_ pane: PaneRef) {
         open(pane)
     }
 }
@@ -90,14 +98,14 @@ extension EnvironmentValues {
 
 extension View {
     /// The whole row opens the pane, while buttons inside it keep their own taps.
-    func opens(_ pane: String?) -> some View {
+    func opens(_ pane: PaneRef?) -> some View {
         modifier(OpensPane(pane: pane))
     }
 }
 
 private struct OpensPane: ViewModifier {
     @Environment(\.openPane) private var openPane
-    var pane: String?
+    var pane: PaneRef?
 
     func body(content: Content) -> some View {
         content
@@ -109,17 +117,18 @@ private struct OpensPane: ViewModifier {
 
 enum PhoneProblemText {
     static let checkTailscale =
-        "Check that Tailscale is on, on this iPhone and the Mac, and that the Mac is awake with Canopy open."
+        "Check that Tailscale is on, on this iPhone and the server, and that the server is awake with Canopy running."
 }
 
-/// "Mac connected, 7 agents", or when the inbox is from, while the Mac is out of reach.
+/// "Studio connected", which servers are out of reach, or when the inbox is from while all of them are.
 struct ConnectionLine: View {
     @Environment(PhoneApp.self) private var app
 
     var body: some View {
+        let line = app.inbox.connectionLine
         HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text)
+            Circle().fill(color(line.state)).frame(width: 6, height: 6)
+            Text(line.text)
         }
         .font(.footnote)
         .foregroundStyle(.secondary)
@@ -128,23 +137,11 @@ struct ConnectionLine: View {
         .accessibilityIdentifier("connection")
     }
 
-    private var color: Color {
-        switch app.connection.status {
+    private func color(_ state: InboxModel.ConnectionLine.State) -> Color {
+        switch state {
         case .connected: Theme.green
         case .connecting: Theme.yellow
         case .unreachable: Color.secondary
-        }
-    }
-
-    private var text: String {
-        switch app.connection.status {
-        case .connected:
-            return "\(app.connection.macName) connected"
-        case .connecting:
-            return "Connecting to \(app.connection.macName)"
-        case .unreachable:
-            guard let asOf = app.inbox.asOf else { return "Can't reach \(app.connection.macName)" }
-            return "As of \(asOf.formatted(date: .omitted, time: .shortened))"
         }
     }
 }
@@ -224,7 +221,7 @@ private struct CaughtUp: View {
 /// Done agents, newest first, each read by opening it, swiping it, or Mark all read.
 private struct DoneSection: View {
     @Environment(PhoneApp.self) private var app
-    var items: [PhoneInbox.Item]
+    var items: [InboxItem]
 
     var body: some View {
         if !items.isEmpty {
@@ -236,7 +233,7 @@ private struct DoneSection: View {
                                 Task { await app.inbox.markRead(item) }
                             }
                             .tint(Theme.accent)
-                            .disabled(app.inbox.isStale)
+                            .disabled(item.server.isUnreachable)
                             .accessibilityIdentifier("mark-read-\(item.row.name)")
                         }
                 }
@@ -260,7 +257,7 @@ private struct DoneSection: View {
 
 private struct InboxSection: View {
     var title: String
-    var items: [PhoneInbox.Item]
+    var items: [InboxItem]
 
     var body: some View {
         if !items.isEmpty {
@@ -278,7 +275,7 @@ private struct InboxSection: View {
 /// One agent: its dot, row name, time, last line, and Allow and Deny for a permission prompt.
 private struct InboxItemRow: View {
     @Environment(PhoneApp.self) private var app
-    var item: PhoneInbox.Item
+    var item: InboxItem
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -304,13 +301,15 @@ private struct InboxItemRow: View {
             }
         }
         .padding(.vertical, 1)
-        .opens(item.agent.pane)
+        // An item from a server out of reach is as of when it last answered.
+        .opacity(item.server.isUnreachable && !app.inbox.isStale ? 0.55 : 1)
+        .opens(item.ref)
     }
 }
 
 struct AllowDeny: View {
     @Environment(PhoneApp.self) private var app
-    var item: PhoneInbox.Item
+    var item: InboxItem
 
     var body: some View {
         HStack(spacing: 8) {
@@ -321,7 +320,7 @@ struct AllowDeny: View {
                 .buttonStyle(ChipStyle(kind: .plain))
                 .accessibilityIdentifier("deny-\(item.row.name)")
         }
-        .disabled(app.inbox.answering.contains(item.agent.pane) || app.inbox.isStale)
+        .disabled(app.inbox.answering.contains(item.ref) || item.server.isUnreachable)
     }
 }
 
