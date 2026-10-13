@@ -17,7 +17,7 @@ func connected(to mac: FakeMac, inbox: PhoneInbox = PhoneInbox(), sleeper: Manua
     return connection
 }
 
-/// UserDefaults of a test's own, so pins and settings never leak between tests.
+/// UserDefaults of a test's own, so settings never leak between tests.
 func freshDefaults() -> UserDefaults {
     let name = "canopy-phone-tests-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: name)!
