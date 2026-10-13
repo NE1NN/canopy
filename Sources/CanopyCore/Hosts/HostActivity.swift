@@ -146,6 +146,8 @@ public final class HostMonitor {
     /// The host's sessions, onto its panes. Returns whether the host answered.
     private func probeSessions(on connection: HostConnection) async -> Bool {
         let alias = connection.alias
+        let isBox = workspace.hosts.hosts[alias]?.box == true
+        if isBox { await workspace.ensureBoxLink(connection) }
         guard
             let result = await connection.probe(HostProbe.command(homeID: workspace.homeID), timeout: .seconds(10)),
             result.status == 0, let report = try? HostProbe.decode(result.stdout)
@@ -173,7 +175,8 @@ public final class HostMonitor {
                 self.listing[alias] = nil
             }
         }
-        if !report.pending.isEmpty, replaying[alias] == nil {
+        // An upgraded host's canopy-box replays its kept reports itself.
+        if !isBox, !report.pending.isEmpty, replaying[alias] == nil {
             let workspace = workspace
             replaying[alias] = Task {
                 for pane in report.pending {

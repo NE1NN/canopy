@@ -1,0 +1,181 @@
+import Foundation
+
+/// An upgraded host's snapshot, after its rows are applied, for what shows its panes and agents.
+public struct BoxUpdate: Sendable {
+    public var host: String
+    public var snapshot: BoxSnapshot
+    /// Stand-ins of rows the box no longer has, whose terminals close.
+    public var goneRows: [String]
+}
+
+extension Workspace {
+    /// Each upgraded host's snapshots, as they come.
+    public func boxUpdates() -> AsyncStream<BoxUpdate> {
+        let (stream, continuation) = AsyncStream.makeStream(of: BoxUpdate.self, bufferingPolicy: .bufferingNewest(16))
+        let id = UUID()
+        boxObservers[id] = continuation
+        continuation.onTermination = { [weak self] _ in Task { await self?.forgetBoxObserver(id) } }
+        return stream
+    }
+
+    private func forgetBoxObserver(_ id: UUID) {
+        boxObservers[id] = nil
+    }
+
+    /// The link to an upgraded host's canopy-box, or nil for a host that is not upgraded.
+    public func boxLink(for alias: String) -> BoxLink? {
+        guard hosts.hosts[alias]?.box == true else { return nil }
+        return boxLinks[alias]
+    }
+
+    /// Brings up an upgraded host's link once per connection: the forward to its `box.sock` through the master, and
+    /// the link itself, which connects and reconnects on its own.
+    public func ensureBoxLink(_ connection: HostConnection) async {
+        let alias = connection.alias
+        guard hosts.hosts[alias]?.box == true, await connection.state == .connected else { return }
+        let generation = await connection.generation
+        if boxForwarded[alias] != generation {
+            let local = HostPaths.boxSocket(home: home, homeID: homeID, alias: alias)
+            try? FileManager.default.createDirectory(
+                atPath: (local as NSString).deletingLastPathComponent, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            unlink(local)
+            guard let hostHome = try? await connection.home(),
+                let result = await connection.forwardSocket(
+                    local: local, remote: "\(hostHome)/.canopy/\(homeID)/box/box.sock"),
+                result.status == 0
+            else { return }
+            boxForwarded[alias] = generation
+        }
+        guard boxLinks[alias] == nil else { return }
+        let link = BoxLink(alias: alias, socketPath: HostPaths.boxSocket(home: home, homeID: homeID, alias: alias)) {
+            [weak self] in
+            BoxConfig(host: alias, repos: self?.hosts.hosts[alias]?.repos ?? [:])
+        }
+        boxLinks[alias] = link
+        await link.start()
+        boxWatchers[alias] = Task { [weak self] in
+            for await snapshot in await link.snapshots() {
+                await self?.applyBoxSnapshot(snapshot, host: alias)
+            }
+        }
+    }
+
+    /// Stops an upgraded host's link, as when the host goes back or is removed.
+    public func stopBoxLink(_ alias: String) async {
+        boxWatchers.removeValue(forKey: alias)?.cancel()
+        await boxLinks.removeValue(forKey: alias)?.stop()
+        boxForwarded[alias] = nil
+    }
+
+    /// Makes the host's remote rows the box's rows other than its clones: stand-ins for new ones, branches and heads
+    /// brought up to date, and rows the box no longer has forgotten. Tells `boxUpdates` after.
+    func applyBoxSnapshot(_ snapshot: BoxSnapshot, host alias: String) async {
+        guard let entry = hosts.hosts[alias], entry.box else { return }
+        var changed = false
+        var gone: [String] = []
+        var touched: Set<String> = []
+        for (repoName, _) in entry.repos {
+            guard let index = state.repos.firstIndex(where: { self.repoName($0.path) == repoName }) else { continue }
+            var repoChanged = false
+            let rows = snapshot.rows.filter { !$0.isMain && $0.repo == repoName }
+            let paths = Set(rows.map(\.path))
+            for row in rows {
+                if let position = state.repos[index].remote.firstIndex(where: {
+                    $0.host == alias && $0.path == row.path
+                }) {
+                    var updated = state.repos[index].remote[position]
+                    updated.branch = row.branch
+                    updated.head = row.head
+                    updated.missing = row.missing
+                    if updated != state.repos[index].remote[position] {
+                        state.repos[index].remote[position] = updated
+                        repoChanged = true
+                    }
+                } else {
+                    let entry = RemoteRowEntry(
+                        host: alias, path: row.path,
+                        standIn: standInPath(
+                            alias: alias, dirName: state.repos[index].dirName,
+                            leaf: (row.path as NSString).lastPathComponent),
+                        branch: row.branch, head: row.head, missing: row.missing)
+                    try? entry.makeStandIn()
+                    state.repos[index].remote.removeAll { $0.standIn == entry.standIn }
+                    state.repos[index].remote.append(entry)
+                    state.repos[index].place(entry.standIn, joining: nil)
+                    repoChanged = true
+                }
+            }
+            let leaving = state.repos[index].remote.filter { $0.host == alias && !paths.contains($0.path) }
+            for row in leaving {
+                state.repos[index].remote.removeAll { $0.standIn == row.standIn }
+                state.repos[index].forget(row.standIn)
+                try? FileManager.default.removeItem(atPath: row.standIn)
+                if state.selectedRowPath == row.standIn { state.selectedRowPath = nil }
+                gone.append(row.standIn)
+                repoChanged = true
+            }
+            if repoChanged {
+                changed = true
+                touched.insert(state.repos[index].path)
+            }
+        }
+        if changed {
+            try? save()
+            for repoPath in touched { await refresh(repoPath: repoPath) }
+        }
+        let update = BoxUpdate(host: alias, snapshot: snapshot, goneRows: gone)
+        for observer in boxObservers.values { observer.yield(update) }
+    }
+
+    /// Makes a row on an upgraded host through its canopy-box, by the box's copy of the same branch rules.
+    func createBoxRow(
+        repoPath: String, host alias: String, branch: String, base: String?, existing: Bool, group: String?
+    ) async throws -> CreatedRow {
+        let target = try await remoteTarget(repoPath: repoPath, host: alias)
+        try await target.connection.connect()
+        await ensureBoxLink(target.connection)
+        guard let link = boxLinks[alias], await link.waitUntilConnected(within: .seconds(30)) else {
+            throw WorkspaceError.hostUnreachable(alias, reason: "canopy-box on \(alias) is not answering.")
+        }
+        let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
+        let made: BoxRowNewResult = try await link.call(
+            BoxMethod.rowNew,
+            BoxRowNewParams(repo: target.repoName, branch: branch, base: base, existing: existing))
+        let index = try entryIndex(repoPath: repoPath)
+        let entry = RemoteRowEntry(
+            host: alias, path: made.row.path,
+            standIn: standInPath(
+                alias: alias, dirName: state.repos[index].dirName, leaf: (made.row.path as NSString).lastPathComponent),
+            branch: made.row.branch, head: made.row.head)
+        if state.repos[index].remote.contains(where: { $0.host == alias && $0.path == entry.path }) {
+            state.repos[index].remote.removeAll { $0.host == alias && $0.path == entry.path }
+        }
+        try await addRemoteRow(entry, repoPath: repoPath, joining: joining)
+        let row = snapshot.row(path: entry.standIn) ?? Row(remote: entry, repoPath: repoPath)
+        record(ActivityType.rowCreated, row, data: remoteData(row, ["class": .string(RowClass.remote.rawValue)]))
+        return CreatedRow(
+            row: row, source: made.source, base: made.base, pullRequest: nil, notes: made.notes,
+            warnings: made.warnings)
+    }
+
+    /// Removes a row on an upgraded host through its canopy-box. Returns its warnings.
+    func removeBoxRow(_ entry: RemoteRowEntry, force: Bool, deleteBranch: Bool) async throws -> [String] {
+        let connection = try await connection(for: entry.host)
+        try await connection.connect()
+        await ensureBoxLink(connection)
+        guard let link = boxLinks[entry.host], await link.waitUntilConnected(within: .seconds(30)) else {
+            throw WorkspaceError.hostUnreachable(entry.host, reason: "canopy-box on \(entry.host) is not answering.")
+        }
+        do {
+            let removed: BoxRowRemoveResult = try await link.call(
+                BoxMethod.rowRemove, BoxRowRemoveParams(path: entry.path, force: force, deleteBranch: deleteBranch))
+            return removed.warnings
+        } catch let error as ControlError where error.code == "worktree_dirty" {
+            throw WorkspaceError.worktreeDirty(entry.standIn)
+        } catch let error as ControlError where error.code == "row_not_found" {
+            // Gone from the box already, as when it was removed there meanwhile.
+            return []
+        }
+    }
+}

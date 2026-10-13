@@ -10,11 +10,17 @@ public struct HostEntry: Codable, Sendable, Equatable {
     public var wake: String?
     /// Panes detach after this many minutes with nothing running and nothing typed. 0 never detaches.
     public var idleDetachMinutes: Int
+    /// canopy-box runs the host's rows, panes, and agents, since `canopy host upgrade`.
+    public var box: Bool
 
-    public init(repos: [String: String] = [:], wake: String? = nil, idleDetachMinutes: Int = defaultIdleDetachMinutes) {
+    public init(
+        repos: [String: String] = [:], wake: String? = nil, idleDetachMinutes: Int = defaultIdleDetachMinutes,
+        box: Bool = false
+    ) {
         self.repos = repos
         self.wake = wake
         self.idleDetachMinutes = idleDetachMinutes
+        self.box = box
     }
 
     public init(from decoder: any Decoder) throws {
@@ -23,6 +29,7 @@ public struct HostEntry: Codable, Sendable, Equatable {
         wake = try container.decodeIfPresent(String.self, forKey: .wake)
         let minutes = try container.decodeIfPresent(Int.self, forKey: .idleDetachMinutes)
         idleDetachMinutes = minutes.map { $0 < 0 ? Self.defaultIdleDetachMinutes : $0 } ?? Self.defaultIdleDetachMinutes
+        box = try container.decodeIfPresent(Bool.self, forKey: .box) ?? false
     }
 
     /// The clone of a registered repo: the one saved under its name, or else under a name its path ends in, since
@@ -74,6 +81,7 @@ public struct HostsConfigFile: Sendable {
             section["repos"] = OrderedJSON(.object(entry.repos.mapValues(JSONValue.string)))
             if let wake = entry.wake { section["wake"] = .string(wake) }
             section["idleDetachMinutes"] = .number(String(entry.idleDetachMinutes))
+            section["box"] = entry.box ? .bool(true) : nil
             hosts[alias] = section
         }
     }

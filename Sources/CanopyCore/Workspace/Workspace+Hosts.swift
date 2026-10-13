@@ -209,6 +209,7 @@ extension Workspace {
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
+        await stopBoxLink(alias)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 
@@ -240,6 +241,7 @@ extension Workspace {
             server.stop()
         }
         relayServers.removeAll()
+        for alias in Array(boxLinks.keys) { await stopBoxLink(alias) }
     }
 }
 
