@@ -826,19 +826,17 @@ final class AppModel {
     }
 
     /// The selected row's Claude conversations, newest first, for Resume in a chat.
-    func conversations() -> [ClaudeSessionInfo] {
+    func conversations() async -> [ClaudeSessionInfo] {
         guard let row = selection else { return [] }
-        return ClaudeSessions.list(folder: Paths.canonical(row.path), home: NSHomeDirectory())
+        let (folder, home) = (Paths.canonical(row.path), terminals.claudeHome)
+        return await Task.detached { ClaudeSessions.list(folder: folder, home: home) }.value
     }
 
     /// Opens a conversation in a chat, or shows the pane that already holds it.
     func resume(_ conversation: ClaudeSessionInfo) {
         guard canOpenChat, let row = selection else { return }
-        if let pane = terminals.pane(holdingSession: conversation.id),
-            let (path, tab) = terminals.tab(containing: pane.id)
-        {
-            terminals.selectTab(tab.id, inRow: path)
-            terminals.focus(pane.id)
+        if let pane = terminals.pane(holdingSession: conversation.id) {
+            terminals.show(pane)
             focusSelectedTerminal()
             return
         }
@@ -847,8 +845,10 @@ final class AppModel {
 
     /// With a prompt, such as a full-screen command, the terminal's Claude Code runs it first.
     func openInTerminal(_ pane: Pane, running prompt: String? = nil) {
-        terminals.openInTerminal(pane, running: prompt)
-        focusSelectedTerminal()
+        Task {
+            await terminals.openInTerminal(pane, running: prompt)
+            focusSelectedTerminal()
+        }
     }
 
     /// Whether the sheet listing every conversation of the row shows.

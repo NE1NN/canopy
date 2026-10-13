@@ -35,6 +35,8 @@ public final class Pane: Identifiable {
 
     /// What the agent in it is doing, as its hooks or `canopy term state` report it.
     public private(set) var agent = PaneAgent()
+    /// The Claude Code session a terminal was opened to resume, until its hooks report the session it holds.
+    public var resumingSession: String?
     /// Called after each change to `agent`.
     @ObservationIgnored public var onAgentChange: ((Pane, AgentChange) -> Void)?
     /// Called when the pane closes for good, before its agent state clears.
@@ -133,7 +135,10 @@ public final class Pane: Identifiable {
         let busy = isBusy
         if busy != isRunningProgram {
             isRunningProgram = busy
-            if !busy { agentChanged(agent.ended(at: Date())) }
+            if !busy {
+                resumingSession = nil
+                agentChanged(agent.ended(at: Date()))
+            }
         }
     }
 
@@ -141,6 +146,7 @@ public final class Pane: Identifiable {
     @discardableResult
     public func report(_ report: AgentReport, now: Date = Date()) -> AgentChange? {
         let change = agent.apply(report, now: now)
+        if report.session != nil { resumingSession = nil }
         if report.event == "UserPromptSubmit", report.session == nil || report.session == agent.session {
             onPrompted?(self)
         }
@@ -228,6 +234,7 @@ public final class Pane: Identifiable {
     func exited(_ code: Int32) {
         status = .exited(code)
         isRunningProgram = false
+        resumingSession = nil
         record(ActivityType.termExited, ["code": .number(Double(code))])
         agentChanged(agent.ended(at: Date()))
         let waiters = exitWaiters

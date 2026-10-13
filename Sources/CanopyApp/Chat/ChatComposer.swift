@@ -24,6 +24,7 @@ struct ChatComposer: View {
         VStack(alignment: .leading, spacing: 8) {
             if !menuItems.isEmpty {
                 CommandMenu(items: menuItems, selection: min(menuSelection, menuItems.count - 1), pick: run)
+                    .onChange(of: chat.draft) { menuSelection = 0 }
             }
             if !chat.draftImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -116,9 +117,13 @@ struct ChatComposer: View {
         return "Reply to Claude"
     }
 
+    private var hasDraft: Bool {
+        !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty
+    }
+
+    /// A `!` command typed while another runs stays in the composer until it can run.
     private var canSend: Bool {
-        !chat.needsTrust
-            && (!chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty)
+        !chat.needsTrust && hasDraft && chat.takes(chat.draft)
     }
 
     private func send() {
@@ -172,7 +177,7 @@ struct ChatComposer: View {
         }
         if chat.needsTrust {
             onTrust()
-        } else if canSend {
+        } else if hasDraft {
             send()
         } else if let permission = chat.permission {
             switch permission.kind {
@@ -192,9 +197,11 @@ struct ChatComposer: View {
         return true
     }
 
-    /// Esc turns down trust, stops a shell command, denies an open prompt, or stops Claude.
+    /// Esc closes the `/` menu, turns down trust, stops a shell command, denies an open prompt, or stops Claude.
     private func escape() {
-        if chat.isRunningShell {
+        if !menuItems.isEmpty {
+            chat.draft = ""
+        } else if chat.isRunningShell {
             chat.stopShell()
         } else if chat.needsTrust {
             onDeclineTrust()

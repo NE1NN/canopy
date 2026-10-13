@@ -32,8 +32,14 @@ public final class PipeProcess: @unchecked Sendable {
     private var pendingErrors = Data()
     private var buffer = [UInt8](repeating: 0, count: 65_536)
     private let inFlight = DispatchSemaphore(value: 4)
+    private let keepsBlankLines: Bool
 
-    public init(_ launch: TerminalLaunch, onLines: @escaping LinesHandler, onExit: @escaping ExitHandler) throws {
+    /// `keepsBlankLines` passes empty lines on, as a command's output needs; stream-json has none worth passing.
+    public init(
+        _ launch: TerminalLaunch, keepsBlankLines: Bool = false, onLines: @escaping LinesHandler,
+        onExit: @escaping ExitHandler
+    ) throws {
+        self.keepsBlankLines = keepsBlankLines
         guard access(launch.executable, X_OK) == 0 else {
             throw PtySpawnError(executable: launch.executable, code: errno)
         }
@@ -197,7 +203,7 @@ public final class PipeProcess: @unchecked Sendable {
     private func drainOutput(_ fd: Int32) -> Int {
         guard outputSource != nil else { return 0 }
         let (count, ended) = read(fd, into: &pending)
-        var lines = Self.split(&pending)
+        var lines = Self.split(&pending, keepingBlankLines: keepsBlankLines)
         if ended {
             if !pending.isEmpty { lines.append(pending) }
             pending = Data()
@@ -235,12 +241,12 @@ public final class PipeProcess: @unchecked Sendable {
     }
 
     /// Takes the complete lines out of `data`, leaving a partial last line in it.
-    static func split(_ data: inout Data) -> [Data] {
+    static func split(_ data: inout Data, keepingBlankLines: Bool = false) -> [Data] {
         guard let last = data.lastIndex(of: 0x0A) else { return [] }
         let lines = data[data.startIndex..<last].split(separator: 0x0A, omittingEmptySubsequences: false)
             .map { Data($0) }
         data = Data(data[data.index(after: last)...])
-        return lines.filter { !$0.isEmpty }
+        return keepingBlankLines ? lines : lines.filter { !$0.isEmpty }
     }
 
     private func finish(output: Int32, errors: Int32) {

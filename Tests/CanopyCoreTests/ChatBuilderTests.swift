@@ -222,6 +222,39 @@ struct ChatBuilderTests {
 }
 
 /// The transcripts recorded from Claude Code 2.1.296 that the phone's tests read.
+struct ChatShellTests {
+    @Test func outputThatHoldsItsOwnTagsStaysWhole() throws {
+        let (output, code) = try #require(
+            ChatBuilder.shellOutput(
+                "<bash-stdout>a </bash-stdout><bash-stderr> b</bash-stdout><bash-stderr>Exit code 2</bash-stderr>"))
+
+        #expect(output == "a </bash-stdout><bash-stderr> b")
+        #expect(code == 2)
+        #expect(ChatBuilder.shellCommand("<bash-input>echo '</bash-input>'</bash-input>") == "echo '</bash-input>'")
+    }
+
+    @Test func aTerminalsStderrStaysOutput() throws {
+        let (output, code) = try #require(
+            ChatBuilder.shellOutput("<bash-stdout>out\n</bash-stdout><bash-stderr>warning: x</bash-stderr>"))
+
+        #expect(output == "out\nwarning: x")
+        #expect(code == 0)
+    }
+
+    @Test func outputKeepsItsEnd() {
+        var shell = ChatShell(command: "yes", output: "", exitCode: nil)
+        for index in 0..<20_000 {
+            shell.append("line \(index)")
+        }
+
+        #expect(shell.output.utf8.count <= 2 * ChatShell.outputLimit)
+        #expect(shell.output.hasPrefix(ChatShell.cutNote + "\nline "))
+        #expect(shell.output.hasSuffix("line 19999"))
+        #expect(shell.outputForClaude.utf8.count <= ChatShell.outputLimit + ChatShell.cutNote.utf8.count + 1)
+        #expect(shell.outputForClaude.hasSuffix("line 19999"))
+    }
+}
+
 struct ChatBuilderRecordedTests {
     func items(_ name: String) throws -> [ChatItem] {
         var builder = ChatBuilder()

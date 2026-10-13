@@ -89,23 +89,20 @@ public struct ChatBuilder: Sendable {
         var shellIndex: Int?
         parts = parts.filter { part in
             let text = part.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let command = TranscriptParser.Builder.tag("bash-input", in: text), text.hasPrefix("<bash-input>") {
+            if let command = Self.shellCommand(text) {
+                // Done unless its output says otherwise: in a TUI transcript the output can be on an older page.
                 append(
                     ChatItem(
                         id: record.id + "#shell\(items.count)",
-                        content: .shell(ChatShell(command: command, output: "", exitCode: nil)), at: record.at))
+                        content: .shell(ChatShell(command: command, output: "", exitCode: 0)), at: record.at))
                 shellIndex = items.count - 1
                 return false
             }
-            if text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") {
-                let output = [
-                    TranscriptParser.Builder.tag("bash-stdout", in: text),
-                    TranscriptParser.Builder.tag("bash-stderr", in: text),
-                ].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+            if let (output, exitCode) = Self.shellOutput(text) {
                 let index = shellIndex ?? items.lastIndex { if case .shell = $0.content { true } else { false } }
                 if let index, case .shell(var shell) = items[index].content {
                     shell.output = output
-                    shell.exitCode = 0
+                    shell.exitCode = exitCode
                     items[index].content = .shell(shell)
                     items[index].revision = nextRevision()
                 }
@@ -125,6 +122,38 @@ public struct ChatBuilder: Sendable {
             return
         }
         append(ChatItem(id: record.id, content: .prompt(ChatPrompt(text: text, images: images)), at: record.at))
+    }
+
+    static func shellCommand(_ text: String) -> String? {
+        guard text.hasPrefix("<bash-input>"), text.hasSuffix("</bash-input>") else { return nil }
+        return String(text.dropFirst("<bash-input>".count).dropLast("</bash-input>".count))
+    }
+
+    /// Output and exit code, cut at the last closing tags, since the output itself may hold them. A failure's exit
+    /// code is in stderr as "Exit code N", as Canopy sends it.
+    static func shellOutput(_ text: String) -> (String, Int32)? {
+        guard text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") else { return nil }
+        var stdout = ""
+        var stderr = Substring(text)
+        if text.hasPrefix("<bash-stdout>") {
+            let body = text.dropFirst("<bash-stdout>".count)
+            if let end = body.range(of: "</bash-stdout><bash-stderr>", options: .backwards) {
+                stdout = String(body[..<end.lowerBound])
+                stderr = "<bash-stderr>" + body[end.upperBound...]
+            } else {
+                return (String(body.hasSuffix("</bash-stdout>") ? body.dropLast("</bash-stdout>".count) : body), 0)
+            }
+        }
+        stderr = stderr.dropFirst("<bash-stderr>".count)
+        if stderr.hasSuffix("</bash-stderr>") { stderr = stderr.dropLast("</bash-stderr>".count) }
+        var errors = String(stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+        var code: Int32 = 0
+        if let range = errors.range(of: #"(^|\n)Exit code (\d+)$"#, options: .regularExpression) {
+            code = Int32(errors[range].split(separator: " ").last ?? "") ?? 1
+            errors.removeSubrange(range)
+        }
+        let output = [stdout.trimmingCharacters(in: .newlines), errors].filter { !$0.isEmpty }
+        return (output.joined(separator: "\n"), code)
     }
 
     private mutating func addAssistant(_ record: TranscriptParser.Record) {

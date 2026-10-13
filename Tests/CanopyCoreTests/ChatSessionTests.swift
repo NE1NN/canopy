@@ -17,7 +17,7 @@ struct ChatSessionTests {
     func session(
         id: String? = nil, trusted: Bool = true, environment: [String: String] = [:],
         granted: @escaping () -> Void = {},
-        tasksRoot: URL? = nil
+        tasksRoot: URL? = nil, shell: Bool = false
     ) -> ChatSession {
         let home = home.path
         let folder = folder.path
@@ -37,7 +37,13 @@ struct ChatSessionTests {
                 grant: {
                     isTrusted = true
                     granted()
-                }), tasksRoot: tasksRoot ?? URL(fileURLWithPath: home + "/tasks"))
+                }), tasksRoot: tasksRoot ?? URL(fileURLWithPath: home + "/tasks"),
+            shell: shell
+                ? { command in
+                    TerminalLaunch(
+                        executable: "/bin/sh", arguments: ["sh", "-c", command],
+                        environment: ["PATH": "/usr/bin:/bin"], directory: folder)
+                } : nil)
     }
 
     /// Waits for things that need the stand-in Claude to have started, which takes longer on a loaded machine.
@@ -172,6 +178,86 @@ struct ChatSessionTests {
             })
         #expect(texts(chat).last == "got it")
         chat.close()
+    }
+
+    @Test func aShellCommandReadsNoInputAndClaudeLearnsHowItEnded() async throws {
+        let chat = session(shell: true)
+
+        chat.send("!printf 'a\\n\\nb\\n'; cat; echo oops >&2; exit 3")
+
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 3 })
+        let shell = ChatShell(
+            command: "printf 'a\\n\\nb\\n'; cat; echo oops >&2; exit 3", output: "a\n\nb\noops", exitCode: 3)
+        #expect(chat.shellRuns.first?.shell == shell)
+        chat.send("say seen")
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.items.contains { $0.content == .shell(shell) })
+        chat.close()
+    }
+
+    @Test func aShellCommandStopsWithItsChat() async throws {
+        let chat = session(shell: true)
+
+        chat.send("!sleep 60")
+        #expect(chat.isRunningShell)
+        #expect(!chat.takes("!echo next"))
+        #expect(!chat.takes("!"))
+        #expect(chat.takes("say hi"))
+        chat.close()
+
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode != nil })
+        #expect(!chat.isRunningShell)
+    }
+
+    @Test func shellCommandsWaitWithTheirMessageAndComeBackWhenItIsStopped() async throws {
+        let chat = session(shell: true)
+        chat.send("pause")
+        #expect(await soon { chat.turnTokens > 0 })
+        chat.send("!echo kept")
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+
+        chat.send("and this")
+
+        #expect(chat.shellRuns.isEmpty)
+        #expect(chat.queued.first?.shellRuns.map(\.shell.output) == ["kept"])
+        let rows = ChatRows.rows(for: chat).map(\.id)
+        let shellRow = try #require(rows.firstIndex { $0.hasPrefix("shell-") })
+        #expect(rows[shellRow + 1].hasPrefix("queued-"))
+        chat.interrupt()
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.draft == "and this")
+        #expect(chat.shellRuns.map(\.shell.output) == ["kept"])
+        chat.close()
+    }
+
+    @Test func aSlashCommandLeavesShellOutputForTheNextMessage() async throws {
+        let chat = session(shell: true)
+        chat.send("!echo later")
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+
+        chat.send("/clear")
+
+        #expect(chat.queued.allSatisfy { $0.shellRuns.isEmpty })
+        #expect(chat.shellRuns.map(\.shell.output) == ["later"])
+        chat.close()
+    }
+
+    @Test func handingOffInterruptsAndReturnsWhatClaudeHasNotRead() async throws {
+        let chat = session(shell: true)
+        chat.send("!echo seen")
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+        chat.send("pause")
+        #expect(await soon { chat.turnTokens > 0 })
+        chat.send("!echo unseen")
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+        chat.draft = "half written"
+
+        let unsent = await chat.handOff()
+
+        #expect(unsent == "I ran `echo unseen`:\n```\nunseen\n```\n\nhalf written")
+        #expect(!chat.isRunning)
+        #expect(!chat.isWorking)
+        #expect(texts(chat).contains("[Interrupted]"))
     }
 
     @Test func countsASubagentsToolCallsOnItsLine() async throws {

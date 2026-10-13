@@ -29,8 +29,10 @@ public enum ChatCommandMenu {
                 name: command.name, description: command.description, argumentHint: command.argumentHint,
                 isSkill: isSkill, opensInTerminal: needsTerminal.contains(command.name))
         }
-        // Names that start with what was typed come first, then commands before skills.
+        // The name typed in full comes first, then names that start with it, then commands before skills.
         return items.sorted {
+            let (exactA, exactB) = ($0.name.lowercased() == query, $1.name.lowercased() == query)
+            if exactA != exactB { return exactA }
             let (a, b) = ($0.name.lowercased().hasPrefix(query), $1.name.lowercased().hasPrefix(query))
             if a != b { return a }
             if $0.isSkill != $1.isSkill { return !$0.isSkill }

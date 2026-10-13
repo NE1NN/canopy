@@ -232,6 +232,8 @@ extension LayoutShape {
 struct NewTabMenu: View {
     @Environment(AppModel.self) private var model
     @State private var isHovering = false
+    /// Read off the main thread when the row changes and as the pointer comes over the button, before the menu opens.
+    @State private var conversations: [ClaudeSessionInfo] = []
 
     var body: some View {
         Menu {
@@ -249,7 +251,6 @@ struct NewTabMenu: View {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
             .disabled(!model.canOpenChat)
-            let conversations = model.conversations()
             if model.canOpenChat, !conversations.isEmpty {
                 Divider()
                 Section("Resume in a chat") {
@@ -275,7 +276,11 @@ struct NewTabMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .foregroundStyle(isHovering ? .primary : .secondary)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering { Task { conversations = await model.conversations() } }
+        }
+        .task(id: model.selection?.path) { conversations = await model.conversations() }
         .help("New Tab")
         .accessibilityLabel("New Tab")
     }

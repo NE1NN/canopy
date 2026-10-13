@@ -28,4 +28,27 @@ struct ClaudeSessionsTests {
         #expect(sessions.map(\.id) == ["new", "old"])
         #expect(sessions.map(\.title) == ["Phone pairing", "Fix the login"])
     }
+
+    /// Claude Code names a conversation as it goes, far down a long transcript, and a first prompt can hold an image.
+    @Test func readsTheNewestTitleFromTheEndAndAPromptPastALargeImage() throws {
+        let home = try TempDir()
+        let folder = ClaudeProjects.root(home: home.path).appending(path: ClaudeProjects.folderName(for: "/w/row"))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let filler = ChatLines.say(String(repeating: "x", count: 300 * 1024))
+        let named = [
+            ChatLines.prompt("Start"), filler, Data(#"{"type":"ai-title","aiTitle":"First idea"}"#.utf8), filler,
+            Data(#"{"type":"ai-title","aiTitle":"Canopy plugins"}"#.utf8), ChatLines.say("done"),
+        ]
+        let image = String(repeating: "A", count: 600 * 1024)
+        let pasted = Data(
+            #"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"\#(image)"}},{"type":"text","text":"What is this?"}]}}"#
+                .utf8)
+        try named.map { $0 + Data("\n".utf8) }.reduce(Data(), +).write(to: folder.appending(path: "named.jsonl"))
+        try (pasted + Data("\n".utf8)).write(to: folder.appending(path: "pasted.jsonl"))
+
+        let titles = Dictionary(
+            uniqueKeysWithValues: ClaudeSessions.list(folder: "/w/row", home: home.path).map { ($0.id, $0.title) })
+
+        #expect(titles == ["named": "Canopy plugins", "pasted": "What is this?"])
+    }
 }

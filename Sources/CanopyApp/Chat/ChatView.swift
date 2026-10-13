@@ -103,9 +103,9 @@ struct ConversationsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
+    @State private var all: [ClaudeSessionInfo] = []
 
     var body: some View {
-        let all = model.conversations()
         let shown = search.isEmpty ? all : all.filter { $0.title.localizedCaseInsensitiveContains(search) }
         VStack(alignment: .leading, spacing: 10) {
             Text("Resume in a chat").font(.headline)
@@ -133,5 +133,6 @@ struct ConversationsSheet: View {
         }
         .padding(16)
         .frame(width: 520, height: 420)
+        .task { all = await model.conversations() }
     }
 }

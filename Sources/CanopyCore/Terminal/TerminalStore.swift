@@ -311,7 +311,7 @@ public final class TerminalStore {
     }
 
     /// The home folder Claude Code keeps its settings and conversations in.
-    var claudeHome: String {
+    public var claudeHome: String {
         settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
     }
 
@@ -343,14 +343,28 @@ public final class TerminalStore {
 
     /// The pane holding a Claude Code session, in a terminal by its hooks or in a chat, so one session never has two.
     public func pane(holdingSession id: String) -> Pane? {
-        panes.first { $0.chat?.sessionID == id || ($0.terminal != nil && $0.agent.session == id) }
+        panes.first { $0.chat?.sessionID == id } ?? terminal(holdingSession: id)
     }
 
-    /// Moves a chat's conversation to a terminal: ends the chat's Claude Code and puts a terminal tab in its place,
-    /// which resumes the same session with the same model and mode.
+    private func terminal(holdingSession id: String) -> Pane? {
+        panes.first { $0.terminal != nil && ($0.agent.session ?? $0.resumingSession) == id }
+    }
+
+    /// Selects a pane's tab and gives it the keyboard.
+    public func show(_ pane: Pane) {
+        guard let (path, tab) = tab(containing: pane.id) else { return }
+        selectTab(tab.id, inRow: path)
+        focus(pane.id)
+    }
+
+    /// Moves a chat's conversation to a terminal: interrupts and ends the chat's Claude Code and puts a terminal tab in
+    /// its place, which resumes the same session with the same model and mode. What the chat had not sent goes as the
+    /// terminal's first message, unless `prompt`, such as a full-screen command, runs first.
     @discardableResult
-    public func openInTerminal(_ chatPane: Pane, running prompt: String? = nil) -> Pane? {
-        guard let chat = chatPane.chat, let (path, tab) = tab(containing: chatPane.id),
+    public func openInTerminal(_ chatPane: Pane, running prompt: String? = nil) async -> Pane? {
+        guard let chat = chatPane.chat, tab(containing: chatPane.id) != nil else { return nil }
+        let unsent = await chat.handOff()
+        guard let (path, tab) = tab(containing: chatPane.id),
             let index = tabs(inRow: path).firstIndex(where: { $0.id == tab.id })
         else { return nil }
         // UI fixtures, e2e runs, and tests set CANOPY_CLAUDE to a stand-in.
@@ -358,10 +372,11 @@ public final class TerminalStore {
         if let session = chat.sessionID { words += ["--resume", session] }
         if let model = chat.model { words += ["--model", model] }
         words += ["--permission-mode", chat.mode]
-        if let prompt { words.append(prompt) }
+        if let prompt = prompt ?? unsent { words.append(prompt) }
         let command = ([words[0]] + words.dropFirst().map(SetupScript.quoted)).joined(separator: " ")
         chatPane.close()
         let pane = makePane(chatPane.context, command: .shell, directory: nil)
+        pane.resumingSession = chat.sessionID
         let terminalTab = TerminalTab(id: TabID(nextTab), name: tab.name, grid: TerminalGrid(pane: pane))
         nextTab += 1
         tabsByRow[path]?[index] = terminalTab
@@ -391,6 +406,13 @@ public final class TerminalStore {
             })
         let pane = Pane(id: id, context: context, chat: chat, activity: activity)
         chat.onChange = { [weak self] in self?.onChange() }
+        chat.heldBy = { [weak self] session in self?.terminal(holdingSession: session)?.id.description }
+        chat.showHolder = { [weak self, weak chat] in
+            guard let self, let session = chat?.sessionID, let holder = terminal(holdingSession: session) else {
+                return
+            }
+            show(holder)
+        }
         chat.onPick = { [weak self] model, mode in
             guard let self else { return }
             self.chatDefaults = ChatDefaults(

@@ -21,9 +21,33 @@
 
 - The `/` menu lists what Claude Code reports once it runs; before a chat's first message it is empty.
 - A full-screen command runs as the terminal's first prompt (`claude --resume <id> "/rewind"`), so Open in Terminal and the command are one step.
-- Shell output shows its last 30 lines; Claude gets all of it.
-- A `!` command runs while Claude is idle or working; Claude reads it with the next message either way.
+- A `!` command's stderr joins its stdout in the order printed, and it reads no input: `!cat` ends at once instead of waiting.
+- A `!` command shows its last 30 lines until opened; Claude gets the last 30,000 bytes, as Claude Code's own `!` does.
+- A failed `!` command reaches Claude as `Exit code N` in `<bash-stderr>`.
+- A `!` command runs while Claude is idle or working; Claude reads it with the next plain message, never with a `/` command, which must start its message.
+- Open in Terminal sends what the chat had not sent yet (finished `!` commands and the draft) as the terminal's first message. A full-screen command from the `/` menu goes first instead. Pasted images that were not sent stay behind.
+- A chat whose session a terminal holds says "Open in p12" with a button to show it, and starts when the terminal lets it go.
 
 ## After Review
 
-Filled in after the independent review.
+An independent opus review found 4 high, 8 medium, and 4 low findings and missing tests; all fixed:
+
+1. High: `!` commands outlived their chat. Closing a chat stops its command. Test: `aShellCommandStopsWithItsChat`.
+2. High: `!` output grew without end on the main thread. It keeps about the last 60 KB and sends Claude the last 30 KB. Test: `outputKeepsItsEnd`.
+3. High: a `!` command that read input waited forever. It reads `/dev/null`, and the shell's own input closes at once. Test: `aShellCommandReadsNoInputAndClaudeLearnsHowItEnded`.
+4. High: `!` output vanished while queued and was lost when the message came back. It travels with its message, shows above it, and returns with it. Test: `shellCommandsWaitWithTheirMessageAndComeBackWhenItIsStopped`.
+5. Medium: exit codes, stderr, and blank lines were lost. Stderr joins stdout, blank lines stay, and the exit code goes to Claude and back into the block.
+6. Medium: output holding `</bash-stdout>` cut its block short. Blocks are cut at their last closing tags. Test: `outputThatHoldsItsOwnTagsStaysWhole`.
+7. Medium: a `/` command after a `!` command could reach Claude as text. `!` output waits for the next plain message. Test: `aSlashCommandLeavesShellOutputForTheNextMessage`.
+8. Medium: conversation titles missed Claude Code's `ai-title` records far down a transcript, and a first prompt holding an image dropped its conversation. Titles come from the end, prompts from up to 4 MB in. Test: `readsTheNewestTitleFromTheEndAndAPromptPastALargeImage`.
+9. Medium: the `+` menu and the sheet read every transcript on the main thread, on each hover and keystroke. They load off the main thread, and titles are cached by file date and size.
+10. Medium: Esc with the `/` menu open stopped Claude. It closes the menu.
+11. Medium: Open in Terminal dropped a turn mid-step and lost the draft. It interrupts first and carries what was not sent. Test: `handingOffInterruptsAndReturnsWhatClaudeHasNotRead`.
+12. Medium: a session could get two owners while a terminal started, or when a restored chat's session was open in a terminal. A terminal holds the session it resumes from the start, and a chat will not start on a held one. Test: `openInTerminalPutsATerminalResumingTheSessionInTheChatsPlace`.
+13. Low: a second `!` command typed while one ran was lost. It stays in the composer.
+14. Low: the name typed in full did not come first in the `/` menu, and the selection stayed put as the filter changed. Test: `theNameTypedInFullComesFirst`.
+15. Low: conversations were listed from the Mac's home instead of the one chats use.
+16. Low: output past 30 lines could not be seen, and a TUI block cut by a page could spin forever. Blocks open to all of their output, and a transcript's blocks never spin.
+17. `ChatRealClaudeTests` now runs a failing `!` command and checks that Claude read its output and exit code.
+
+Also fixed along the way: a warning for a `switch` case handled twice.

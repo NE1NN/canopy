@@ -40,6 +40,29 @@ public struct ChatShell: Equatable, Sendable {
         self.output = output
         self.exitCode = exitCode
     }
+
+    /// How much output Claude gets, as Claude Code's own `!` keeps: the end of it.
+    public static let outputLimit = 30_000
+
+    /// Adds printed lines, keeping about the last `outputLimit` bytes so a command that prints without end stays cheap.
+    public mutating func append(_ text: String) {
+        output += (output.isEmpty ? "" : "\n") + text
+        if output.utf8.count > 2 * Self.outputLimit { output = Self.lastPart(of: output) }
+    }
+
+    /// The output as Claude gets it.
+    public var outputForClaude: String {
+        output.utf8.count > Self.outputLimit ? Self.lastPart(of: output) : output
+    }
+
+    static let cutNote = "[earlier output cut]"
+
+    private static func lastPart(of output: String) -> String {
+        let tail = String(decoding: output.utf8.suffix(outputLimit), as: UTF8.self)
+        let lines = tail.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        let whole = lines.count == 2 && !tail.hasPrefix(cutNote) ? String(lines[1]) : tail
+        return whole.hasPrefix(cutNote) ? whole : cutNote + "\n" + whole
+    }
 }
 
 public struct ChatPrompt: Equatable, Sendable {

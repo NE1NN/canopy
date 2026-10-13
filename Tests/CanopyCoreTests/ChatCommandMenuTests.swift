@@ -25,4 +25,15 @@ struct ChatCommandMenuTests {
 
         #expect(items.map(\.name) == ["color", "compact"])
     }
+
+    @Test func theNameTypedInFullComesFirst() {
+        let commands = [
+            ClaudeCommand(name: "review-pr", description: "A command", argumentHint: ""),
+            ClaudeCommand(name: "review", description: "A skill (user)", argumentHint: ""),
+        ]
+
+        let items = ChatCommandMenu.items(commands: commands, terminal: [], typed: "review")
+
+        #expect(items.map(\.name) == ["review", "review-pr"])
+    }
 }

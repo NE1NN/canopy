@@ -75,7 +75,7 @@ private struct ChatItemView: View {
         case .notice(let notice):
             NoticeLine(text: notice)
         case .shell(let shell):
-            ShellBlock(shell: shell)
+            ShellBlock(shell: shell, expanded: expanded, toggle: toggle)
         }
     }
 }
@@ -485,6 +485,7 @@ private struct FailureCard: View {
             "Chats need Claude Code \(ChatSession.minimumVersion) or newer"
                 + (version.isEmpty ? "" : ", and this Mac has \(version)")
         case .transcriptMissing: "This conversation's history is gone"
+        case .heldElsewhere(let pane): "Open in \(pane)"
         }
     }
 
@@ -494,6 +495,7 @@ private struct FailureCard: View {
         case .couldNotStart(let reason): reason
         case .tooOld: "Update it with `claude update`, then send your message again."
         case .transcriptMissing: "Claude Code no longer has its transcript, so it cannot be resumed."
+        case .heldElsewhere: "A terminal runs this conversation. Close Claude Code there to go on here."
         }
     }
 
@@ -501,6 +503,7 @@ private struct FailureCard: View {
         switch failure {
         case .exited, .couldNotStart, .tooOld: ("Start again", chat.dismissFailure)
         case .transcriptMissing: ("Start a new chat", chat.startFresh)
+        case .heldElsewhere(let pane): ("Show \(pane)", chat.showHolder)
         }
     }
 }
@@ -809,6 +812,10 @@ private struct RunningCard: View {
 /// A `!` command the author ran: the command, "you ran this", and the last 30 lines it printed.
 struct ShellBlock: View {
     let shell: ChatShell
+    let expanded: Bool
+    let toggle: () -> Void
+
+    private static let shownLines = 30
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -827,18 +834,32 @@ struct ShellBlock: View {
             .padding(.horizontal, 12)
             .frame(height: 30)
             if !shell.output.isEmpty {
+                let lines = shell.output.split(separator: "\n", omittingEmptySubsequences: false)
                 Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
-                Text(
-                    shell.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(
-                        separator: "\n")
-                )
-                .font(ChatStyle.monoSmall)
-                .foregroundStyle(ChatStyle.secondaryText)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                if lines.count > Self.shownLines {
+                    Button(action: toggle) {
+                        Text(
+                            expanded
+                                ? "Show the last \(Self.shownLines) lines"
+                                : "\(lines.count - Self.shownLines) earlier lines"
+                        )
+                        .font(ChatStyle.meta)
+                        .foregroundStyle(ChatStyle.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+                Text((expanded ? lines[...] : lines.suffix(Self.shownLines)).joined(separator: "\n"))
+                    .font(ChatStyle.monoSmall)
+                    .foregroundStyle(ChatStyle.secondaryText)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .background(ChatStyle.codeFill, in: RoundedRectangle(cornerRadius: 9))
