@@ -43,6 +43,14 @@ struct ChatComposer: View {
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
             HStack(spacing: 6) {
+                if chat.draft.hasPrefix("!") {
+                    Text(verbatim: "$ shell command")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(ChatStyle.chipText)
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 7))
+                }
                 ChatChips(chat: chat)
                 Spacer()
                 if chat.isWorking && chat.permission == nil {
@@ -94,6 +102,7 @@ struct ChatComposer: View {
     }
 
     private var placeholder: String {
+        if chat.isRunningShell { return "Running your command. Esc stops it." }
         if case .question? = chat.permission?.kind { return "Or answer in your own words" }
         if case .plan? = chat.permission?.kind { return "Or tell Claude what to change" }
         if chat.permission != nil { return "Or tell Claude what to do instead" }
@@ -138,9 +147,11 @@ struct ChatComposer: View {
         return true
     }
 
-    /// Esc turns down trust, denies an open prompt, or stops Claude.
+    /// Esc turns down trust, stops a shell command, denies an open prompt, or stops Claude.
     private func escape() {
-        if chat.needsTrust {
+        if chat.isRunningShell {
+            chat.stopShell()
+        } else if chat.needsTrust {
             onDeclineTrust()
         } else if chat.permission != nil {
             chat.deny()

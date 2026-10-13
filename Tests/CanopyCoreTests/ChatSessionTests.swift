@@ -138,6 +138,42 @@ struct ChatSessionTests {
         chat.close()
     }
 
+    @Test func runsAShellCommandAndHandsItToClaudeWithTheNextMessage() async throws {
+        let home = home.path
+        let folder = folder.path
+        let chat = ChatSession(
+            model: nil, mode: "default", sessionID: nil, title: "",
+            launcher: { model, mode, resume in
+                var launch = FakeClaude.launch(home: home, folder: folder)
+                launch.arguments =
+                    ["python3", "-I", FakeClaude.script]
+                    + ClaudeLaunch.arguments(model: model, mode: mode, resume: resume)
+                return launch
+            },
+            transcript: { ClaudeProjects.transcript(session: $0, folder: folder, home: home) },
+            trust: ChatTrust(isTrusted: { true }, grant: {}),
+            shell: { command in
+                TerminalLaunch(
+                    executable: "/bin/sh", arguments: ["sh", "-c", command], environment: ["PATH": "/usr/bin:/bin"],
+                    directory: folder)
+            })
+
+        chat.send("!echo from-shell")
+
+        #expect(!chat.isRunning)
+        #expect(await soon { chat.shellRuns.first?.shell.exitCode == 0 })
+        #expect(chat.shellRuns.first?.shell.output == "from-shell")
+        chat.send("say got it")
+        #expect(chat.shellRuns.isEmpty)
+        #expect(await soon { !chat.isWorking })
+        #expect(
+            chat.items.contains {
+                $0.content == .shell(ChatShell(command: "echo from-shell", output: "from-shell", exitCode: 0))
+            })
+        #expect(texts(chat).last == "got it")
+        chat.close()
+    }
+
     @Test func countsASubagentsToolCallsOnItsLine() async throws {
         let chat = session()
 

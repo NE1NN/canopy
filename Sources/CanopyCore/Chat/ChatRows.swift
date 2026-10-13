@@ -36,7 +36,13 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     /// Changes whenever what the row shows does, cheaply: an item's revision rather than its content.
     public var key: String {
         switch self {
-        case .item(let item, let expanded): "\(item.id)#\(item.revision)#\(expanded)"
+        case .item(let item, let expanded):
+            if case .shell(let shell) = item.content, item.revision == 0 {
+                // A command still being run here grows without a revision.
+                "\(item.id)#\(shell.output.utf8.count)#\(shell.exitCode.map(String.init) ?? "running")"
+            } else {
+                "\(item.id)#\(item.revision)#\(expanded)"
+            }
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
@@ -67,6 +73,7 @@ public enum ChatRows {
         }
         // A saved conversation stays readable above the question.
         if chat.needsTrust { return rows + [.trust] }
+        rows += chat.shellRuns.map { ChatRow.item(ChatItem(id: "shell-" + $0.id, content: .shell($0.shell), at: 0)) }
         if let streaming = chat.streaming {
             for (index, block) in streaming.blocks.enumerated() {
                 let growth = index < streaming.settledCount ? 0 : streaming.text.utf8.count

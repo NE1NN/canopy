@@ -1,6 +1,12 @@
 import Foundation
 import Observation
 
+/// A `!` command the author ran here, before Claude has it.
+public struct ChatShellRun: Identifiable, Equatable, Sendable {
+    public let id: String
+    public var shell: ChatShell
+}
+
 public struct ChatImage: Equatable, Sendable, Identifiable {
     public let id = UUID()
     public var mediaType: String
@@ -179,6 +185,10 @@ public final class ChatSession {
     public var draft = ""
     /// Images pasted or dropped into the composer, sent with the next message.
     public var draftImages: [ChatImage] = []
+    /// `!` commands run since the last message, which Claude reads with the next one.
+    public private(set) var shellRuns: [ChatShellRun] = []
+    @ObservationIgnored private let shell: ((String) -> TerminalLaunch)?
+    @ObservationIgnored private var shellProcess: PipeProcess?
 
     /// Called when something worth saving changes: the session, the title.
     @ObservationIgnored public var onChange: () -> Void = {}
@@ -215,8 +225,10 @@ public final class ChatSession {
     public init(
         model: String?, mode: String, sessionID: String?, title: String, launcher: @escaping Launcher,
         transcript: @escaping (String) -> URL?, trust: ChatTrust,
-        tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())")
+        tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())"),
+        shell: ((String) -> TerminalLaunch)? = nil
     ) {
+        self.shell = shell
         self.tasksRoot = tasksRoot
         self.model = model
         self.mode = mode
@@ -252,6 +264,10 @@ public final class ChatSession {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
         open()
+        if text.hasPrefix("!"), images.isEmpty {
+            runShell(String(text.dropFirst()).trimmingCharacters(in: .whitespaces))
+            return
+        }
         if failure == .transcriptMissing { startFresh() }
         if needsTrust { needsTrust = !trust.isTrusted() }
         // Text typed at a question answers it in the author's own words.
@@ -279,7 +295,15 @@ public final class ChatSession {
             guard isRunning else { return }
         }
         onInput(Self.returnKey)
-        stream?.send(images.map { .image(mediaType: $0.mediaType, data: $0.data) } + [.text(text)])
+        let ran = shellRuns.filter { $0.shell.exitCode != nil }
+        shellRuns.removeAll { $0.shell.exitCode != nil }
+        let shellBlocks: [ClaudeInput.Content] = ran.flatMap {
+            [
+                .text("<bash-input>\($0.shell.command)</bash-input>"),
+                .text("<bash-stdout>\($0.shell.output)</bash-stdout><bash-stderr></bash-stderr>"),
+            ]
+        }
+        stream?.send(shellBlocks + images.map { .image(mediaType: $0.mediaType, data: $0.data) } + [.text(text)])
     }
 
     public func allow() {
@@ -342,6 +366,49 @@ public final class ChatSession {
             record(answer: question.options[index].label)
         }
     }
+
+    /// Runs a `!` command in the row, as the author's login shell would, and keeps what it prints for Claude.
+    private func runShell(_ command: String) {
+        guard !command.isEmpty, shellProcess == nil, let shell else { return }
+        let id = UUID().uuidString
+        shellRuns.append(ChatShellRun(id: id, shell: ChatShell(command: command, output: "", exitCode: nil)))
+        do {
+            shellProcess = try PipeProcess(
+                shell(command),
+                onLines: { [weak self] lines in
+                    let text = lines.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
+                    self?.updateShell(id) { $0.output += ($0.output.isEmpty ? "" : "\n") + text }
+                },
+                onExit: { [weak self] code in
+                    guard let self else { return }
+                    let errors = self.shellProcess?.errorTail() ?? []
+                    self.updateShell(id) {
+                        if !errors.isEmpty {
+                            $0.output += ($0.output.isEmpty ? "" : "\n") + errors.joined(separator: "\n")
+                        }
+                        $0.exitCode = code
+                    }
+                    self.shellProcess = nil
+                })
+        } catch {
+            updateShell(id) {
+                $0.output = "\(error)"
+                $0.exitCode = 127
+            }
+        }
+    }
+
+    private func updateShell(_ id: String, _ change: (inout ChatShell) -> Void) {
+        guard let index = shellRuns.firstIndex(where: { $0.id == id }) else { return }
+        change(&shellRuns[index].shell)
+    }
+
+    /// Stops a `!` command still running.
+    public func stopShell() {
+        shellProcess?.terminate()
+    }
+
+    public var isRunningShell: Bool { shellProcess != nil }
 
     /// Whether `index` is one of the current question's options, so a digit typed past them stays text.
     public func canPick(_ index: Int) -> Bool {

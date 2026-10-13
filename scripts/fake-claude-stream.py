@@ -316,7 +316,9 @@ def text_of(message):
     content = message.get("message", {}).get("content")
     if isinstance(content, str):
         return content
-    return " ".join(block.get("text", "") for block in content or [] if block.get("type") == "text")
+    # A `!` command's blocks go ahead of the message; what the stand-in acts on is the message itself.
+    return " ".join(block.get("text", "") for block in content or []
+                    if block.get("type") == "text" and not block.get("text", "").startswith("<bash-"))
 
 
 def worker():

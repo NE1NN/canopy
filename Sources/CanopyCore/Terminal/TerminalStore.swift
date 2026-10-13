@@ -353,7 +353,11 @@ public final class TerminalStore {
             model: model, mode: mode, sessionID: session, title: title,
             launcher: { model, mode, resume in launcher(context, id, model, mode, resume) },
             transcript: { ClaudeProjects.transcript(session: $0, folder: folder, home: home) },
-            trust: chatTrust(context))
+            trust: chatTrust(context),
+            shell: { [settings] command in
+                let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
+                return settings.script(command, environment: environment, directory: context.rowPath)
+            })
         let pane = Pane(id: id, context: context, chat: chat, activity: activity)
         chat.onChange = { [weak self] in self?.onChange() }
         chat.onPick = { [weak self] model, mode in
