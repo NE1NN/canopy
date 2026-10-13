@@ -117,3 +117,5 @@ An independent opus review of `git diff origin/main...HEAD` found 3 high, 5 medi
 13. Low: any echo without a matching message removed the first queued one. An echo without text removes nothing, and merged texts are matched joined too.
 
 Not changed: the trust write still reads and renames without Claude Code's lock, so a Claude Code write in the same few milliseconds can be undone; the read-back check catches the case where Canopy's own key is lost. Large integers in `~/.claude.json` keep full precision up to 2^53, which covers every value Claude Code writes today.
+
+CodeRabbit then left nine comments, eight fixed: only http, https, and mailto links in Claude's text are clickable; messages go back to the composer when Claude Code cannot start; one echo removes one queued message; code fences match by character and length, tildes included; the list removes its scroll observer; the phone e2e's screen read on timeout cannot hide the timeout; the stand-in has no fixed /tmp path; and the e2e script marks its intended word splitting. Not changed: a `try!` in a test helper, which swift-format allows.
