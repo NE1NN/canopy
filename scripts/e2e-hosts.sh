@@ -322,8 +322,9 @@ time.sleep(600)' "$held" "canopy-e2e-listener-$id" </dev/null >/dev/null 2>&1) &
 listener=$!
 disown
 taken() { ! /usr/bin/python3 -c "$binds" "$1"; }
-# A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load.
-wait_for 30 taken "$held" || fail "the local listener did not take port $held"
+# A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load, for the listener and for
+# each check alike, so this waits well past that.
+wait_for 120 taken "$held" || fail "the local listener did not take port $held"
 serve "$held" 127.0.0.1
 wait_for 60 forwarded "$held" || fail "port $held on the host was not forwarded: $(ports_json)"
 held_mac=$(mac_port "$held")
