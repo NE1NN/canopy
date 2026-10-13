@@ -170,7 +170,11 @@ public final class BoxPhoneSource: PhoneSource {
 
         func drop(_ id: UUID, pane: String) {
             waiting[pane]?.removeAll { $0 == id }
-            if waiting[pane]?.isEmpty == true { waiting[pane] = nil }
+            // A later reply is sent after any state that took one, so none of them can take it.
+            if waiting[pane]?.isEmpty == true {
+                waiting[pane] = nil
+                takenSince[pane] = nil
+            }
         }
     }
 

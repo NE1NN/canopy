@@ -81,6 +81,7 @@ extension Workspace {
 
     private func startBoxLink(_ connection: HostConnection) async {
         let alias = connection.alias
+        guard !removingHosts.contains(alias) else { return }
         guard hosts.hosts[alias]?.box == true, await connection.state == .connected else { return }
         let generation = await connection.generation
         if boxInstalled[alias] != generation {
@@ -145,7 +146,9 @@ extension Workspace {
                 })
             else { continue }
             var repoChanged = false
-            let rows = snapshot.rows.filter { !$0.isMain && $0.repo == repoName }
+            // A host upgraded before the Mac sent the host's key has its rows under the Mac's name for the repo.
+            let macName = self.repoName(state.repos[index].path)
+            let rows = snapshot.rows.filter { !$0.isMain && ($0.repo == repoName || $0.repo == macName) }
             let paths = Set(rows.map(\.path))
             for row in rows {
                 if let position = state.repos[index].remote.firstIndex(where: {
@@ -159,7 +162,8 @@ extension Workspace {
                         state.repos[index].remote[position] = updated
                         repoChanged = true
                     }
-                } else {
+                } else if remoteRow(host: alias, path: row.path) == nil {
+                    // A row another repo here already has, as when two repos match one key, stays there.
                     let entry = RemoteRowEntry(
                         host: alias, path: row.path,
                         standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: row.path),
@@ -208,9 +212,12 @@ extension Workspace {
             BoxMethod.rowNew,
             BoxRowNewParams(repo: target.hostRepo, branch: branch, base: base, existing: existing))
         let index = try entryIndex(repoPath: repoPath)
+        // A snapshot may have brought the row in first; it keeps the stand-in it has.
+        let known = state.repos[index].remote.first { $0.host == alias && $0.path == made.row.path }
         let entry = RemoteRowEntry(
             host: alias, path: made.row.path,
-            standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: made.row.path),
+            standIn: known?.standIn
+                ?? freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: made.row.path),
             branch: made.row.branch, head: made.row.head)
         if state.repos[index].remote.contains(where: { $0.host == alias && $0.path == entry.path }) {
             state.repos[index].remote.removeAll { $0.host == alias && $0.path == entry.path }
@@ -332,8 +339,9 @@ extension Workspace {
             return nil
         } catch {
             let reason = (error as? WorkspaceError)?.message ?? "\(error)"
-            return "canopy-box may still run on \(alias), as Canopy could not reach it to stop it: \(reason) "
-                + "Run `systemctl --user disable --now canopy-box-\(homeID)` there."
+            return "canopy-box may still run on \(alias), as Canopy could not reach it to stop it. "
+                + "Stop it there with `systemctl --user disable --now canopy-box-\(homeID)`, or end its "
+                + "`canopy-box serve --home-id \(homeID)` process. \(reason)"
         }
     }
 
@@ -397,7 +405,8 @@ extension Workspace {
         for row in rows {
             guard remoteRow(host: alias, path: row.path) == nil,
                 let index = state.repos.firstIndex(where: {
-                    (host?.repoKey(repoName: repoName($0.path), repoPath: $0.path) ?? repoName($0.path)) == row.repo
+                    repoName($0.path) == row.repo
+                        || host?.repoKey(repoName: repoName($0.path), repoPath: $0.path) == row.repo
                 })
             else { continue }
             let entry = RemoteRowEntry(

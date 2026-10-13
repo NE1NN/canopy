@@ -43,7 +43,8 @@ extension BoxDaemon {
         guard let clone = found else {
             await forgetRow(row)
             return [
-                "\(row.repo) is no longer in this host's settings and the row's folder is gone, so it was forgotten."
+                "\(row.repo) is no longer in this host's settings, and the row's folder is gone or no longer a git "
+                    + "worktree, so it was forgotten."
             ]
         }
         return try await inQueue(clone) {

@@ -141,13 +141,19 @@ public enum BoxInstall {
                 # would leave the unit restarting for good. Only one that is canopy-box, as pids are reused.
                 if [ -f "$pid" ]; then
                     p=$(cat "$pid")
-                    case "$(ps -p "$p" -o args= 2>/dev/null)" in
-                        *canopy-box*serve*)
+                    # /proc where there is one, as busybox's ps may not take -o args.
+                    a=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null || ps -p "$p" -o args= 2>/dev/null)
+                    case "$a" in
+                        *canopy-box*serve*"--home-id $h"*)
                             kill "$p" 2>/dev/null
                             i=0; while [ $i -lt 30 ] && kill -0 "$p" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
-                            kill -9 "$p" 2>/dev/null ;;
+                            kill -9 "$p" 2>/dev/null; sleep 0.1 ;;
                     esac
-                    rm -f "$pid"
+                    # Kept while a process it names runs that could not be told apart, so that one is never lost.
+                    case "$a" in
+                        *canopy-box*serve*) rm -f "$pid" ;;
+                        *) kill -0 "$p" 2>/dev/null || rm -f "$pid" ;;
+                    esac
                 fi
                 d="$HOME/.config/systemd/user"; mkdir -p "$d"
                 printf %s "$unit" | base64 -d > "$d/canopy-box-$h.service.new" \

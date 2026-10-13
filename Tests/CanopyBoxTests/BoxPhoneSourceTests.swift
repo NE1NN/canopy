@@ -106,11 +106,14 @@ struct BoxPhoneSourceTests {
         let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
         try await daemon.send(pane: pane, text: "cat > /dev/null", enter: true)
         await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
-        let source = BoxPhoneSource(daemon: daemon, deliveryWindow: .milliseconds(100))
+        let source = BoxPhoneSource(daemon: daemon, deliveryWindow: .seconds(1))
         let delivered = Shared(false)
+        let watching = await daemon.observerCount
         try await source.reply(PhoneReplyParams(pane: pane, text: "late")) { delivered.withLock { $0 = true } }
+        #expect(await eventually { await daemon.observerCount == watching + 1 })
 
-        try await Task.sleep(for: .milliseconds(400))
+        // Nothing changes on the box, and the watch still ends.
+        #expect(await eventually { await daemon.observerCount == watching })
         await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
         try await Task.sleep(for: .milliseconds(300))
 
@@ -262,7 +265,6 @@ struct BoxPhoneSourceTests {
     }
 }
 
-/// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
 /// The box's activity log, which phones' calls go into.
 struct BoxActivityLogTests {
     @Test func aFullLogMovesAsideAndTheNextEntryStartsAnew() throws {
@@ -277,7 +279,14 @@ struct BoxActivityLogTests {
         #expect(older.contains(#""phone":"a""#) && older.contains(#""phone":"b""#))
     }
 
-    @Test func aLogThatCannotBeWrittenLosesTheEntryNotTheDaemon() throws {
+    #if os(Linux)
+        /// Writing to /dev/full fails as a full disk does, which trapped the old `FileHandle.write`.
+        @Test func aWriteThatFailsLosesTheEntryNotTheDaemon() {
+            BoxMain.appendActivity(.paired(phone: "a"), to: "/dev/full")
+        }
+    #endif
+
+    @Test func aLogThatCannotBeOpenedLosesTheEntryNotTheDaemon() throws {
         let dir = try TempDir()
         let log = dir.sub("activity.jsonl")
         try FileManager.default.createDirectory(atPath: log, withIntermediateDirectories: true)
@@ -289,6 +298,7 @@ struct BoxActivityLogTests {
     }
 }
 
+/// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
 struct BoxPhonesMethodsTests {
     /// `host upgrade` starts the daemon before it configures it, so the box's name for phones is its alias on the Mac
     /// from then on, not the name it started with.

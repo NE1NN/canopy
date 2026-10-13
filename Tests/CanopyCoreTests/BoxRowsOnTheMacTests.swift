@@ -59,6 +59,30 @@ struct BoxRowsOnTheMacTests {
         #expect(await workspace.snapshot.repo(path: first)?.rows.map(\.rowClass) == [.main, .remote])
     }
 
+    /// A host upgraded before the Mac sent the host's key adopted its rows under the Mac's name for the repo, which
+    /// the box keeps; they stay on the Mac.
+    @Test func rowsAdoptedUnderTheMacsNameStay() async throws {
+        let dir = try TempDir()
+        let first = try await Fixture.repo(in: dir, name: "one/demo")
+        let second = try await Fixture.repo(in: dir, name: "two/demo")
+        let workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git)
+        try await workspace.start()
+        try await workspace.addRepo(path: first)
+        try await workspace.addRepo(path: second)
+        let macName = try #require(await workspace.snapshot.repo(path: first)?.name)
+        try HostsConfigFile(url: workspace.home.configFile).save(
+            "box", HostEntry(repos: ["demo": "/home/u/demo"], box: true))
+        let snapshot = BoxSnapshot(rows: [
+            BoxRow(path: "/home/u/demo", repo: "demo", branch: "main", isMain: true),
+            BoxRow(path: "/home/u/.canopy/0/worktrees/demo/feat-a", repo: macName, branch: "feat/a"),
+        ])
+
+        await workspace.applyBoxSnapshot(snapshot, host: "box")
+        await workspace.applyBoxSnapshot(snapshot, host: "box")
+
+        #expect(await workspace.snapshot.repo(path: first)?.rows.map(\.rowClass) == [.main, .remote])
+    }
+
     /// A row in a shared folder and one in canopy-box's worktrees can share a leaf; each keeps a stand-in of its own.
     @Test func rowsSharingALeafStandApart() async throws {
         let dir = try TempDir()

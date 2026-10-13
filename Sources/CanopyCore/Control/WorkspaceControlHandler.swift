@@ -237,8 +237,8 @@ public struct WorkspaceControlHandler: Sendable {
                     let reason =
                         (error as? WorkspaceError)?.message ?? (error as? ControlError)?.message ?? "\(error)"
                     info.warnings.append(
-                        "canopy-box did not start on \(params.alias), so the host runs through this Mac: \(reason) "
-                            + "Run `canopy host upgrade \(params.alias)` to try again.")
+                        "canopy-box did not start on \(params.alias), so the host runs through this Mac. "
+                            + "Run `canopy host upgrade \(params.alias)` to try again. \(reason)")
                 }
             }
             return try .from(await withPanes(info))

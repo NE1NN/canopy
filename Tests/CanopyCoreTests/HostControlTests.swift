@@ -429,11 +429,24 @@ struct HostBoxLifecycleTests {
         let setup = try await HostControlTests.Setup()
         try HostsConfigFile(url: setup.workspace.home.configFile).save(
             "box", HostEntry(repos: ["demo": setup.clone], box: true))
+        // A daemon running as a plain process, as on a host without systemd, and the relay's mark that it took over.
+        let box = setup.host.home + "/.canopy/\(setup.workspace.homeID)/box"
+        try FileManager.default.createDirectory(atPath: box, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: box + "/adopted", contents: nil)
+        let daemon = Process()
+        daemon.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        daemon.arguments = ["300"]
+        try daemon.run()
+        defer { daemon.terminate() }
+        try "\(daemon.processIdentifier)\n".write(toFile: box + "/pid", atomically: true, encoding: .utf8)
 
         let warnings = try await setup.workspace.removeHost(alias: "box")
 
         #expect(warnings.isEmpty)
         #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts.isEmpty)
+        #expect(await eventually { !daemon.isRunning })
+        #expect(!FileManager.default.fileExists(atPath: box + "/adopted"))
+        #expect(!FileManager.default.fileExists(atPath: box + "/pid"))
         await setup.workspace.stop()
     }
 }
