@@ -74,6 +74,49 @@ struct BoxPhoneSourceTests {
         #expect(await eventually { contents(out) == "first line\nsecond\n" })
     }
 
+    /// The agent takes one prompt per turn, so a working state marks one reply delivered: the oldest waiting.
+    @Test func eachWorkingTurnTakesOneReplyTheOldestFirst() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        try await daemon.send(pane: pane, text: "cat > /dev/null", enter: true)
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        let source = BoxPhoneSource(daemon: daemon)
+        let delivered = Shared<[String]>([])
+        for text in ["first", "second"] {
+            try await source.reply(PhoneReplyParams(pane: pane, text: text)) {
+                delivered.withLock { $0.append(text) }
+            }
+        }
+
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+        #expect(await eventually { delivered.withLock { $0 } == ["first"] })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(delivered.withLock { $0 } == ["first"])
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+
+        #expect(await eventually { delivered.withLock { $0 } == ["first", "second"] })
+    }
+
+    /// On a box that stays quiet, a reply's watch ends with its window rather than waiting for the next change.
+    @Test func aReplyNotTakenWithinItsWindowIsNeverMarked() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        try await daemon.send(pane: pane, text: "cat > /dev/null", enter: true)
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        let source = BoxPhoneSource(daemon: daemon, deliveryWindow: .milliseconds(100))
+        let delivered = Shared(false)
+        try await source.reply(PhoneReplyParams(pane: pane, text: "late")) { delivered.withLock { $0 = true } }
+
+        try await Task.sleep(for: .milliseconds(400))
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(!delivered.withLock { $0 })
+    }
+
     @Test func aReplyIsRefusedWhileADialogShowsOrNoAgentRuns() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

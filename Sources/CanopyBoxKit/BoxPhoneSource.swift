@@ -11,8 +11,13 @@ public final class BoxPhoneSource: PhoneSource {
     /// Each pane's conversation's last entry, which words its agent's line as on the Mac.
     let tails = TranscriptTails()
 
-    public init(daemon: BoxDaemon) {
+    /// Each pane's replies waiting to be taken, in the order sent.
+    private let deliveries = Deliveries()
+    private let deliveryWindow: Duration
+
+    public init(daemon: BoxDaemon, deliveryWindow: Duration = BoxPhoneSource.deliveryWindow) {
         self.daemon = daemon
+        self.deliveryWindow = deliveryWindow
     }
 
     static let promptGone = ControlError(
@@ -26,7 +31,7 @@ public final class BoxPhoneSource: PhoneSource {
     static let noTranscript = ControlError(
         code: "no_transcript", message: "This pane has no Claude Code conversation. Its terminal shows what it does.")
     /// How long a reply waits to be taken before it no longer counts as delivered.
-    static let deliveryWindow = Duration.seconds(10 * 60)
+    public static let deliveryWindow = Duration.seconds(10 * 60)
 
     static func inbox(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> PhoneInbox {
         PhoneInbox(rows: phoneRows(snapshot, tails: tails))
@@ -116,18 +121,56 @@ public final class BoxPhoneSource: PhoneSource {
         // Checked and pressed together, so a dialog that opened during the pause never takes the Return.
         guard try await daemon.pressReturnUnlessDialog(pane: params.pane) else { throw Self.promptOpen }
         let daemon = daemon
+        let deliveries = deliveries
         let pane = params.pane
+        let id = UUID()
+        await deliveries.wait(id, pane: pane)
+        let window = deliveryWindow
         Task {
-            let deadline = ContinuousClock.now + Self.deliveryWindow
-            for await snapshot in await daemon.changes() {
-                guard ContinuousClock.now < deadline,
-                    let shown = snapshot.panes.first(where: { $0.id == pane }), shown.agent != .none
-                else { return }
-                if shown.agent == .working, shown.since >= sent.timeIntervalSince1970 {
-                    delivered()
-                    return
+            // Whichever ends first: the reply taken, the agent gone, or the window over on a box that stays quiet.
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await snapshot in await daemon.changes() {
+                        guard let shown = snapshot.panes.first(where: { $0.id == pane }), shown.agent != .none
+                        else { return }
+                        if shown.agent == .working,
+                            await deliveries.take(id, pane: pane, since: shown.since, sent: sent.timeIntervalSince1970)
+                        {
+                            delivered()
+                            return
+                        }
+                    }
                 }
+                group.addTask { try? await Task.sleep(for: window) }
+                await group.next()
+                group.cancelAll()
             }
+            await deliveries.drop(id, pane: pane)
+        }
+    }
+
+    /// Replies waiting in each pane. A working state takes one, the oldest, as the agent takes one prompt at a time.
+    private actor Deliveries {
+        private var waiting: [String: [UUID]] = [:]
+        /// The `since` of the working state that took each pane's last reply, which takes no other.
+        private var takenSince: [String: Double] = [:]
+
+        func wait(_ id: UUID, pane: String) {
+            waiting[pane, default: []].append(id)
+        }
+
+        func take(_ id: UUID, pane: String, since: Double, sent: Double) -> Bool {
+            guard waiting[pane]?.first == id, since >= sent, since > takenSince[pane] ?? -.infinity else {
+                return false
+            }
+            waiting[pane]?.removeFirst()
+            takenSince[pane] = since
+            return true
+        }
+
+        func drop(_ id: UUID, pane: String) {
+            waiting[pane]?.removeAll { $0 == id }
+            if waiting[pane]?.isEmpty == true { waiting[pane] = nil }
         }
     }
 
