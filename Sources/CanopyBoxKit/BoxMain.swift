@@ -73,7 +73,11 @@ public enum BoxMain {
     static let instanceEvery = Duration.seconds(60)
 
     /// One JSON line per phone event, with the Mac's types: `phone.paired`, `phone.removed`, and `phone.call`.
-    static func appendActivity(_ activity: PhoneActivity, to path: String) {
+    /// How big the activity log grows before it moves to `.1`, replacing the one there, so the two stay under 10 MB.
+    static let activityLimit = 5 * 1024 * 1024
+
+    /// A write that fails, as on a full disk, loses the entry rather than the daemon.
+    static func appendActivity(_ activity: PhoneActivity, to path: String, limit: Int = activityLimit) {
         let (type, data): (String, [String: JSONValue]) =
             switch activity {
             case .paired(let phone): ("phone.paired", ["phone": .string(phone)])
@@ -85,10 +89,15 @@ public enum BoxMain {
         ])
         guard var line = try? JSONEncoder().encode(entry) else { return }
         line.append(0x0A)
+        let files = FileManager.default
+        if let size = (try? files.attributesOfItem(atPath: path))?[.size] as? Int, size >= limit {
+            try? files.removeItem(atPath: path + ".1")
+            try? files.moveItem(atPath: path, toPath: path + ".1")
+        }
         if let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(line)
-            try? handle.close()
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
         } else {
             try? BoxFiles.write(line, to: path)
         }

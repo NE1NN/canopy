@@ -220,6 +220,32 @@ struct BoxPhoneSourceTests {
 }
 
 /// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
+/// The box's activity log, which phones' calls go into.
+struct BoxActivityLogTests {
+    @Test func aFullLogMovesAsideAndTheNextEntryStartsAnew() throws {
+        let dir = try TempDir()
+        let log = dir.sub("activity.jsonl")
+
+        for name in ["a", "b", "c"] { BoxMain.appendActivity(.paired(phone: name), to: log, limit: 120) }
+
+        let current = try String(contentsOfFile: log, encoding: .utf8)
+        let older = try String(contentsOfFile: log + ".1", encoding: .utf8)
+        #expect(current.split(separator: "\n").count == 1 && current.contains(#""phone":"c""#))
+        #expect(older.contains(#""phone":"a""#) && older.contains(#""phone":"b""#))
+    }
+
+    @Test func aLogThatCannotBeWrittenLosesTheEntryNotTheDaemon() throws {
+        let dir = try TempDir()
+        let log = dir.sub("activity.jsonl")
+        try FileManager.default.createDirectory(atPath: log, withIntermediateDirectories: true)
+
+        BoxMain.appendActivity(.paired(phone: "a"), to: log)
+
+        var isFolder: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: log, isDirectory: &isFolder) && isFolder.boolValue)
+    }
+}
+
 struct BoxPhonesMethodsTests {
     /// `host upgrade` starts the daemon before it configures it, so the box's name for phones is its alias on the Mac
     /// from then on, not the name it started with.
