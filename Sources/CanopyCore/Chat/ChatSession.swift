@@ -220,6 +220,10 @@ public final class ChatSession {
     @ObservationIgnored private var olderCursor: Int?
     @ObservationIgnored private var transcriptURL: URL?
     @ObservationIgnored private var pendingText = ""
+    /// The turn's newest token count, which `turnTokens` shows at most four times a second: Claude Code can report it
+    /// with every word, and each change redraws the chat.
+    @ObservationIgnored private var countedTokens = 0
+    @ObservationIgnored private var tokenFlush: Task<Void, Never>?
     @ObservationIgnored private var flush: Task<Void, Never>?
     @ObservationIgnored private var tokensBeforeMessage = 0
     /// An interrupt went out this turn, so a permission request still on its way is turned down.
@@ -302,7 +306,7 @@ public final class ChatSession {
         guard !needsTrust else { return }
         if !isWorking {
             turnStarted = Date()
-            turnTokens = 0
+            showTokens(0)
             lastTurn = nil
         }
         // A slash command must start its message, so `!` output waits for the next plain one.
@@ -597,6 +601,8 @@ public final class ChatSession {
     public func close() {
         stopShell()
         flush?.cancel()
+        tokenFlush?.cancel()
+        tokenFlush = nil
         let stream = stream
         self.stream = nil
         stream?.stop()
@@ -700,7 +706,7 @@ public final class ChatSession {
             hasOlder = false
             endStreaming()
         case .messageStarted:
-            tokensBeforeMessage = turnTokens
+            tokensBeforeMessage = countedTokens
             endStreaming()
         case .blockStarted(_, let kind):
             activity = kind == "thinking" ? .thinking : .working
@@ -708,11 +714,13 @@ public final class ChatSession {
             pendingText += text
             publishStreamingSoon()
         case .outputTokens(let tokens):
-            turnTokens = tokensBeforeMessage + tokens
+            countedTokens = tokensBeforeMessage + tokens
+            showTokensSoon()
         case .message(let message):
             received(message)
         case .result(let result):
             endStreaming()
+            showTokens(countedTokens)
             // Claude Code drops what was queued when a turn is interrupted, so it goes back to the composer.
             if interrupting { returnQueuedToDraft() }
             interrupting = false
@@ -884,6 +892,23 @@ public final class ChatSession {
     /// is drawn less often, which keeps the cost of streaming about the same however long the block gets.
     static func streamingInterval(growing length: Int) -> Duration {
         min(max(streamingInterval, .microseconds(length * 20)), .milliseconds(300))
+    }
+
+    private func showTokensSoon() {
+        guard tokenFlush == nil else { return }
+        tokenFlush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.tokenFlush = nil
+            if self.turnTokens != self.countedTokens { self.turnTokens = self.countedTokens }
+        }
+    }
+
+    private func showTokens(_ count: Int) {
+        tokenFlush?.cancel()
+        tokenFlush = nil
+        countedTokens = count
+        if turnTokens != count { turnTokens = count }
     }
 
     /// Draws the new text now if the last draw was long enough ago, or else once it is.
