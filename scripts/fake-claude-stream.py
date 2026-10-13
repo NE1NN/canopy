@@ -15,6 +15,7 @@ What it does with a message depends on how the message starts:
   hold           asks to run `make test` and never ends the turn on its own
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
+  tail           runs a command that prints ten lines over two seconds, written to its task file as Claude Code does
   plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
@@ -220,6 +221,26 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "tail":
+        tool_id, task = "toolu_" + uuid.uuid4().hex[:20], "b" + uuid.uuid4().hex[:8]
+        emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": "count"}}]))
+        root = os.environ.get("FAKE_CLAUDE_TASKS", "/tmp/claude-%d" % os.getuid())
+        folder = os.path.join(root, "".join(c if c.isalnum() else "-" for c in CWD), SESSION, "tasks")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, task + ".output")
+        emit({"type": "system", "subtype": "task_started", "task_id": task, "tool_use_id": tool_id,
+              "is_backgrounded": False, "task_type": "local_bash"})
+        with open(path, "w") as out:
+            for n in range(1, 11):
+                out.write("line %d\n" % n)
+                out.flush()
+                time.sleep(0.2)
+        time.sleep(0.5)
+        os.remove(path)
+        emit({"type": "system", "subtype": "task_notification", "task_id": task, "tool_use_id": tool_id,
+              "status": "completed"})
+        emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "line 10"}]))
+        finish("counted")
     elif text == "plan":
         tool_id, answer = ask("ExitPlanMode", {"plan": "# Plan\n\n1. Add the case\n2. Save it"}, needs_author=True)
         if answer and answer.get("behavior") == "allow":

@@ -40,6 +40,7 @@ struct ChatRowsTests {
             case .trust: "trust"
             case .failure: "failure"
             case .status: "status"
+            case .running: "running"
             case .empty: "empty"
             }
         }

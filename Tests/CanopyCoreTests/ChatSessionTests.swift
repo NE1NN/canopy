@@ -15,7 +15,9 @@ struct ChatSessionTests {
     }
 
     func session(
-        id: String? = nil, trusted: Bool = true, environment: [String: String] = [:], granted: @escaping () -> Void = {}
+        id: String? = nil, trusted: Bool = true, environment: [String: String] = [:],
+        granted: @escaping () -> Void = {},
+        tasksRoot: URL? = nil
     ) -> ChatSession {
         let home = home.path
         let folder = folder.path
@@ -35,7 +37,7 @@ struct ChatSessionTests {
                 grant: {
                     isTrusted = true
                     granted()
-                }))
+                }), tasksRoot: tasksRoot ?? URL(fileURLWithPath: home + "/tasks"))
     }
 
     /// Waits for things that need the stand-in Claude to have started, which takes longer on a loaded machine.
@@ -133,6 +135,20 @@ struct ChatSessionTests {
 
         #expect(await soon { !chat.isWorking })
         #expect(texts(chat).dropFirst().first == "Ran rm -rf build, declined")
+        chat.close()
+    }
+
+    @Test func tailsARunningCommand() async throws {
+        let tasks = try TempDir()
+        let chat = session(environment: ["FAKE_CLAUDE_TASKS": tasks.path], tasksRoot: URL(fileURLWithPath: tasks.path))
+
+        chat.send("tail")
+
+        #expect(await soon { (chat.tails.values.first?.last.map { $0 >= "line 3" }) == true })
+        #expect(chat.tails.values.first?.count ?? 0 <= ChatSession.tailLines)
+        #expect(ChatRows.rows(for: chat).contains { if case .running = $0 { true } else { false } })
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.tails.isEmpty)
         chat.close()
     }
 

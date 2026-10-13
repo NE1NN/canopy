@@ -13,6 +13,8 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     case queued(QueuedPrompt)
     case permission(ChatPermission)
     case failure(ChatFailure)
+    /// A command still running, with the last lines it printed.
+    case running(callID: String, command: String, lines: [String])
     /// Working, waiting, or done, with times and tokens.
     case status
 
@@ -25,6 +27,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         case .queued(let prompt): "queued-" + prompt.id
         case .permission(let permission): "permission-" + permission.id
         case .failure: "failure"
+        case .running(let callID, _, _): "running-" + callID
         case .status: "status"
         }
     }
@@ -36,6 +39,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
+        case .running(_, _, let lines): "\(id)#\(lines.count)#\(lines.last ?? "")"
         default: id
         }
     }
@@ -46,7 +50,18 @@ public enum ChatRows {
     public static func rows(for chat: ChatSession) -> [ChatRow] {
         // A question or plan waiting on the author shows as its card, not also as a line above it.
         let waiting = Set(chat.pendingPermissions.compactMap { $0.kind == .permission ? nil : $0.toolUse })
-        var rows = chat.items.filter { !waiting.contains($0.id) }.map(ChatRow.item)
+        var rows: [ChatRow] = []
+        for item in chat.items where !waiting.contains(item.id) {
+            rows.append(.item(item))
+            // A running command shows what it prints, under its line.
+            guard case .tools(let group) = item.content else { continue }
+            for call in group.calls where chat.runningCommands.contains(call.id) {
+                rows.append(
+                    .running(
+                        callID: call.id, command: call.input["command"]?.text ?? call.name,
+                        lines: chat.tails[call.id] ?? []))
+            }
+        }
         // A saved conversation stays readable above the question.
         if chat.needsTrust { return rows + [.trust] }
         if let streaming = chat.streaming {

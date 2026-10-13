@@ -43,6 +43,8 @@ struct ChatRowView: View {
             FailureCard(failure: failure, chat: chat)
         case .status:
             ChatStatusLine(chat: chat)
+        case .running(_, let command, let lines):
+            RunningCard(command: command, lines: lines)
         }
     }
 }
@@ -698,5 +700,50 @@ private struct PlanCard: View {
         .padding(.vertical, 14)
         .background(ChatStyle.askFill, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(ChatStyle.askBorder))
+    }
+}
+
+/// A command still running: its command, how long it has run, and the last lines it printed.
+private struct RunningCard: View {
+    let command: String
+    let lines: [String]
+    @State private var started = Date()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 18, height: 18)
+                    .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                Text("Running")
+                Text(command).font(ChatStyle.monoSmall).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(ChatFormat.clock(context.date.timeIntervalSince(started)))
+                        .foregroundStyle(ChatStyle.tertiaryText)
+                }
+            }
+            .font(ChatStyle.meta)
+            .foregroundStyle(ChatStyle.primaryText)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            if !lines.isEmpty {
+                Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(verbatim: line.isEmpty ? " " : line)
+                            .font(ChatStyle.monoSmall)
+                            .foregroundStyle(ChatStyle.secondaryText)
+                            .lineLimit(1)
+                            .frame(minHeight: 17, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+            }
+        }
+        .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
     }
 }

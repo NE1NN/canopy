@@ -142,6 +142,17 @@ public final class ChatSession {
     public private(set) var isLoadingOlder = false
     /// Commands running now, by tool call ID, as Claude Code's task events say.
     public private(set) var runningCommands: Set<String> = []
+    /// The last lines of each running command's output, by tool call ID.
+    public private(set) var tails: [String: [String]] = [:]
+    /// How many lines a tail keeps.
+    public static let tailLines = 5
+    @ObservationIgnored private var tasks: [String: String] = [:]
+    @ObservationIgnored private var tailOffsets: [String: UInt64] = [:]
+    @ObservationIgnored private var tailPartial: [String: String] = [:]
+    @ObservationIgnored private var tailPoll: Task<Void, Never>?
+    @ObservationIgnored private var cwd: String?
+    /// Where Claude Code writes running commands' output: `<root>/<folder>/<session>/tasks/<task>.output`.
+    @ObservationIgnored private let tasksRoot: URL
     public var title: String {
         didSet {
             guard title != oldValue else { return }
@@ -183,8 +194,10 @@ public final class ChatSession {
 
     public init(
         model: String?, mode: String, sessionID: String?, title: String, launcher: @escaping Launcher,
-        transcript: @escaping (String) -> URL?, trust: ChatTrust
+        transcript: @escaping (String) -> URL?, trust: ChatTrust,
+        tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())")
     ) {
+        self.tasksRoot = tasksRoot
         self.model = model
         self.mode = mode
         self.sessionID = sessionID
@@ -475,6 +488,7 @@ public final class ChatSession {
             }
             model = info.model
             mode = info.mode
+            cwd = info.cwd
         case .status(let status):
             if let mode = status.mode { self.mode = mode }
             switch status.activity {
@@ -506,6 +520,7 @@ public final class ChatSession {
             if interrupting { returnQueuedToDraft() }
             interrupting = false
             runningCommands = []
+            endTails()
             if let window = result.contextWindow { contextWindow = window }
             if result.isError, result.kind != "error_during_execution", let text = result.text, !text.isEmpty {
                 builder.addNotice(text)
@@ -520,10 +535,13 @@ public final class ChatSession {
             rateLimitedUntil = allowed ? nil : resetsAt
         case .toolRequest(let request):
             received(request)
-        case .taskStarted(_, let toolUse?, false):
+        case .taskStarted(let task, let toolUse?, false):
             runningCommands.insert(toolUse)
+            tasks[toolUse] = task
+            startTailing()
         case .taskEnded(_, let toolUse?, _):
             runningCommands.remove(toolUse)
+            endTail(toolUse)
         case .taskStarted, .taskEnded, .unknownRequest, .controlResponse:
             break
         }
@@ -590,8 +608,56 @@ public final class ChatSession {
         pendingPermissions = []
         returnQueuedToDraft()
         runningCommands = []
+        endTails()
         interrupting = false
         onEnded()
+    }
+
+    private func startTailing() {
+        guard tailPoll == nil else { return }
+        tailPoll = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.readTails()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+    }
+
+    /// Reads what each running command wrote since the last read.
+    func readTails() {
+        guard let cwd, let sessionID else { return }
+        let folder = tasksRoot.appending(path: ClaudeProjects.folderName(for: cwd)).appending(path: sessionID)
+            .appending(path: "tasks")
+        for (toolUse, task) in tasks {
+            guard let handle = try? FileHandle(forReadingFrom: folder.appending(path: task + ".output")) else {
+                continue
+            }
+            defer { try? handle.close() }
+            let offset = tailOffsets[toolUse] ?? 0
+            guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd(), !data.isEmpty
+            else { continue }
+            tailOffsets[toolUse] = offset + UInt64(data.count)
+            let text = (tailPartial[toolUse] ?? "") + String(decoding: data, as: UTF8.self)
+            var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            tailPartial[toolUse] = lines.removeLast()
+            guard !lines.isEmpty else { continue }
+            tails[toolUse] = Array(((tails[toolUse] ?? []) + lines).suffix(Self.tailLines))
+        }
+    }
+
+    private func endTail(_ toolUse: String) {
+        tasks[toolUse] = nil
+        tails[toolUse] = nil
+        tailOffsets[toolUse] = nil
+        tailPartial[toolUse] = nil
+        if tasks.isEmpty {
+            tailPoll?.cancel()
+            tailPoll = nil
+        }
+    }
+
+    private func endTails() {
+        for toolUse in Array(tasks.keys) { endTail(toolUse) }
     }
 
     /// Draws the new text now if the last draw was at least `streamingInterval` ago, or else once it is.
