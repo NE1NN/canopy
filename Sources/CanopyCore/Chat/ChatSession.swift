@@ -316,17 +316,10 @@ public final class ChatSession {
         return !isRunningShell && !text.dropFirst().trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// `!` commands as Claude Code's TUI sends them, with a failure's exit code where stderr goes.
+    /// `!` commands as blocks of Canopy's own. Claude Code 2.1.296 replays no message holding the TUI's
+    /// `<bash-input>` tags, and without the echo a chat cannot tell when Claude took the message.
     static func shellBlocks(_ runs: [ChatShellRun]) -> [ClaudeInput.Content] {
-        runs.flatMap { run -> [ClaudeInput.Content] in
-            let code = run.shell.exitCode ?? 0
-            return [
-                .text("<bash-input>\(run.shell.command)</bash-input>"),
-                .text(
-                    "<bash-stdout>\(run.shell.outputForClaude)</bash-stdout>"
-                        + "<bash-stderr>\(code == 0 ? "" : "Exit code \(code)")</bash-stderr>"),
-            ]
-        }
+        runs.map { .text(ChatShell.block(for: $0.shell)) }
     }
 
     public func allow() {

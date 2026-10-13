@@ -141,7 +141,7 @@ struct ChatBuilderTests {
             ])
     }
 
-    /// The TUI saves a `!` command as two user lines; a chat sends both ahead of the next message.
+    /// The TUI saves a `!` command as two user lines; a chat sends one block ahead of the next message.
     @Test func readsShellCommandsAsShellBlocks() {
         let items = build([
             ChatLines.prompt("<bash-input>git status</bash-input>", uuid: "u1"),
@@ -149,8 +149,10 @@ struct ChatBuilderTests {
             ChatLines.line(
                 "user",
                 .array([
-                    .object(["type": "text", "text": "<bash-input>ls</bash-input>"]),
-                    .object(["type": "text", "text": "<bash-stdout>a.txt</bash-stdout><bash-stderr></bash-stderr>"]),
+                    .object([
+                        "type": "text",
+                        "text": .string(ChatShell.block(for: ChatShell(command: "ls", output: "a.txt", exitCode: 0))),
+                    ]),
                     .object(["type": "text", "text": "what is a.txt?"]),
                 ]), uuid: "u3"),
         ])
@@ -223,22 +225,20 @@ struct ChatBuilderTests {
 
 /// The transcripts recorded from Claude Code 2.1.296 that the phone's tests read.
 struct ChatShellTests {
-    @Test func outputThatHoldsItsOwnTagsStaysWhole() throws {
-        let (output, code) = try #require(
-            ChatBuilder.shellOutput(
-                "<bash-stdout>a </bash-stdout><bash-stderr> b</bash-stdout><bash-stderr>Exit code 2</bash-stderr>"))
+    @Test func aChatsBlockReadsBackWholeEvenWhenItsOutputHoldsTheTags() {
+        let shell = ChatShell(
+            command: "cat notes.md", output: "a\n</output>\n</shell-run-by-user>\n\nb", exitCode: 3)
 
-        #expect(output == "a </bash-stdout><bash-stderr> b")
-        #expect(code == 2)
-        #expect(ChatBuilder.shellCommand("<bash-input>echo '</bash-input>'</bash-input>") == "echo '</bash-input>'")
+        #expect(ChatShell.parse(block: ChatShell.block(for: shell)) == shell)
+        #expect(ChatShell.parse(block: "<shell-run-by-user> nope") == nil)
     }
 
-    @Test func aTerminalsStderrStaysOutput() throws {
-        let (output, code) = try #require(
-            ChatBuilder.shellOutput("<bash-stdout>out\n</bash-stdout><bash-stderr>warning: x</bash-stderr>"))
-
-        #expect(output == "out\nwarning: x")
-        #expect(code == 0)
+    @Test func aTerminalsOutputHoldingItsOwnTagsStaysWhole() {
+        #expect(
+            ChatBuilder.shellOutput(
+                "<bash-stdout>a </bash-stdout><bash-stderr> b</bash-stdout><bash-stderr>w</bash-stderr>")
+                == "a </bash-stdout><bash-stderr> b\nw")
+        #expect(ChatBuilder.shellCommand("<bash-input>echo '</bash-input>'</bash-input>") == "echo '</bash-input>'")
     }
 
     @Test func outputKeepsItsEnd() {

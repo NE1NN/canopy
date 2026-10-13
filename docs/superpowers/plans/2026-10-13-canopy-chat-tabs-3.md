@@ -23,7 +23,7 @@
 - A full-screen command runs as the terminal's first prompt (`claude --resume <id> "/rewind"`), so Open in Terminal and the command are one step.
 - A `!` command's stderr joins its stdout in the order printed, and it reads no input: `!cat` ends at once instead of waiting.
 - A `!` command shows its last 30 lines until opened; Claude gets the last 30,000 bytes, as Claude Code's own `!` does.
-- A failed `!` command reaches Claude as `Exit code N` in `<bash-stderr>`.
+- A `!` command reaches Claude as a `<shell-run-by-user>` block with its command, exit code, and output, ahead of the next message. The TUI's `<bash-input>` blocks would read the same, but Claude Code 2.1.296 does not echo a message holding them (checked against the real one), so a chat could not tell when Claude took it. A conversation resumed in a terminal shows the block as text.
 - A `!` command runs while Claude is idle or working; Claude reads it with the next plain message, never with a `/` command, which must start its message.
 - Open in Terminal sends what the chat had not sent yet (finished `!` commands and the draft) as the terminal's first message. A full-screen command from the `/` menu goes first instead. Pasted images that were not sent stay behind.
 - A chat whose session a terminal holds says "Open in p12" with a button to show it, and starts when the terminal lets it go.
@@ -48,6 +48,6 @@ An independent opus review found 4 high, 8 medium, and 4 low findings and missin
 14. Low: the name typed in full did not come first in the `/` menu, and the selection stayed put as the filter changed. Test: `theNameTypedInFullComesFirst`.
 15. Low: conversations were listed from the Mac's home instead of the one chats use.
 16. Low: output past 30 lines could not be seen, and a TUI block cut by a page could spin forever. Blocks open to all of their output, and a transcript's blocks never spin.
-17. `ChatRealClaudeTests` now runs a failing `!` command and checks that Claude read its output and exit code.
+17. `ChatRealClaudeTests` now runs a failing `!` command and checks that Claude read its output and exit code. It showed that Claude Code does not echo a message holding `<bash-input>`, so the queued message never cleared; chats now send a block of their own, and the stand-in drops the echo as Claude Code does.
 
 Also fixed along the way: a warning for a `switch` case handled twice.

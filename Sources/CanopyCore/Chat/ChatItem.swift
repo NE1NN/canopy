@@ -57,6 +57,26 @@ public struct ChatShell: Equatable, Sendable {
 
     static let cutNote = "[earlier output cut]"
 
+    /// How a chat hands Claude a `!` command.
+    public static func block(for shell: ChatShell) -> String {
+        "<shell-run-by-user>\n<command>\(shell.command)</command>\n<exit-code>\(shell.exitCode ?? 0)</exit-code>\n"
+            + "<output>\n\(shell.outputForClaude)\n</output>\n</shell-run-by-user>"
+    }
+
+    /// Reads `block(for:)` back. The output is cut at the last closing tags, since it may hold them itself.
+    public static func parse(block text: String) -> ChatShell? {
+        let start = "<shell-run-by-user>\n<command>"
+        let end = "\n</output>\n</shell-run-by-user>"
+        guard text.hasPrefix(start), text.hasSuffix(end) else { return nil }
+        let body = text.dropFirst(start.count).dropLast(end.count)
+        guard let command = body.range(of: "</command>\n<exit-code>"),
+            let code = body[command.upperBound...].range(of: "</exit-code>\n<output>\n")
+        else { return nil }
+        return ChatShell(
+            command: String(body[..<command.lowerBound]), output: String(body[code.upperBound...]),
+            exitCode: Int32(body[command.upperBound..<code.lowerBound]) ?? 0)
+    }
+
     private static func lastPart(of output: String) -> String {
         let tail = String(decoding: output.utf8.suffix(outputLimit), as: UTF8.self)
         let lines = tail.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)

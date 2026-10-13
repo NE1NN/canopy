@@ -85,10 +85,14 @@ public struct ChatBuilder: Sendable {
             case .tool: break
             }
         }
-        // `!` commands come as `<bash-input>` and `<bash-stdout>` text, alone or ahead of a message.
+        // A TUI's `!` commands come as `<bash-input>` and `<bash-stdout>` lines, a chat's as blocks ahead of a message.
         var shellIndex: Int?
         parts = parts.filter { part in
             let text = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let shell = ChatShell.parse(block: text) {
+                append(ChatItem(id: record.id + "#shell\(items.count)", content: .shell(shell), at: record.at))
+                return false
+            }
             if let command = Self.shellCommand(text) {
                 // Done unless its output says otherwise: in a TUI transcript the output can be on an older page.
                 append(
@@ -98,11 +102,10 @@ public struct ChatBuilder: Sendable {
                 shellIndex = items.count - 1
                 return false
             }
-            if let (output, exitCode) = Self.shellOutput(text) {
+            if let output = Self.shellOutput(text) {
                 let index = shellIndex ?? items.lastIndex { if case .shell = $0.content { true } else { false } }
                 if let index, case .shell(var shell) = items[index].content {
                     shell.output = output
-                    shell.exitCode = exitCode
                     items[index].content = .shell(shell)
                     items[index].revision = nextRevision()
                 }
@@ -129,31 +132,23 @@ public struct ChatBuilder: Sendable {
         return String(text.dropFirst("<bash-input>".count).dropLast("</bash-input>".count))
     }
 
-    /// Output and exit code, cut at the last closing tags, since the output itself may hold them. A failure's exit
-    /// code is in stderr as "Exit code N", as Canopy sends it.
-    static func shellOutput(_ text: String) -> (String, Int32)? {
+    /// A TUI's output, cut at the last closing tags, since the output itself may hold them. Its stderr stays output.
+    static func shellOutput(_ text: String) -> String? {
         guard text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") else { return nil }
         var stdout = ""
         var stderr = Substring(text)
         if text.hasPrefix("<bash-stdout>") {
             let body = text.dropFirst("<bash-stdout>".count)
-            if let end = body.range(of: "</bash-stdout><bash-stderr>", options: .backwards) {
-                stdout = String(body[..<end.lowerBound])
-                stderr = "<bash-stderr>" + body[end.upperBound...]
-            } else {
-                return (String(body.hasSuffix("</bash-stdout>") ? body.dropLast("</bash-stdout>".count) : body), 0)
+            guard let end = body.range(of: "</bash-stdout><bash-stderr>", options: .backwards) else {
+                return String(body.hasSuffix("</bash-stdout>") ? body.dropLast("</bash-stdout>".count) : body)
             }
+            stdout = String(body[..<end.lowerBound])
+            stderr = "<bash-stderr>" + body[end.upperBound...]
         }
         stderr = stderr.dropFirst("<bash-stderr>".count)
         if stderr.hasSuffix("</bash-stderr>") { stderr = stderr.dropLast("</bash-stderr>".count) }
-        var errors = String(stderr).trimmingCharacters(in: .whitespacesAndNewlines)
-        var code: Int32 = 0
-        if let range = errors.range(of: #"(^|\n)Exit code (\d+)$"#, options: .regularExpression) {
-            code = Int32(errors[range].split(separator: " ").last ?? "") ?? 1
-            errors.removeSubrange(range)
-        }
-        let output = [stdout.trimmingCharacters(in: .newlines), errors].filter { !$0.isEmpty }
-        return (output.joined(separator: "\n"), code)
+        return [stdout.trimmingCharacters(in: .newlines), stderr.trimmingCharacters(in: .whitespacesAndNewlines)]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private mutating func addAssistant(_ record: TranscriptParser.Record) {
