@@ -20,7 +20,7 @@ struct TermCommand: AsyncParsableCommand {
 
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "List the terminals in the row you are in, or in every row.")
+            abstract: "List the terminals and chats in the row you are in, or in every row.")
 
         @OptionGroup var rowOptions: RowOptions
         @Flag(help: "List terminals in every row.")
@@ -33,11 +33,12 @@ struct TermCommand: AsyncParsableCommand {
             try client.print(result) {
                 let panes = try result.decode([TermInfo].self)
                 return Table.render(
-                    ["ID", "ROW", "TAB", "PROCESS", "AGENT", "TITLE", "FOLDER"],
+                    ["ID", "ROW", "TAB", "KIND", "PROCESS", "AGENT", "TITLE", "FOLDER"],
                     panes.map { pane in
                         let process = pane.exited.map { "exited (\($0))" } ?? pane.foreground ?? ""
                         return [
-                            pane.pane, pane.row, pane.tab, process, pane.agent?.rawValue ?? "", pane.title, pane.folder,
+                            pane.pane, pane.row, pane.tab, pane.kind ?? "terminal", process,
+                            pane.agent?.rawValue ?? "", pane.title, pane.folder,
                         ]
                     }
                 )

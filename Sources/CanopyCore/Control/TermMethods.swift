@@ -24,6 +24,8 @@ public struct TermInfo: Codable, Sendable, Equatable {
     /// The program in the foreground, such as `claude`, or the shell when it is idle.
     public var foreground: String?
     public var exited: Int32?
+    /// `terminal` or `chat`.
+    public var kind: String?
     /// The agent's state, left out when it is none.
     public var agent: AgentState?
     /// What a background agent waits on, left out when nothing runs.

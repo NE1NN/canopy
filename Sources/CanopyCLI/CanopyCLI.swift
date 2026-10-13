@@ -9,7 +9,8 @@ struct CanopyCLI: AsyncParsableCommand {
         abstract: "Drive Canopy from the command line.",
         version: CanopyVersion.current,
         subcommands: [
-            Status.self, RepoCommand.self, RowCommand.self, GroupCommand.self, TermCommand.self, WebCommand.self,
+            Status.self, RepoCommand.self, RowCommand.self, GroupCommand.self, TermCommand.self, ChatCommand.self,
+            WebCommand.self,
             PortsCommand.self,
             PRCommand.self, BranchCommand.self, PluginCommand.self, TicketCommand.self, LogCommand.self,
             HooksCommand.self, HostCommand.self, PhoneCommand.self, RemoteAttachCommand.self,
