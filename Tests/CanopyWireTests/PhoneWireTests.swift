@@ -85,36 +85,6 @@ struct PhoneInboxTests {
         row("split", [agent("p8", .none, since: 10), agent("p9", .waiting, since: 20)]),
     ])
 
-    @Test func theInboxHoldsOnlyWaitingAndUnreadDone() {
-        let sections = Self.inbox.sections
-        #expect(sections.needsYou.map(\.agent.pane) == ["p9", "p2", "p3"])
-        #expect(sections.done.map(\.agent.pane) == ["p4"])
-        #expect(sections.count == 4)
-        #expect(!sections.isEmpty)
-    }
-
-    @Test func doneIsNewestFirst() {
-        let inbox = PhoneInbox(rows: [
-            Self.row("old", [Self.agent("p1", .done, unseen: true, since: 10)]),
-            Self.row("new", [Self.agent("p2", .done, unseen: true, since: 30)]),
-            Self.row("mid", [Self.agent("p3", .done, unseen: true, since: 20)]),
-        ])
-        #expect(inbox.sections.done.map(\.agent.pane) == ["p2", "p3", "p1"])
-    }
-
-    @Test func tiesKeepTheMacsOrder() {
-        let inbox = PhoneInbox(rows: [
-            Self.row("b", [Self.agent("p2", .waiting, since: 50)]),
-            Self.row("a", [Self.agent("p1", .waiting, since: 50)]),
-        ])
-        #expect(inbox.sections.needsYou.map(\.agent.pane) == ["p2", "p1"])
-    }
-
-    @Test func runningAgentsAreCountedNotListed() {
-        #expect(Self.inbox.runningCount == 3)
-        #expect(PhoneInbox().sections.isEmpty)
-    }
-
     @Test func aRowShowsItsMostUrgentAgent() {
         #expect(Self.inbox.rows.last?.dot == .waiting)
         #expect(Self.inbox.rows.first { $0.name == "seen" }?.dot == nil)

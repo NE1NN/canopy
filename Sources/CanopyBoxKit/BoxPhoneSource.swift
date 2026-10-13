@@ -33,7 +33,8 @@ public final class BoxPhoneSource: PhoneSource {
     }
 
     static func phoneRows(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> [PhoneRow] {
-        snapshot.rows.map { row in
+        tails?.keep(only: Set(snapshot.panes.compactMap(\.transcriptPath)))
+        return snapshot.rows.map { row in
             PhoneRow(
                 path: row.path, name: row.branch ?? (row.path as NSString).lastPathComponent, repo: row.repo,
                 isMain: row.isMain,

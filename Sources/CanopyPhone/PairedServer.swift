@@ -23,10 +23,13 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     public var version: String?
     /// When it was paired, which orders the servers, since the Keychain keeps no order.
     public var pairedAt: Date
+    /// Why the server no longer counts as paired, once it forgot this phone, so it stays that way after a relaunch.
+    public var unpairedNotice: String?
 
     public init(
         id: String = UUID().uuidString, kind: String = PhoneServerKind.mac, name: String, host: String, port: UInt16,
-        address: String?, token: String, phone: String, version: String? = nil, pairedAt: Date = Date()
+        address: String?, token: String, phone: String, version: String? = nil, pairedAt: Date = Date(),
+        unpairedNotice: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -38,6 +41,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         self.phone = phone
         self.version = version
         self.pairedAt = pairedAt
+        self.unpairedNotice = unpairedNotice
     }
 
     public var isBox: Bool { kind == PhoneServerKind.box }
@@ -54,7 +58,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, name, host, port, address, token, phone, version, pairedAt
+        case id, kind, name, host, port, address, token, phone, version, pairedAt, unpairedNotice
         /// The name's key from before several servers, when the one server was always the Mac.
         case mac
     }
@@ -73,6 +77,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         phone = try container.decode(String.self, forKey: .phone)
         version = try container.decodeIfPresent(String.self, forKey: .version)
         pairedAt = try container.decodeIfPresent(Date.self, forKey: .pairedAt) ?? .distantPast
+        unpairedNotice = try container.decodeIfPresent(String.self, forKey: .unpairedNotice)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -87,6 +92,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         try container.encode(phone, forKey: .phone)
         try container.encodeIfPresent(version, forKey: .version)
         try container.encode(pairedAt, forKey: .pairedAt)
+        try container.encodeIfPresent(unpairedNotice, forKey: .unpairedNotice)
     }
 }
 
@@ -105,16 +111,21 @@ extension [PairedServer] {
     }
 }
 
-/// Each server's token stays in this phone's Keychain, one item each, never in a backup another device can restore.
-public struct KeychainCredentialStore: CredentialStore {
+/// The Keychain's generic passwords for one service, by account.
+public protocol KeychainItems: Sendable {
+    func all() -> [(account: String, data: Data)]
+    /// Replaces the account's item in place, or adds it.
+    func write(_ data: Data, account: String) -> OSStatus
+    func delete(account: String)
+}
+
+/// This device's own Keychain. Items never go into a backup another device can restore.
+public struct SystemKeychain: KeychainItems {
     public var service: String
 
-    public init(service: String = "com.ne1nn.Canopy.Phone") {
+    public init(service: String) {
         self.service = service
     }
-
-    /// The one item from before several servers, which the first load moves to the server's own.
-    static let legacyAccount = "mac"
 
     private func query(account: String?) -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
@@ -122,9 +133,7 @@ public struct KeychainCredentialStore: CredentialStore {
         return query
     }
 
-    private static func account(_ id: String) -> String { "server.\(id)" }
-
-    public func loadAll() -> [PairedServer] {
+    public func all() -> [(account: String, data: Data)] {
         var search = query(account: nil)
         search[kSecReturnData as String] = true
         search[kSecReturnAttributes as String] = true
@@ -133,35 +142,73 @@ public struct KeychainCredentialStore: CredentialStore {
         guard SecItemCopyMatching(search as CFDictionary, &found) == errSecSuccess,
             let items = found as? [[String: Any]]
         else { return [] }
-        var servers: [PairedServer] = []
-        for item in items {
-            guard let data = item[kSecValueData as String] as? Data,
-                let server = try? JSONDecoder().decode(PairedServer.self, from: data)
-            else { continue }
-            if item[kSecAttrAccount as String] as? String == Self.legacyAccount {
+        return items.compactMap { item in
+            guard let account = item[kSecAttrAccount as String] as? String,
+                let data = item[kSecValueData as String] as? Data
+            else { return nil }
+            return (account, data)
+        }
+    }
+
+    public func write(_ data: Data, account: String) -> OSStatus {
+        let item = query(account: account)
+        let status = SecItemUpdate(item as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecItemNotFound else { return status }
+        var added = item
+        added[kSecValueData as String] = data
+        added[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(added as CFDictionary, nil)
+    }
+
+    public func delete(account: String) {
+        SecItemDelete(query(account: account) as CFDictionary)
+    }
+}
+
+/// Each server's token in the Keychain, one item each.
+public struct KeychainCredentialStore: CredentialStore {
+    let items: any KeychainItems
+
+    public init(service: String = "com.ne1nn.Canopy.Phone") {
+        items = SystemKeychain(service: service)
+    }
+
+    init(items: any KeychainItems) {
+        self.items = items
+    }
+
+    /// The one item from before several servers, always the Mac's, which the first load moves to its own.
+    static let legacyAccount = "mac"
+    /// The moved server's id, the same however many launches the move takes, so it is never there twice.
+    static let legacyID = "mac"
+
+    private static func account(_ id: String) -> String { "server.\(id)" }
+
+    public func loadAll() -> [PairedServer] {
+        let stored = items.all()
+        var servers = stored.compactMap { item -> PairedServer? in
+            guard item.account != Self.legacyAccount else { return nil }
+            return try? JSONDecoder().decode(PairedServer.self, from: item.data)
+        }
+        if let legacy = stored.first(where: { $0.account == Self.legacyAccount }),
+            var server = try? JSONDecoder().decode(PairedServer.self, from: legacy.data)
+        {
+            server.id = Self.legacyID
+            if servers.contains(where: { $0.id == server.id }) {
+                // Moved on an earlier launch whose delete failed.
+                items.delete(account: Self.legacyAccount)
+            } else {
                 // The legacy item goes only once its server is safe in its own.
-                guard (try? save(server)) != nil else {
-                    servers.append(server)
-                    continue
-                }
-                SecItemDelete(query(account: Self.legacyAccount) as CFDictionary)
+                if (try? save(server)) != nil { items.delete(account: Self.legacyAccount) }
+                servers.append(server)
             }
-            servers.append(server)
         }
         return servers.inPairingOrder()
     }
 
     /// Replaces the server's item in place, so a save that fails leaves the one before it.
     public func save(_ server: PairedServer) throws {
-        let data = try JSONEncoder().encode(server)
-        let item = query(account: Self.account(server.id))
-        var status = SecItemUpdate(item as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var added = item
-            added[kSecValueData as String] = data
-            added[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            status = SecItemAdd(added as CFDictionary, nil)
-        }
+        let status = items.write(try JSONEncoder().encode(server), account: Self.account(server.id))
         guard status == errSecSuccess else {
             throw PhoneProblem(
                 title: "This iPhone could not keep its pairing.", detail: "The Keychain said \(status). Pair again.")
@@ -169,7 +216,7 @@ public struct KeychainCredentialStore: CredentialStore {
     }
 
     public func remove(id: String) {
-        SecItemDelete(query(account: Self.account(id)) as CFDictionary)
+        items.delete(account: Self.account(id))
     }
 }
 

@@ -121,3 +121,39 @@ Servers say their kind in `phone.hello`, `phone.pair`, and the pairing link, and
 ### Checks
 
 - `make lint`, `make build`, `make test` three times, `make linux`, `make ios`, `scripts/ios-shots.sh`, `make e2e`, an opus review with After Review, CI.
+
+## As built
+
+Tasks 2 and 3 landed as one commit, since the models could not compile against the new connection apart from it.
+Building the fixture's box turned up three things on the box itself, fixed here with tests:
+
+- The Mac opens a box row's pane itself through tmux, and the box learned of it only on its next poll, so an agent's first hooks were dropped.
+  A hook for a session the box does not know now takes it at once, when it runs in one of the box's rows (`aHookFromASessionTheBoxHasNotPolledYetCounts`).
+- The phone server read the box's name once at start, before `host upgrade` configured it, so phones saw the machine's hostname and could not match the Mac's copy of its rows.
+  `PhoneServerSettings.serverName` is now asked at each pairing and hello (`phonesSeeTheNameTheMacGaveTheBox`).
+- The box worded agents' lines from the screen only, which showed nothing for a done agent.
+  Both servers now word them through `AgentLine` in `CanopyAgents`, with the box keeping its own `TranscriptTails` (`aDoneAgentsLineIsItsLastWords`).
+
+The tour's shots also changed the Inbox to one banner for every server out of reach, and the Pairing notice to name every server that forgot the phone.
+
+## After Review
+
+An opus review found no critical issues, two important ones, and twelve minor ones.
+
+- Pairing a server again from Settings left the sheet open, since it closed on a new server's id, and the camera then sent the spent code again, which showed a false error.
+  The sheet closes on a count of pairings, a code that worked is not tried again, and the sheet clears old problems as it opens and closes (`pairingTheSameServerAgainCountsAndItsCodeIsNotTriedAgain`).
+- The move of the old Keychain item had no test that ran it.
+  `KeychainCredentialStore` now works through `KeychainItems`, with `SystemKeychain` in the app and a fake in tests, covering the move, a second launch, a refused write, and an old item left behind (`KeychainMoveTests`).
+- The moved server's id was new on each launch until the move worked, which could pair the Mac twice; it is now always `mac`.
+- A server that forgot the phone counted as paired again after a relaunch; its notice is now saved with it (`aForgottenServerStaysForgottenAfterARelaunch`).
+- A removed connection still let a stream wait for it; it now ends as unpaired.
+- `takeSession` checks again after listing tmux that the box was not released meanwhile.
+- `RowsModel` started again restarts each server's rows (`rowsStartedAgainRefreshAgain`).
+- The box's transcript tails keep only the panes it still has.
+- A forgotten box's messages name `canopy phone pair --on <host>` (`aForgottenBoxSaysToPairItAgainWithItsHost`).
+- Mark all read leaves a server out of reach alone instead of failing on it (`markAllReadLeavesAServerOutOfReach`).
+- `PhoneInbox.sections` in `CanopyWire` copied the Inbox's sort; it is gone, and `InboxModel` is the one place.
+- Ruling, from the review's question: the phone hides the Mac's copy of a box's rows only once the box has sent its own, so a box not reached since launch still shows through the Mac (`aBoxNotReachedYetLeavesTheMacsCopy`).
+
+Deferred: the box's phone port is still read once at start, which is safe while the Mac never sets `phonePort`; a hook for a session outside every row lists tmux each time.
+

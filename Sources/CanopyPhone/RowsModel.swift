@@ -62,9 +62,10 @@ public final class RowsModel {
         }
         for id in ids where byServer[id] == nil {
             guard let server = servers.connection(id: id) else { continue }
-            let rows = ServerRows(server: server, servers: servers)
-            byServer[id] = rows
-            if isStarted { rows.start() }
+            byServer[id] = ServerRows(server: server, servers: servers)
+        }
+        if isStarted {
+            for rows in byServer.values { rows.start() }
         }
     }
 

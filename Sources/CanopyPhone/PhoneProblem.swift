@@ -14,13 +14,14 @@ public struct PhoneProblem: Error, Equatable, Sendable {
         self.code = code
     }
 
-    /// `server` names the server in what the app says, by its name or the host the phone tried.
-    public init(_ error: any Error, server: String) {
+    /// `server` names the server in what the app says, by its name or the host the phone tried. `pairCommand` is what
+    /// pairs it again, run on the Mac.
+    public init(_ error: any Error, server: String, pairCommand: String = "canopy phone pair") {
         switch error {
         case let problem as PhoneProblem:
             self = problem
         case let error as ControlError:
-            self = Self.refused(error, server: server)
+            self = Self.refused(error, server: server, pairCommand: pairCommand)
         case PhoneTransportError.refused:
             self.init(
                 title: "Canopy isn't listening on \(server).",
@@ -37,17 +38,17 @@ public struct PhoneProblem: Error, Equatable, Sendable {
     static let checkTailscale =
         "Check that Tailscale is on, on this iPhone and the server, and that the server is awake with Canopy running."
 
-    private static func refused(_ error: ControlError, server: String) -> PhoneProblem {
+    private static func refused(_ error: ControlError, server: String, pairCommand: String) -> PhoneProblem {
         let title: String
         switch error.code {
         case "bad_pairing_code":
             return PhoneProblem(
                 title: "That code expired or was already used.",
-                detail: "Run canopy phone pair on the Mac for a new one.", code: error.code)
+                detail: "Run \(pairCommand) on the Mac for a new one.", code: error.code)
         case "unpaired":
             return PhoneProblem(
                 title: "\(server) no longer knows this iPhone. Pair it again.",
-                detail: "Run canopy phone pair on the Mac.", code: error.code)
+                detail: "Run \(pairCommand) on the Mac.", code: error.code)
         case "prompt_gone": title = "That prompt moved on before your answer reached it."
         case "prompt_open": title = "Answer the open prompt first. A reply would answer it instead."
         case "agent_not_running": title = "Claude Code isn't running in this pane, so a reply would reach the shell."

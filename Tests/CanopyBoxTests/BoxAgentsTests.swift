@@ -48,6 +48,10 @@ struct BoxAgentsTests {
         // A session outside the box's rows is still no pane of the box's.
         try await home.server.tmux.newSession("p8", folder: home.dir.path, environment: [:])
         #expect(await daemon.hook(pane: "p8", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
+        // A released box takes no new panes.
+        _ = await daemon.release()
+        try await home.server.tmux.newSession("p9", folder: home.clone, environment: [:])
+        #expect(await daemon.hook(pane: "p9", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
     }
 
     @Test func anOlderHookIsIgnored() async throws {

@@ -188,8 +188,9 @@ public final class InboxModel {
         await markRead([item])
     }
 
+    /// Every done item from a server in reach. One out of reach could not take them.
     public func markAllRead() async {
-        await markRead(sections.done)
+        await markRead(sections.done.filter { !$0.server.isUnreachable })
     }
 
     /// Each item is read once its server takes it, so one that fails comes back alone.

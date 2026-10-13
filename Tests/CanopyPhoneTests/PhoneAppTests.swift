@@ -57,6 +57,26 @@ struct PairingModelTests {
         #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 2)
     }
 
+    /// Pairing a server again from Settings counts as a pairing, so its sheet closes, and the camera still seeing the
+    /// spent code tries nothing.
+    @Test func pairingTheSameServerAgainCountsAndItsCodeIsNotTriedAgain() async throws {
+        let servers = servers()
+        let pairing = PairingModel(servers: servers)
+        await pairing.pair(mac.link.url, scanned: true)
+        let again = mac.newCode("NEW1-CODE").url
+
+        await pairing.pair(again, scanned: true)
+        await pairing.pair(again, scanned: true)
+
+        #expect(pairing.pairings == 2)
+        #expect(pairing.problem == nil)
+        #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 2)
+        #expect(servers.connections.count == 1)
+        pairing.reset()
+        await pairing.pair(again, scanned: true)
+        #expect(pairing.problem?.title == "That code expired or was already used.")
+    }
+
     @Test func theSameCodeScannedTwiceWhilePairingPairsOnce() async throws {
         let servers = servers()
         let pairing = PairingModel(servers: servers)

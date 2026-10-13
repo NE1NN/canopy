@@ -23,7 +23,7 @@ struct BoxPhoneSourceTests {
         await daemon.report(pane: pane, AgentReport(state: .waiting, session: "s", prompt: Self.permission))
         let source = BoxPhoneSource(daemon: daemon)
         let inbox = await source.inbox()
-        #expect(inbox.sections.needsYou.map(\.agent.pane) == [pane])
+        #expect(inbox.rows.flatMap(\.agents).filter { $0.state == .waiting }.map(\.pane) == [pane])
         let rows = await source.rows()
         #expect(rows.sections.map(\.name) == ["demo"])
         #expect(rows.sections.first?.main?.path == home.clone)

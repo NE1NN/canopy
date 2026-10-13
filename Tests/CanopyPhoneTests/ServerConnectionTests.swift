@@ -1,5 +1,7 @@
 import CanopyWire
 import Foundation
+import Security
+import Synchronization
 import Testing
 
 @testable import CanopyPhone
@@ -329,6 +331,37 @@ struct ServersTests {
         #expect(servers.pairingNotice == "Studio and hindie-box no longer know this iPhone. Pair them again.")
     }
 
+    /// A server that forgot the phone stays forgotten after a relaunch, rather than counting as paired again.
+    @Test func aForgottenServerStaysForgottenAfterARelaunch() async throws {
+        let credentials = MemoryCredentialStore(mac.paired(at: 0), box.paired(at: 1))
+        let before = servers(credentials)
+        before.start()
+        #expect(await eventually { before.connections.allSatisfy(\.isConnected) })
+        box.forget(phone: "iPhone")
+        box.dropAll()
+        #expect(await eventually { before.paired.map(\.name) == ["Studio"] })
+        before.background()
+
+        let after = servers(credentials)
+
+        #expect(after.paired.map(\.name) == ["Studio"])
+        #expect(after.connections.last?.status == .unpaired("hindie-box no longer knows this iPhone. Pair it again."))
+    }
+
+    @Test func aForgottenBoxSaysToPairItAgainWithItsHost() async throws {
+        let servers = try await CanopyPhoneTests.servers(box)
+        box.forget(phone: "iPhone")
+        box.dropAll()
+        let connection = try #require(servers.connections.first)
+        #expect(await eventually { !connection.isPaired })
+
+        #expect(
+            throws: PhoneProblem(
+                title: "hindie-box no longer knows this iPhone. Pair it again.",
+                detail: "Pair it again with canopy phone pair --on hindie-box on the Mac.")
+        ) { try connection.liveClient() }
+    }
+
     @Test func removingAServerForgetsOnlyIt() async throws {
         let credentials = MemoryCredentialStore(mac.paired(at: 0), box.paired(at: 1))
         let servers = servers(credentials)
@@ -345,6 +378,7 @@ struct ServersTests {
         #expect(await eventually { box.openLinks.isEmpty })
         #expect(mac.openLinks.count == 1)
         await #expect(throws: ServerConnection.NotPaired.self) { try await waiting.value }
+        await #expect(throws: ServerConnection.NotPaired.self) { try await removed.client(after: removed.generation) }
     }
 
     @Test func eachServerBacksOffOnItsOwn() async throws {
@@ -385,6 +419,80 @@ struct CredentialStoreTests {
             server.isServer(of: PairingLink(host: "100.101.5.9", port: PhonePort.standard, code: "C", address: nil)))
         #expect(!server.isServer(of: FakeMac.box().link))
         #expect(!server.isServer(of: PairingLink(host: FakeMac.host, port: 7000, code: "C", address: nil)))
+    }
+}
+
+/// The Keychain's items for one service, in memory, failing writes while `refusesWrites`.
+final class FakeKeychain: KeychainItems, @unchecked Sendable {
+    let items = Mutex<[String: Data]>([:])
+    let refusesWrites = Mutex(false)
+
+    func all() -> [(account: String, data: Data)] {
+        items.withLock { $0.sorted { $0.key < $1.key }.map { ($0.key, $0.value) } }
+    }
+
+    func write(_ data: Data, account: String) -> OSStatus {
+        guard !refusesWrites.withLock({ $0 }) else { return errSecInteractionNotAllowed }
+        items.withLock { $0[account] = data }
+        return errSecSuccess
+    }
+
+    func delete(account: String) {
+        _ = items.withLock { $0.removeValue(forKey: account) }
+    }
+
+    var accounts: [String] { items.withLock { $0.keys.sorted() } }
+}
+
+@MainActor
+struct KeychainMoveTests {
+    /// The author's phone, paired with one Mac before this update, keeps that pairing through it.
+    @Test func aPairingFromBeforeSeveralServersMovesToItsOwnItem() throws {
+        let keychain = FakeKeychain()
+        keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }
+        let store = KeychainCredentialStore(items: keychain)
+
+        let servers = store.loadAll()
+
+        #expect(servers.map(\.name) == ["Studio"] && servers.first?.token == "t1")
+        #expect(keychain.accounts == ["server.mac"])
+        // A second launch reads the moved item, once.
+        #expect(KeychainCredentialStore(items: keychain).loadAll() == servers)
+    }
+
+    @Test func aMoveTheKeychainRefusesKeepsTheOldItemAndTheSameServer() throws {
+        let keychain = FakeKeychain()
+        keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }
+        keychain.refusesWrites.withLock { $0 = true }
+
+        let first = KeychainCredentialStore(items: keychain).loadAll()
+        let second = KeychainCredentialStore(items: keychain).loadAll()
+
+        #expect(keychain.accounts == ["mac"])
+        #expect(first.map(\.id) == ["mac"] && second.map(\.id) == ["mac"])
+    }
+
+    @Test func anOldItemLeftBehindByAnEarlierMoveIsDropped() throws {
+        let keychain = FakeKeychain()
+        keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }
+        let moved = KeychainCredentialStore(items: keychain).loadAll()
+        keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }
+
+        #expect(KeychainCredentialStore(items: keychain).loadAll() == moved)
+        #expect(keychain.accounts == ["server.mac"])
+    }
+
+    @Test func serversSaveAndGoOneItemEach() throws {
+        let keychain = FakeKeychain()
+        let store = KeychainCredentialStore(items: keychain)
+        let mac = FakeMac().paired(at: 1)
+        let box = FakeMac.box().paired(at: 2)
+        try store.save(box)
+        try store.save(mac)
+
+        #expect(store.loadAll().map(\.name) == ["Studio", "hindie-box"])
+        store.remove(id: mac.id)
+        #expect(store.loadAll().map(\.name) == ["hindie-box"])
     }
 }
 

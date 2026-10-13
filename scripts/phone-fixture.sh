@@ -180,4 +180,4 @@ if ((box)); then
     "$cli" row new feat/usage-migration --repo solis --on devbox --run "$run" >/dev/null
 fi
 
-echo "listening on 127.0.0.1:$port, the box on 127.0.0.1:$box_port, CANOPY_HOME=$CANOPY_HOME"
+echo "listening on 127.0.0.1:$port$( ((box)) && echo ", the box on 127.0.0.1:$box_port"), CANOPY_HOME=$CANOPY_HOME"

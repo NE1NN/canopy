@@ -145,8 +145,6 @@ extension BoxDaemon {
             message: "\(ids.joined(separator: ", ")) did not become \(target.label) before the timeout.")
     }
 
-    /// Reads what each pane runs, its title, whether a program holds its terminal, and its last line. Panes whose
-    /// session ended go, and sessions the box does not know, in one of its rows, become panes.
     /// Whether the box has the pane, taking it now when its session runs on the box's tmux server in one of its rows,
     /// as one the Mac just opened does, rather than on the next poll, so its agent's first hooks are not lost.
     func takeSession(_ id: String) async -> Bool {
@@ -154,8 +152,9 @@ extension BoxDaemon {
         guard !state.released, !makingPanes.contains(id),
             let session = try? await tmux.panes().first(where: { $0.session == id })
         else { return false }
-        // Another call may have taken it while tmux listed.
+        // Another call may have taken it, or the box been released, while tmux listed.
         if pane(id) != nil { return true }
+        guard !state.released else { return false }
         let folder = Paths.canonical(session.start)
         guard let row = row(holding: folder) else { return false }
         state.panes.append(StoredPane(id: id, rowPath: row.path, folder: folder, agent: PaneAgent()))
@@ -164,6 +163,8 @@ extension BoxDaemon {
         return true
     }
 
+    /// Reads what each pane runs, its title, whether a program holds its terminal, and its last line. Panes whose
+    /// session ended go, and sessions the box does not know, in one of its rows, become panes.
     public func pollPanes() async {
         // Panes made while tmux lists are not in its listing, so only panes from before it can be gone.
         let known = Set(state.panes.map(\.id))

@@ -133,6 +133,8 @@ private struct PairAnotherSheet: View {
                     }
                 }
         }
-        .onChange(of: app.pairing.lastPaired?.id) { dismiss() }
+        .onAppear { app.pairing.reset() }
+        .onDisappear { app.pairing.reset() }
+        .onChange(of: app.pairing.pairings) { dismiss() }
     }
 }

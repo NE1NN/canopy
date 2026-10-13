@@ -50,6 +50,7 @@ public final class ServerConnection: Identifiable {
     ) {
         id = server.id
         self.server = server
+        if let notice = server.unpairedNotice { status = .unpaired(notice) }
         self.transport = transport
         self.credentials = credentials
         self.timeout = timeout
@@ -110,9 +111,10 @@ public final class ServerConnection: Identifiable {
         loop = Task { await self.run(opened: opened) }
     }
 
-    /// Stops for good, as when the server is removed here.
+    /// Stops for good, as when the server is removed here, so nothing waits for it again.
     func end() {
         stop()
+        status = .unpaired("\(name) was removed from this iPhone.")
         failWaiters()
     }
 
@@ -123,7 +125,7 @@ public final class ServerConnection: Identifiable {
             case .unreachable(let problem):
                 throw PhoneProblem(title: "Can't reach \(name).", detail: problem.detail)
             case .unpaired(let notice):
-                throw PhoneProblem(title: notice, detail: "Pair it again with canopy phone pair on the Mac.")
+                throw PhoneProblem(title: notice, detail: "Pair it again with \(pairCommand) on the Mac.")
             case .connecting, .connected:
                 throw PhoneProblem(title: "Can't reach \(name).", detail: PhoneProblem.checkTailscale)
             }
@@ -133,8 +135,11 @@ public final class ServerConnection: Identifiable {
 
     /// An error as the app says it, naming this server.
     public func problem(_ error: any Error) -> PhoneProblem {
-        PhoneProblem(error, server: name)
+        PhoneProblem(error, server: name, pairCommand: pairCommand)
     }
+
+    /// What pairs this server again, run on the Mac.
+    public var pairCommand: String { isBox ? "canopy phone pair --on \(name)" : "canopy phone pair" }
 
     /// The live connection, waiting for one when there is none yet.
     public func client() async throws -> PhoneClient {
@@ -182,6 +187,8 @@ public final class ServerConnection: Identifiable {
         inbox = nil
         inboxAsOf = nil
         status = .unpaired(notice)
+        server.unpairedNotice = notice
+        try? credentials.save(server)
         failWaiters()
     }
 
@@ -207,7 +214,7 @@ public final class ServerConnection: Identifiable {
             } catch let error as ControlError where error.code == "unpaired" {
                 // A loop that pairing again replaced may still hear its old token refused; only the current one counts.
                 guard !Task.isCancelled, self.server.token == server.token else { return }
-                forgotten(notice: PhoneProblem(error, server: server.name).title)
+                forgotten(notice: problem(error).title)
                 return
             } catch {
                 guard !Task.isCancelled else { return }

@@ -67,6 +67,22 @@ struct RowsModelTests {
         model.stop()
     }
 
+    @Test func rowsStartedAgainRefreshAgain() async throws {
+        serveRows(Rows.inbox.rows)
+        mac.setInbox(Rows.inbox)
+        let model = RowsModel(servers: try await servers(mac))
+        model.start()
+        #expect(await eventually { model.hosts.first?.sections.first?.rows.count == 5 })
+        model.stop()
+        model.start()
+        let added = PhoneRow(path: "/canopy-new", name: "feat/new", repo: "canopy")
+        serveRows(Rows.inbox.rows + [added])
+        mac.setInbox(PhoneInbox(rows: Rows.inbox.rows + [added]))
+
+        #expect(await eventually { model.hosts.first?.sections.first?.rows.last?.name == "feat/new" })
+        model.stop()
+    }
+
     @Test func aFailedRefreshSaysWhy() async throws {
         mac.on(PhoneMethod.rows) { _ in .error("internal") }
         mac.setInbox(Rows.inbox)

@@ -301,6 +301,45 @@ struct InboxAcrossServersTests {
         #expect(await eventually { model.connectionLine.text.hasPrefix("As of ") })
     }
 
+    /// A box the phone has not reached since launch has sent nothing, so the Mac's copy of its rows shows meanwhile.
+    @Test func aBoxNotReachedYetLeavesTheMacsCopy() async throws {
+        var copy = PhoneRow(
+            path: "/Users/h/.canopy/remote/hindie-box/feat", name: "feat/box", repo: "solis-v1",
+            agents: [Rows.agent("p9", .waiting, since: 1_600)])
+        copy.host = "hindie-box"
+        mac.setInbox(PhoneInbox(rows: [copy]))
+        box.goAway()
+        let servers = Servers(
+            transport: FakeNetwork(mac, box), credentials: MemoryCredentialStore(mac.paired(at: 0), box.paired(at: 1)),
+            phoneName: "iPhone", sleep: ManualSleeper().sleep)
+        servers.start()
+        let model = InboxModel(servers: servers)
+
+        #expect(await eventually { model.sections.needsYou.map(\.server.name) == ["Studio"] })
+        box.comeBack()
+        servers.foreground()
+        #expect(await eventually { model.sections.needsYou.isEmpty })
+    }
+
+    @Test func markAllReadLeavesAServerOutOfReach() async throws {
+        mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
+        mac.setInbox(PhoneInbox(rows: [Rows.drain]))
+        box.setInbox(
+            PhoneInbox(rows: [
+                PhoneRow(
+                    path: "/b3", name: "feat/late", repo: "solis-v1",
+                    agents: [Rows.agent("b3", .done, since: 1_300, unseen: true)])
+            ]))
+        let model = InboxModel(servers: try await servers(mac, box))
+        box.goAway()
+        #expect(await eventually { model.staleServers.count == 1 })
+
+        await model.markAllRead()
+
+        #expect(model.sections.done.map(\.row.name) == ["feat/late"])
+        #expect(model.notice == nil)
+    }
+
     @Test func theMacsCopyOfABoxRowIsLeftOut() async throws {
         var copy = PhoneRow(
             path: "/Users/h/.canopy/remote/hindie-box/feat", name: "feat/box", repo: "solis-v1",

@@ -60,11 +60,12 @@ public final class Servers {
         }
     }
 
-    /// Whether a row a server sent shows here: not the Mac's copy of a row on a box this phone pairs with, which the
-    /// box serves itself, reachable or not.
+    /// Whether a row a server sent shows here: not the Mac's copy of a row on a box this phone pairs with, once the box
+    /// has sent its own, which stay as of when it last answered while it is out of reach. A box not reached since
+    /// launch leaves the Mac's copy to show.
     public func shows(_ row: PhoneRow, from connection: ServerConnection) -> Bool {
         guard !connection.isBox, let host = row.host else { return true }
-        return !connections.contains { $0.isBox && $0.isPaired && $0.name == host }
+        return !connections.contains { $0.isBox && $0.isPaired && $0.name == host && $0.inbox != nil }
     }
 
     public func connection(id: String) -> ServerConnection? {
@@ -126,7 +127,9 @@ public final class Servers {
                     throw error
                 }
             } catch let error as ControlError {
-                throw PhoneProblem(error, server: host)
+                let pairCommand =
+                    link.kind == PhoneServerKind.box ? "canopy phone pair --on <host>" : "canopy phone pair"
+                throw PhoneProblem(error, server: host, pairCommand: pairCommand)
             } catch let kept as PairingKept {
                 throw kept.problem
             } catch {
