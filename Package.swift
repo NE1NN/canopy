@@ -1,10 +1,16 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// What builds on Linux too: the wire format, what canopy-box shares with the Mac, and their tests.
-let portableDependencies: [Package.Dependency] = [
-    .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0")
+// Every dependency, on both platforms, so macOS and Linux resolve the same Package.resolved. Linux builds only what the
+// portable targets use.
+let dependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
+    .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.9.0"),
 ]
+
+// What builds on Linux too: the wire format, what canopy-box shares with the Mac, canopy-box, and their tests.
 
 let portableTargets: [Target] = [
     // What the Mac and the iPhone app both speak. It builds for iOS, so it has nothing platform-specific.
@@ -21,12 +27,31 @@ let portableTargets: [Target] = [
         dependencies: [
             "CanopyWire", "CanopySystem", "CanopyAgents", .product(name: "Crypto", package: "swift-crypto"),
         ]),
+    // git's runner for a clone, worktree lists, and the branch rules `row new` uses, here and on hosts.
+    .target(name: "CanopyGit", dependencies: ["CanopyWire", "CanopySystem"]),
+    // canopy-box: a Canopy home's rows, tmux panes, and agents on a host, and the socket the Mac and the box's CLI use.
+    .target(
+        name: "CanopyBoxKit",
+        dependencies: [
+            "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer", "CanopyGit",
+            .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        ]),
+    .executableTarget(name: "CanopyBox", dependencies: ["CanopyBoxKit"]),
     // Helpers every test target shares.
-    .target(name: "CanopyTestSupport", dependencies: ["CanopyWire", "CanopySystem"], resources: [.copy("Fixtures")]),
+    .target(
+        name: "CanopyTestSupport", dependencies: ["CanopyWire", "CanopySystem", "CanopyGit"],
+        resources: [.copy("Fixtures")]),
     .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
     .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
     .testTarget(name: "CanopyAgentsTests", dependencies: ["CanopyAgents", "CanopyWire", "CanopyTestSupport"]),
-    .testTarget(name: "CanopyServerTests", dependencies: ["CanopyServer", "CanopyWire", "CanopyTestSupport"]),
+    .testTarget(
+        name: "CanopyServerTests", dependencies: ["CanopyServer", "CanopyWire", "CanopySystem", "CanopyTestSupport"]),
+    .testTarget(name: "CanopyGitTests", dependencies: ["CanopyGit", "CanopyTestSupport"]),
+    .testTarget(
+        name: "CanopyBoxTests",
+        dependencies: [
+            "CanopyBoxKit", "CanopyBox", "CanopyWire", "CanopyAgents", "CanopyGit", "CanopyServer", "CanopyTestSupport",
+        ]),
 ]
 
 let macTargets: [Target] = [
@@ -36,7 +61,7 @@ let macTargets: [Target] = [
     .target(
         name: "CanopyCore",
         dependencies: [
-            "CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer",
+            "CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer", "CanopyGit",
             .product(name: "Markdown", package: "swift-markdown"),
         ]),
     // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
@@ -57,7 +82,9 @@ let macTargets: [Target] = [
         ]
     ),
     .testTarget(name: "CanopyPhoneTests", dependencies: ["CanopyPhone"]),
-    .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport"]),
+    .testTarget(
+        name: "CanopyCoreTests",
+        dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport", "CanopyBoxKit", "CanopyBox"]),
     .testTarget(
         name: "CanopyCLITests",
         dependencies: [
@@ -70,8 +97,11 @@ let macTargets: [Target] = [
 #if os(Linux)
     let package = Package(
         name: "Canopy",
-        products: [.library(name: "CanopyWire", targets: ["CanopyWire"])],
-        dependencies: portableDependencies,
+        products: [
+            .library(name: "CanopyWire", targets: ["CanopyWire"]),
+            .executable(name: "canopy-box", targets: ["CanopyBox"]),
+        ],
+        dependencies: dependencies,
         targets: portableTargets
     )
 #else
@@ -82,14 +112,11 @@ let macTargets: [Target] = [
         products: [
             .executable(name: "CanopyApp", targets: ["CanopyApp"]),
             .executable(name: "canopy", targets: ["CanopyCLI"]),
+            .executable(name: "canopy-box", targets: ["CanopyBox"]),
             .library(name: "CanopyWire", targets: ["CanopyWire"]),
             .library(name: "CanopyPhone", targets: ["CanopyPhone"]),
         ],
-        dependencies: portableDependencies + [
-            .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
-            .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
-            .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.9.0"),
-        ],
+        dependencies: dependencies,
         targets: portableTargets + macTargets
     )
 #endif

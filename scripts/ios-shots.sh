@@ -38,9 +38,11 @@ for appearance in $appearances; do
     scripts/phone-fixture.sh start
     # shellcheck source=/dev/null
     port=$(source build/phone-fixture.env && echo "$port")
+    box_port=$(source build/phone-fixture.env && echo "$box_port")
     requests=$(mktemp -d -t cnshots)
     calls="$requests/calls.json"
-    # The tour asks for what only the Mac can do: stopping its Canopy, and starting a new one that never paired.
+    # The tour asks for what only the Mac can do: stopping its Canopy and the box, and starting new ones that never
+    # paired, where the phone looks for them.
     (
         while true; do
             if [[ -f "$requests/stop-mac" ]]; then
@@ -49,8 +51,12 @@ for appearance in $appearances; do
                 scripts/phone-fixture.sh stop
                 rm -f "$requests/stop-mac"
             fi
+            if [[ -f "$requests/stop-box" ]]; then
+                scripts/phone-fixture.sh stop-box
+                rm -f "$requests/stop-box"
+            fi
             if [[ -f "$requests/restart-mac" ]]; then
-                PHONE_FIXTURE_PORT=$port scripts/phone-fixture.sh start >/dev/null
+                PHONE_FIXTURE_PORT=$port PHONE_FIXTURE_BOX_PORT=$box_port scripts/phone-fixture.sh start >/dev/null
                 # Only once it is all set up, so the script knows when it can stop it.
                 rm -f "$requests/restart-mac"
             fi
@@ -61,7 +67,9 @@ for appearance in $appearances; do
     results="$requests/tour.xcresult"
     # xcodebuild hands TEST_RUNNER_ variables in its own environment to the tour, without the prefix.
     status=0
-    TEST_RUNNER_CANOPY_TOUR_LINK="$(scripts/phone-fixture.sh link)" TEST_RUNNER_CANOPY_TOUR_DIR="$requests" \
+    TEST_RUNNER_CANOPY_TOUR_LINK="$(scripts/phone-fixture.sh link)" \
+        TEST_RUNNER_CANOPY_TOUR_BOX_LINK="$(scripts/phone-fixture.sh link box)" TEST_RUNNER_CANOPY_TOUR_DIR="$requests" \
+        TEST_RUNNER_CANOPY_TOUR_EC2="$(scripts/phone-fixture.sh ec2)" \
         xcodebuild -project Apps/CanopyiOS/Canopy.xcodeproj -scheme Canopy -destination "id=$udid" \
         -derivedDataPath "$derived" test-without-building -only-testing:CanopyUITests/ScreenTour \
         -resultBundlePath "$results" -collect-test-diagnostics never -quiet || status=$?

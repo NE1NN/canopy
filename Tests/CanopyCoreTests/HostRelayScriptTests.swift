@@ -211,6 +211,28 @@ struct HostRelayScriptTests {
         #expect(app.requests.map { $0?.input } == [Data("token\n".utf8), Data("unterminated".utf8)])
     }
 
+    /// A wake key is a key id and its secret, a line each; clearing one reads nothing.
+    @Test func hostWakeKeySendsTwoLinesAndClearSendsNone() async throws {
+        let setup = try Setup()
+        let app = try RelayStub(
+            path: setup.socket, answer: .acknowledging(RelayReply(stdout: Data(), stderr: Data(), status: 0)),
+            connections: 2)
+        let command = #"""
+            printf 'AKIA\nsecret\nrest\n' | { python3 "$0" relay host wake-key box; cat; }
+            python3 "$0" relay host wake-key box --clear < /dev/null
+            """#
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", command, setup.script],
+                environment: setup.environment(["CANOPY_SOCKET": setup.socket]), directory: nil, timeout: .seconds(60))
+        }
+
+        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "rest\n")
+        #expect(app.requests.map { $0?.input } == [Data("AKIA\nsecret\n".utf8), nil])
+    }
+
     /// A token typed at a remote pane's terminal cannot reach the Mac's CLI, so the relay says to pipe it in, as the
     /// CLI words its errors, without asking the app. Help still comes from the app.
     @Test func ticketConnectAtATerminalSaysToPipeTheTokenIn() async throws {

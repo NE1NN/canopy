@@ -30,8 +30,18 @@ public protocol HostMasterProcess: AnyObject, Sendable {
 public protocol HostProcessLauncher: Sendable {
     func startMaster(_ argv: [String]) -> any HostMasterProcess
     func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult
+    /// Runs `argv` with `stdin` on its standard input, as a file going up to a host does.
+    func run(_ argv: [String], timeout: Duration?, stdin: Data) async -> SubprocessResult
     /// Runs a host's `wake` command with the login shell's PATH, which tools like aws live on.
     func runWake(_ command: String) async -> SubprocessResult
+}
+
+extension HostProcessLauncher {
+    /// Launchers that never send input, as tests' stand-ins, refuse it.
+    public func run(_ argv: [String], timeout: Duration?, stdin: Data) async -> SubprocessResult {
+        SubprocessResult(
+            status: 255, stdout: Data(), stderr: Data("This launcher sends no input.".utf8), timedOut: false)
+    }
 }
 
 public struct SubprocessHostLauncher: HostProcessLauncher {
@@ -60,11 +70,20 @@ public struct SubprocessHostLauncher: HostProcessLauncher {
     }
 
     public func run(_ argv: [String], timeout: Duration?) async -> SubprocessResult {
+        await run(argv, timeout: timeout, input: nil)
+    }
+
+    public func run(_ argv: [String], timeout: Duration?, stdin: Data) async -> SubprocessResult {
+        await run(argv, timeout: timeout, input: stdin)
+    }
+
+    private func run(_ argv: [String], timeout: Duration?, input: Data?) async -> SubprocessResult {
         let environment = environment()
         return await onOwnThread {
             do {
                 return try Subprocess.run(
-                    argv[0], Array(argv.dropFirst()), environment: environment, directory: nil, timeout: timeout)
+                    argv[0], Array(argv.dropFirst()), environment: environment, directory: nil, timeout: timeout,
+                    stdin: input)
             } catch {
                 return SubprocessResult(status: 255, stdout: Data(), stderr: Data("\(error)".utf8), timedOut: false)
             }

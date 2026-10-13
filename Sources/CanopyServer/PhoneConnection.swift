@@ -23,11 +23,22 @@ public struct PhoneGate: Sendable {
     /// What a phone may call after `phone.hello`. A lost phone must not remove rows, repos, or hooks.
     public static let allowedMethods: Set<String> = [
         PhoneMethod.subscribe, PhoneMethod.rows, PhoneMethod.transcript, PhoneMethod.reply, PhoneMethod.answer,
-        PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe,
+        PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe, PhoneMethod.newRow,
     ]
 
+    /// Calls that may take minutes, as a new row waits for its setup. They run beside the connection's later calls
+    /// rather than ahead of them, and answer when done; the phone matches answers by id.
+    public static let lengthyMethods: Set<String> = [PhoneMethod.newRow]
+
     public var registry: PhoneRegistry
-    public var macName: String
+    /// The server's name, asked each time, as it can change while the server runs.
+    public var name: @Sendable () -> String
+    /// `PhoneServerKind`'s.
+    public var kind: String
+    /// How a phone starts the server, asked at each hello.
+    public var wake: @Sendable () -> PhoneWake?
+    /// What a task from a phone runs, asked at each hello.
+    public var agentCommand: @Sendable () -> String
     /// Canopy's version, which `phone.hello` answers with.
     public var version: String
     /// Waits out the time a new connection has to say hello, counted again after a pairing.
@@ -37,12 +48,18 @@ public struct PhoneGate: Sendable {
     public var onPaired: @Sendable (PairedPhone) -> Void
 
     public init(
-        registry: PhoneRegistry, macName: String, version: String, helloTimeout: Duration = .seconds(10),
+        registry: PhoneRegistry, name: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
+        wake: @escaping @Sendable () -> PhoneWake? = { nil },
+        agentCommand: @escaping @Sendable () -> String = { PhoneAgentCommand.standard }, version: String,
+        helloTimeout: Duration = .seconds(10),
         helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
         onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
     ) {
         self.registry = registry
-        self.macName = macName
+        self.name = name
+        self.kind = kind
+        self.wake = wake
+        self.agentCommand = agentCommand
         self.version = version
         self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
@@ -241,6 +258,16 @@ final class PhoneConnection: Sendable {
         }
         let session = PhoneSession(phone: phone, connection: self)
         let handler = gate.handler
+        if PhoneGate.lengthyMethods.contains(request.method) {
+            Task {
+                let reply = await handler(request, session)
+                await self.queueSend {
+                    if let data = try? ControlCodec.encodeLine(reply.response) { await self.write(data) }
+                    await reply.after?()
+                }.value
+            }
+            return
+        }
         let reply = await handler(request, session)
         await queueSend {
             if let data = try? ControlCodec.encodeLine(reply.response) { await self.write(data) }
@@ -256,7 +283,8 @@ final class PhoneConnection: Sendable {
                 let paired = try await gate.registry.redeem(code: params.code, name: params.name)
                 gate.onPaired(paired.phone)
                 startHelloTimer()
-                let result = PhonePairResult(token: paired.token, phone: paired.phone.name, mac: gate.macName)
+                let result = PhonePairResult(
+                    token: paired.token, phone: paired.phone.name, mac: gate.name(), kind: gate.kind)
                 queueReply(.success(id: request.id, result: try .from(result)))
             } catch {
                 refuse(
@@ -267,7 +295,7 @@ final class PhoneConnection: Sendable {
             let params = try? request.decodeParams(PhoneHelloParams.self)
             guard let token = params?.token, let phone = await gate.registry.authenticate(token: token) else {
                 let error = ControlError(
-                    code: "unpaired", message: "This phone is not paired with \(gate.macName). Pair it again.")
+                    code: "unpaired", message: "This phone is not paired with \(gate.name()). Pair it again.")
                 refuse(id: request.id, error, closing: true)
                 return
             }
@@ -280,7 +308,7 @@ final class PhoneConnection: Sendable {
             guard await gate.registry.connected(phone.id) else {
                 state.withLock { $0.phone = nil }
                 let error = ControlError(
-                    code: "unpaired", message: "This phone is not paired with \(gate.macName). Pair it again.")
+                    code: "unpaired", message: "This phone is not paired with \(gate.name()). Pair it again.")
                 refuse(id: request.id, error, closing: true)
                 return
             }
@@ -292,7 +320,9 @@ final class PhoneConnection: Sendable {
     }
 
     private func greeting(_ phone: PairedPhone) -> PhoneHelloResult {
-        PhoneHelloResult(mac: gate.macName, version: gate.version, phone: phone.name)
+        PhoneHelloResult(
+            mac: gate.name(), version: gate.version, phone: phone.name, kind: gate.kind, wake: gate.wake(),
+            agentCommand: gate.agentCommand())
     }
 
     private func refuse(id: String, _ error: ControlError, closing: Bool) {

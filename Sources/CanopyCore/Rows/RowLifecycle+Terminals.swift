@@ -87,7 +87,7 @@ extension RowLifecycle {
     }
 
     public func sendToTerminal(_ params: TermSendParams) async throws {
-        let pane = try terminal(params.pane)
+        let pane = try terminal(params.pane, host: params.host)
         // Without --enter the text goes into the composer, as typing would. With it, the text goes as a message of its own
         // and the author's draft stays theirs; with no text, what earlier sends put in the composer goes.
         if let chat = pane.chat {
@@ -110,7 +110,7 @@ extension RowLifecycle {
     }
 
     public func readTerminal(_ params: TermReadParams) throws -> TermReadResult {
-        let pane = try terminal(params.pane)
+        let pane = try terminal(params.pane, host: params.host)
         if let lines = params.lines, lines < 1 {
             throw ControlError(code: "bad_params", message: "--lines must be at least 1.")
         }
@@ -128,7 +128,7 @@ extension RowLifecycle {
     }
 
     public func closeTerminal(_ params: TermCloseParams) throws {
-        let pane = try terminal(params.pane)
+        let pane = try terminal(params.pane, host: params.host)
         if pane.hasRunningWork, !params.force {
             throw WorkspaceError.paneBusy(
                 params.pane, program: pane.chat == nil ? pane.foreground?.name ?? "A program" : "Claude")
@@ -136,8 +136,18 @@ extension RowLifecycle {
         terminals.closePane(pane.id)
     }
 
-    func terminal(_ id: String) throws -> Pane {
-        guard let paneID = PaneID(id), let pane = terminals.pane(paneID) else { throw WorkspaceError.paneNotFound(id) }
-        return pane
+    /// A pane by its ID, or by the session a host's pane is named after, as a pane canopy-box made, whose agents know
+    /// it by that name. A call relayed from a host names that host, as two hosts can each have a `b1`.
+    func terminal(_ id: String, host: String? = nil) throws -> Pane {
+        if let paneID = PaneID(id), let pane = terminals.pane(paneID) { return pane }
+        if !id.isEmpty,
+            let pane = terminals.panes.first(where: {
+                guard $0.terminal?.remoteSession == id, let remote = $0.context.remote else { return false }
+                return host == nil || remote.host == host
+            })
+        {
+            return pane
+        }
+        throw WorkspaceError.paneNotFound(id)
     }
 }

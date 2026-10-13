@@ -4,17 +4,30 @@ import Testing
 
 @testable import CanopyPhone
 
-/// A connection to the fake Mac, paired and connected, with its inbox in place.
+/// A connection to the fake server, paired and connected, with its inbox in place.
 @MainActor
 func connected(to mac: FakeMac, inbox: PhoneInbox = PhoneInbox(), sleeper: ManualSleeper = ManualSleeper()) async throws
-    -> MacConnection
+    -> ServerConnection
 {
     mac.setInbox(inbox)
-    let connection = MacConnection(
-        transport: mac, credentials: MemoryCredentialStore(mac.paired()), phoneName: "iPhone", sleep: sleeper.sleep)
+    let paired = mac.paired()
+    let connection = ServerConnection(
+        server: paired, transport: mac, credentials: MemoryCredentialStore(paired), sleep: sleeper.sleep)
     connection.start()
     try #require(await eventually { connection.status == .connected })
     return connection
+}
+
+/// The phone's servers, each fake already paired in the order given, and all of them connected.
+@MainActor
+func servers(_ fakes: FakeMac..., sleeper: ManualSleeper = ManualSleeper()) async throws -> Servers {
+    let paired = fakes.enumerated().map { index, fake in fake.paired(at: Double(index)) }
+    let servers = Servers(
+        transport: FakeNetwork(fakes), credentials: MemoryCredentialStore(paired), phoneName: "iPhone",
+        sleep: sleeper.sleep)
+    servers.start()
+    try #require(await eventually { servers.connections.allSatisfy(\.isConnected) })
+    return servers
 }
 
 /// UserDefaults of a test's own, so settings never leak between tests.

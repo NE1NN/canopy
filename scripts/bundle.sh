@@ -23,13 +23,27 @@ fi
 swift build -c "$configuration" --product CanopyApp
 swift build -c "$configuration" --product canopy
 bin=$(swift build -c "$configuration" --show-bin-path)
-version=$(sed -n 's/.*current = "\(.*\)".*/\1/p' Sources/CanopyCore/Support/CanopyHome.swift)
+version=$(sed -n 's/.*current = "\(.*\)".*/\1/p' Sources/CanopyWire/CanopyVersion.swift)
 
 app="build/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin"
 cp "$bin/CanopyApp" "$app/Contents/MacOS/Canopy"
 cp "$bin/canopy" "$app/Contents/Resources/bin/canopy"
+# canopy-box for hosts, built in Docker. Without Docker the app still builds, and hosts cannot be upgraded.
+if docker info >/dev/null 2>&1; then
+    make box
+else
+    echo "warning: Docker is not running, so canopy-box is not rebuilt for hosts." >&2
+fi
+if [[ -x build/box/x86_64/canopy-box && -x build/box/aarch64/canopy-box ]]; then
+    for arch in x86_64 aarch64; do
+        mkdir -p "$app/Contents/Resources/box/$arch"
+        cp "build/box/$arch/canopy-box" "$app/Contents/Resources/box/$arch/canopy-box"
+    done
+else
+    echo "warning: no canopy-box in build/box, so this app cannot upgrade hosts. Run make box." >&2
+fi
 sed -e "s|@APP_NAME@|$app_name|g" \
     -e "s|@BUNDLE_ID@|$bundle_id|g" \
     -e "s|@CANOPY_HOME@|$canopy_home|g" \

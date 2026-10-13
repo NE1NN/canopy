@@ -110,6 +110,18 @@ public struct PaneAgent: Sendable, Equatable {
 
     public init() {}
 
+    /// The agent as canopy-box reports it for one of its panes, which the Mac shows rather than works out.
+    public init(mirroring pane: BoxPane) {
+        state = pane.agent
+        unseen = pane.unseen
+        backgroundTasks = pane.backgroundTasks
+        transcriptPath = pane.transcriptPath
+        prompt = pane.prompt
+        waitsOnQuestion = pane.prompt?.kind == .reply
+        since = Date(timeIntervalSince1970: pane.since)
+        changedAt = since
+    }
+
     public var dot: AgentDot? {
         switch state {
         case .none: nil
@@ -195,6 +207,14 @@ public struct PaneAgent: Sendable, Equatable {
         return true
     }
 
+    /// Opens an answered prompt again, as when its answer never reached the pane. Returns whether it did: not once a hook
+    /// has moved the agent on.
+    public mutating func reopen(_ answered: OpenPrompt) -> Bool {
+        guard prompt == nil, state == .waiting else { return false }
+        prompt = answered
+        return true
+    }
+
     /// Keeps the open prompt while a hook describes it again, as the permission request after an AskUserQuestion does.
     private mutating func open(_ next: AgentPrompt?) {
         guard let next else { return }
@@ -244,4 +264,42 @@ public struct PaneAgent: Sendable, Equatable {
     static let interruptKeys: Set<Data> = [
         Data([0x1B]), Data([0x03]), Data("\u{1b}[27u".utf8), Data("\u{1b}[99;5u".utf8),
     ]
+}
+
+/// Kept whole, with times in seconds since 1970, so canopy-box can save it and hand it to the Mac. Missing fields read
+/// as a pane with no agent.
+extension PaneAgent: Codable {
+    enum CodingKeys: String, CodingKey {
+        case state, unseen, session, waitsOnQuestion, backgroundTasks, transcriptPath, prompt, since, changedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decodeIfPresent(AgentState.self, forKey: .state) ?? .none
+        unseen = try container.decodeIfPresent(Bool.self, forKey: .unseen) ?? false
+        session = try container.decodeIfPresent(String.self, forKey: .session)
+        waitsOnQuestion = try container.decodeIfPresent(Bool.self, forKey: .waitsOnQuestion) ?? false
+        backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
+        transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
+        prompt = try? container.decodeIfPresent(OpenPrompt.self, forKey: .prompt)
+        since =
+            try container.decodeIfPresent(Double.self, forKey: .since).map(Date.init(timeIntervalSince1970:))
+            ?? .distantPast
+        changedAt =
+            try container.decodeIfPresent(Double.self, forKey: .changedAt).map(Date.init(timeIntervalSince1970:))
+            ?? .distantPast
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encode(unseen, forKey: .unseen)
+        try container.encodeIfPresent(session, forKey: .session)
+        try container.encode(waitsOnQuestion, forKey: .waitsOnQuestion)
+        try container.encode(backgroundTasks, forKey: .backgroundTasks)
+        try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(prompt, forKey: .prompt)
+        try container.encode(since.timeIntervalSince1970, forKey: .since)
+        try container.encode(changedAt.timeIntervalSince1970, forKey: .changedAt)
+    }
 }

@@ -27,7 +27,12 @@ public actor HostConnection {
 
     public nonisolated let alias: String
     public nonisolated let ssh: SSHCommand
-    public private(set) var entry: HostEntry
+    public private(set) var entry: HostEntry {
+        didSet { upgraded.withLock { $0 = entry.box } }
+    }
+    /// Whether the host runs canopy-box, read without waiting for the connection, as each round of probes does.
+    public nonisolated var isBox: Bool { upgraded.withLock { $0 } }
+    private nonisolated let upgraded: Mutex<Bool>
     public private(set) var state = HostState.idle
     /// ssh's message from the last failure to connect.
     public private(set) var lastError: String?
@@ -63,6 +68,7 @@ public actor HostConnection {
     ) {
         self.alias = alias
         self.entry = entry
+        upgraded = Mutex(entry.box)
         self.ssh = ssh
         self.launcher = launcher
         self.clock = clock
@@ -90,7 +96,8 @@ public actor HostConnection {
     }
 
     /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
-    public func connect() async throws {
+    /// Without `waking`, a host that does not answer fails at once rather than being woken, as for removing it.
+    public func connect(waking: Bool = true) async throws {
         guard !stopped else { throw Self.stoppedError(alias) }
         lastUse = clock.now
         // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
@@ -108,7 +115,7 @@ public actor HostConnection {
             try await connecting.value
             return
         }
-        let attempt = Task { try await self.establish() }
+        let attempt = Task { try await self.establish(waking: waking) }
         connecting = attempt
         defer { connecting = nil }
         try await attempt.value
@@ -137,6 +144,13 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(["true"]), timeout: .seconds(10)).status == 255
     }
 
+    /// Runs `remote` on the host with `stdin` as its input, connecting first.
+    public func run(_ remote: [String], timeout: Duration, stdin: Data) async throws -> SubprocessResult {
+        try await connect()
+        lastUse = clock.now
+        return await launcher.run(ssh.exec(remote), timeout: timeout, stdin: stdin)
+    }
+
     /// Runs `remote` only while the master is up, without counting as use, so watching an idle host never keeps it.
     public func probe(_ remote: [String], timeout: Duration) async -> SubprocessResult? {
         guard state == .connected, master?.isRunning == true else { return nil }
@@ -148,6 +162,13 @@ public actor HostConnection {
     public func forward(remote: String, local: String) async -> SubprocessResult? {
         guard state == .connected, master?.isRunning == true else { return nil }
         return await launcher.run(ssh.forward(remote: remote, local: local), timeout: .seconds(15))
+    }
+
+    /// Asks the master to forward the socket `local` here to `remote` on the host, for as long as it runs. Nil when the
+    /// master is not up.
+    public func forwardSocket(local: String, remote: String) async -> SubprocessResult? {
+        guard state == .connected, master?.isRunning == true else { return nil }
+        return await launcher.run(ssh.forwardSocket(local: local, remote: remote), timeout: .seconds(15))
     }
 
     /// The master's process on this Mac, which holds the forwards' listening sockets. Nil while not connected.
@@ -229,7 +250,7 @@ public actor HostConnection {
         observers.removeAll()
     }
 
-    private func establish() async throws {
+    private func establish(waking: Bool) async throws {
         let deadline = clock.now + Self.giveUpAfter
         set(.connecting)
         while true {
@@ -246,7 +267,7 @@ public actor HostConnection {
                 activity.record(ActivityType.hostConnected, data: ["host": .string(alias)])
                 return
             }
-            if noRetryCanFix(lastError ?? "") || clock.now >= deadline {
+            if noRetryCanFix(lastError ?? "") || clock.now >= deadline || !waking {
                 set(.unreachable)
                 activity.record(
                     ActivityType.hostUnreachable,

@@ -1,7 +1,8 @@
+import CanopySystem
 import CanopyTestSupport
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyGit
 
 struct WorktreeListParserTests {
     @Test func parsesMainLinkedDetachedAndPrunable() {
@@ -37,10 +38,10 @@ struct WorktreeListParserTests {
 
     @Test func parsesRealGitOutput() async throws {
         let dir = try TempDir()
-        let repo = try await Fixture.repo(in: dir)
-        try await Fixture.worktree(repo: repo, branch: "feat/x", at: dir.sub("wt"))
+        let repo = try await GitFixture.repo(in: dir)
+        try await GitFixture.git(["worktree", "add", "--quiet", "-b", "feat/x", dir.sub("wt")], in: repo)
 
-        let output = try await Fixture.git.run(["worktree", "list", "--porcelain", "-z"], in: repo)
+        let output = try await GitFixture.git(["worktree", "list", "--porcelain", "-z"], in: repo)
         let worktrees = WorktreeListParser.parse(output)
 
         #expect(worktrees.map(\.branch) == ["main", "feat/x"])
