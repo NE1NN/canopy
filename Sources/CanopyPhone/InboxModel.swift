@@ -2,35 +2,114 @@ import CanopyWire
 import Foundation
 import Observation
 
-/// The Inbox: agents waiting for the author, and done agents not yet read.
-@MainActor @Observable
-public final class InboxModel {
-    public let connection: MacConnection
-    /// Panes whose answer is on its way.
-    public private(set) var answering: Set<String> = []
-    /// What went wrong with the last answer or mark read, until dismissed.
-    public private(set) var notice: PhoneProblem?
-    /// Done agents marked read here, by pane and when they finished, hidden until the Mac's inbox catches up.
-    private var read: [String: Double] = [:]
+/// A pane by its server, since pane ids are only unique on the server that made them.
+public struct PaneRef: Hashable, Sendable {
+    public var server: String
+    public var pane: String
 
-    public init(connection: MacConnection) {
-        self.connection = connection
+    public init(server: String, pane: String) {
+        self.server = server
+        self.pane = pane
+    }
+}
+
+/// An agent in the Inbox, with its row and the server it runs on.
+public struct InboxItem: Identifiable, Equatable {
+    public let server: ServerConnection
+    public var row: PhoneRow
+    public var agent: PhoneAgent
+
+    public init(server: ServerConnection, row: PhoneRow, agent: PhoneAgent) {
+        self.server = server
+        self.row = row
+        self.agent = agent
     }
 
-    private var inbox: PhoneInbox { connection.inbox ?? PhoneInbox() }
+    public var ref: PaneRef { PaneRef(server: server.id, pane: agent.pane) }
+    public var id: PaneRef { ref }
 
-    public var sections: PhoneInbox.Sections {
-        var sections = inbox.sections
-        sections.done.removeAll { read[$0.agent.pane] == $0.agent.since }
-        return sections
+    public static func == (lhs: InboxItem, rhs: InboxItem) -> Bool {
+        lhs.server.id == rhs.server.id && lhs.row == rhs.row && lhs.agent == rhs.agent
+    }
+}
+
+/// The Inbox: agents waiting for the author, and done agents not yet read, from every server.
+@MainActor @Observable
+public final class InboxModel {
+    public struct Sections: Equatable {
+        /// Waiting agents, the longest waiting first.
+        public var needsYou: [InboxItem] = []
+        /// Done agents not yet seen, the newest first.
+        public var done: [InboxItem] = []
+
+        /// What the tab's badge counts.
+        public var count: Int { needsYou.count + done.count }
+        public var isEmpty: Bool { count == 0 }
+    }
+
+    public let servers: Servers
+    /// Panes whose answer is on its way.
+    public private(set) var answering: Set<PaneRef> = []
+    /// What went wrong with the last answer or mark read, until dismissed.
+    public private(set) var notice: PhoneProblem?
+    /// Done agents marked read here, by pane and when they finished, hidden until their server's inbox catches up.
+    private var read: [PaneRef: Double] = [:]
+
+    public init(servers: Servers) {
+        self.servers = servers
+    }
+
+    /// Each paired server's rows as the Inbox shows them, in pairing order.
+    private var shown: [(server: ServerConnection, rows: [PhoneRow])] {
+        servers.paired.map { server in
+            (server, (server.inbox?.rows ?? []).filter { servers.shows($0, from: server) })
+        }
+    }
+
+    /// Each server's agents in order, with their server's place and their own, so equal times keep that order.
+    private var items: [(item: InboxItem, order: (Int, Int))] {
+        shown.enumerated().flatMap { place, shown in
+            shown.rows.flatMap { row in row.agents.map { (row, $0) } }.enumerated().map { offset, pair in
+                (InboxItem(server: shown.server, row: pair.0, agent: pair.1), (place, offset))
+            }
+        }
+    }
+
+    public var sections: Sections {
+        let items = items
+        let waiting = items.filter { $0.item.agent.state == .waiting }
+            .sorted { ($0.item.agent.since, $0.order.0, $0.order.1) < ($1.item.agent.since, $1.order.0, $1.order.1) }
+        let done = items.filter {
+            $0.item.agent.state == .done && $0.item.agent.unseen && read[$0.item.ref] != $0.item.agent.since
+        }
+        .sorted { ($1.item.agent.since, $0.order.0, $0.order.1) < ($0.item.agent.since, $1.order.0, $1.order.1) }
+        return Sections(needsYou: waiting.map(\.item), done: done.map(\.item))
     }
 
     public var badgeCount: Int { sections.count }
-    public var runningCount: Int { inbox.runningCount }
-    /// What an empty Inbox says. Out of reach, the phone only knows what was true when the Mac last answered.
+
+    public var runningCount: Int {
+        shown.flatMap(\.rows).flatMap(\.agents).filter { $0.state == .working || $0.state == .background }.count
+    }
+
+    /// The servers out of reach whose last inbox still shows, in pairing order.
+    public var staleServers: [ServerConnection] {
+        servers.paired.filter { $0.isUnreachable && $0.inbox != nil }
+    }
+
+    /// Every server is out of reach, so the Inbox only knows what was true when each last answered.
+    public var isStale: Bool {
+        let paired = servers.paired
+        return !paired.isEmpty && paired.allSatisfy(\.isUnreachable) && paired.contains { $0.inbox != nil }
+    }
+
+    /// The oldest of the out of reach servers' last answers, which the whole Inbox is as of.
+    public var asOf: Date? { staleServers.compactMap(\.inboxAsOf).min() }
+
+    /// What an empty Inbox says. Out of reach, the phone only knows what was true when the servers last answered.
     public var caughtUpDetail: String {
         if isStale {
-            guard let asOf else { return "Nothing was waiting when the Mac last answered." }
+            guard let asOf else { return "Nothing was waiting when they last answered." }
             return "Nothing was waiting as of \(asOf.formatted(date: .omitted, time: .shortened))."
         }
         let waiting = "Nothing is waiting for you."
@@ -40,37 +119,35 @@ public final class InboxModel {
         default: return waiting + "\n\(runningCount) agents are running."
         }
     }
-    public var hasInbox: Bool { connection.inbox != nil }
 
-    /// The inbox is the last one the Mac sent before it went out of reach.
-    public var isStale: Bool { connection.isUnreachable && connection.inbox != nil }
-    public var asOf: Date? { connection.inboxAsOf }
+    public var hasInbox: Bool { servers.paired.contains { $0.inbox != nil } }
 
     /// The small label after a row's name: its plugin's item, or its repo when the inbox spans several.
     public func label(for row: PhoneRow) -> String? {
         if let plugin = row.plugin { return plugin }
-        let repos = Set(inbox.rows.compactMap(\.repo))
+        let repos = Set(shown.flatMap(\.rows).compactMap(\.repo))
         return repos.count > 1 ? row.repo : nil
     }
 
     /// Allow or Deny for a permission prompt, straight from the list.
-    public func answer(_ item: PhoneInbox.Item, allow: Bool) async {
+    public func answer(_ item: InboxItem, allow: Bool) async {
         guard let prompt = item.agent.prompt else { return }
-        let pane = item.agent.pane
-        answering.insert(pane)
-        defer { answering.remove(pane) }
+        let ref = item.ref
+        answering.insert(ref)
+        defer { answering.remove(ref) }
         do {
-            _ = try await connection.liveClient().call(
-                PhoneMethod.answer, PhoneAnswerParams(pane: pane, prompt: prompt.id, answer: PhoneAnswer(allow: allow)),
+            _ = try await item.server.liveClient().call(
+                PhoneMethod.answer,
+                PhoneAnswerParams(pane: item.agent.pane, prompt: prompt.id, answer: PhoneAnswer(allow: allow)),
                 as: PhonePaneParams.self)
             notice = nil
         } catch {
-            notice = connection.problem(error)
+            notice = item.server.problem(error)
         }
     }
 
-    /// Marks a done agent read, here and on the Mac, as opening it does.
-    public func markRead(_ item: PhoneInbox.Item) async {
+    /// Marks a done agent read, here and on its server, as opening it does.
+    public func markRead(_ item: InboxItem) async {
         await markRead([item])
     }
 
@@ -78,35 +155,39 @@ public final class InboxModel {
         await markRead(sections.done)
     }
 
-    /// Each item is read once the Mac takes it, so one that fails comes back alone.
-    private func markRead(_ items: [PhoneInbox.Item]) async {
-        for item in items { read[item.agent.pane] = item.agent.since }
-        let client: PhoneClient
-        do {
-            client = try connection.liveClient()
-        } catch {
-            unread(items)
-            notice = connection.problem(error)
-            return
-        }
+    /// Each item is read once its server takes it, so one that fails comes back alone.
+    private func markRead(_ items: [InboxItem]) async {
+        for item in items { read[item.ref] = item.agent.since }
         var problem: PhoneProblem?
-        for item in items {
+        for server in servers.paired {
+            let theirs = items.filter { $0.server.id == server.id }
+            guard !theirs.isEmpty else { continue }
+            let client: PhoneClient
             do {
-                _ = try await client.call(
-                    PhoneMethod.seen, PhonePaneParams(pane: item.agent.pane), as: PhonePaneParams.self)
-            } catch let error as ControlError where error.code == "pane_not_found" {
-                // The pane closed, so its agent leaves the inbox anyway.
+                client = try server.liveClient()
             } catch {
-                unread([item])
-                problem = connection.problem(error)
+                unread(theirs)
+                problem = server.problem(error)
+                continue
+            }
+            for item in theirs {
+                do {
+                    _ = try await client.call(
+                        PhoneMethod.seen, PhonePaneParams(pane: item.agent.pane), as: PhonePaneParams.self)
+                } catch let error as ControlError where error.code == "pane_not_found" {
+                    // The pane closed, so its agent leaves the inbox anyway.
+                } catch {
+                    unread([item])
+                    problem = server.problem(error)
+                }
             }
         }
         notice = problem
     }
 
-    private func unread(_ items: [PhoneInbox.Item]) {
-        for item in items where read[item.agent.pane] == item.agent.since {
-            read[item.agent.pane] = nil
+    private func unread(_ items: [InboxItem]) {
+        for item in items where read[item.ref] == item.agent.since {
+            read[item.ref] = nil
         }
     }
 

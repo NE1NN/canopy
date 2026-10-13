@@ -5,18 +5,20 @@ import Observation
 /// The Pairing screen: a link from the camera, a paste, or a `canopy-phone://` URL, traded for a token.
 @MainActor @Observable
 public final class PairingModel {
-    public let connection: MacConnection
+    public let servers: Servers
     public private(set) var isPairing = false
     public private(set) var problem: PhoneProblem?
+    /// The server the last pairing added or paired again, so a sheet that paired it can close.
+    public private(set) var lastPaired: ServerConnection?
     /// The last link that failed, which the camera keeps seeing while it points at the code.
     private var failed: URL?
 
-    public init(connection: MacConnection) {
-        self.connection = connection
+    public init(servers: Servers) {
+        self.servers = servers
     }
 
-    /// Why the phone is here again, when the Mac forgot it.
-    public var notice: String? { connection.pairingNotice }
+    /// Why the phone is here again, when the last server that knew it forgot it.
+    public var notice: String? { servers.pairingNotice }
 
     public func dismissProblem() {
         problem = nil
@@ -45,11 +47,11 @@ public final class PairingModel {
         problem = nil
         defer { isPairing = false }
         do {
-            try await connection.pair(link)
+            lastPaired = try await servers.pair(link)
             failed = nil
         } catch {
             failed = url
-            problem = PhoneProblem(error, mac: link.host)
+            problem = PhoneProblem(error, server: link.host)
         }
     }
 }

@@ -130,28 +130,49 @@ struct AppLockTests {
 
 @MainActor
 struct SettingsModelTests {
-    @Test func showsThePairedMacAndUnpairs() async throws {
+    @Test func settingsListEachServer() async throws {
         let mac = FakeMac()
-        let connection = try await connected(to: mac)
-        let settings = SettingsModel(connection: connection)
-        #expect(settings.mac == "Studio")
-        #expect(settings.host == FakeMac.host)
-        #expect(settings.address == FakeMac.address)
-        #expect(settings.phone == "iPhone")
-        #expect(settings.version == "0.9")
-        #expect(settings.statusText == "Connected")
+        let box = FakeMac.box()
+        let servers = try await servers(mac, box)
+        let settings = SettingsModel(servers: servers)
+
+        let list = settings.list
+        #expect(list.map(\.name) == ["Studio", "hindie-box"])
+        #expect(list.map(\.kindText) == ["Mac", "Host"])
+        let studio = try #require(list.first)
+        #expect(studio.host == FakeMac.host)
+        #expect(studio.address == FakeMac.address)
+        #expect(studio.phone == "iPhone")
+        #expect(studio.version == "0.9")
+        #expect(studio.statusText == "Connected")
         #expect(
-            settings.removeHint == "Studio still lists this iPhone until you run canopy phone remove \"iPhone\" there.")
-        settings.unpair()
-        #expect(connection.paired == nil)
-        #expect(await eventually { mac.openLinks.isEmpty })
+            studio.removeHint == "Studio still lists this iPhone until you run canopy phone remove \"iPhone\" there.")
+        #expect(
+            list.last?.removeHint
+                == "hindie-box still lists this iPhone until you run canopy phone remove \"iPhone\" --on hindie-box on the Mac."
+        )
     }
 
-    @Test func statusSaysWhenTheMacIsOutOfReach() async throws {
+    @Test func removingAServerForgetsIt() async throws {
         let mac = FakeMac()
-        let connection = try await connected(to: mac)
-        let settings = SettingsModel(connection: connection)
+        let box = FakeMac.box()
+        let servers = try await servers(mac, box)
+        let settings = SettingsModel(servers: servers)
+
+        settings.remove(id: try #require(settings.list.last).id)
+
+        #expect(settings.list.map(\.name) == ["Studio"])
+        #expect(await eventually { box.openLinks.isEmpty })
+    }
+
+    @Test func statusSaysWhenAServerIsOutOfReachOrForgotThePhone() async throws {
+        let mac = FakeMac()
+        let box = FakeMac.box()
+        let servers = try await servers(mac, box)
+        let settings = SettingsModel(servers: servers)
         mac.goAway()
-        #expect(await eventually { settings.statusText == "Can't reach Studio" })
+        box.forget(phone: "iPhone")
+        box.dropAll()
+        #expect(await eventually { settings.list.map(\.statusText) == ["Can't reach Studio", "No longer paired"] })
     }
 }

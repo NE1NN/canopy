@@ -8,23 +8,23 @@ import Testing
 struct PairingModelTests {
     let mac = FakeMac()
 
-    func connection() -> MacConnection {
-        MacConnection(
-            transport: mac, credentials: MemoryCredentialStore(), phoneName: "iPhone", sleep: ManualSleeper().sleep)
+    func servers() -> Servers {
+        Servers(transport: mac, credentials: MemoryCredentialStore(), phoneName: "iPhone", sleep: ManualSleeper().sleep)
     }
 
     @Test func aPastedLinkPairs() async throws {
-        let connection = connection()
-        let pairing = PairingModel(connection: connection)
+        let servers = servers()
+        let pairing = PairingModel(servers: servers)
         await pairing.pair(text: "  \(mac.link.url.absoluteString)\n")
-        #expect(connection.paired?.mac == "Studio")
+        #expect(servers.connections.map(\.name) == ["Studio"])
+        #expect(pairing.lastPaired?.name == "Studio")
         #expect(pairing.problem == nil)
         #expect(!pairing.isPairing)
     }
 
     @Test(arguments: ["", "hello", "https://example.com", "canopy-phone://pair?host=a"])
     func whatIsNotAPairingLinkSaysSo(_ text: String) async throws {
-        let pairing = PairingModel(connection: connection())
+        let pairing = PairingModel(servers: servers())
         await pairing.pair(text: text)
         #expect(pairing.problem?.title == "That isn't a Canopy pairing link.")
         #expect(mac.connects.isEmpty)
@@ -32,13 +32,13 @@ struct PairingModelTests {
 
     @Test func aFailedPairingSaysWhy() async throws {
         mac.goAway()
-        let pairing = PairingModel(connection: connection())
+        let pairing = PairingModel(servers: servers())
         await pairing.pair(text: mac.link.url.absoluteString)
         #expect(pairing.problem?.title == "Can't reach \(FakeMac.host).")
     }
 
     @Test func aCodeThatFailedIsNotTriedAgainEachTimeTheCameraSeesIt() async throws {
-        let pairing = PairingModel(connection: connection())
+        let pairing = PairingModel(servers: servers())
         let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
         await pairing.pair(used.url, scanned: true)
         await pairing.pair(used.url, scanned: true)
@@ -50,7 +50,7 @@ struct PairingModelTests {
     }
 
     @Test func aPastedCodeIsTriedAgainEvenAfterItFailed() async throws {
-        let pairing = PairingModel(connection: connection())
+        let pairing = PairingModel(servers: servers())
         let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
         await pairing.pair(used.url, scanned: true)
         await pairing.pair(text: used.url.absoluteString)
@@ -58,13 +58,13 @@ struct PairingModelTests {
     }
 
     @Test func theSameCodeScannedTwiceWhilePairingPairsOnce() async throws {
-        let connection = connection()
-        let pairing = PairingModel(connection: connection)
+        let servers = servers()
+        let pairing = PairingModel(servers: servers)
         async let first: Void = pairing.pair(mac.link.url)
         async let second: Void = pairing.pair(mac.link.url)
         _ = await (first, second)
         #expect(mac.requests.filter { $0.method == PhoneMethod.pair }.count == 1)
-        #expect(connection.paired != nil)
+        #expect(servers.connections.count == 1)
     }
 }
 
@@ -91,19 +91,21 @@ struct PhoneAppTests {
         let app = app()
         app.launch()
         app.open(mac.link.url)
-        #expect(await eventually { app.connection.status == .connected })
+        #expect(await eventually { app.servers.connections.first?.status == .connected })
         app.open(URL(string: "https://example.com")!)
+        #expect(app.servers.connections.count == 1)
     }
 
     @Test func aFailedLinkWhilePairedKeepsTheConnectionAndSaysWhy() async throws {
         let app = app(credentials: MemoryCredentialStore(mac.paired()))
         app.launch()
-        #expect(await eventually { app.connection.status == .connected })
+        let connection = try #require(app.servers.connections.first)
+        #expect(await eventually { connection.status == .connected })
         let used = PairingLink(host: FakeMac.host, port: PhonePort.standard, code: "USED-CODE", address: nil)
         app.open(used.url)
         #expect(await eventually { app.pairing.problem?.title == "That code expired or was already used." })
-        #expect(app.connection.status == .connected)
-        #expect(app.connection.paired?.token == "token-iPhone")
+        #expect(connection.status == .connected)
+        #expect(connection.server.token == "token-iPhone")
         app.pairing.dismissProblem()
         #expect(app.pairing.problem == nil)
     }
@@ -112,12 +114,13 @@ struct PhoneAppTests {
         let app = app(credentials: MemoryCredentialStore(mac.paired()))
         app.launch()
         #expect(app.lock.isLocked)
-        #expect(await eventually { app.connection.status == .connected })
+        let connection = try #require(app.servers.connections.first)
+        #expect(await eventually { connection.status == .connected })
         app.phaseChanged(to: .inactive)
-        #expect(app.connection.isConnected)
+        #expect(connection.isConnected)
         app.phaseChanged(to: .background)
         #expect(await eventually { mac.openLinks.isEmpty })
         app.phaseChanged(to: .active)
-        #expect(await eventually { app.connection.status == .connected && mac.openLinks.count == 1 })
+        #expect(await eventually { connection.status == .connected && mac.openLinks.count == 1 })
     }
 }
