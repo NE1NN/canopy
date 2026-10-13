@@ -107,8 +107,12 @@ struct TCPTests {
         let port = first.listener.port
         let client = try TCPConnection.connect(to: "127.0.0.1", port: port)
         let accepted = try #require(await first.first())
-        accepted.close()
+        // Both closes run later on their connections' queues, so wait for them before the listener goes: until then
+        // the port still has a live connection on it, which is not what this test is about.
         client.close()
+        #expect(await eventually { first.closed.withLock { $0.contains(0) } })
+        accepted.close()
+        await #expect(throws: TCPError.closed) { try await accepted.send(Data("after close".utf8)) }
         first.listener.close()
 
         let again = try Server(port: port)
