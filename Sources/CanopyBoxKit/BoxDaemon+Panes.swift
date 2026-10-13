@@ -145,7 +145,8 @@ extension BoxDaemon {
             forgetPane(pane.id)
             changedPanes = true
         }
-        for session in sessions where pane(session.session) == nil && !makingPanes.contains(session.session) {
+        for session in sessions
+        where !state.released && pane(session.session) == nil && !makingPanes.contains(session.session) {
             let folder = Paths.canonical(session.start)
             guard let row = row(holding: folder) else { continue }
             state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))

@@ -4,8 +4,13 @@ import Foundation
 
 /// Real git repos for tests, on macOS and Linux.
 public enum GitFixture {
-    /// This process's environment without the SDKROOT that `swift test` adds and the app never has.
-    public static let environment = ProcessInfo.processInfo.environment.filter { $0.key != "SDKROOT" }
+    /// This process's environment without the SDKROOT that `swift test` adds and the app never has, or variables that
+    /// would point git at another repository, as a git hook running the tests sets.
+    public static let environment = ProcessInfo.processInfo.environment.filter {
+        $0.key != "SDKROOT"
+            && !["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR"].contains(
+                $0.key)
+    }
 
     /// The git that /usr/bin/git hands off to on macOS, from xcode-select, since the shim asks xcrun on every run.
     public static let gitPath: String = {

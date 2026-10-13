@@ -64,6 +64,12 @@ public enum BoxMain {
         let daemon = BoxDaemon(paths: paths, tmux: tmux) {
             GitClone.local(path: $0, executable: git, environment: gitEnvironment)
         }
+        // Checked before starting, which saves state, so a second serve never writes over the first one's.
+        if let live = try? UnixConnection.connect(path: paths.socket) {
+            live.close()
+            printError("canopy-box already runs for this home, on \(paths.socket).")
+            return 1
+        }
         await daemon.start()
         let server: BoxServer
         do {

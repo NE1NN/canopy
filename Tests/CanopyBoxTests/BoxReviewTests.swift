@@ -141,3 +141,62 @@ struct BoxReviewTests {
         #expect(await eventually(timeout: .seconds(5)) { writer.failed })
     }
 }
+
+/// What CodeRabbit found on PR 49, each pinned.
+struct BoxCodeRabbitTests {
+    @Test func aReleasedBoxTakesNothingBackUntilAdoptOrConfigure() async throws {
+        let home = try await BoxTestHome()
+        try await home.session("b1", in: home.clone)
+        try await home.worktree("feat/later")
+        let daemon = try await home.daemon()
+        _ = await daemon.release()
+        await daemon.pollPanes()
+        await daemon.start()
+        #expect(await daemon.snapshot().panes.isEmpty)
+        #expect(await daemon.snapshot().rows.filter { !$0.isMain }.isEmpty)
+        try await daemon.configure(home.config)
+        await daemon.pollPanes()
+        #expect(await daemon.snapshot().panes.map(\.id) == ["b1"])
+    }
+
+    @Test func aHugeWaitTimeoutIsRefusedNotATrap() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        func wait(_ timeout: Double) async throws -> ControlResponse {
+            await BoxServer.handle(
+                ControlRequest(
+                    method: BoxMethod.wait,
+                    params: try .from(TermWaitParams(panes: [pane], target: .done, timeout: timeout))),
+                daemon: daemon)
+        }
+        for timeout in [-1.0, -0.5] {
+            #expect(try await wait(timeout).error?.code == "bad_params", "\(timeout)")
+        }
+        // Far past any Duration, so it is held to a year; the pane is already done, so it answers at once.
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        #expect(try await wait(1e300).error == nil)
+    }
+
+    @Test func aSecondServeLeavesTheStateFileAlone() async throws {
+        let dir = try TempDir(in: "/tmp")
+        let paths = BoxPaths(root: dir.path, homeID: "abc12347")
+        let first = try BoxProcessTests.Running(root: dir.path, homeID: "abc12347", tmuxFolder: dir.path)
+        #expect(await eventually { (try? UnixConnection.connect(path: paths.socket)) != nil })
+        let before = try FileManager.default.attributesOfItem(atPath: paths.stateFile)[.modificationDate] as? Date
+        try await Task.sleep(for: .milliseconds(1100))
+        let refused = try BoxProcessTests.Running(root: dir.path, homeID: "abc12347", tmuxFolder: dir.path)
+        #expect(try await refused.result.value.status == 1)
+        let after = try FileManager.default.attributesOfItem(atPath: paths.stateFile)[.modificationDate] as? Date
+        #expect(before == after)
+        #expect(first.handle.isRunning)
+    }
+
+    @Test func gitNeverAsksForAPassword() async throws {
+        let clone = GitClone.local(path: "/", executable: "/usr/bin/env", environment: ["GIT_ASKPASS": "/bin/helper"])
+        let printed = try await clone.run([])
+        let lines = Set(printed.split(separator: "\n").map(String.init))
+        #expect(lines.contains("GIT_TERMINAL_PROMPT=0"))
+        #expect(lines.contains("GIT_ASKPASS="))
+    }
+}

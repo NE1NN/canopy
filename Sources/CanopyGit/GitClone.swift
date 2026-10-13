@@ -16,7 +16,8 @@ public struct GitClone: Sendable {
         self.runner = run
     }
 
-    /// git on this machine, with `environment` and no prompts for credentials.
+    /// git on this machine, with `environment` and no prompts for credentials: none on a terminal, and no helper
+    /// program, which could wait for an answer nobody gives.
     public static func local(
         path: String, executable: String = "/usr/bin/git",
         environment: [String: String] = ProcessInfo.processInfo
@@ -24,6 +25,7 @@ public struct GitClone: Sendable {
     ) -> GitClone {
         var environment = environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
+        environment["GIT_ASKPASS"] = ""
         let fixed = environment
         return GitClone(path: path) { arguments, folder, timeout in
             try await onOwnThread {

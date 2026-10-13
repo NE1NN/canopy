@@ -162,8 +162,12 @@ public final class BoxServer: Sendable {
             return try .from(TermReadResult(text: try await daemon.read(pane: params.pane, lines: params.lines)))
         case BoxMethod.wait:
             let params = try request.decodeParams(TermWaitParams.self)
+            guard params.timeout.isFinite, params.timeout >= 0 else {
+                throw ControlError(code: "bad_params", message: "The timeout must be zero or more seconds.")
+            }
+            // A wait longer than a year is as good as forever, and a Duration that long would overflow.
             let reached = try await daemon.wait(
-                panes: params.panes, for: params.target, timeout: .seconds(params.timeout))
+                panes: params.panes, for: params.target, timeout: .seconds(min(params.timeout, 366 * 86_400)))
             return try .from(TermWaitResult(pane: reached.pane, state: reached.state))
         case BoxMethod.seen:
             try await daemon.seen(pane: request.decodeParams(BoxPaneParams.self).pane)

@@ -56,6 +56,7 @@ public actor BoxDaemon {
     public func configure(_ next: BoxConfig) async throws {
         try BoxFiles.write(try JSONEncoder.box.encode(next), to: paths.configFile)
         config = next
+        state.released = false
         await reconcile()
         changed()
     }

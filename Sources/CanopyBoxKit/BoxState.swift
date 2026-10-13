@@ -11,6 +11,9 @@ struct BoxState: Codable, Sendable, Equatable {
     var nextPane = 1
     /// The Mac's last pull request numbers, by row path.
     var prs: [String: Int] = [:]
+    /// Everything went back to the Mac with `box.release`, so worktrees and sessions are not taken in again until the
+    /// Mac adopts or configures.
+    var released = false
 
     init() {}
 
@@ -20,6 +23,7 @@ struct BoxState: Codable, Sendable, Equatable {
         panes = try container.decodeIfPresent([StoredPane].self, forKey: .panes) ?? []
         nextPane = try container.decodeIfPresent(Int.self, forKey: .nextPane) ?? 1
         prs = try container.decodeIfPresent([String: Int].self, forKey: .prs) ?? [:]
+        released = try container.decodeIfPresent(Bool.self, forKey: .released) ?? false
     }
 }
 

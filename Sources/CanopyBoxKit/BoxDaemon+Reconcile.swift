@@ -42,7 +42,7 @@ extension BoxDaemon {
                     state.rows[index].branch = worktree.branch
                     state.rows[index].head = worktree.head
                     state.rows[index].missing = worktree.isPrunable
-                } else if Paths.isInside(path, folder), path != folder {
+                } else if !state.released, Paths.isInside(path, folder), path != folder {
                     state.rows.append(
                         StoredRow(
                             path: path, repo: repo, branch: worktree.branch, head: worktree.head,
@@ -67,7 +67,9 @@ extension BoxDaemon {
         let names = Set(sessions.map(\.session))
         state.panes.removeAll { known.contains($0.id) && !names.contains($0.id) && !makingPanes.contains($0.id) }
         for session in sessions
-        where !state.panes.contains(where: { $0.id == session.session }) && !makingPanes.contains(session.session) {
+        where !state.released && !state.panes.contains(where: { $0.id == session.session })
+            && !makingPanes.contains(session.session)
+        {
             let folder = Paths.canonical(session.start)
             guard let row = row(holding: folder) else { continue }
             state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))
@@ -118,6 +120,7 @@ extension BoxDaemon {
             panes.append(adopted.id)
         }
         state.nextPane = max(state.nextPane, params.nextPane)
+        state.released = false
         changed()
         return BoxAdoptResult(rows: rows, panes: panes, missing: missing)
     }
@@ -132,6 +135,7 @@ extension BoxDaemon {
             }, nextPane: state.nextPane)
         state.rows = []
         state.panes = []
+        state.released = true
         activity = [:]
         changed()
         return result
