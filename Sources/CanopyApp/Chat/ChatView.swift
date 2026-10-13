@@ -15,7 +15,8 @@ struct ChatView: View {
             ChatHeader(pane: pane) { model.openInTerminal(pane) }
             ZStack(alignment: .bottom) {
                 ChatList(
-                    chat: chat, rows: ChatRows.rows(for: chat), actions: actions, isAtBottom: $isAtBottom,
+                    chat: chat, conversation: ChatRows.conversation(for: chat), actions: actions,
+                    isAtBottom: $isAtBottom,
                     scrollToBottomRequest: scrollRequest)
                 if !isAtBottom {
                     Button {
@@ -60,7 +61,14 @@ struct ChatView: View {
             },
             declineTrust: { model.terminals.closePane(pane.id) },
             openArtifact: { model.showArtifact($0, placement: $1, from: pane) },
-            openInBrowser: { model.openInBrowser($0) })
+            openInBrowser: { model.openInBrowser($0) },
+            openLink: { url in
+                if ArtifactLink(url) != nil {
+                    _ = model.openLink(url, from: pane)
+                } else {
+                    model.openInBrowser(url)
+                }
+            })
     }
 }
 

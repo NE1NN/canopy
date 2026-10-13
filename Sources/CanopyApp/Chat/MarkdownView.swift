@@ -77,7 +77,7 @@ struct InlineText: View {
     var font = ChatStyle.text
 
     var body: some View {
-        Text(Self.styled(text))
+        Text(Self.styled(text, font: font))
             .font(font)
             .lineSpacing(ChatStyle.textLineSpacing)
             .foregroundStyle(ChatStyle.primaryText)
@@ -87,7 +87,7 @@ struct InlineText: View {
     }
 
     /// Turns Foundation's presentation intents into what SwiftUI's Text draws.
-    static func styled(_ text: AttributedString) -> AttributedString {
+    static func styled(_ text: AttributedString, font: Font = ChatStyle.text) -> AttributedString {
         var styled = text
         for run in text.runs {
             guard let intent = run.inlinePresentationIntent else { continue }
@@ -97,11 +97,11 @@ struct InlineText: View {
                 styled[range].backgroundColor = ChatStyle.inlineCode
                 styled[range].foregroundColor = ChatStyle.strongText
             } else if intent.contains(.stronglyEmphasized) && intent.contains(.emphasized) {
-                styled[range].font = ChatStyle.text.weight(.semibold).italic()
+                styled[range].font = font.weight(.semibold).italic()
             } else if intent.contains(.stronglyEmphasized) {
-                styled[range].font = ChatStyle.text.weight(.semibold)
+                styled[range].font = font.weight(.semibold)
             } else if intent.contains(.emphasized) {
-                styled[range].font = ChatStyle.text.italic()
+                styled[range].font = font.italic()
             }
             if intent.contains(.strikethrough) {
                 styled[range].strikethroughStyle = .single

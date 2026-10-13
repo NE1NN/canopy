@@ -8,6 +8,8 @@ struct ChatActions {
     /// Opens a published artifact in the row: beside the chat, or in a tab.
     var openArtifact: (ChatArtifact, WebPlacement) -> Void
     var openInBrowser: (URL) -> Void
+    /// Opens a link in the text Claude is still writing; SwiftUI rows open theirs through the environment's `openURL`.
+    var openLink: (URL) -> Void
 }
 
 /// One row of the conversation, laid out in the chat's centered column.

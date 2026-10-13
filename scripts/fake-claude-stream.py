@@ -11,6 +11,8 @@ What it does with a message depends on how the message starts:
   ask            asks a question with AskUserQuestion
   slow [<n>]     streams <n> words (default 200) as one paragraph, stopping early if interrupted
   prose [<n>]    streams <n> words (default 600) in paragraphs of 60, as a reply reads
+  markdown [<n>] streams a reply with every kind of block; with <n>, holds the turn open after <n> words until an
+                 interrupt, so a block can be looked at while it grows
   pause [<n>]    streams one word, then holds the turn open until <n> more messages (default 1) wait, or an
                  interrupt
   hold           asks to run `make test` and never ends the turn on its own
@@ -131,7 +133,20 @@ def ask(tool, tool_input, needs_author=False):
     return tool_id, answer
 
 
-def stream(text):
+MARKDOWN = (
+    "## Streaming check\n\nHere is **bold text**, some *italic words*, a bit of `inline code`, and a "
+    "[link](https://example.com) inside a paragraph that runs long enough to wrap across more than one line of "
+    "the column, as Claude's replies often do when they explain something.\n\n"
+    "1. First step with `make app`\n2. Second step, which is a longer item so that it wraps onto a second line in "
+    "the column when the window is narrow enough\n3. Third\n\n"
+    "- A bullet with **bold**\n  - A nested bullet\n- Another bullet\n\n"
+    "> A quoted line that Claude might write when citing something it read.\n\n"
+    "```swift\nlet greeting = \"Hello\"\nfor name in [\"Ann\", \"Bo\"] {\n    print(greeting, name)\n}\n```\n\n"
+    "### Done\n\nThat is every kind of block."
+)
+
+
+def stream(text, hold_after=None):
     message_id = "msg_" + uuid.uuid4().hex[:12]
     emit({"type": "stream_event", "event": {"type": "message_start", "message": {"id": message_id}}})
     emit({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
@@ -146,6 +161,10 @@ def stream(text):
         emit({"type": "stream_event", "event": {"type": "message_delta", "delta": {},
                                                 "usage": {"output_tokens": index + 1}}})
         time.sleep(DELAY)
+        if hold_after is not None and index + 1 == hold_after:
+            deadline = time.time() + 600
+            while not interrupted.is_set() and time.time() < deadline:
+                time.sleep(0.02)
     emit(record("assistant", [{"type": "text", "text": text}]))
     return True
 
@@ -249,6 +268,9 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "markdown" or text.startswith("markdown "):
+        stream(MARKDOWN, int(text[9:]) if text.startswith("markdown ") else None)
+        finish("markdown")
     elif text == "prose" or text.startswith("prose "):
         count = int(text[6:]) if text.startswith("prose ") else 600
         words = ["word%d" % i for i in range(count)]

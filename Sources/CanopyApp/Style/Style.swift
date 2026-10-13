@@ -82,7 +82,7 @@ extension NSAppearance {
 
 extension Color {
     static func adaptive(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { $0.isDark ? dark : light })
+        Color(nsColor: .adaptive(light: light, dark: dark))
     }
 
     static func adaptive(light: UInt32, dark: UInt32) -> Color {
@@ -91,6 +91,14 @@ extension Color {
 }
 
 extension NSColor {
+    static func adaptive(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.isDark ? dark : light }
+    }
+
+    static func adaptive(light: UInt32, dark: UInt32) -> NSColor {
+        adaptive(light: NSColor(hex: light), dark: NSColor(hex: dark))
+    }
+
     convenience init(hex: UInt32) {
         self.init(
             srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
