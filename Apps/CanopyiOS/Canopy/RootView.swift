@@ -6,23 +6,25 @@ struct RootView: View {
     @Environment(PhoneApp.self) private var app
     @State private var scene: UIWindowScene?
     @State private var lockWindow = LockWindow()
+    @State private var tab = AppTab.inbox
 
     var body: some View {
         Group {
             if app.connection.paired == nil {
                 PairingView()
             } else {
-                TabView {
-                    Tab("Inbox", systemImage: "tray") {
+                TabView(selection: $tab) {
+                    Tab("Inbox", systemImage: "tray", value: AppTab.inbox) {
                         InboxView()
                     }
-                    .badge(app.inbox.waitingCount)
+                    .badge(app.inbox.badgeCount)
                     .accessibilityIdentifier("tab-inbox")
-                    Tab("Rows", systemImage: "line.3.horizontal") {
+                    Tab("Rows", systemImage: "line.3.horizontal", value: AppTab.rows) {
                         RowsView()
                     }
                     .accessibilityIdentifier("tab-rows")
                 }
+                .environment(\.showRows, ShowRowsAction { tab = .rows })
             }
         }
         .background(SceneReader { scene = $0 })
@@ -37,4 +39,21 @@ struct RootView: View {
     private var covered: Bool {
         app.lock.isLocked || app.lock.isCovered
     }
+}
+
+enum AppTab: Hashable {
+    case inbox, rows
+}
+
+/// Switches to the Rows tab, for the Inbox's All caught up.
+struct ShowRowsAction {
+    var show: @MainActor () -> Void
+
+    @MainActor func callAsFunction() {
+        show()
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var showRows = ShowRowsAction {}
 }

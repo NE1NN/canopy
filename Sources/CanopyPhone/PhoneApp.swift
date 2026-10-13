@@ -6,7 +6,6 @@ import Observation
 @MainActor @Observable
 public final class PhoneApp {
     public let connection: MacConnection
-    public let pins: PinStore
     public let lock: AppLock
     public let inbox: InboxModel
     public let rows: RowsModel
@@ -18,9 +17,8 @@ public final class PhoneApp {
         lockGrace: TimeInterval = AppLock.standardGrace, phoneName: String
     ) {
         connection = MacConnection(transport: transport, credentials: credentials, phoneName: phoneName)
-        pins = PinStore(defaults: defaults)
         lock = AppLock(defaults: defaults, authenticator: authenticator, grace: lockGrace)
-        inbox = InboxModel(connection: connection, pins: pins)
+        inbox = InboxModel(connection: connection)
         rows = RowsModel(connection: connection)
         pairing = PairingModel(connection: connection)
     }
@@ -29,7 +27,6 @@ public final class PhoneApp {
         lock.isGuarding = connection.paired != nil
         lock.launch()
         connection.start()
-        inbox.start()
         rows.start()
     }
 

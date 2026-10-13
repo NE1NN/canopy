@@ -7,64 +7,119 @@ import Testing
 @MainActor
 struct InboxModelTests {
     let mac = FakeMac()
+    static let other = PhoneRow(
+        path: "/canopy-other", name: "feat/other", repo: "canopy",
+        agents: [Rows.agent("p6", .done, since: 1_200, unseen: true, line: "Merged.")])
 
-    @Test func sectionsFollowPinsAndPinnedAgentsStayWithTheirRow() async throws {
+    @Test func theInboxHoldsWhatNeedsTheAuthor() async throws {
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
-        model.start()
-        #expect(await eventually { model.sections.pinned.map(\.name) == ["main"] })
-        #expect(model.sections.needsYou.map(\.row.name) == ["#0853", "feat/ios-companion"])
+        let model = InboxModel(connection: connection)
+        #expect(model.sections.needsYou.map(\.row.name) == ["feat/ios-companion", "#0853"])
         #expect(model.sections.done.map(\.row.name) == ["fix/port-scan-drain"])
-        #expect(model.sections.running.map(\.row.name) == ["feat/port-labels"])
-        #expect(model.waitingCount == 2)
-        #expect(model.agentCount == 5)
+        #expect(model.badgeCount == 3)
+        #expect(model.runningCount == 2)
     }
 
-    @Test func theFirstInboxPinsMainCheckoutsOnce() async throws {
-        let defaults = freshDefaults()
+    @Test func markReadHidesTheItemAtOnce() async throws {
+        mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let pins = PinStore(defaults: defaults)
-        let model = InboxModel(connection: connection, pins: pins)
-        model.start()
-        #expect(await eventually { pins.pins == ["/canopy"] })
-        model.togglePin(Rows.main)
-        #expect(pins.pins.isEmpty)
-        // A later inbox, or a later launch, leaves the author's choice alone.
-        mac.setInbox(PhoneInbox(rows: Rows.inbox.rows + [Rows.idle]))
-        let relaunched = InboxModel(connection: connection, pins: PinStore(defaults: defaults))
-        relaunched.start()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(PinStore(defaults: defaults).pins.isEmpty)
-        #expect(relaunched.sections.pinned.isEmpty)
-    }
-
-    @Test func noAgentInAMainCheckoutPinsNothingYet() async throws {
-        let idleMain = PhoneRow(path: "/canopy", name: "main", repo: "canopy", isMain: true)
-        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: [idleMain, Rows.labels]))
-        let pins = PinStore(defaults: freshDefaults())
-        let model = InboxModel(connection: connection, pins: pins)
-        model.start()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(pins.pins.isEmpty)
-        mac.setInbox(Rows.inbox)
-        #expect(await eventually { pins.pins == ["/canopy"] })
-    }
-
-    @Test func pinningAnyRowPutsItOnTop() async throws {
-        let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
-        model.start()
-        _ = await eventually { model.isPinned(Rows.main) }
-        model.togglePin(Rows.drain)
-        #expect(model.sections.pinned.map(\.name) == ["main", "fix/port-scan-drain"])
+        let model = InboxModel(connection: connection)
+        let item = try #require(model.sections.done.first)
+        await model.markRead(item)
         #expect(model.sections.done.isEmpty)
+        #expect(model.badgeCount == 2)
+        let seen = try #require(await mac.request(PhoneMethod.seen))
+        #expect(try seen.decodeParams(PhonePaneParams.self) == PhonePaneParams(pane: "p4"))
+        // The Mac resends its inbox before it has caught up: the item stays hidden.
+        mac.setInbox(PhoneInbox(rows: Rows.inbox.rows + [Rows.idle]))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(model.sections.done.isEmpty)
+        #expect(model.notice == nil)
+    }
+
+    @Test func markAllReadSendsSeenForEachDoneItem() async throws {
+        mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
+        let model = InboxModel(connection: connection)
+        #expect(model.sections.done.count == 2)
+        await model.markAllRead()
+        #expect(model.sections.done.isEmpty)
+        let panes = try mac.requests.filter { $0.method == PhoneMethod.seen }
+            .map { try $0.decodeParams(PhonePaneParams.self).pane }
+        #expect(Set(panes) == ["p4", "p6"])
+        #expect(model.sections.needsYou.count == 2)
+    }
+
+    @Test func markAllReadKeepsWhatTheMacTookWhenAnotherFails() async throws {
+        mac.on(PhoneMethod.seen) { request in
+            let pane = (try? request.decodeParams(PhonePaneParams.self))?.pane
+            return pane == "p4" ? .error("internal") : .result(request.params ?? .null)
+        }
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
+        let model = InboxModel(connection: connection)
+        await model.markAllRead()
+        #expect(model.sections.done.map(\.agent.pane) == ["p4"])
+        #expect(model.notice != nil)
+        let panes = try mac.requests.filter { $0.method == PhoneMethod.seen }
+            .map { try $0.decodeParams(PhonePaneParams.self).pane }
+        #expect(Set(panes) == ["p4", "p6"])
+    }
+
+    @Test func aPaneThatClosedCountsAsRead() async throws {
+        mac.on(PhoneMethod.seen) { _ in .error("pane_not_found") }
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        await model.markRead(try #require(model.sections.done.first))
+        #expect(model.sections.done.isEmpty)
+        #expect(model.notice == nil)
+    }
+
+    @Test func caughtUpCountsRunningAgentsWhileConnected() async throws {
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        #expect(model.caughtUpDetail == "Nothing is waiting for you.\n2 agents are running.")
+        mac.setInbox(PhoneInbox(rows: [Rows.idle]))
+        #expect(await eventually { model.caughtUpDetail == "Nothing is waiting for you." })
+    }
+
+    @Test func caughtUpOutOfReachSaysWhenItWasTrue() async throws {
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: [Rows.main, Rows.idle]))
+        let model = InboxModel(connection: connection)
+        mac.goAway()
+        #expect(await eventually { model.isStale })
+        #expect(model.caughtUpDetail.hasPrefix("Nothing was waiting as of "))
+        #expect(!model.caughtUpDetail.contains("running"))
+    }
+
+    @Test func markingReadWhileTheMacIsAwayKeepsTheItem() async throws {
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        mac.goAway()
+        #expect(await eventually { connection.isUnreachable })
+        let item = try #require(model.sections.done.first)
+        await model.markRead(item)
+        #expect(model.sections.done == [item])
+        #expect(model.notice?.title == "Can't reach Studio.")
+        #expect(!mac.requests.contains { $0.method == PhoneMethod.seen })
+    }
+
+    @Test func anAgentThatFinishesAgainComesBack() async throws {
+        mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        await model.markRead(try #require(model.sections.done.first))
+        #expect(model.sections.done.isEmpty)
+        var drain = Rows.drain
+        drain.agents = [Rows.agent("p4", .done, since: 2_000, unseen: true, line: "READY again")]
+        mac.setInbox(PhoneInbox(rows: [Rows.main, Rows.companion, drain, Rows.labels, Rows.ticket]))
+        #expect(await eventually { model.sections.done.map(\.agent.lastLine) == ["READY again"] })
     }
 
     @Test func allowAndDenyAnswerThePromptByItsID() async throws {
         mac.on(PhoneMethod.answer) { .result(($0.params ?? .null)) }
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
-        let item = try #require(model.sections.needsYou.first)
+        let model = InboxModel(connection: connection)
+        let item = try #require(model.sections.needsYou.first { $0.agent.prompt != nil })
         await model.answer(item, allow: true)
         await model.answer(item, allow: false)
         let answers = mac.requests.filter { $0.method == PhoneMethod.answer }
@@ -80,21 +135,21 @@ struct InboxModelTests {
     @Test func aPromptThatMovedOnSaysSo() async throws {
         mac.on(PhoneMethod.answer) { _ in .error("prompt_gone") }
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
-        let item = try #require(model.sections.needsYou.first)
+        let model = InboxModel(connection: connection)
+        let item = try #require(model.sections.needsYou.first { $0.agent.prompt != nil })
         await model.answer(item, allow: true)
         #expect(model.notice?.title == "That prompt moved on before your answer reached it.")
-        #expect(model.sections.needsYou.first == item)
+        #expect(model.sections.needsYou.contains(item))
         model.dismissNotice()
         #expect(model.notice == nil)
     }
 
     @Test func anAnswerWhileTheMacIsOutOfReachSaysSo() async throws {
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
+        let model = InboxModel(connection: connection)
         mac.goAway()
         #expect(await eventually { connection.isUnreachable })
-        let item = try #require(model.sections.needsYou.first)
+        let item = try #require(model.sections.needsYou.first { $0.agent.prompt != nil })
         await model.answer(item, allow: true)
         #expect(model.notice?.title == "Can't reach Studio.")
         #expect(!mac.requests.contains { $0.method == PhoneMethod.answer })
@@ -102,7 +157,7 @@ struct InboxModelTests {
 
     @Test func theInboxIsStaleWhileTheMacIsOutOfReach() async throws {
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
+        let model = InboxModel(connection: connection)
         #expect(!model.isStale)
         let asOf = try #require(connection.inboxAsOf)
         mac.goAway()
@@ -113,7 +168,7 @@ struct InboxModelTests {
 
     @Test func labelsNamePluginsAndReposOnlyWhenThereAreSeveral() async throws {
         let connection = try await connected(to: mac, inbox: Rows.inbox)
-        let model = InboxModel(connection: connection, pins: PinStore(defaults: freshDefaults()))
+        let model = InboxModel(connection: connection)
         #expect(model.label(for: Rows.ticket) == "ticket")
         #expect(model.label(for: Rows.companion) == nil)
         let other = PhoneRow(path: "/web", name: "main", repo: "web-app", isMain: true)

@@ -13,24 +13,19 @@ struct InboxView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    ForEach(model.sections.pinned) { row in
-                        PinnedRow(row: row)
-                    }
                 } header: {
                     ConnectionLine()
                 }
                 InboxSection(title: "Needs you", items: model.sections.needsYou)
-                InboxSection(title: "Done", items: model.sections.done)
-                InboxSection(title: "Running", items: model.sections.running)
+                DoneSection(items: model.sections.done)
             }
             .listStyle(.insetGrouped)
             .listSectionSpacing(.compact)
             .opacity(model.isStale ? 0.55 : 1)
             .overlay {
                 if model.hasInbox, model.sections.isEmpty {
-                    ContentUnavailableView(
-                        "Nothing needs you", systemImage: "checkmark.circle",
-                        description: Text("No agent is waiting, done, or running. Rows lists every row."))
+                    CaughtUp(detail: model.caughtUpDetail)
+                        .opacity(model.isStale ? 0.55 : 1)
                 } else if !model.hasInbox, app.connection.isUnreachable {
                     ContentUnavailableView(
                         "Can't reach \(app.connection.macName)", systemImage: "wifi.slash",
@@ -55,7 +50,7 @@ struct InboxView: View {
                     }
                 }
             }
-            .navigationTitle("Canopy")
+            .navigationTitle("Inbox")
             .backButtonTitle("Inbox")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -117,10 +112,6 @@ enum PhoneProblemText {
         "Check that Tailscale is on, on this iPhone and the Mac, and that the Mac is awake with Canopy open."
 }
 
-extension PhoneInbox.Sections {
-    var isEmpty: Bool { pinned.isEmpty && needsYou.isEmpty && done.isEmpty && running.isEmpty }
-}
-
 /// "Mac connected, 7 agents", or when the inbox is from, while the Mac is out of reach.
 struct ConnectionLine: View {
     @Environment(PhoneApp.self) private var app
@@ -146,10 +137,9 @@ struct ConnectionLine: View {
     }
 
     private var text: String {
-        let agents = app.inbox.agentCount
         switch app.connection.status {
         case .connected:
-            return "\(app.connection.macName) connected, \(agents) agent\(agents == 1 ? "" : "s")"
+            return "\(app.connection.macName) connected"
         case .connecting:
             return "Connecting to \(app.connection.macName)"
         case .unreachable:
@@ -212,6 +202,62 @@ struct Banner: View {
     }
 }
 
+/// The empty Inbox: nothing waits, with how many agents still run and the way to them.
+private struct CaughtUp: View {
+    @Environment(\.showRows) private var showRows
+    var detail: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("All caught up", systemImage: "checkmark.circle")
+                .accessibilityIdentifier("caught-up")
+        } description: {
+            Text(detail)
+        } actions: {
+            Button("See rows") { showRows() }
+                .buttonStyle(ChipStyle(kind: .tinted))
+                .accessibilityIdentifier("see-rows")
+        }
+    }
+}
+
+/// Done agents, newest first, each read by opening it, swiping it, or Mark all read.
+private struct DoneSection: View {
+    @Environment(PhoneApp.self) private var app
+    var items: [PhoneInbox.Item]
+
+    var body: some View {
+        if !items.isEmpty {
+            Section {
+                ForEach(items) { item in
+                    InboxItemRow(item: item)
+                        .swipeActions(edge: .trailing) {
+                            Button("Mark read", systemImage: "checkmark") {
+                                Task { await app.inbox.markRead(item) }
+                            }
+                            .tint(Theme.accent)
+                            .disabled(app.inbox.isStale)
+                            .accessibilityIdentifier("mark-read-\(item.row.name)")
+                        }
+                }
+            } header: {
+                HStack {
+                    Text("Done")
+                    Spacer()
+                    Button("Mark all read") { Task { await app.inbox.markAllRead() } }
+                        .textCase(nil)
+                        .foregroundStyle(Theme.accent)
+                        .disabled(app.inbox.isStale)
+                        .accessibilityIdentifier("mark-all-read")
+                }
+                .font(.footnote)
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct InboxSection: View {
     var title: String
     var items: [PhoneInbox.Item]
@@ -259,9 +305,6 @@ private struct InboxItemRow: View {
         }
         .padding(.vertical, 1)
         .opens(item.agent.pane)
-        .swipeActions(edge: .leading) {
-            PinButton(row: item.row)
-        }
     }
 }
 
@@ -279,54 +322,6 @@ struct AllowDeny: View {
                 .accessibilityIdentifier("deny-\(item.row.name)")
         }
         .disabled(app.inbox.answering.contains(item.agent.pane) || app.inbox.isStale)
-    }
-}
-
-struct PinButton: View {
-    @Environment(PhoneApp.self) private var app
-    var row: PhoneRow
-
-    var body: some View {
-        let pinned = app.inbox.isPinned(row)
-        Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") {
-            withAnimation { app.inbox.togglePin(row) }
-        }
-        .tint(Theme.accent)
-    }
-}
-
-/// A pinned row: its repo's tile, name, time, and its lead agent's last line.
-private struct PinnedRow: View {
-    @Environment(PhoneApp.self) private var app
-    var row: PhoneRow
-
-    var body: some View {
-        content(row.lead)
-            .opens(row.lead?.pane)
-            .swipeActions(edge: .leading) { PinButton(row: row) }
-    }
-
-    private func content(_ lead: PhoneAgent?) -> some View {
-        HStack(spacing: 10) {
-            RepoTile(name: row.repo ?? row.plugin ?? row.name, dot: row.dot)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
-                    RowName(row: row, label: row.repo ?? row.plugin)
-                        .accessibilityIdentifier("pinned-\(row.name)")
-                    Spacer(minLength: 8)
-                    if let lead { TimeAgo(since: lead.since) }
-                }
-                Text(lead?.lastLine ?? (lead == nil ? "No agent here" : lead?.state.phrase.capitalizedFirst ?? ""))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let lead, lead.prompt?.kind == .permission {
-                    AllowDeny(item: PhoneInbox.Item(row: row, agent: lead))
-                        .padding(.top, 6)
-                }
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
 

@@ -71,23 +71,34 @@ struct PhoneInboxTests {
         row("split", [agent("p8", .none, since: 10), agent("p9", .waiting, since: 20)]),
     ])
 
-    @Test func sortsAgentsByWhatTheyNeedNewestFirst() {
-        let sections = Self.inbox.sections(pinned: [])
-        #expect(sections.needsYou.map(\.agent.pane) == ["p3", "p2", "p9"])
+    @Test func theInboxHoldsOnlyWaitingAndUnreadDone() {
+        let sections = Self.inbox.sections
+        #expect(sections.needsYou.map(\.agent.pane) == ["p9", "p2", "p3"])
         #expect(sections.done.map(\.agent.pane) == ["p4"])
-        #expect(sections.running.map(\.agent.pane) == ["p1", "p7", "p6"])
-        #expect(sections.pinned.isEmpty)
+        #expect(sections.count == 4)
+        #expect(!sections.isEmpty)
     }
 
-    @Test func pinnedRowsLeaveTheSectionsAndKeepTheirOrder() {
-        let sections = Self.inbox.sections(pinned: ["/w/idle", "/w/main", "/w/gone"])
-        #expect(sections.pinned.map(\.name) == ["idle", "main"])
-        #expect(sections.running.map(\.agent.pane) == ["p7", "p6"])
+    @Test func doneIsNewestFirst() {
+        let inbox = PhoneInbox(rows: [
+            Self.row("old", [Self.agent("p1", .done, unseen: true, since: 10)]),
+            Self.row("new", [Self.agent("p2", .done, unseen: true, since: 30)]),
+            Self.row("mid", [Self.agent("p3", .done, unseen: true, since: 20)]),
+        ])
+        #expect(inbox.sections.done.map(\.agent.pane) == ["p2", "p3", "p1"])
     }
 
-    @Test func countsWaitingAgentsPinnedOrNot() {
-        #expect(Self.inbox.waitingCount == 3)
-        #expect(Self.inbox.agentCount == 8)
+    @Test func tiesKeepTheMacsOrder() {
+        let inbox = PhoneInbox(rows: [
+            Self.row("b", [Self.agent("p2", .waiting, since: 50)]),
+            Self.row("a", [Self.agent("p1", .waiting, since: 50)]),
+        ])
+        #expect(inbox.sections.needsYou.map(\.agent.pane) == ["p2", "p1"])
+    }
+
+    @Test func runningAgentsAreCountedNotListed() {
+        #expect(Self.inbox.runningCount == 3)
+        #expect(PhoneInbox().sections.isEmpty)
     }
 
     @Test func aRowShowsItsMostUrgentAgent() {
@@ -103,8 +114,24 @@ struct PhoneInboxTests {
         let pr = #"{"number":1,"state":"queued","title":"t","url":"u"}"#
         #expect(try JSONDecoder().decode(PhonePR.self, from: Data(pr.utf8)).state == .open)
     }
+}
 
-    @Test func firstLaunchPinsMainRowsWithAnAgent() {
-        #expect(Self.inbox.defaultPins == ["/w/main"])
+struct PhoneRowsResultTests {
+    static let main = PhoneRow(path: "/w/main", name: "main", repo: "canopy", isMain: true)
+    static let feature = PhoneRow(path: "/w/feat", name: "feat/x", repo: "canopy")
+    static let fix = PhoneRow(path: "/w/fix", name: "fix/y", repo: "canopy")
+
+    @Test func aRepoShowsItsMainRowApart() {
+        let section = PhoneRowsResult.Section(
+            name: "canopy", isPlugin: false, rows: [Self.feature, Self.main, Self.fix])
+        #expect(section.main == Self.main)
+        #expect(section.others.map(\.name) == ["feat/x", "fix/y"])
+    }
+
+    @Test func aSectionWithoutAMainRowListsEveryRow() {
+        let ticket = PhoneRow(path: "/t/1", name: "#0853", plugin: "ticket")
+        let section = PhoneRowsResult.Section(name: "ticket", isPlugin: true, rows: [ticket])
+        #expect(section.main == nil)
+        #expect(section.others == [ticket])
     }
 }

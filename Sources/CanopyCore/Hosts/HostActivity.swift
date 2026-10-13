@@ -64,6 +64,8 @@ public final class HostMonitor {
     private var lastPorts: [String: ContinuousClock.Instant] = [:]
     /// When each host's ports were last listed.
     private var listed: [String: ContinuousClock.Instant] = [:]
+    /// Counts each host's port stops, so a listing read before a stop never puts the stopped port back.
+    private var stops: [String: Int] = [:]
     /// Each host's probes under way, its session probe and then its ports, which another round skips.
     private var probing: [String: Task<Void, Never>] = [:]
 
@@ -192,6 +194,7 @@ public final class HostMonitor {
 
     /// Ports just stopped on a host leave the panel at once, and the host's ports are read again on its next probe.
     public func portsStopped(_ ports: Set<UInt16>, on alias: String) {
+        stops[alias, default: 0] += 1
         lastPorts[alias] = nil
         guard let groups = remotePorts[alias] else { return }
         remotePorts[alias] = groups.compactMap { group in
@@ -210,6 +213,7 @@ public final class HostMonitor {
         let now = clock.now
         guard forwarding[alias] == nil, lastPorts[alias].map({ now - $0 >= portsEvery }) ?? true else { return }
         lastPorts[alias] = now
+        let stopsBefore = stops[alias, default: 0]
         guard
             let result = await connection.probe(
                 HostProbe.command(homeID: workspace.homeID, ports: true), timeout: .seconds(10)),
@@ -217,13 +221,15 @@ public final class HostMonitor {
         else { return }
         listed[alias] = clock.now
         forwarding[alias] = Task {
-            await self.forward(ports, shells: report.shells, on: connection)
+            await self.forward(ports, shells: report.shells, stopsBefore: stopsBefore, on: connection)
             self.forwarding[alias] = nil
         }
     }
 
     /// Gives the host's ports to its remote rows and forwards the rows' ports to the Mac.
-    private func forward(_ ports: [RemoteListeningPort], shells: [String: Int32], on connection: HostConnection) async {
+    private func forward(
+        _ ports: [RemoteListeningPort], shells: [String: Int32], stopsBefore: Int, on connection: HostConnection
+    ) async {
         let alias = connection.alias
         let rows = await workspace.remoteRows(on: alias)
         var sessions: [String: String] = [:]
@@ -238,6 +244,11 @@ public final class HostMonitor {
         }
         // A master that stopped during the round leaves the ports as they showed until the next round, read soon.
         guard let forwards else {
+            lastPorts[alias] = nil
+            return
+        }
+        // A port stopped since this listing was read would show again, so the next round reads them afresh.
+        guard stops[alias, default: 0] == stopsBefore else {
             lastPorts[alias] = nil
             return
         }
