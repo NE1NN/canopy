@@ -62,6 +62,8 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// WebKit's description of why the page failed to load, until it loads again.
     private(set) var error: String?
     @ObservationIgnored private var restartedAfterCrash = false
+    /// The HTTP status the page itself last loaded with.
+    @ObservationIgnored private(set) var loadedStatus: Int?
     @ObservationIgnored private weak var owner: WebViews?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var popUps: [WKWebView] = []
@@ -141,7 +143,10 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async
         -> WKNavigationResponsePolicy
     {
-        navigationResponse.canShowMIMEType ? .allow : .cancel
+        if webView === self.webView, navigationResponse.isForMainFrame {
+            loadedStatus = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+        }
+        return navigationResponse.canShowMIMEType ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
