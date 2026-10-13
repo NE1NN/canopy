@@ -11,6 +11,7 @@ public final class PhoneApp {
     public let rows: RowsModel
     public let pairing: PairingModel
     public let waker: Waker
+    public let newTask: NewTaskModel
 
     public init(
         transport: any PhoneTransport = TCPTransport(), credentials: any CredentialStore = KeychainCredentialStore(),
@@ -24,6 +25,7 @@ public final class PhoneApp {
         rows = RowsModel(servers: servers)
         pairing = PairingModel(servers: servers)
         waker = Waker(http: http, endpoint: ec2Endpoint)
+        newTask = NewTaskModel(servers: servers, rows: rows, waker: waker, defaults: defaults)
     }
 
     public func launch() {

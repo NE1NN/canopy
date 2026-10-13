@@ -27,11 +27,13 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     public var unpairedNotice: String?
     /// How to start a box that powered itself off, as its last hello said.
     public var wake: PhoneWake?
+    /// What a task from this phone runs there, as its last hello said. Nil from a server older than New task.
+    public var agentCommand: String?
 
     public init(
         id: String = UUID().uuidString, kind: String = PhoneServerKind.mac, name: String, host: String, port: UInt16,
         address: String?, token: String, phone: String, version: String? = nil, pairedAt: Date = Date(),
-        unpairedNotice: String? = nil, wake: PhoneWake? = nil
+        unpairedNotice: String? = nil, wake: PhoneWake? = nil, agentCommand: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -45,6 +47,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         self.pairedAt = pairedAt
         self.unpairedNotice = unpairedNotice
         self.wake = wake
+        self.agentCommand = agentCommand
     }
 
     public var isBox: Bool { kind == PhoneServerKind.box }
@@ -61,7 +64,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, name, host, port, address, token, phone, version, pairedAt, unpairedNotice, wake
+        case id, kind, name, host, port, address, token, phone, version, pairedAt, unpairedNotice, wake, agentCommand
         /// The name's key from before several servers, when the one server was always the Mac.
         case mac
     }
@@ -82,6 +85,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         pairedAt = try container.decodeIfPresent(Date.self, forKey: .pairedAt) ?? .distantPast
         unpairedNotice = try container.decodeIfPresent(String.self, forKey: .unpairedNotice)
         wake = try container.decodeIfPresent(PhoneWake.self, forKey: .wake)
+        agentCommand = try container.decodeIfPresent(String.self, forKey: .agentCommand)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -98,6 +102,7 @@ public struct PairedServer: Codable, Sendable, Equatable, Identifiable {
         try container.encode(pairedAt, forKey: .pairedAt)
         try container.encodeIfPresent(unpairedNotice, forKey: .unpairedNotice)
         try container.encodeIfPresent(wake, forKey: .wake)
+        try container.encodeIfPresent(agentCommand, forKey: .agentCommand)
     }
 }
 
