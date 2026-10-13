@@ -65,20 +65,25 @@ extension RowLifecycle {
                     code: "session_not_found", message: "Claude Code has no conversation \(session) for this row.")
             }
         }
-        if let prompt = params.prompt { try Self.sendMessage(prompt, to: pane) }
-        return ChatNewResult(pane: pane.id.description, tab: tab.name)
+        var waiting: String?
+        if let prompt = params.prompt, let chat = pane.chat, chat.send(prompt, asMessage: true) == .drafted {
+            waiting = Self.waitReason(pane)
+        }
+        return ChatNewResult(pane: pane.id.description, tab: tab.name, waiting: waiting)
     }
 
     /// Sends an agent's message to a chat as a message of its own, and says so when it could only wait in the draft.
     static func sendMessage(_ text: String, to pane: Pane) throws {
         guard let chat = pane.chat else { return }
         if chat.send(text, asMessage: true) == .drafted {
-            throw ControlError(
-                code: "chat_waiting",
-                message:
-                    "\(pane.id.description) waits on the author, \(chat.needsTrust ? "to trust its folder" : "as its Claude Code is not running"). The message waits in its composer."
-            )
+            throw ControlError(code: "chat_waiting", message: waitReason(pane))
         }
+    }
+
+    private static func waitReason(_ pane: Pane) -> String {
+        "\(pane.id.description) waits on the author, "
+            + "\(pane.chat?.needsTrust == true ? "to trust its folder" : "as its Claude Code is not running"). "
+            + "The message waits in its composer."
     }
 
     public func sendToTerminal(_ params: TermSendParams) async throws {

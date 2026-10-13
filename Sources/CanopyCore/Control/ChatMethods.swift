@@ -41,4 +41,12 @@ public struct ChatNewParams: Codable, Sendable {
 public struct ChatNewResult: Codable, Sendable, Equatable {
     public var pane: String
     public var tab: String
+    /// Why the prompt waits in the chat's composer instead of going to Claude, such as a folder not yet trusted.
+    public var waiting: String?
+
+    public init(pane: String, tab: String, waiting: String? = nil) {
+        self.pane = pane
+        self.tab = tab
+        self.waiting = waiting
+    }
 }

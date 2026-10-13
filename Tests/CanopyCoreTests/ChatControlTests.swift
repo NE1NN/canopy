@@ -122,9 +122,13 @@ struct ChatControlTests {
         defer { terminals.closeAll() }
         let result = try rows.newChat(context, ChatNewParams())
 
+        #expect(result.waiting == nil)
         await #expect(throws: ControlError.self) {
             try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "say later", enter: true))
         }
+        let prompted = try rows.newChat(context, ChatNewParams(prompt: "say now"))
+        #expect(prompted.waiting?.contains("to trust its folder") == true)
+        #expect(try chat(prompted).draft == "say now")
         #expect(try chat(result).draft == "say later")
         #expect(try read(result.pane).hasSuffix("trust this folder for Claude Code, then it sends: say later"))
     }

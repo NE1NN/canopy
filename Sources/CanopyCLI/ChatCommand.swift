@@ -34,7 +34,7 @@ struct ChatCommand: AsyncParsableCommand {
                 ChatNewParams(target: rowOptions.hint, prompt: prompt, model: model, mode: mode, resume: resume))
             try client.print(result) {
                 let opened = try result.decode(ChatNewResult.self)
-                return "Opened chat \(opened.pane) in tab \(opened.tab)."
+                return "Opened chat \(opened.pane) in tab \(opened.tab)." + (opened.waiting.map { " " + $0 } ?? "")
             }
         }
     }
