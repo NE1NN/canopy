@@ -179,3 +179,79 @@ extension Workspace {
         }
     }
 }
+
+extension Workspace {
+    /// Switches a host over to canopy-box: installs it, starts it, sends the Mac's settings, and hands it the host's
+    /// rows and `panes`. No session is touched. The host is marked upgraded only once the box has taken it all.
+    public func upgradeHost(_ alias: String, panes: [BoxAdoptedPane]) async throws -> HostUpgradeResult {
+        guard var entry = hosts.hosts[alias] else {
+            throw WorkspaceError.hostNotFound(alias, known: hosts.hosts.keys.sorted())
+        }
+        let connection = await connection(alias, entry)
+        try await connection.connect()
+        try await prepareHost(connection)
+        let report = try await BoxInstall.install(on: connection, homeID: homeID, binaries: hostTooling.boxBinaries)
+        let saved = entry
+        entry.box = true
+        try HostsConfigFile(url: home.configFile).save(alias, entry)
+        do {
+            await ensureBoxLink(connection)
+            guard let link = boxLinks[alias], await link.waitUntilConnected(within: .seconds(30)) else {
+                throw WorkspaceError.hostUnreachable(alias, reason: "canopy-box on \(alias) did not answer.")
+            }
+            let rows = remoteRows(on: alias).compactMap { row -> BoxAdoptedRow? in
+                guard let repo = state.repos.first(where: { $0.remote.contains { $0.standIn == row.standIn } }) else {
+                    return nil
+                }
+                return BoxAdoptedRow(repo: repoName(repo.path), path: row.path, branch: row.branch)
+            }
+            let adopted: BoxAdoptResult = try await link.call(
+                BoxMethod.adopt, BoxAdoptParams(rows: rows, panes: panes, nextPane: 1))
+            activity.record(ActivityType.hostUpgraded, data: ["host": .string(alias)])
+            var warnings: [String] = []
+            if !adopted.missing.isEmpty {
+                warnings.append(
+                    "\(alias) no longer has the sessions of \(adopted.missing.joined(separator: ", ")), so they were left out."
+                )
+            }
+            if !report.systemd {
+                warnings.append(
+                    "systemd's user manager does not answer on \(alias), so canopy-box runs as a plain process and "
+                        + "will not start again after the host restarts.")
+            } else if report.lingering == false {
+                warnings.append(
+                    "Lingering is off on \(alias), so canopy-box stops when no one is logged in. "
+                        + "Run `sudo loginctl enable-linger $USER` there once.")
+            }
+            return HostUpgradeResult(
+                alias: alias, rows: adopted.rows.count, panes: adopted.panes.count, missing: adopted.missing,
+                warnings: warnings)
+        } catch {
+            try? HostsConfigFile(url: home.configFile).save(alias, saved)
+            await stopBoxLink(alias)
+            throw error
+        }
+    }
+
+    /// Switches a host back: the box hands back its rows and panes, stops, and the Mac tracks the host again. Returns
+    /// what the box gave back.
+    public func undoUpgrade(_ alias: String) async throws -> (HostUpgradeResult, BoxReleaseResult) {
+        guard var entry = hosts.hosts[alias] else {
+            throw WorkspaceError.hostNotFound(alias, known: hosts.hosts.keys.sorted())
+        }
+        guard entry.box else { throw WorkspaceError.hostCommandFailed(alias, reason: "\(alias) is not upgraded.") }
+        let connection = await connection(alias, entry)
+        try await connection.connect()
+        await ensureBoxLink(connection)
+        guard let link = boxLinks[alias], await link.waitUntilConnected(within: .seconds(30)) else {
+            throw WorkspaceError.hostUnreachable(alias, reason: "canopy-box on \(alias) did not answer.")
+        }
+        let released: BoxReleaseResult = try await link.call(BoxMethod.release, JSONValue.object([:]))
+        await stopBoxLink(alias)
+        try await BoxInstall.stop(on: connection, homeID: homeID)
+        entry.box = false
+        try HostsConfigFile(url: home.configFile).save(alias, entry)
+        activity.record(ActivityType.hostDowngraded, data: ["host": .string(alias)])
+        return (HostUpgradeResult(alias: alias, rows: released.rows.count, panes: released.panes.count), released)
+    }
+}

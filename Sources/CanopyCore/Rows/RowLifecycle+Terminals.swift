@@ -62,8 +62,14 @@ extension RowLifecycle {
         terminals.closePane(pane.id)
     }
 
+    /// A pane by its ID, or by the session a host's pane is named after, as a pane canopy-box made, whose agents know
+    /// it by that name.
     func terminal(_ id: String) throws -> Pane {
-        guard let paneID = PaneID(id), let pane = terminals.pane(paneID) else { throw WorkspaceError.paneNotFound(id) }
-        return pane
+        if let paneID = PaneID(id), let pane = terminals.pane(paneID) { return pane }
+        if !id.isEmpty, let pane = terminals.panes.first(where: { $0.remoteSession == id && $0.context.remote != nil })
+        {
+            return pane
+        }
+        throw WorkspaceError.paneNotFound(id)
     }
 }

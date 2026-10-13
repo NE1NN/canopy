@@ -10,7 +10,7 @@ struct HostCommand: AsyncParsableCommand {
             A host is an ssh alias from ~/.ssh/config. Remote rows of a registered repo live in that repo's clone on \
             the host, and their terminals run in tmux there, so programs keep running while this Mac sleeps.
             """,
-        subcommands: [Add.self, List.self, Remove.self]
+        subcommands: [Add.self, List.self, Remove.self, Upgrade.self]
     )
 
     struct Add: AsyncParsableCommand {
@@ -88,10 +88,44 @@ struct HostCommand: AsyncParsableCommand {
                     ["HOST", "STATE", "ROWS", "PANES", "REPOS"],
                     hosts.map { host in
                         [
-                            host.alias, host.state.rawValue, "\(host.rows.count)", "\(host.panes.count)",
+                            host.alias, host.state.rawValue + (host.box ? ", box" : ""), "\(host.rows.count)",
+                            "\(host.panes.count)",
                             host.repos.keys.sorted().joined(separator: ", "),
                         ]
                     })
+            }
+        }
+    }
+
+    struct Upgrade: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Hand a host's rows, panes, and agents to canopy-box on it, or take them back with --undo.",
+            discussion: """
+                canopy-box then keeps the host's rows and agents whether or not this Mac is on, so the iPhone can \
+                reach them directly. Nothing running on the host is restarted. It runs as a systemd user service; \
+                run `sudo loginctl enable-linger $USER` on the host once, so it starts with the host.
+                """)
+
+        @Argument(help: "The host's alias.")
+        var alias: String
+        @Flag(help: "Go back: this Mac tracks the host again, and canopy-box stops.")
+        var undo = false
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            let result = client.call(HostMethod.upgrade, HostUpgradeParams(alias: alias, undo: undo), wait: .forever)
+            let upgraded = try result.decode(HostUpgradeResult.self)
+            for warning in upgraded.warnings {
+                FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+            }
+            try client.print(result) {
+                let what =
+                    "\(upgraded.rows) \(upgraded.rows == 1 ? "row" : "rows") and \(upgraded.panes) "
+                    + (upgraded.panes == 1 ? "pane" : "panes")
+                return undo
+                    ? "\(alias) is back with this Mac, with \(what)."
+                    : "canopy-box now runs \(alias), with \(what)."
             }
         }
     }

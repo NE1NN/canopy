@@ -236,3 +236,28 @@ extension RowLifecycle: RemotePaneHooks {
             rowPath: pane.context.rowPath, rowName: pane.context.rowName)
     }
 }
+
+extension RowLifecycle {
+    /// `canopy host upgrade`: the host's panes, with their sessions and agents, go to canopy-box with its rows.
+    public func upgradeHost(_ alias: String) async throws -> HostUpgradeResult {
+        let panes = terminals.panes.compactMap { pane -> BoxAdoptedPane? in
+            guard let remote = pane.context.remote, remote.host == alias, let session = pane.remoteSession else {
+                return nil
+            }
+            return BoxAdoptedPane(
+                id: session, rowPath: remote.path,
+                folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, agent: pane.agent)
+        }
+        return try await workspace.upgradeHost(alias, panes: panes)
+    }
+
+    /// `canopy host upgrade --undo`: the box's panes keep their tabs, and their agents stay as the box last had them.
+    public func undoUpgrade(_ alias: String) async throws -> HostUpgradeResult {
+        let (result, released) = try await workspace.undoUpgrade(alias)
+        for given in released.panes {
+            terminals.panes.first { $0.context.remote?.host == alias && $0.remoteSession == given.id }?.mirror(
+                given.agent)
+        }
+        return result
+    }
+}

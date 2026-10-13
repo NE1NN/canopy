@@ -39,6 +39,8 @@ public enum ActivityType {
     public static let pluginRowCreated = "plugin.row.created"
     public static let pluginRowRemoved = "plugin.row.removed"
     public static let hostAdded = "host.added"
+    public static let hostUpgraded = "host.upgraded"
+    public static let hostDowngraded = "host.downgraded"
     public static let hostRemoved = "host.removed"
     public static let hostConnected = "host.connected"
     public static let hostDetached = "host.detached"
