@@ -6,7 +6,7 @@ struct MarkdownView: View {
     let blocks: [ChatBlock]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: ChatStyle.blockSpacing) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
             }
@@ -52,7 +52,7 @@ private struct MarkdownBlockView: View {
                         MarkdownBlockView(block: block)
                     }
                 }
-                .foregroundStyle(ChatStyle.secondaryText)
+                .environment(\.chatTextColor, ChatStyle.secondaryText)
             }
             .fixedSize(horizontal: false, vertical: true)
         case .table(let header, let rows, let alignments):
@@ -75,12 +75,13 @@ private struct MarkdownBlockView: View {
 struct InlineText: View {
     let text: AttributedString
     var font = ChatStyle.text
+    @Environment(\.chatTextColor) private var color
 
     var body: some View {
         Text(Self.styled(text, font: font))
             .font(font)
             .lineSpacing(ChatStyle.textLineSpacing)
-            .foregroundStyle(ChatStyle.primaryText)
+            .foregroundStyle(color)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,4 +182,9 @@ private struct TableBlockView: View {
         case .trailing: .trailing
         }
     }
+}
+
+extension EnvironmentValues {
+    /// The color of Claude's text, which a quote makes quieter.
+    @Entry var chatTextColor = ChatStyle.primaryText
 }

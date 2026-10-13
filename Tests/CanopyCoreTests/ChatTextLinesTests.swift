@@ -53,12 +53,28 @@ struct ChatTextLinesTests {
             ])
     }
 
-    @Test func anItemThatOpensWithAListGetsALineForItsOwnMarker() {
+    @Test func anEmptyItemGetsALineForItsMarker() {
         #expect(
-            lines("1. - inner") == [
+            lines("1.\n2. two") == [
                 ChatTextLine("", depth: 1, marker: "1."),
-                ChatTextLine("inner", depth: 2, marker: "•", spacingBefore: 5),
+                ChatTextLine("two", depth: 1, marker: "2.", spacingBefore: 5),
             ])
+    }
+
+    /// What `MarkdownView` draws with a box, bar, line, or grid of its own inside a list or quote stays with SwiftUI,
+    /// as does an item opening with a list, whose markers SwiftUI puts on one line.
+    @Test func blocksThatNeedMoreThanTextInsideAListStayWithSwiftUI() {
+        let stays = [
+            "1. Run:\n\n   ```bash\n   make\n   ```", "- > quoted", "> ```\n> code\n> ```", "- a\n\n  ---",
+            "1. - inner", "> | a |\n> |---|\n> | b |",
+        ]
+        for markdown in stays {
+            #expect(!ChatTextLines.draws(ChatMarkdown.parse(markdown)[0]), "\(markdown)")
+        }
+        let drawn = ["- one\n  - two", "> a\n>\n> - b", "1. **bold** item", "```swift\nlet a = 1\n```", "> quoted"]
+        for markdown in drawn {
+            #expect(ChatTextLines.draws(ChatMarkdown.parse(markdown)[0]), "\(markdown)")
+        }
     }
 
     @Test func aQuoteIsQuietAndSpacedAsMarkdownViewSpacesIt() {

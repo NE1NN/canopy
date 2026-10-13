@@ -41,10 +41,28 @@ public enum ChatTextLines {
     /// The space above a large heading.
     public static let headingSpacing = 4.0
 
-    /// Whether `ChatTextLines` can draw `block`. A table needs its grid, so it stays with SwiftUI.
+    /// Whether `ChatTextLines` can draw `block` as `MarkdownView` does. A table needs its grid, and inside a list or
+    /// quote a code block, quote, or rule needs its own box, bar, or line, so those stay with SwiftUI. So does a list
+    /// item that opens with a list, whose markers SwiftUI puts on one line.
     public static func draws(_ block: ChatBlock) -> Bool {
-        if case .table = block { return false }
-        return true
+        switch block {
+        case .table: false
+        case .paragraph, .heading, .code, .rule: true
+        case .list(_, _, let items):
+            items.allSatisfy { blocks in
+                if case .list? = blocks.first { return false }
+                return blocks.allSatisfy(drawsInside)
+            }
+        case .quote(let blocks): blocks.allSatisfy(drawsInside)
+        }
+    }
+
+    private static func drawsInside(_ block: ChatBlock) -> Bool {
+        switch block {
+        case .paragraph, .heading: true
+        case .list: draws(block)
+        case .code, .quote, .rule, .table: false
+        }
     }
 
     public static func lines(for block: ChatBlock) -> [ChatTextLine] {

@@ -134,7 +134,7 @@ def ask(tool, tool_input, needs_author=False):
 
 
 MARKDOWN = (
-    "## Streaming check\n\nHere is **bold text**, some *italic words*, a bit of `inline code`, and a "
+    "## Streaming check\n\nHere is **bold text** ✅, some *italic words*, a bit of `inline code`, and a "
     "[link](https://example.com) inside a paragraph that runs long enough to wrap across more than one line of "
     "the column, as Claude's replies often do when they explain something.\n\n"
     "1. First step with `make app`\n2. Second step, which is a longer item so that it wraps onto a second line in "

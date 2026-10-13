@@ -7,6 +7,8 @@ enum ChatStyle {
     static let columnWidth = 720.0
     static let sidePadding = 24.0
     static let rowSpacing = 12.0
+    /// Between the blocks of one reply.
+    static let blockSpacing = 10.0
     static let topPadding = 22.0
 
     static let text = Font.system(size: 13.5)

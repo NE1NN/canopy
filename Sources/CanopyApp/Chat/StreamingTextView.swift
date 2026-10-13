@@ -13,6 +13,9 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
     var openLink: (URL) -> Void = { _ in }
     private(set) var block: ChatBlock?
     private var lines: [ChatTextLine] = []
+    /// The text last put in the storage, as built. TextKit swaps fonts in the storage for characters the system font
+    /// lacks, such as emoji, so the storage itself never matches a newly built text.
+    private var built = NSAttributedString()
     private let storage = NSTextStorage()
     private let manager = NSLayoutManager()
     private var pages: [NSTextView] = []
@@ -62,30 +65,39 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
 
     /// Lays the text out at `width` across as many pages as it needs, and returns its height.
     private func layoutPages(width: CGFloat) -> CGFloat {
-        let size = CGSize(width: width, height: Self.pageHeight)
+        let size = CGSize(width: max(width, Self.minimumWidth), height: Self.pageHeight)
         for page in pages where page.textContainer?.size != size { page.textContainer?.size = size }
-        while let last = pages.last?.textContainer {
-            manager.ensureLayout(for: last)
-            let laidOut = NSMaxRange(manager.glyphRange(for: last))
-            guard storage.length > 0, laidOut < manager.numberOfGlyphs else { break }
-            addPage()
-            pages.last?.textContainer?.size = size
-        }
-        // Text that got shorter leaves empty pages behind.
+        // Text that got shorter, or a wider row, leaves pages with nothing on them.
         while pages.count > 1, let last = pages.last?.textContainer, manager.glyphRange(for: last).length == 0 {
             manager.removeTextContainer(at: manager.textContainers.count - 1)
             pages.removeLast().removeFromSuperview()
         }
+        // Each page is filled in turn; one that takes nothing, as a line taller than a page would, ends it.
+        while let last = pages.last?.textContainer {
+            let laidOut = manager.glyphRange(for: last)
+            guard laidOut.length > 0, NSMaxRange(laidOut) < manager.numberOfGlyphs else { break }
+            addPage()
+            pages.last?.textContainer?.size = size
+        }
+        guard storage.length > 0 else {
+            pageHeights = pages.map { _ in 0 }
+            return 0
+        }
         pageHeights = pages.map { page in page.textContainer.map { manager.usedRect(for: $0).height } ?? 0 }
         return pageHeights.reduce(0, +)
     }
+
+    /// Narrower than this, a layout pass has not given the row its width yet, and text would break a letter a line.
+    static let minimumWidth: CGFloat = 40
 
     /// Changes the text in place, so TextKit lays out only what is new rather than SwiftUI making a new row.
     func show(_ block: ChatBlock) {
         guard block != self.block else { return }
         self.block = block
         lines = ChatTextLines.lines(for: block)
-        StreamingText.replace(storage, with: StreamingText.attributed(lines))
+        let text = StreamingText.attributed(lines)
+        StreamingText.replace(storage, was: built, with: text)
+        built = text
         if case .code(let language?, _) = block {
             languageLabel.stringValue = language
             languageLabel.isHidden = false
@@ -115,7 +127,9 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
     override func layout() {
         super.layout()
         guard let block else { return }
-        let parts = Parts(block: block, lines: lines, width: bounds.width) { layoutPages(width: $0) }
+        let parts = Parts(block: block, lines: lines, width: bounds.width, scale: window?.backingScaleFactor ?? 2) {
+            layoutPages(width: $0)
+        }
         var y = parts.text.minY
         for (page, height) in zip(pages, pageHeights) {
             page.frame = CGRect(x: parts.text.minX, y: y, width: parts.text.width, height: height)
@@ -183,14 +197,19 @@ final class StreamingTextView: NSView, NSTextViewDelegate {
         var decoration: CGRect?
         var height: CGFloat
 
-        init(block: ChatBlock, lines: [ChatTextLine], width: CGFloat, textHeight: (CGFloat) -> CGFloat) {
+        init(
+            block: ChatBlock, lines: [ChatTextLine], width: CGFloat, scale: CGFloat = 2,
+            textHeight: (CGFloat) -> CGFloat
+        ) {
             let columnWidth = max(1, min(ChatStyle.columnWidth, width - 2 * ChatStyle.sidePadding))
-            let x = ((width - columnWidth) / 2).rounded(.down)
+            // Centered on the pixel grid, as SwiftUI centers the column.
+            let x = ((width - columnWidth) / 2 * scale).rounded() / scale
             let top = lines.first?.spacingBefore ?? 0
             switch block {
             case .code:
                 let height = textHeight(.greatestFiniteMagnitude)
-                text = CGRect(x: x + 12, y: 9, width: max(1, columnWidth - 24), height: height)
+                // Clipped at the box's border, as SwiftUI's scroll view clips it, rather than at the padding.
+                text = CGRect(x: x + 12, y: 9, width: max(1, columnWidth - 13), height: height)
                 decoration = CGRect(x: x, y: 0, width: columnWidth, height: height + 18)
                 self.height = height + 18
             case .quote:
@@ -232,22 +251,25 @@ enum StreamingText {
 
         func height(of text: NSAttributedString, width: CGFloat) -> CGFloat {
             storage.setAttributedString(text)
-            container.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+            container.size = CGSize(
+                width: max(width, StreamingTextView.minimumWidth), height: .greatestFiniteMagnitude)
             manager.ensureLayout(for: container)
             return text.length > 0 ? manager.usedRect(for: container).height : 0
         }
     }
 
     /// Replaces only what changed from the first difference on, so TextKit keeps the layout of the text before it.
-    static func replace(_ storage: NSTextStorage, with text: NSAttributedString) {
-        var common = (storage.string.commonPrefix(with: text.string, options: .literal) as NSString).length
+    /// `old` is the text the storage was last given, as it was built.
+    static func replace(_ storage: NSTextStorage, was old: NSAttributedString, with text: NSAttributedString) {
+        var common = (old.string.commonPrefix(with: text.string, options: .literal) as NSString).length
         // Markdown that closes, such as a second `**`, restyles what came before it.
         if common > 0,
-            !storage.attributedSubstring(from: NSRange(location: 0, length: common)).isEqual(
+            !old.attributedSubstring(from: NSRange(location: 0, length: common)).isEqual(
                 to: text.attributedSubstring(from: NSRange(location: 0, length: common)))
         {
             common = 0
         }
+        common = min(common, storage.length)
         let length = text.length
         storage.beginEditing()
         storage.replaceCharacters(
@@ -297,6 +319,7 @@ enum StreamingText {
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: base, .foregroundColor: color, .paragraphStyle: paragraph,
             ]
+            let start = result.length
             if !prefix.isEmpty {
                 var markerAttributes = attributes
                 markerAttributes[.font] = ChatStyle.AppKit.text
@@ -321,6 +344,17 @@ enum StreamingText {
                 }
                 if let link = run.link { runAttributes[.link] = link }
                 result.append(NSAttributedString(string: string, attributes: runAttributes))
+            }
+            // A code block's lines and a hard line break start paragraphs of their own in TextKit, which go on from
+            // where the text is indented, with no space above.
+            let lineRange = NSRange(location: start, length: result.length - start)
+            let newline = (result.string as NSString).range(of: "\n", options: .literal, range: lineRange)
+            if newline.location != NSNotFound, let continuation = paragraph.mutableCopy() as? NSMutableParagraphStyle {
+                continuation.firstLineHeadIndent = paragraph.headIndent
+                continuation.paragraphSpacingBefore = 0
+                result.addAttribute(
+                    .paragraphStyle, value: continuation,
+                    range: NSRange(location: NSMaxRange(newline), length: NSMaxRange(lineRange) - NSMaxRange(newline)))
             }
             if index < lines.count - 1 {
                 result.append(NSAttributedString(string: "\n", attributes: attributes))
