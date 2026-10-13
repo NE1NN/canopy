@@ -10,7 +10,7 @@ struct HostCommand: AsyncParsableCommand {
             A host is an ssh alias from ~/.ssh/config. Remote rows of a registered repo live in that repo's clone on \
             the host, and their terminals run in tmux there, so programs keep running while this Mac sleeps.
             """,
-        subcommands: [Add.self, List.self, Remove.self, Upgrade.self]
+        subcommands: [Add.self, List.self, Remove.self, Upgrade.self, WakeKey.self]
     )
 
     struct Add: AsyncParsableCommand {
@@ -126,6 +126,50 @@ struct HostCommand: AsyncParsableCommand {
                 return undo
                     ? "\(alias) is back with this Mac, with \(what)."
                     : "canopy-box now runs \(alias), with \(what)."
+            }
+        }
+    }
+
+    struct WakeKey: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "wake-key",
+            abstract: "Give the iPhone a key that starts the host's EC2 instance when it has powered itself off.",
+            discussion: """
+                Reads an AWS access key id and its secret, one per line, from the terminal or from stdin. Make the key \
+                for an IAM user whose only permission is ec2:StartInstances on the host's instance. It stays in this \
+                Mac's login Keychain, and canopy-box on the host hands it to paired phones, so needs the host \
+                upgraded. Pipe it in with:
+                  printf '%s\\n%s\\n' "$KEY_ID" "$SECRET" | canopy host wake-key <host>
+                """)
+
+        @Argument(help: "The host's alias.")
+        var alias: String
+        @Flag(help: "Forget the key here and on the host.")
+        var clear = false
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            var key: BoxWakeKey?
+            if !clear {
+                let piping = "printf '%s\\n%s\\n' \"$KEY_ID\" \"$SECRET\" | canopy host wake-key \(alias)"
+                let id = try SecretPrompt.read(prompt: "Access key id: ", what: "access key id", piping: piping)
+                let secret = try SecretPrompt.read(prompt: "Secret access key: ", what: "secret", piping: piping)
+                guard !id.isEmpty, !secret.isEmpty else {
+                    client.fail(
+                        ControlError(code: "bad_params", message: "The access key id and the secret are both needed."))
+                }
+                key = BoxWakeKey(accessKeyID: id, secretAccessKey: secret)
+            }
+            let result = client.call(HostMethod.wakeKey, HostWakeKeyParams(alias: alias, key: key))
+            let set = try result.decode(HostWakeKeyResult.self)
+            try client.print(result) {
+                switch (set.isSet, set.sent) {
+                case (true, true): "\(alias)'s wake key is set. Paired phones get it when they next connect."
+                case (true, false): "\(alias)'s wake key is set. canopy-box gets it when \(alias) next connects."
+                case (false, true): "\(alias) has no wake key now."
+                case (false, false): "\(alias) has no wake key now. canopy-box forgets it when \(alias) next connects."
+                }
             }
         }
     }

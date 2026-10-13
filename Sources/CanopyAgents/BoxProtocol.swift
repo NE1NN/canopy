@@ -86,12 +86,30 @@ public struct BoxConfig: Codable, Sendable, Equatable {
     public var agentCommand: String?
     /// The port phones connect to. Nil for the standard one.
     public var phonePort: UInt16?
+    /// The key phones start the box's instance with. Nil when none is set.
+    public var wake: BoxWakeKey?
 
-    public init(host: String, repos: [String: String] = [:], agentCommand: String? = nil, phonePort: UInt16? = nil) {
+    public init(
+        host: String, repos: [String: String] = [:], agentCommand: String? = nil, phonePort: UInt16? = nil,
+        wake: BoxWakeKey? = nil
+    ) {
         self.host = host
         self.repos = repos
         self.agentCommand = agentCommand
         self.phonePort = phonePort
+        self.wake = wake
+    }
+}
+
+/// An AWS access key whose only permission is `ec2:StartInstances` on the box's instance, which a phone signs with to
+/// start a box that powered itself off.
+public struct BoxWakeKey: Codable, Sendable, Equatable {
+    public var accessKeyID: String
+    public var secretAccessKey: String
+
+    public init(accessKeyID: String, secretAccessKey: String) {
+        self.accessKeyID = accessKeyID
+        self.secretAccessKey = secretAccessKey
     }
 }
 

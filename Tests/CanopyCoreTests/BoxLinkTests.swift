@@ -61,6 +61,25 @@ struct BoxLinkTests {
         }
     }
 
+    /// A setting changed on the Mac, as a wake key, reaches the daemon without waiting for the next connect.
+    @Test func reconfiguringSendsTheSettingsAgain() async throws {
+        let box = try Box()
+        let daemon = try await box.start()
+        let wake = Shared<BoxWakeKey?>(nil)
+        let link = BoxLink(alias: "box", socketPath: box.socket) {
+            BoxConfig(host: "box", wake: wake.withLock { $0 })
+        }
+        await link.start()
+        defer { Task { await link.stop() } }
+        #expect(await link.waitUntilConnected(within: .seconds(30)))
+        let key = BoxWakeKey(accessKeyID: "AKIA", secretAccessKey: "s")
+        wake.withLock { $0 = key }
+
+        try await link.reconfigure()
+
+        #expect(await daemon.wakeKey == key)
+    }
+
     @Test func aLinkComesBackAfterTheDaemonRestarts() async throws {
         let box = try Box()
         _ = try await box.start()
