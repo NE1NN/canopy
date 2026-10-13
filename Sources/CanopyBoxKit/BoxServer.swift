@@ -36,6 +36,10 @@ public final class BoxServer: Sendable {
         let subscriptions = Mutex<[Task<Void, Never>]>([])
         defer {
             for subscription in subscriptions.withLock({ $0 }) { subscription.cancel() }
+            // A client gone altogether hears no answers, so its calls stop; one that only stopped sending still reads.
+            if connection.peerClosed() {
+                for task in work.withLock({ $0 }) { task.cancel() }
+            }
             let finished = DispatchSemaphore(value: 0)
             let pending = work.withLock { $0 }
             Task {
@@ -156,6 +160,9 @@ public final class BoxServer: Sendable {
             return .bool(true)
         case BoxMethod.keys:
             try await daemon.keys(request.decodeParams(BoxKeysParams.self))
+            return .bool(true)
+        case BoxMethod.typed:
+            try await daemon.typedElsewhere(request.decodeParams(BoxKeysParams.self))
             return .bool(true)
         case BoxMethod.read:
             let params = try request.decodeParams(TermReadParams.self)

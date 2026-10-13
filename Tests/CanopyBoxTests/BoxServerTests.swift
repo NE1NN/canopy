@@ -136,7 +136,9 @@ struct BoxServerTests {
                 try ControlCodec.encodeLine(ControlRequest(method: BoxMethod.hello, params: .object([:]), id: "h")),
                 deadline: .now + .seconds(5))
             connection.finishSending()
-            return try connection.readLine(deadline: .now + .seconds(10))
+            var line = try connection.readLine(deadline: .now + .seconds(10))
+            while line?.isEmpty == true { line = try connection.readLine(deadline: .now + .seconds(10)) }
+            return line
         }
         let response = try ControlCodec.decode(ControlResponse.self, from: try #require(reply))
         #expect(response.id == "h")
