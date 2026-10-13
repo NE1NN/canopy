@@ -35,12 +35,20 @@ As milestone 1, and: nothing a row shows may change without its key changing, so
 
 ## Tasks
 
-- [ ] **Task 1: Artifact items.** `ChatArtifact`, `ChatContent.artifact`; the builder makes a publish an artifact item filled in by its structured result (version from `seq`, else the count of publishes of that URL), keeps other Artifact actions as tool lines, and marks older versions replaced. Tests: `ChatArtifactTests`.
-- [ ] **Task 2: Opening live publishes.** `ChatSession.onArtifact`, the store opens the URL in the row's panel, reloads a panel already at it, and wants a thumbnail. The stand-in gains `artifact`. Tests: `opensOnlyWhatItPublishesLive`, `aRepublishReloadsThePanelInsteadOfOpeningAnother`.
-- [ ] **Task 3: Thumbnails.** `ArtifactThumbnails` (file per artifact and version), the app's snapshot after the panel loads, `ChatSession.thumbnailSaved`, the card's key.
-- [ ] **Task 4: Cards.** The card (thumbnail, title, type, version, private, Open beside, ••• with Open in a tab, Open in browser, Copy link) and the compact replaced card.
-- [ ] **Task 5: Links.** An artifact link in Claude's text opens in the panel on a single click; other web links open the default browser.
+- [x] **Task 1: Artifact items.** `ChatArtifact`, `ChatContent.artifact`; the builder makes a publish an artifact item filled in by its structured result (version from `seq`, else the count of publishes of that URL), keeps other Artifact actions as tool lines, and marks older versions replaced. Tests: `ChatArtifactTests`.
+- [x] **Task 2: Opening live publishes.** `ChatSession.onArtifact`, the store opens the URL in the row's panel, reloads a panel already at it, and wants a thumbnail. The stand-in gains `artifact`. Tests: `opensOnlyWhatItPublishesLive`, `aRepublishReloadsThePanelInsteadOfOpeningAnother`.
+- [x] **Task 3: Thumbnails.** `ArtifactThumbnails` (file per artifact and version), the app's snapshot after the panel loads, `ChatSession.thumbnailSaved`, the card's key.
+- [x] **Task 4: Cards.** The card (thumbnail, title, type, version, private, Open beside, ••• with Open in a tab, Open in browser, Copy link) and the compact replaced card.
+- [x] **Task 5: Links.** An artifact link in Claude's text opens in the panel on a single click; other web links open the default browser.
 
 ## Decisions to review
+
+- A card's type is "Page" unless the result names one, as for a page made from an Artifact type; Claude Code 2.1.296's result names none for a plain page.
+- A version is the one the result names (`seq`), or else the count of publishes of that URL in the conversation.
+- Only the newest version of an artifact gets a full card; older ones are a dimmed line that opens the current version.
+- A live publish opens in the row's panel, whatever the row's default placement, as the mockup shows it beside the chat.
+- The snapshot is taken two seconds after the page loads, since an artifact draws inside a frame, and only while the page is at the artifact's address and answered with a success status.
+  claude.ai answers its own "Page not found" with a success status, so a link to an artifact the author cannot open can still be snapped.
+- A card whose artifact has no snapshot yet shows six grey tiles, as the mockup does.
 
 ## After Review
