@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// An artifact Claude published from the chat, shown as a card.
 public struct ChatArtifact: Equatable, Sendable {
@@ -19,10 +20,13 @@ public struct ChatArtifact: Equatable, Sendable {
     /// The version as the result named it, kept apart from `version`, which can be counted.
     var reportedVersion: Int?
 
-    /// The key a thumbnail is kept under: one per artifact and version.
+    /// The key a thumbnail is kept under: one per artifact and version. Only a version the result named has one, since
+    /// a counted one changes as older pages load.
     public var thumbnailKey: String? {
-        guard let version, let id = artifactID ?? url.map({ ArtifactThumbnails.name(for: $0) }) else { return nil }
-        return "\(id)-v\(version)"
+        guard let reportedVersion, let id = artifactID ?? url.map({ ArtifactThumbnails.name(for: $0) }) else {
+            return nil
+        }
+        return "\(id)-v\(reportedVersion)"
     }
 
     /// Whether `call` publishes a page, as opposed to the tool's other actions, which publish nothing.
@@ -47,7 +51,8 @@ public struct ChatArtifact: Equatable, Sendable {
         call.result = text
         if case .object(let fields)? = structured, let link = fields["url"]?.text, let url = ArtifactLink(link)?.url {
             self.url = url
-            artifactID = fields["artifact_id"]?.text
+            // It names a file, so only letters, digits, - and _ count, as in the URL's own ID.
+            artifactID = fields["artifact_id"]?.text.flatMap { ArtifactLink.isID($0) ? $0 : nil }
             if let title = fields["title"]?.text, !title.isEmpty { self.title = title }
             if case .number(let seq)? = fields["seq"] { reportedVersion = Int(seq) }
             if let audience = fields["audience"]?.text { isPrivate = audience == "owner" }
@@ -63,9 +68,11 @@ public struct ChatArtifact: Equatable, Sendable {
     }
 }
 
-/// Snapshots of artifacts, one file per artifact and version, kept in `CANOPY_HOME/thumbnails/`.
-public struct ArtifactThumbnails: Sendable {
+/// Snapshots of artifacts, one file per artifact and version, kept in `CANOPY_HOME/thumbnails/`. Which ones exist is read
+/// from the folder once and kept up to date as snapshots are saved, so drawing a chat's rows reads no disk.
+public final class ArtifactThumbnails: Sendable {
     public let folder: URL
+    private let saved = Mutex<Set<String>?>(nil)
 
     public init(folder: URL) {
         self.folder = folder
@@ -77,17 +84,28 @@ public struct ArtifactThumbnails: Sendable {
 
     /// The snapshot of `artifact`, once there is one.
     public func existing(for artifact: ChatArtifact) -> URL? {
-        guard let key = artifact.thumbnailKey else { return nil }
-        let file = file(for: key)
-        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+        guard let key = artifact.thumbnailKey, has(key) else { return nil }
+        return file(for: key)
+    }
+
+    public func has(_ key: String) -> Bool {
+        saved.withLock { saved in
+            if saved == nil {
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+                saved = Set(names.filter { $0.hasSuffix(".png") }.map { String($0.dropLast(4)) })
+            }
+            return saved?.contains(key) == true
+        }
     }
 
     public func save(_ png: Data, for key: String) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: file(for: key), options: .atomic)
+        _ = has(key)
+        saved.withLock { _ = $0?.insert(key) }
     }
 
-    /// A file name for an artifact known only by its URL.
+    /// A file name for an artifact known only by its URL, whose last part is its checked ID.
     static func name(for url: URL) -> String {
         url.pathComponents.last ?? "artifact"
     }

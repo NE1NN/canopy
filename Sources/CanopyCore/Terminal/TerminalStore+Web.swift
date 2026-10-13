@@ -27,27 +27,28 @@ extension TerminalStore {
         reloading: Bool = false
     ) -> OpenedPage {
         let opened = openPage(url, for: chatPane.context, placement: placement)
-        if reloading, !opened.isNew { onReloadPage(opened.page.id) }
-        if let thumbnail, !FileManager.default.fileExists(atPath: artifactThumbnails.file(for: thumbnail).path) {
+        // The page may have moved on from the artifact since, so it loads the artifact's address again.
+        if reloading, !opened.isNew { onLoadPage(opened.page.id, url) }
+        if let thumbnail, !artifactThumbnails.has(thumbnail) {
             thumbnailWishes[opened.page.id] = ThumbnailWish(key: thumbnail, url: url, pane: chatPane.id)
         }
         return opened
     }
 
-    /// The snapshot a page that just loaded at `url` should give, if a chat asked for one, taken off the list. A page
-    /// that went elsewhere, such as to sign in, keeps the wish for when it comes back.
-    public func takeThumbnailWish(for page: WebPageID, at url: URL?) -> ThumbnailWish? {
+    /// The snapshot a page showing `url` should give, if a chat asked for one. A page that went elsewhere, such as to
+    /// sign in, gives none until it comes back.
+    public func thumbnailWish(for page: WebPageID, at url: URL?) -> ThumbnailWish? {
         guard let wish = thumbnailWishes[page], let url, url.host() == wish.url.host(),
             url.path().trimmingSuffix("/") == wish.url.path().trimmingSuffix("/")
         else { return nil }
-        thumbnailWishes[page] = nil
         return wish
     }
 
-    /// Keeps a page's snapshot for the chat that asked for it, and redraws its card.
-    public func saveThumbnail(_ png: Data, for wish: ThumbnailWish) throws {
+    /// Keeps a page's snapshot and redraws the cards of every chat, since another tab may show the same artifact.
+    public func saveThumbnail(_ png: Data, for wish: ThumbnailWish, page: WebPageID) throws {
         try artifactThumbnails.save(png, for: wish.key)
-        pane(wish.pane)?.chat?.thumbnailSaved()
+        if thumbnailWishes[page] == wish { thumbnailWishes[page] = nil }
+        for pane in panes { pane.chat?.thumbnailSaved() }
     }
 
     /// Shows `url` in the row. A page the row already shows is shown where it is. Otherwise it opens in the panel,
@@ -203,6 +204,7 @@ extension TerminalStore {
 
     /// Logs a page that closed and lets the app drop its web view.
     func retire(_ page: WebPage) {
+        thumbnailWishes[page.id] = nil
         record(ActivityType.webClosed, page)
         onPageClosed(page.id)
     }

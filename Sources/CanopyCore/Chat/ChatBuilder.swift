@@ -209,8 +209,13 @@ public struct ChatBuilder: Sendable {
         case "Artifact" where ChatArtifact.publishes(call) && !call.isError:
             var artifact = ChatArtifact(call: call)
             if let result = call.result { artifact.published(text: result, structured: structured) }
-            append(ChatItem(id: call.id, content: .artifact(artifact), at: at))
-            if artifact.url != nil { markVersions() }
+            // A result that names no page reads as the tool call it was, as when it comes after the call.
+            if call.result != nil, artifact.url == nil {
+                append(ChatItem(id: call.id, content: .tools(ChatToolGroup(calls: [call])), at: at))
+            } else {
+                append(ChatItem(id: call.id, content: .artifact(artifact), at: at))
+                if artifact.url != nil { markVersions() }
+            }
         case "AskUserQuestion":
             let questions = TranscriptParser.Builder.questions(call.input)
             let question = ChatQuestion(questions: questions, answer: answer(toQuestions: questions, call))

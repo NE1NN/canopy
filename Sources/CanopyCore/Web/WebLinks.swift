@@ -31,7 +31,7 @@ public struct ArtifactLink: Sendable, Equatable {
         }
     }
 
-    private static func isID(_ text: String) -> Bool {
+    static func isID(_ text: String) -> Bool {
         !text.isEmpty && text.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 }

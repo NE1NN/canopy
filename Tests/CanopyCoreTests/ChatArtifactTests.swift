@@ -123,6 +123,52 @@ struct ChatArtifactTests {
         #expect(artifacts(builder.items).map(\.version) == [4])
     }
 
+    /// The call ends one page and its result starts the next, so the result is read first, as an orphan.
+    @Test func aResultThatNamesNoPageIsAToolLineWhicheverPageItIsOn() {
+        var builder = ChatBuilder()
+        builder.add(line: ChatLines.result("a1", "Published, but no link came back"))
+        builder.prepend(builder.olderPage(lines: [ArtifactLines.publish("a1")]))
+
+        #expect(artifacts(builder.items).isEmpty)
+        guard case .tools(let group)? = builder.items.first?.content else {
+            Issue.record("no tool line in \(builder.items)")
+            return
+        }
+        #expect(group.calls.first?.result == "Published, but no link came back")
+    }
+
+    @Test func aStructuredResultOnTheNextPageStillFillsTheCard() {
+        var builder = ChatBuilder()
+        builder.add(line: ArtifactLines.published("a1", version: 5))
+        builder.prepend(builder.olderPage(lines: [ArtifactLines.publish("a1")]))
+
+        #expect(artifacts(builder.items).map(\.title) == ["Canopy Phone"])
+        #expect(artifacts(builder.items).map(\.thumbnailKey) == ["c5f0dd41-a8cf-4973-bed7-312a275e6f10-v5"])
+    }
+
+    @Test func anArtifactIDThatIsNoPlainNameIsNotAFileName() throws {
+        var artifact = ChatArtifact(
+            call: ChatToolCall(id: "a1", name: "Artifact", input: [:], result: nil, isError: false))
+        artifact.published(
+            text: "",
+            structured: .object([
+                "url": .string(ArtifactLines.url), "artifact_id": "../../escape", "seq": .number(2),
+            ]))
+
+        #expect(artifact.artifactID == nil)
+        #expect(artifact.thumbnailKey == "RSfrJZmSpnffA7s42BZDwd-v2")
+    }
+
+    @Test func aCountedVersionHasNoSnapshot() throws {
+        var builder = ChatBuilder()
+        builder.add(line: ArtifactLines.publish("a1"))
+        builder.add(line: ArtifactLines.published("a1", version: nil))
+
+        let card = try #require(artifacts(builder.items).first)
+        #expect(card.version == 1)
+        #expect(card.thumbnailKey == nil)
+    }
+
     @Test func thumbnailsAreKeptPerArtifactAndVersion() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "thumbs-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

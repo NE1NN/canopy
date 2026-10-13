@@ -50,5 +50,36 @@ As milestone 1, and: nothing a row shows may change without its key changing, so
 - The snapshot is taken two seconds after the page loads, since an artifact draws inside a frame, and only while the page is at the artifact's address and answered with a success status.
   claude.ai answers its own "Page not found" with a success status, so a link to an artifact the author cannot open can still be snapped.
 - A card whose artifact has no snapshot yet shows six grey tiles, as the mockup does.
+- Only a publish seen live asks for a snapshot. Open beside on a card from history shows the artifact's newest version, which may have been published elsewhere since and is not that card's.
+- Only a version the result names gets a snapshot, since a counted one changes as older pages load.
 
 ## After Review
+
+An independent opus review found 2 medium-high, 1 medium, 1 low-medium, and 5 low findings; all fixed:
+
+1. Medium-high: a republish reloaded in a row out of view used up its snapshot wish, so the card kept grey tiles.
+   The wish stays until a snapshot is saved, and a page that comes back into view tries again.
+2. Medium-high: the snapshot never checked again after its two-second wait, so a sign-in or a newer version could be saved under the wrong key.
+   It checks the address, that no new load began, and that the page is in view, before and after taking it.
+3. Medium: a publish whose result named no page stayed at "Publishing…" when its call and result were on different pages.
+   It reads as a tool line wherever the page boundary falls.
+   Test: `aResultThatNamesNoPageIsAToolLineWhicheverPageItIsOn`.
+4. Low-medium: an `artifact_id` from a tool result could name a file outside the thumbnails folder.
+   Only letters, digits, - and _ count; otherwise the URL's checked ID is used.
+   Test: `anArtifactIDThatIsNoPlainNameIsNotAFileName`.
+5. Low-medium: a republish reloaded whatever the panel had moved on to.
+   It loads the artifact's address.
+   Test: `aRepublishReloadsThePanelInsteadOfOpeningAnother`.
+6. Low: Open beside on a card could save a newer version's snapshot under the card's version.
+   Only live publishes ask for snapshots.
+7. Low: wishes outlived their page.
+   Closing a page drops its wish.
+   Test: `closingAPageDropsItsSnapshotWish`.
+8. Low: building rows read the disk for each card, and each card decoded its image twice.
+   Which snapshots exist is read once and kept as they are saved, and images decode once.
+9. Low: a counted version could get another card's snapshot once older pages loaded, and a saved snapshot redrew only the chat that asked.
+   Only named versions get snapshots, and every chat redraws.
+   Test: `aCountedVersionHasNoSnapshot`.
+
+Seen while taking the shots: twice in about eight runs, both on a busy machine, the panel stayed empty in window shots although its page had loaded, as its snapshot shows; a page opened after it in the same panel stayed empty too.
+It did not happen again in later runs, with or without a fresh build, and the first time was before any change here touched the web views.

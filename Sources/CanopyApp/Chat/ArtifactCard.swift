@@ -111,9 +111,19 @@ private struct ArtifactThumbnail: View {
     let width: Double
     let height: Double
 
+    /// Decoded once per file: the table measures a row and then draws it, and a snapshot never changes.
+    private static let images = NSCache<NSURL, NSImage>()
+
+    static func image(at file: URL) -> NSImage? {
+        if let image = images.object(forKey: file as NSURL) { return image }
+        guard let image = NSImage(contentsOf: file) else { return nil }
+        images.setObject(image, forKey: file as NSURL)
+        return image
+    }
+
     var body: some View {
         Group {
-            if let file, let image = NSImage(contentsOf: file) {
+            if let file, let image = ArtifactThumbnail.image(at: file) {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

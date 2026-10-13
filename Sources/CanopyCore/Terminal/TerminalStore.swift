@@ -120,8 +120,8 @@ public final class TerminalStore {
     public internal(set) var panelsByRow: [String: WebPanel] = [:]
     /// Pages a chat wants a snapshot of once they load, for an artifact's card.
     @ObservationIgnored var thumbnailWishes: [WebPageID: ThumbnailWish] = [:]
-    /// Loads a page again, as for a new version of an artifact it shows. The app sets it.
-    @ObservationIgnored public var onReloadPage: (WebPageID) -> Void = { _ in }
+    /// Loads an address into a page, as for a new version of an artifact it shows. The app sets it.
+    @ObservationIgnored public var onLoadPage: (WebPageID, URL) -> Void = { _, _ in }
     @ObservationIgnored public lazy var artifactThumbnails = ArtifactThumbnails(folder: settings.home.thumbnailsFolder)
     /// Where a new page opens: where the author last moved one.
     public var webPlacement = WebPlacement.panel {
