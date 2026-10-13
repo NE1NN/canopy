@@ -130,7 +130,8 @@ public enum BoxInstall {
         return ["sh", "-c", script, homeID]
     }
 
-    /// Starts the daemon, or restarts it after an update, and waits up to 10 seconds for it to answer.
+    /// Starts the daemon, or restarts it after an update, and waits up to 30 seconds for it to answer, as a freshly
+    /// written binary's first run can be held by a security scanner.
     static func startCommand(homeID: String, restart: Bool, systemd: Bool) -> [String] {
         let script = #"""
             h=$0 restart=$1 systemd=$2 unit=$3
@@ -157,7 +158,7 @@ public enum BoxInstall {
                     echo $! > "$pid"
                 fi
             fi
-            i=0; while [ $i -lt 100 ]; do "$b" status --home-id "$h" && exit 0; sleep 0.1; i=$((i + 1)); done
+            i=0; while [ $i -lt 300 ]; do "$b" status --home-id "$h" && exit 0; sleep 0.1; i=$((i + 1)); done
             echo "canopy-box did not start on this host." >&2; exit 1
             """#
         return [

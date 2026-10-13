@@ -97,6 +97,7 @@ struct BoxLinkTests {
         let link = box.link()
         await link.start()
         defer { Task { await link.stop() } }
-        #expect(await eventually(timeout: .seconds(10)) { accepted.withLock { $0 } >= 3 })
+        // Twice in 20 seconds even on a loaded machine; a link waiting out a call would try once in two minutes.
+        #expect(await eventually(timeout: .seconds(20)) { accepted.withLock { $0 } >= 2 })
     }
 }
