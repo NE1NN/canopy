@@ -2,6 +2,10 @@
 import PackageDescription
 
 // What builds on Linux too: the wire format, what canopy-box shares with the Mac, and their tests.
+let portableDependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0")
+]
+
 let portableTargets: [Target] = [
     // What the Mac and the iPhone app both speak. It builds for iOS, so it has nothing platform-specific.
     .target(name: "CanopyWire"),
@@ -9,18 +13,26 @@ let portableTargets: [Target] = [
     .target(name: "CanopySystem"),
     // Agent states from Claude Code's hooks, transcripts, and the keys that answer prompts.
     .target(name: "CanopyAgents", dependencies: ["CanopyWire"]),
+    // The phone server, which reaches rows and panes through PhoneSource, so the Mac and canopy-box can each serve.
+    .target(
+        name: "CanopyServer",
+        dependencies: [
+            "CanopyWire", "CanopySystem", "CanopyAgents", .product(name: "Crypto", package: "swift-crypto"),
+        ]),
     // Helpers every test target shares.
-    .target(name: "CanopyTestSupport", dependencies: ["CanopySystem"], resources: [.copy("Fixtures")]),
+    .target(name: "CanopyTestSupport", dependencies: ["CanopyWire", "CanopySystem"], resources: [.copy("Fixtures")]),
     .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
     .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
     .testTarget(name: "CanopyAgentsTests", dependencies: ["CanopyAgents", "CanopyWire", "CanopyTestSupport"]),
+    .testTarget(name: "CanopyServerTests", dependencies: ["CanopyServer", "CanopyWire", "CanopyTestSupport"]),
 ]
 
 let macTargets: [Target] = [
     .target(name: "CPty"),
     // The iPhone app's models and its connection to the Mac, kept out of its views so they test on the Mac.
     .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
-    .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem", "CanopyAgents"]),
+    .target(
+        name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer"]),
     // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
     .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
     .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
@@ -53,6 +65,7 @@ let macTargets: [Target] = [
     let package = Package(
         name: "Canopy",
         products: [.library(name: "CanopyWire", targets: ["CanopyWire"])],
+        dependencies: portableDependencies,
         targets: portableTargets
     )
 #else
@@ -66,7 +79,7 @@ let macTargets: [Target] = [
             .library(name: "CanopyWire", targets: ["CanopyWire"]),
             .library(name: "CanopyPhone", targets: ["CanopyPhone"]),
         ],
-        dependencies: [
+        dependencies: portableDependencies + [
             .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
             .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
         ],

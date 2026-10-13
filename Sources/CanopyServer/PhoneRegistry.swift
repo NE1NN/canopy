@@ -1,7 +1,8 @@
-import CryptoKit
+import CanopyWire
+import Crypto
 import Foundation
 
-/// A phone paired with this Mac. Only a hash of its token is kept.
+/// A phone paired with this server. Only a hash of its token is kept.
 public struct PairedPhone: Codable, Sendable, Equatable {
     public var id: String
     public var name: String
@@ -11,6 +12,18 @@ public struct PairedPhone: Codable, Sendable, Equatable {
     public var pushToken: String?
     public var pairedAt: Date
     public var lastConnected: Date?
+
+    public init(
+        id: String, name: String, tokenHash: String, pushToken: String? = nil, pairedAt: Date,
+        lastConnected: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.tokenHash = tokenHash
+        self.pushToken = pushToken
+        self.pairedAt = pairedAt
+        self.lastConnected = lastConnected
+    }
 }
 
 /// A one-time pairing code.

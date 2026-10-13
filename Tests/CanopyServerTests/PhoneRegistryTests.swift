@@ -1,9 +1,10 @@
 import CanopyTestSupport
+import CanopyWire
 import Foundation
 import Synchronization
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyServer
 
 final class TestClock: Sendable {
     private let current = Mutex(Date(timeIntervalSince1970: 1_000_000))
