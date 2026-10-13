@@ -107,12 +107,18 @@ struct TCPTests {
         let port = first.listener.port
         let client = try TCPConnection.connect(to: "127.0.0.1", port: port)
         let accepted = try #require(await first.first())
-        // Both closes run later on their connections' queues, so wait for them before the listener goes: until then
-        // the port still has a live connection on it, which is not what this test is about.
-        client.close()
-        #expect(await eventually { first.closed.withLock { $0.contains(0) } })
+        // Canopy's side closes first, as when the address goes away, so its side of the connection is the one left in
+        // TIME_WAIT. A client that closed first would leave it in LAST_ACK for a moment, which no option lets a bind
+        // past. Closes run later on their connections' queues, so each is waited for.
+        let clientSawEnd = Shared(false)
+        client.receive { data, _ in
+            if data == nil { clientSawEnd.withLock { $0 = true } }
+        }
         accepted.close()
         await #expect(throws: TCPError.closed) { try await accepted.send(Data("after close".utf8)) }
+        #expect(await eventually { clientSawEnd.withLock { $0 } })
+        client.close()
+        await #expect(throws: TCPError.closed) { try await client.send(Data("after close".utf8)) }
         first.listener.close()
 
         let again = try Server(port: port)

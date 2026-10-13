@@ -112,3 +112,6 @@ CodeRabbit's review found six more, all fixed:
 
 Also fixed: `aDialogOpeningDuringThePasteHoldsBackReturn` raced a two-second timer and failed under load.
 Return now waits on the test, which lets it go once the dialog's hook has landed.
+`TCPTests.bindsAgainAtOnceAfterClosing` failed on CI's macOS runner with "Address already in use", though not here in 100 runs under load, old or new.
+Its client closed first, which can leave the server's side in LAST_ACK, and no option lets a bind past that.
+Canopy's side now closes first, as when the address goes away, so its side is left in TIME_WAIT, which `SO_REUSEADDR` covers.
