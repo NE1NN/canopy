@@ -110,6 +110,18 @@ public struct PaneAgent: Sendable, Equatable {
 
     public init() {}
 
+    /// The agent as canopy-box reports it for one of its panes, which the Mac shows rather than works out.
+    public init(mirroring pane: BoxPane) {
+        state = pane.agent
+        unseen = pane.unseen
+        backgroundTasks = pane.backgroundTasks
+        transcriptPath = pane.transcriptPath
+        prompt = pane.prompt
+        waitsOnQuestion = pane.prompt?.kind == .reply
+        since = Date(timeIntervalSince1970: pane.since)
+        changedAt = since
+    }
+
     public var dot: AgentDot? {
         switch state {
         case .none: nil

@@ -42,6 +42,8 @@ public final class RowLifecycle {
     /// Remote rows' ports come from its probes. Without one, rows list this Mac's ports alone.
     public let hostMonitor: HostMonitor?
     let localPorts: LocalPorts
+    /// Shows upgraded hosts' panes and agents. Set once the app starts it.
+    public var boxMirror: BoxMirror?
 
     public init(
         workspace: Workspace, terminals: TerminalStore, hostMonitor: HostMonitor? = nil,
@@ -199,10 +201,28 @@ extension RowLifecycle: RemotePaneHooks {
         var sessions: [String: [String]] = [:]
         for pane in panes {
             guard let remote = pane.context.remote, let session = pane.remoteSession else { continue }
+            boxMirror?.closedAtTheMac(session, host: remote.host)
             sessions[remote.host, default: []].append(session)
         }
         for (host, names) in sessions {
-            Task { await workspace.killSessions(names, on: host) }
+            Task {
+                // An upgraded host's canopy-box ends its panes, so it forgets them as it does.
+                if let link = await workspace.boxLink(for: host) {
+                    for name in names {
+                        let _: Bool? = try? await link.call(BoxMethod.paneClose, BoxPaneParams(pane: name))
+                    }
+                } else {
+                    await workspace.killSessions(names, on: host)
+                }
+            }
+        }
+    }
+
+    public func seen(_ pane: Pane) {
+        guard let remote = pane.context.remote, let session = pane.remoteSession else { return }
+        Task {
+            guard let link = await workspace.boxLink(for: remote.host) else { return }
+            let _: Bool? = try? await link.call(BoxMethod.seen, BoxPaneParams(pane: session))
         }
     }
 
