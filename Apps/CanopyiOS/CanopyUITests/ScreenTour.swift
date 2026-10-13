@@ -95,8 +95,11 @@ final class ScreenTour: XCTestCase {
         XCTAssert(drain.waitForExistence(timeout: 10), "the done agent left before it was read")
         drain.swipeLeft()
         app.buttons["mark-read-fix/port-scan-drain"].tap()
-        XCTAssert(wait { !drain.exists }, "Mark read left the item")
-        if app.buttons["mark-all-read"].exists { app.buttons["mark-all-read"].tap() }
+        XCTAssert(wait { !drain.exists }, "Mark read did not remove the item")
+        // The ticket's agent is in Done by now: its last line shows only once it is done.
+        let markAll = app.buttons["mark-all-read"]
+        XCTAssert(markAll.waitForExistence(timeout: 10), "no Mark all read for the ticket's done agent")
+        markAll.tap()
         XCTAssert(element("caught-up").waitForExistence(timeout: 30), "the Inbox never emptied")
         shot("inbox-caught-up")
         app.buttons["see-rows"].tap()

@@ -27,6 +27,19 @@ public final class InboxModel {
 
     public var badgeCount: Int { sections.count }
     public var runningCount: Int { inbox.runningCount }
+    /// What an empty Inbox says. Out of reach, the phone only knows what was true when the Mac last answered.
+    public var caughtUpDetail: String {
+        if isStale {
+            guard let asOf else { return "Nothing was waiting when the Mac last answered." }
+            return "Nothing was waiting as of \(asOf.formatted(date: .omitted, time: .shortened))."
+        }
+        let waiting = "Nothing is waiting for you."
+        switch runningCount {
+        case 0: return waiting
+        case 1: return waiting + "\n1 agent is running."
+        default: return waiting + "\n\(runningCount) agents are running."
+        }
+    }
     public var hasInbox: Bool { connection.inbox != nil }
 
     /// The inbox is the last one the Mac sent before it went out of reach.
@@ -65,20 +78,35 @@ public final class InboxModel {
         await markRead(sections.done)
     }
 
+    /// Each item is read once the Mac takes it, so one that fails comes back alone.
     private func markRead(_ items: [PhoneInbox.Item]) async {
         for item in items { read[item.agent.pane] = item.agent.since }
+        let client: PhoneClient
         do {
-            let client = try connection.liveClient()
-            for item in items {
+            client = try connection.liveClient()
+        } catch {
+            unread(items)
+            notice = connection.problem(error)
+            return
+        }
+        var problem: PhoneProblem?
+        for item in items {
+            do {
                 _ = try await client.call(
                     PhoneMethod.seen, PhonePaneParams(pane: item.agent.pane), as: PhonePaneParams.self)
+            } catch let error as ControlError where error.code == "pane_not_found" {
+                // The pane closed, so its agent leaves the inbox anyway.
+            } catch {
+                unread([item])
+                problem = connection.problem(error)
             }
-            notice = nil
-        } catch {
-            for item in items where read[item.agent.pane] == item.agent.since {
-                read[item.agent.pane] = nil
-            }
-            notice = connection.problem(error)
+        }
+        notice = problem
+    }
+
+    private func unread(_ items: [PhoneInbox.Item]) {
+        for item in items where read[item.agent.pane] == item.agent.since {
+            read[item.agent.pane] = nil
         }
     }
 

@@ -7,6 +7,9 @@ import Testing
 @MainActor
 struct InboxModelTests {
     let mac = FakeMac()
+    static let other = PhoneRow(
+        path: "/canopy-other", name: "feat/other", repo: "canopy",
+        agents: [Rows.agent("p6", .done, since: 1_200, unseen: true, line: "Merged.")])
 
     @Test func theInboxHoldsWhatNeedsTheAuthor() async throws {
         let connection = try await connected(to: mac, inbox: Rows.inbox)
@@ -36,10 +39,7 @@ struct InboxModelTests {
 
     @Test func markAllReadSendsSeenForEachDoneItem() async throws {
         mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
-        let other = PhoneRow(
-            path: "/canopy-other", name: "feat/other", repo: "canopy",
-            agents: [Rows.agent("p6", .done, since: 1_200, unseen: true, line: "Merged.")])
-        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: Rows.inbox.rows + [other]))
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
         let model = InboxModel(connection: connection)
         #expect(model.sections.done.count == 2)
         await model.markAllRead()
@@ -48,6 +48,47 @@ struct InboxModelTests {
             .map { try $0.decodeParams(PhonePaneParams.self).pane }
         #expect(Set(panes) == ["p4", "p6"])
         #expect(model.sections.needsYou.count == 2)
+    }
+
+    @Test func markAllReadKeepsWhatTheMacTookWhenAnotherFails() async throws {
+        mac.on(PhoneMethod.seen) { request in
+            let pane = (try? request.decodeParams(PhonePaneParams.self))?.pane
+            return pane == "p4" ? .error("internal") : .result(request.params ?? .null)
+        }
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
+        let model = InboxModel(connection: connection)
+        await model.markAllRead()
+        #expect(model.sections.done.map(\.agent.pane) == ["p4"])
+        #expect(model.notice != nil)
+        let panes = try mac.requests.filter { $0.method == PhoneMethod.seen }
+            .map { try $0.decodeParams(PhonePaneParams.self).pane }
+        #expect(Set(panes) == ["p4", "p6"])
+    }
+
+    @Test func aPaneThatClosedCountsAsRead() async throws {
+        mac.on(PhoneMethod.seen) { _ in .error("pane_not_found") }
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        await model.markRead(try #require(model.sections.done.first))
+        #expect(model.sections.done.isEmpty)
+        #expect(model.notice == nil)
+    }
+
+    @Test func caughtUpCountsRunningAgentsWhileConnected() async throws {
+        let connection = try await connected(to: mac, inbox: Rows.inbox)
+        let model = InboxModel(connection: connection)
+        #expect(model.caughtUpDetail == "Nothing is waiting for you.\n2 agents are running.")
+        mac.setInbox(PhoneInbox(rows: [Rows.idle]))
+        #expect(await eventually { model.caughtUpDetail == "Nothing is waiting for you." })
+    }
+
+    @Test func caughtUpOutOfReachSaysWhenItWasTrue() async throws {
+        let connection = try await connected(to: mac, inbox: PhoneInbox(rows: [Rows.main, Rows.idle]))
+        let model = InboxModel(connection: connection)
+        mac.goAway()
+        #expect(await eventually { model.isStale })
+        #expect(model.caughtUpDetail.hasPrefix("Nothing was waiting as of "))
+        #expect(!model.caughtUpDetail.contains("running"))
     }
 
     @Test func markingReadWhileTheMacIsAwayKeepsTheItem() async throws {

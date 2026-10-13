@@ -805,3 +805,19 @@ git commit -m "test: the screen tour reads the inbox down to All caught up"
 - An independent opus review of `git diff origin/main...feat/box-server`, findings fixed, listed under "After Review" below.
 - CI `check` green, then squash-merge.
 - `make ios-install` puts it on the author's iPhone once merged; the author's pins are gone, which is expected.
+
+## After Review
+
+An independent opus review of `git diff origin/main...feat/box-server` found no critical problems and three important ones, all fixed:
+
+1. All caught up said "Nothing is waiting for you" and counted running agents while the Mac was out of reach, which the phone cannot know.
+   It now says "Nothing was waiting as of <time>." and dims with the stale list.
+   Tests: `caughtUpCountsRunningAgentsWhileConnected`, `caughtUpOutOfReachSaysWhenItWasTrue`.
+2. Mark all read rolled back every item when one `phone.seen` failed, including those the Mac had taken, and sent nothing after the failure.
+   Each item is now read once the Mac takes it, a failure brings back only its own item, and `pane_not_found` counts as read, since that agent leaves anyway.
+   Tests: `markAllReadKeepsWhatTheMacTookWhenAnotherFails`, `aPaneThatClosedCountsAsRead`.
+3. The tour tapped Mark all read only if it happened to exist.
+   It now waits for it, since the ticket's done agent is certain to be in Done by then, and taps it.
+
+Also fixed from its minor list, as they showed on screen: swipe Mark read is disabled while the Mac is out of reach, as Mark all read is, so a swipe cannot add a second "Can't reach" banner; the repo label in Rows renders in the primary color; a tour message said the opposite of its failure.
+Deferred: pruning the phone's read map, removing the old pin keys from UserDefaults, and an unreachable shot with items still listed.

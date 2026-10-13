@@ -24,7 +24,8 @@ struct InboxView: View {
             .opacity(model.isStale ? 0.55 : 1)
             .overlay {
                 if model.hasInbox, model.sections.isEmpty {
-                    CaughtUp(running: model.runningCount)
+                    CaughtUp(detail: model.caughtUpDetail)
+                        .opacity(model.isStale ? 0.55 : 1)
                 } else if !model.hasInbox, app.connection.isUnreachable {
                     ContentUnavailableView(
                         "Can't reach \(app.connection.macName)", systemImage: "wifi.slash",
@@ -204,27 +205,18 @@ struct Banner: View {
 /// The empty Inbox: nothing waits, with how many agents still run and the way to them.
 private struct CaughtUp: View {
     @Environment(\.showRows) private var showRows
-    var running: Int
+    var detail: String
 
     var body: some View {
         ContentUnavailableView {
             Label("All caught up", systemImage: "checkmark.circle")
                 .accessibilityIdentifier("caught-up")
         } description: {
-            Text(description)
+            Text(detail)
         } actions: {
             Button("See rows") { showRows() }
                 .buttonStyle(ChipStyle(kind: .tinted))
                 .accessibilityIdentifier("see-rows")
-        }
-    }
-
-    private var description: String {
-        let waiting = "Nothing is waiting for you."
-        switch running {
-        case 0: return waiting
-        case 1: return waiting + "\n1 agent is running."
-        default: return waiting + "\n\(running) agents are running."
         }
     }
 }
@@ -244,6 +236,7 @@ private struct DoneSection: View {
                                 Task { await app.inbox.markRead(item) }
                             }
                             .tint(Theme.accent)
+                            .disabled(app.inbox.isStale)
                             .accessibilityIdentifier("mark-read-\(item.row.name)")
                         }
                 }

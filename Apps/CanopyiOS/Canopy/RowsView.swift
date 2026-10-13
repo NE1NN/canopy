@@ -110,7 +110,7 @@ private struct RepoLabel: View {
             RepoTile(name: name, dot: nil, size: 18)
             Text(name)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color(uiColor: .label))
         }
         .textCase(nil)
         .padding(.leading, -4)
