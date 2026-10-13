@@ -34,6 +34,18 @@ extension Workspace {
         let alias = connection.alias
         guard hosts.hosts[alias]?.box == true, await connection.state == .connected else { return }
         let generation = await connection.generation
+        if boxInstalled[alias] != generation {
+            // Once per connection: brings the host's canopy-box up to this build and starts it if it stopped, as
+            // after a reboot without lingering. Cheap when it runs and matches.
+            do {
+                _ = try await BoxInstall.install(on: connection, homeID: homeID, binaries: hostTooling.boxBinaries)
+                boxInstalled[alias] = generation
+            } catch {
+                Self.hostLog.error(
+                    "Canopy isn't running on \(alias, privacy: .public): \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
         if boxForwarded[alias] != generation {
             let local = HostPaths.boxSocket(home: home, homeID: homeID, alias: alias)
             try? FileManager.default.createDirectory(
@@ -62,10 +74,11 @@ extension Workspace {
     }
 
     /// Stops an upgraded host's link, as when the host goes back or is removed.
+    /// The forward stays for the rest of the connection: ssh would take the same forward again as done without
+    /// binding it again.
     public func stopBoxLink(_ alias: String) async {
         boxWatchers.removeValue(forKey: alias)?.cancel()
         await boxLinks.removeValue(forKey: alias)?.stop()
-        boxForwarded[alias] = nil
     }
 
     /// Makes the host's remote rows the box's rows other than its clones: stand-ins for new ones, branches and heads
@@ -191,6 +204,7 @@ extension Workspace {
         try await connection.connect()
         try await prepareHost(connection)
         let report = try await BoxInstall.install(on: connection, homeID: homeID, binaries: hostTooling.boxBinaries)
+        boxInstalled[alias] = await connection.generation
         let saved = entry
         entry.box = true
         try HostsConfigFile(url: home.configFile).save(alias, entry)
@@ -222,6 +236,8 @@ extension Workspace {
                 }
             }
             try? save()
+            // From now on the host's relay sends hooks and calls to the box, which has the panes they name.
+            _ = try await output(of: markCommand(adopted: true), on: connection)
             activity.record(ActivityType.hostUpgraded, data: ["host": .string(alias)])
             var warnings: [String] = []
             if !adopted.missing.isEmpty {
@@ -242,8 +258,11 @@ extension Workspace {
                 alias: alias, rows: adopted.rows.count, panes: adopted.panes.count, missing: adopted.missing,
                 warnings: warnings)
         } catch {
+            // As before the upgrade: the relay talks to the app, and no daemon waits on the host for panes it lacks.
             try? HostsConfigFile(url: home.configFile).save(alias, saved)
             await stopBoxLink(alias)
+            _ = try? await output(of: markCommand(adopted: false), on: connection)
+            try? await BoxInstall.stop(on: connection, homeID: homeID)
             throw error
         }
     }
@@ -264,12 +283,54 @@ extension Workspace {
         // The box's snapshot after it lets go has no rows, which must not read as rows removed.
         upgradingHosts.insert(alias)
         defer { upgradingHosts.remove(alias) }
+        // Hooks go to the app again before the box lets go, so none lands on a box that no longer has its pane.
+        _ = try await output(of: markCommand(adopted: false), on: connection)
         let released: BoxReleaseResult = try await link.call(BoxMethod.release, JSONValue.object([:]))
-        await stopBoxLink(alias)
-        try await BoxInstall.stop(on: connection, homeID: homeID)
         entry.box = false
         try HostsConfigFile(url: home.configFile).save(alias, entry)
+        await stopBoxLink(alias)
+        restoreReleasedRows(released.rows, host: alias)
+        var warnings: [String] = []
+        do {
+            try await BoxInstall.stop(on: connection, homeID: homeID)
+        } catch {
+            warnings.append("canopy-box on \(alias) may still run: \(error)")
+        }
         activity.record(ActivityType.hostDowngraded, data: ["host": .string(alias)])
-        return (HostUpgradeResult(alias: alias, rows: released.rows.count, panes: released.panes.count), released)
+        return (
+            HostUpgradeResult(
+                alias: alias, rows: released.rows.count, panes: released.panes.count, warnings: warnings), released
+        )
+    }
+
+    /// Writes or removes `adopted` in this home's box folder on the host, which the relay reads.
+    func markCommand(adopted: Bool) -> [String] {
+        let script =
+            adopted
+            ? #"mkdir -p "$HOME/.canopy/$0/box" && touch "$HOME/.canopy/$0/box/adopted""#
+            : #"rm -f "$HOME/.canopy/$0/box/adopted""#
+        return ["sh", "-c", script, homeID]
+    }
+
+    /// Rows the box gave back that the Mac has no entry for, as one made on the box while no snapshot reached the Mac.
+    func restoreReleasedRows(_ rows: [BoxAdoptedRow], host alias: String) {
+        var touched = Set<String>()
+        for row in rows {
+            guard remoteRow(host: alias, path: row.path) == nil,
+                let index = state.repos.firstIndex(where: { repoName($0.path) == row.repo })
+            else { continue }
+            let entry = RemoteRowEntry(
+                host: alias, path: row.path,
+                standIn: standInPath(
+                    alias: alias, dirName: state.repos[index].dirName, leaf: (row.path as NSString).lastPathComponent),
+                branch: row.branch, head: nil)
+            try? entry.makeStandIn()
+            state.repos[index].remote.append(entry)
+            state.repos[index].place(entry.standIn, joining: nil)
+            touched.insert(state.repos[index].path)
+        }
+        guard !touched.isEmpty else { return }
+        try? save()
+        Task { for path in touched { await self.refresh(repoPath: path) } }
     }
 }

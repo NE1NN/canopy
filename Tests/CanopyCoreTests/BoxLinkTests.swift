@@ -82,4 +82,21 @@ struct BoxLinkTests {
             let _: BoxHelloResult = try await link.call(BoxMethod.hello, BoxHelloParams(version: "x"))
         }
     }
+
+    @Test func aForwardWithNoDaemonBehindItIsTriedAgainEverySecond() async throws {
+        // ssh's forward takes the connection and closes it while the host's box.sock is gone, as a restart leaves it.
+        let box = try Box()
+        let accepted = Shared(0)
+        let listener = try UnixListener(path: box.socket) { connection in
+            accepted.withLock { $0 += 1 }
+            // ssh reads what the app sends before it learns the host's end is gone.
+            _ = try? connection.readLine(deadline: .now + .seconds(5))
+            connection.close()
+        }
+        defer { listener.close() }
+        let link = box.link()
+        await link.start()
+        defer { Task { await link.stop() } }
+        #expect(await eventually(timeout: .seconds(10)) { accepted.withLock { $0 } >= 3 })
+    }
 }

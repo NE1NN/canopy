@@ -410,12 +410,14 @@ public enum HostFiles {
 
 
         def socket_path():
-            """Where the relay sends calls: this home's canopy-box while its socket is there, as on an upgraded host,
-            which answers what it can and passes the rest to the app, or else the app's socket."""
+            """Where the relay sends calls: this home's canopy-box once it has taken the host's panes, as the app marks
+            with `adopted` after `canopy host upgrade`, which answers what it can and passes the rest to the app, or
+            else the app's socket."""
             home_id = os.environ.get("CANOPY_HOME_ID", "")
             if NAME.fullmatch(home_id):
-                box = os.path.join(os.path.expanduser("~/.canopy"), home_id, "box", "box.sock")
-                if os.path.exists(box):
+                folder = os.path.join(os.path.expanduser("~/.canopy"), home_id, "box")
+                box = os.path.join(folder, "box.sock")
+                if os.path.exists(os.path.join(folder, "adopted")) and os.path.exists(box):
                     return box
             return os.environ.get("CANOPY_SOCKET", "")
 

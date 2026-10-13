@@ -39,6 +39,9 @@ struct RelayBoxSocketTests {
         }
         #expect(try await run() == "app")
         let box = try Self.answering(at: dir.sub(".canopy/\(homeID)/box/box.sock"), as: "box")
+        // Not before the box has taken the panes, which the app marks once it has.
+        #expect(try await run() == "app")
+        FileManager.default.createFile(atPath: dir.sub(".canopy/\(homeID)/box/adopted"), contents: Data())
         #expect(try await run() == "box")
         box.close()
         #expect(try await run() == "app")

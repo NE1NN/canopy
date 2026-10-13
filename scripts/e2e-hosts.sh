@@ -458,6 +458,12 @@ if ((with_box)); then
     "$cli" row select e2e/boxed --repo demo >/dev/null
     boxed_says() { "$cli" term read "$(boxed_pane)" --lines 50 | grep -q boxed-42; }
     wait_for 60 boxed_says || fail "the box's pane did not run its command"
+    boxed_session=$("$cli" term list --all --json | json '[t["pane"] for t in d if t["row"] == "e2e/boxed"][0]')
+    box_sessions() { on_host "tmux -u -L $server list-sessions -F '#{session_name}'" | grep -c '^b' || true; }
+    [[ "$(box_sessions)" == 1 ]] || fail "the box has $(box_sessions) panes of its own, not 1"
+    "$cli" term close "$boxed_session" --force >/dev/null || fail "the box's pane could not be closed here"
+    box_pane_gone() { [[ "$(box_sessions)" == 0 ]]; }
+    wait_for 20 box_pane_gone || fail "closing the box's pane here did not end its session on the host"
 
     step "host upgrade --undo gives the host back, and hooks reach this Mac again"
     sessions_before=$(session_count)

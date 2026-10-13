@@ -126,3 +126,29 @@ Steps:
 
 - `make lint`, `make build`, `make test` three times, `make linux`, `make box`, `make app` with the binaries in the bundle, `make e2e`.
 - An opus review of the whole branch, its findings fixed, and an After Review section here; CI's `check` and `linux` pass.
+
+## After Review
+
+An opus review of the whole branch found one critical issue and seven important ones; each is fixed:
+
+- **Critical: a failed `host upgrade` left a running daemon that swallowed every hook.** The relay chose `box.sock` whenever it existed, so hooks went to a daemon that had not taken the panes, and `--undo` refused a host that was not marked upgraded.
+  The relay now uses the box only once the Mac has written `~/.canopy/<home id>/box/adopted`, after the box takes the panes; a failed upgrade removes the mark and stops the daemon, and `--undo` removes it before the box lets go (`theRelayUsesTheBoxOnlyWhileItsSocketExists`, red then green).
+- A daemon restart kept the link waiting up to two minutes on a call that would never be answered, since ssh's forward takes a connection and closes it while the host's socket is gone; calls now fail as the connection ends, so the link comes back within a second (`aForwardWithNoDaemonBehindItIsTriedAgainEverySecond`, red then green).
+- Stopping a link cleared its forward's generation, so a second upgrade on one connection removed the socket ssh would not bind again; the forward now stays for its connection.
+- `--undo` saved the host as not upgraded only after stopping the daemon, so a failed stop left an empty snapshot to forget every row; it saves first, and a failed stop is a warning.
+- Rows gone from a snapshot ended their sessions through the Mac's panes; their terminals now close here and the box ends the sessions it removed.
+- A pane closed at the Mac while the link was down, or before the box had seen it, kept its session and came back; tmux now ends what the box did not (the e2e closes a box pane at the Mac and sees its session go).
+- The app never updated or restarted the daemon after upgrading; it now checks and starts it once per connection.
+- `--undo` gave back only panes the Mac already had; it now restores missing rows and opens tabs for the box's panes.
+
+Deferred minors, for milestone 4, which reworks the box's side for phones:
+
+- Each call's timeout task is never cancelled, holding the link for up to two minutes per call.
+- `nextPane` is sent as 1; harmless while box panes are `b<N>` and the Mac's `p<N>`.
+- A hook naming a session falls back to any host's pane with that session; after `--undo` on two hosts at once, a `b1` could land on the wrong one.
+- Two callers of `ensureBoxLink` in one connection can forward twice.
+- `bundle.sh` without Docker bundles whatever `build/box` holds, which may be stale.
+- A daemon started without systemd, then a host that gains systemd, can run two daemons, the second restarting every two seconds.
+- When a host's `repos` key differs from the Mac repo's name, adopt and `rowNew` name the repo differently.
+- A shared-folder row and a box row with one leaf name share a stand-in.
+- Tests the plan named that are covered elsewhere or not at all: `paneClose` is in the e2e, `typed` and `seen` have no test, and nothing installs a different binary over a running daemon.

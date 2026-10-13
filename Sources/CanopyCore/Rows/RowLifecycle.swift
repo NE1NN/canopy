@@ -208,9 +208,13 @@ extension RowLifecycle: RemotePaneHooks {
             Task {
                 // An upgraded host's canopy-box ends its panes, so it forgets them as it does.
                 if let link = await workspace.boxLink(for: host) {
+                    var left: [String] = []
                     for name in names {
-                        let _: Bool? = try? await link.call(BoxMethod.paneClose, BoxPaneParams(pane: name))
+                        let closed: Bool? = try? await link.call(BoxMethod.paneClose, BoxPaneParams(pane: name))
+                        if closed == nil { left.append(name) }
                     }
+                    // Not closed by the box, as while its link is down or before it has seen the pane: tmux ends them.
+                    await workspace.killSessions(left, on: host)
                 } else {
                     await workspace.killSessions(names, on: host)
                 }
@@ -254,10 +258,15 @@ extension RowLifecycle {
     /// `canopy host upgrade --undo`: the box's panes keep their tabs, and their agents stay as the box last had them.
     public func undoUpgrade(_ alias: String) async throws -> HostUpgradeResult {
         let (result, released) = try await workspace.undoUpgrade(alias)
-        for given in released.panes {
-            terminals.panes.first { $0.context.remote?.host == alias && $0.remoteSession == given.id }?.mirror(
-                given.agent)
+        // Each pane the box gave back keeps or gets a tab here, with its agent as the box last had it.
+        let panes = released.panes.map { given in
+            BoxPane(
+                id: given.id, rowPath: given.rowPath, folder: given.folder, agent: given.agent.state,
+                unseen: given.agent.unseen, backgroundTasks: given.agent.backgroundTasks,
+                transcriptPath: given.agent.transcriptPath, prompt: given.agent.prompt,
+                since: given.agent.since.timeIntervalSince1970)
         }
+        await boxMirror?.apply(BoxUpdate(host: alias, snapshot: BoxSnapshot(panes: panes), goneRows: []))
         return result
     }
 }

@@ -126,7 +126,11 @@ public actor BoxLink {
         reader.name = "canopy.box-link"
         reader.start()
         self.connection = connection
-        let handling = Task { for await line in lines { self.received(line) } }
+        let handling = Task {
+            for await line in lines { self.received(line) }
+            // The daemon went, so calls waiting on it fail now rather than at their timeout.
+            self.ended(connection)
+        }
         do {
             let hello: BoxHelloResult = try await call(BoxMethod.hello, BoxHelloParams(version: CanopyVersion.current))
             guard hello.protocolVersion == BoxProtocol.version else { throw notConnected() }
@@ -153,6 +157,10 @@ public actor BoxLink {
         case .event:
             break
         }
+    }
+
+    private func ended(_ ended: UnixConnection) {
+        if connection === ended { drop() }
     }
 
     private func drop() {

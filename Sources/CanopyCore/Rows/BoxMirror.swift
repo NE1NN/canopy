@@ -47,7 +47,7 @@ public final class BoxMirror {
     }
 
     func apply(_ update: BoxUpdate) async {
-        for standIn in update.goneRows { terminals.closeRow(path: standIn) }
+        for standIn in update.goneRows { terminals.closeRowQuietly(path: standIn) }
         let now = Date()
         closed = closed.filter { now.timeIntervalSince($0.value) < Self.closedFor }
         let panes = terminals.panes.filter { $0.context.remote?.host == update.host }

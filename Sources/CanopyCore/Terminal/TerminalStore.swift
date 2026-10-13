@@ -380,8 +380,9 @@ public final class TerminalStore {
         endSessions(of: panes)
     }
 
-    /// Closes the row's terminals here and leaves remote sessions running on their hosts.
-    private func closeRowQuietly(path: String) {
+    /// Closes the row's terminals here and leaves remote sessions running on their hosts, as for a row canopy-box no
+    /// longer lists, whose sessions are the box's to end.
+    public func closeRowQuietly(path: String) {
         for pane in tabs(inRow: path).flatMap(\.paneList) {
             pane.close()
         }
