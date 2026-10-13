@@ -49,7 +49,7 @@ struct InboxView: View {
                     }
                 }
             }
-            .navigationTitle("Canopy")
+            .navigationTitle("Inbox")
             .backButtonTitle("Inbox")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -209,6 +209,7 @@ private struct CaughtUp: View {
     var body: some View {
         ContentUnavailableView {
             Label("All caught up", systemImage: "checkmark.circle")
+                .accessibilityIdentifier("caught-up")
         } description: {
             Text(description)
         } actions: {
@@ -216,7 +217,6 @@ private struct CaughtUp: View {
                 .buttonStyle(ChipStyle(kind: .tinted))
                 .accessibilityIdentifier("see-rows")
         }
-        .accessibilityIdentifier("caught-up")
     }
 
     private var description: String {
@@ -250,8 +250,6 @@ private struct DoneSection: View {
             } header: {
                 HStack {
                     Text("Done")
-                        .textCase(.uppercase)
-                        .foregroundStyle(.secondary)
                     Spacer()
                     Button("Mark all read") { Task { await app.inbox.markAllRead() } }
                         .textCase(nil)
@@ -260,6 +258,8 @@ private struct DoneSection: View {
                         .accessibilityIdentifier("mark-all-read")
                 }
                 .font(.footnote)
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
             }
         }
     }

@@ -34,13 +34,15 @@ final class ScreenTour: XCTestCase {
             app.staticTexts.matching(identifier: "connection").firstMatch.waitForExistence(timeout: 15),
             "the link did not pair")
         XCTAssert(wait { self.app.staticTexts["connection"].label.contains("connected") }, "never connected")
-        XCTAssert(app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 10), "main is not pinned")
+        XCTAssert(element("item-feat/ios-companion").waitForExistence(timeout: 10), "no waiting agent in the Inbox")
+        XCTAssert(element("item-fix/port-scan-drain").exists, "the done agent is not in the Inbox")
+        XCTAssertFalse(element("item-feat/port-labels").exists, "a working agent is in the Inbox")
         shot("inbox")
 
         app.tabBars.buttons["Rows"].tap()
-        XCTAssert(
-            app.descendants(matching: .any)["row-fix/hand-checks"].waitForExistence(timeout: 10), "Rows has no idle row"
-        )
+        XCTAssert(element("main-canopy").waitForExistence(timeout: 10), "Rows has no main card")
+        XCTAssert(element("row-fix/hand-checks").exists, "Rows has no idle row")
+        XCTAssert(element("host").label.contains("connected"), "Rows does not say the Mac is connected")
         shot("rows")
         app.tabBars.buttons["Inbox"].tap()
 
@@ -88,6 +90,19 @@ final class ScreenTour: XCTestCase {
             "the allowed command never ran")
         shot("inbox-answered")
 
+        // Read from the list: one by a swipe, then the rest at once, until nothing is left.
+        let drain = element("item-fix/port-scan-drain")
+        XCTAssert(drain.waitForExistence(timeout: 10), "the done agent left before it was read")
+        drain.swipeLeft()
+        app.buttons["mark-read-fix/port-scan-drain"].tap()
+        XCTAssert(wait { !drain.exists }, "Mark read left the item")
+        if app.buttons["mark-all-read"].exists { app.buttons["mark-all-read"].tap() }
+        XCTAssert(element("caught-up").waitForExistence(timeout: 30), "the Inbox never emptied")
+        shot("inbox-caught-up")
+        app.buttons["see-rows"].tap()
+        XCTAssert(element("main-canopy").waitForExistence(timeout: 5), "See rows did not open Rows")
+        app.tabBars.buttons["Inbox"].tap()
+
         app.buttons["settings"].tap()
         XCTAssert(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Settings did not open")
         shot("settings")
@@ -108,9 +123,7 @@ final class ScreenTour: XCTestCase {
         XCTAssert(app.staticTexts["Canopy is locked"].waitForExistence(timeout: 10), "a paired launch is not locked")
         shot("locked")
         app.buttons["unlock"].tap()
-        XCTAssert(
-            app.descendants(matching: .any)["pinned-main"].waitForExistence(timeout: 15),
-            "Unlock did not open the inbox")
+        XCTAssert(app.staticTexts["connection"].waitForExistence(timeout: 15), "Unlock did not open the inbox")
 
         // The Mac goes away: the last inbox stays, greyed, with what to check.
         request("stop-mac", in: requests)
@@ -126,6 +139,10 @@ final class ScreenTour: XCTestCase {
         XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 90), "an unpaired phone stayed")
         XCTAssert(text("no longer knows this iPhone").exists, "Pairing does not say why")
         shot("unpaired")
+    }
+
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     /// Text on screen containing `part`. Queries by whole label are limited to 128 characters.
