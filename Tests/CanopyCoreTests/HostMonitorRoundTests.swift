@@ -173,6 +173,33 @@ struct HostMonitorRoundTests {
         await hosts.stop()
     }
 
+    /// A ports listing read before a port was stopped, which lands after the stop, must not put the port back.
+    @Test func aListingReadBeforeAStopDoesNotBringThePortBack() async throws {
+        let hosts = try await Hosts(["box"], rows: true)
+        let box = hosts["box"]
+        let monitor = HostMonitor(workspace: hosts.workspace, terminals: hosts.terminals, portsEvery: .zero)
+        let port = FakeSSHForwardTests.freePort(count: 2)
+        hosts.serve(on: "box", [port])
+        let listed = { monitor.remotePorts["box"]?.flatMap(\.ports).contains { $0.port == port } == true }
+        #expect(
+            await eventually {
+                await monitor.probe()
+                return listed()
+            })
+        await monitor.settle()
+        box.hold(.ports)
+        await monitor.probe()
+        #expect(await eventually { box.heldProbeCount(.ports) == 1 })
+
+        monitor.portsStopped([port], on: "box")
+        #expect(!listed())
+        box.release(.ports)
+        #expect(await eventually { monitor.isSettled })
+
+        #expect(!listed())
+        await hosts.stop()
+    }
+
     /// A host whose remote row serves a port keeps its master with no pane attached, as someone may be browsing it.
     @Test func aHostServingARemoteRowsPortStaysConnected() async throws {
         let hosts = try await Hosts(["serving", "quiet"], rows: true)
