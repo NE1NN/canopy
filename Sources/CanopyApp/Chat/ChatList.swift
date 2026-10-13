@@ -120,8 +120,9 @@ struct ChatList: NSViewRepresentable {
         private var deferred: (unchanged: Int, request: Int)?
         /// The author scrolled while the table was between updates, so where they are is checked once it is not.
         private var scrollSkipped = false
-        /// Where the author's last scroll left the view, to tell scrolling up from scrolling down.
-        private var lastOrigin: CGFloat = 0
+        /// What the view showed after the last scroll or update, to tell the author scrolling up from the view
+        /// being resized.
+        private var lastVisible = CGRect.zero
 
         /// Shows the conversation SwiftUI read for this update. It changes only when items do, so it is shown inside
         /// SwiftUI's update, as one batch with the rest of the chat.
@@ -136,8 +137,9 @@ struct ChatList: NSViewRepresentable {
             if stalePending {
                 pendingChanged()
                 // What is pending changed with the conversation, as when a reply settles into an item, so both are
-                // shown together then rather than the reply twice for a frame now.
-                if !rows.isEmpty {
+                // shown together then rather than the reply twice for a frame now. With nothing pending on screen
+                // there is nothing to show twice, and a chat opening is shown at once, inside SwiftUI's update.
+                if !rows.isEmpty, !pending.rows.isEmpty {
                     deferred = (min(deferred?.unchanged ?? unchanged, unchanged), request)
                     return
                 }
@@ -351,7 +353,7 @@ struct ChatList: NSViewRepresentable {
 
         private func finishUpdating() {
             updating = false
-            lastOrigin = scroll?.contentView.bounds.origin.y ?? 0
+            lastVisible = scroll?.contentView.bounds ?? .zero
             recheckScroll()
         }
 
@@ -363,9 +365,11 @@ struct ChatList: NSViewRepresentable {
 
         private func scrolled() {
             // Not the author scrolling: rows going in move the clip view before the update scrolls where it means
-            // to, and until a pending update lands the table still shows the rows from before it. Where the author
-            // is gets checked again once the table is settled.
-            guard !updating, !followScheduled else {
+            // to.
+            guard !updating else { return }
+            // Until a pending update lands the table still shows the rows from before it, so where the author is
+            // gets checked once it has.
+            guard !followScheduled else {
                 scrollSkipped = true
                 return
             }
@@ -373,9 +377,11 @@ struct ChatList: NSViewRepresentable {
             let visible = scroll.contentView.bounds
             let atBottom = visible.maxY >= table.bounds.height - 40
             // Any scroll up stops following, or a slow one would be pulled back down by the next line Claude writes.
-            // Settling back from past the bottom is not one.
-            let movedUp = visible.origin.y < lastOrigin - 0.5 && visible.maxY < table.bounds.height - 0.5
-            lastOrigin = visible.origin.y
+            // Settling back from past the bottom is not one, nor is the view getting taller.
+            let movedUp =
+                visible.origin.y < lastVisible.origin.y - 0.5 && visible.height == lastVisible.height
+                && visible.maxY < table.bounds.height - 0.5
+            lastVisible = visible
             followsBottom = atBottom && !movedUp
             setAtBottom(followsBottom)
             if visible.minY < 300, chat.hasOlder {
