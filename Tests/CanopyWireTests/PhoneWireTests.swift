@@ -12,6 +12,20 @@ struct PairingLinkTests {
         #expect(PairingLink(url: link.url) == link)
     }
 
+    @Test func aLinkCarriesItsKind() throws {
+        let link = PairingLink(host: "hindie-box.tail1234.ts.net", port: 6974, code: "C", address: nil, kind: "box")
+
+        #expect(link.url.absoluteString.contains("kind=box"))
+        #expect(PairingLink(url: link.url) == link)
+    }
+
+    /// As a Mac from before several servers makes it.
+    @Test func aLinkWithoutAKindSaysNone() throws {
+        let url = try #require(URL(string: "canopy-phone://pair?host=studio&port=6974&code=C"))
+
+        #expect(PairingLink(url: url)?.kind == nil)
+    }
+
     @Test func keepsAnIPv6AddressWhole() throws {
         let link = PairingLink(host: "fd7a:115c:a1e0::1", port: 6974, code: "AAAA-BBBB", address: nil)
         #expect(PairingLink(url: link.url) == link)
@@ -133,5 +147,22 @@ struct PhoneRowsResultTests {
         let section = PhoneRowsResult.Section(name: "ticket", isPlugin: true, rows: [ticket])
         #expect(section.main == nil)
         #expect(section.others == [ticket])
+    }
+}
+
+struct PhoneServerKindTests {
+    @Test func anOldHelloWithoutAKindDecodes() throws {
+        let data = Data(#"{"mac": "Studio", "version": "0.9", "phone": "iPhone"}"#.utf8)
+
+        let hello = try JSONDecoder().decode(PhoneHelloResult.self, from: data)
+
+        #expect(hello == PhoneHelloResult(mac: "Studio", version: "0.9", phone: "iPhone"))
+        #expect(hello.kind == nil)
+    }
+
+    @Test func aRowWithoutAHostDecodes() throws {
+        let data = Data(#"{"path": "/w", "name": "main", "isMain": true, "agents": []}"#.utf8)
+
+        #expect(try JSONDecoder().decode(PhoneRow.self, from: data).host == nil)
     }
 }

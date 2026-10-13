@@ -69,10 +69,12 @@ public struct PhoneRow: Codable, Sendable, Equatable, Hashable, Identifiable {
     public var isMain: Bool
     public var pr: PhonePR?
     public var agents: [PhoneAgent]
+    /// The host a Mac's remote row lives on, by its alias there. Nil for a row on the server itself.
+    public var host: String?
 
     public init(
         path: String, name: String, repo: String? = nil, plugin: String? = nil, isMain: Bool = false,
-        pr: PhonePR? = nil, agents: [PhoneAgent] = []
+        pr: PhonePR? = nil, agents: [PhoneAgent] = [], host: String? = nil
     ) {
         self.path = path
         self.name = name
@@ -81,6 +83,7 @@ public struct PhoneRow: Codable, Sendable, Equatable, Hashable, Identifiable {
         self.isMain = isMain
         self.pr = pr
         self.agents = agents
+        self.host = host
     }
 
     public var id: String { path }

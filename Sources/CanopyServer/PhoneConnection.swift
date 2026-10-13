@@ -28,6 +28,8 @@ public struct PhoneGate: Sendable {
 
     public var registry: PhoneRegistry
     public var macName: String
+    /// `PhoneServerKind`'s.
+    public var kind: String
     /// Canopy's version, which `phone.hello` answers with.
     public var version: String
     /// Waits out the time a new connection has to say hello, counted again after a pairing.
@@ -37,12 +39,14 @@ public struct PhoneGate: Sendable {
     public var onPaired: @Sendable (PairedPhone) -> Void
 
     public init(
-        registry: PhoneRegistry, macName: String, version: String, helloTimeout: Duration = .seconds(10),
+        registry: PhoneRegistry, macName: String, kind: String = PhoneServerKind.mac, version: String,
+        helloTimeout: Duration = .seconds(10),
         helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
         onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
     ) {
         self.registry = registry
         self.macName = macName
+        self.kind = kind
         self.version = version
         self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
@@ -256,7 +260,8 @@ final class PhoneConnection: Sendable {
                 let paired = try await gate.registry.redeem(code: params.code, name: params.name)
                 gate.onPaired(paired.phone)
                 startHelloTimer()
-                let result = PhonePairResult(token: paired.token, phone: paired.phone.name, mac: gate.macName)
+                let result = PhonePairResult(
+                    token: paired.token, phone: paired.phone.name, mac: gate.macName, kind: gate.kind)
                 queueReply(.success(id: request.id, result: try .from(result)))
             } catch {
                 refuse(
@@ -292,7 +297,7 @@ final class PhoneConnection: Sendable {
     }
 
     private func greeting(_ phone: PairedPhone) -> PhoneHelloResult {
-        PhoneHelloResult(mac: gate.macName, version: gate.version, phone: phone.name)
+        PhoneHelloResult(mac: gate.macName, version: gate.version, phone: phone.name, kind: gate.kind)
     }
 
     private func refuse(id: String, _ error: ControlError, closing: Bool) {

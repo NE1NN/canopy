@@ -32,7 +32,7 @@ public enum PhoneInboxBuilder {
                         pr: row.pullRequest.map {
                             PhonePR(number: $0.number, state: $0.state, title: $0.title, url: $0.url)
                         },
-                        agents: agents(inRow: row.path, terminals: terminals, tails: tails))
+                        agents: agents(inRow: row.path, terminals: terminals, tails: tails), host: row.host)
                 })
         }
         let plugins = snapshot.activePlugins.map { section in

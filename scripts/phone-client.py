@@ -81,7 +81,7 @@ def main(args):
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w") as file:
             file.write(result["token"])
-        print(json.dumps({"phone": result["phone"], "mac": result["mac"]}))
+        print(json.dumps({"phone": result["phone"], "mac": result["mac"], "kind": result.get("kind")}))
     elif command == "call":
         link, token_file, method = args[1:4]
         params = json.loads(args[4]) if len(args) > 4 else None

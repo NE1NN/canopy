@@ -455,7 +455,10 @@ if ((with_box)); then
         phone="/usr/bin/python3 -I $PWD/scripts/phone-client.py"
         "$cli" phone pair --on "$alias" --json > "$work/pair.json" || fail "phone pair --on failed"
         link=$(json 'd["link"]' < "$work/pair.json")
-        $phone pair "$link" e2e-phone "$work/box-token" >/dev/null || fail "the phone could not pair with canopy-box"
+        case "$link" in *kind=box*) ;; *) fail "the box's pairing link does not say it is a box: $link" ;; esac
+        $phone pair "$link" e2e-phone "$work/box-token" > "$work/box-paired.json" \
+            || fail "the phone could not pair with canopy-box"
+        [ "$(json 'd["kind"]' < "$work/box-paired.json")" = box ] || fail "canopy-box does not tell the phone it is a box"
         $phone wait-inbox "$link" "$work/box-token" "any(a['pane'] == '$session' and a['state'] == 'waiting' for r in inbox['rows'] for a in r['agents'])" 20 >/dev/null \
             || fail "the box's inbox does not show the waiting pane"
         $phone call "$link" "$work/box-token" phone.reply '{"pane": "'"$session"'", "text": "from-phone"}' >/dev/null \

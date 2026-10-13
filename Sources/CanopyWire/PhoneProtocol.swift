@@ -185,6 +185,12 @@ public struct PhoneDelivered: Codable, Sendable, Equatable {
     }
 }
 
+/// What a server is: a Mac, or canopy-box on a host. One that does not say is a Mac.
+public enum PhoneServerKind {
+    public static let mac = "mac"
+    public static let box = "box"
+}
+
 /// The port the Mac listens on for phones, on its Tailscale addresses.
 public enum PhonePort {
     public static let standard: UInt16 = 6974
@@ -205,11 +211,14 @@ public struct PhoneHelloResult: Codable, Sendable, Equatable {
     public var version: String
     /// The name the Mac knows this phone by.
     public var phone: String
+    /// `PhoneServerKind`'s; nil from a Mac older than several servers.
+    public var kind: String?
 
-    public init(mac: String, version: String, phone: String) {
+    public init(mac: String, version: String, phone: String, kind: String? = nil) {
         self.mac = mac
         self.version = version
         self.phone = phone
+        self.kind = kind
     }
 }
 
@@ -230,11 +239,14 @@ public struct PhonePairResult: Codable, Sendable, Equatable {
     /// The name the Mac gave the phone, which differs from the one sent when another phone has it.
     public var phone: String
     public var mac: String
+    /// `PhoneServerKind`'s; nil from a Mac older than several servers.
+    public var kind: String?
 
-    public init(token: String, phone: String, mac: String) {
+    public init(token: String, phone: String, mac: String, kind: String? = nil) {
         self.token = token
         self.phone = phone
         self.mac = mac
+        self.kind = kind
     }
 }
 

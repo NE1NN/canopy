@@ -84,7 +84,8 @@ struct PhoneServerTests {
                 source: source,
                 settings: PhoneServerSettings(
                     registryFile: URL(fileURLWithPath: dir.sub("phones.json")), serverName: "hindie-box",
-                    version: "1.2.3", port: 0, addresses: { ["127.0.0.1"] }, tailnetName: { nil },
+                    kind: PhoneServerKind.box, version: "1.2.3", port: 0, addresses: { ["127.0.0.1"] },
+                    tailnetName: { nil },
                     closedReason: { "No tailnet address." }, record: { event in recorded.withLock { $0.append(event) } }
                 ))
         }
@@ -98,11 +99,13 @@ struct PhoneServerTests {
             let paired = try await offPool {
                 try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "iPhone")))
             }
-            let token = try #require(paired.result).decode(PhonePairResult.self).token
+            let pairing = try #require(paired.result).decode(PhonePairResult.self)
+            #expect(pairing.kind == PhoneServerKind.box)
             let hello = try await offPool {
-                try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token)))
+                try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: pairing.token)))
             }
-            #expect(try #require(hello.result).decode(PhoneHelloResult.self).mac == "hindie-box")
+            let greeting = try #require(hello.result).decode(PhoneHelloResult.self)
+            #expect(greeting.mac == "hindie-box" && greeting.kind == PhoneServerKind.box)
             return client
         }
     }
@@ -112,6 +115,19 @@ struct PhoneServerTests {
             path: "/box/feat", name: "feat/x", repo: "canopy",
             agents: [PhoneAgent(pane: "b1", state: .waiting, since: 10)])
     ])
+
+    /// The phone shows a box apart from a Mac, from the pairing link on.
+    @Test func theBoxSaysItIsABox() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        defer { harness.server.stop() }
+        await harness.server.refresh()
+
+        let link = try #require(URL(string: try await harness.server.pair().link).flatMap(PairingLink.init(url:)))
+
+        #expect(link.kind == PhoneServerKind.box)
+        _ = try await harness.phone()
+    }
 
     @Test func subscribingSendsTheInboxThenItsChanges() async throws {
         let dir = try TempDir()

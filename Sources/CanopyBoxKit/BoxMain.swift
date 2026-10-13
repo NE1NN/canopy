@@ -37,7 +37,8 @@ public enum BoxMain {
             source: BoxPhoneSource(daemon: daemon),
             settings: PhoneServerSettings(
                 registryFile: URL(fileURLWithPath: paths.folder + "/phones.json"),
-                serverName: config?.host ?? ProcessInfo.processInfo.hostName, version: CanopyVersion.current,
+                serverName: config?.host ?? ProcessInfo.processInfo.hostName, kind: PhoneServerKind.box,
+                version: CanopyVersion.current,
                 port: port ?? config?.phonePort ?? PhonePort.standard,
                 addresses: { address.map { [$0] } ?? TailnetAddresses.current() },
                 tailnetName: { await TailnetAddresses.name(environment: environment) },
