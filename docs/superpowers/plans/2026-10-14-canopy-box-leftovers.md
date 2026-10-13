@@ -12,10 +12,12 @@
 ## Fixed
 
 - [x] The relay's framing is tested on the box: heartbeats during a long call, a relayed call stopping when its caller hangs up, and a hook landing after its caller hangs up.
-  The last found a bug: the acknowledgement went out before the hook started, so a hook whose process was already gone was dropped. The work now starts first.
+  The last found a bug: the acknowledgement went out before the hook started, so a hook whose process was already gone was dropped.
+  The work now starts first.
 - [x] canopy-box holds a lock on its home (`box/serve.lock`) from the start, so two daemons started at the same moment never both load and save its state; `InstanceLock` moved to `CanopySystem` to build on Linux.
 - [x] canopy-box reads the machine's name on a thread of its own at start, as it may take a DNS lookup, rather than on its actor's first poll.
-- [x] `bundle.sh` without Docker leaves out a canopy-box older than either of its binaries' sources, as hosts would install it over a newer build. Hosts keep the one they run, though such an app cannot start one that stopped or upgrade a host, as before when `build/box` was empty.
+- [x] `bundle.sh` without Docker leaves out a canopy-box older than either of its binaries' sources, as hosts would install it over a newer build.
+  Hosts keep the one they run, though such an app cannot start one that stopped or upgrade a host, as before when `build/box` was empty.
 
 ## Left as they are
 
