@@ -169,6 +169,8 @@ public final class ChatSession {
     }
     /// What the composer holds, kept here so it survives the view.
     public var draft = ""
+    /// Images pasted or dropped into the composer, sent with the next message.
+    public var draftImages: [ChatImage] = []
 
     /// Called when something worth saving changes: the session, the title.
     @ObservationIgnored public var onChange: () -> Void = {}

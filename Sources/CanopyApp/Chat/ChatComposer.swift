@@ -17,6 +17,15 @@ struct ChatComposer: View {
     var body: some View {
         @Bindable var chat = chat
         VStack(alignment: .leading, spacing: 8) {
+            if !chat.draftImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(chat.draftImages.enumerated()), id: \.offset) { index, image in
+                            ImageThumbnail(image: image) { chat.draftImages.remove(at: index) }
+                        }
+                    }
+                }
+            }
             ZStack(alignment: .topLeading) {
                 if chat.draft.isEmpty {
                     Text(placeholder)
@@ -26,7 +35,8 @@ struct ChatComposer: View {
                 }
                 ComposerTextView(
                     text: $chat.draft, height: $height, paneID: paneID, composers: composers,
-                    onReturn: submit, onEscape: escape, onDigit: digit
+                    onReturn: submit, onEscape: escape, onDigit: digit,
+                    onImage: { chat.draftImages.append($0) }
                 )
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
@@ -90,14 +100,16 @@ struct ChatComposer: View {
     }
 
     private var canSend: Bool {
-        !chat.needsTrust && !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.needsTrust
+            && (!chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty)
     }
 
     private func send() {
-        let text = chat.draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSend else { return }
+        let (text, images) = (chat.draft, chat.draftImages)
         chat.draft = ""
-        chat.send(text)
+        chat.draftImages = []
+        chat.send(text, images: images)
     }
 
     /// Return sends what is written; with nothing written it allows an open prompt.
@@ -169,6 +181,37 @@ final class ComposerNSTextView: NSTextView {
     var onWindow: () -> Void = {}
     /// Takes a digit pressed with no modifiers before it is typed; true when it was used.
     var onDigit: (Int) -> Bool = { _ in false }
+    /// Takes an image pasted or dropped in, as PNG.
+    var onImage: (ChatImage) -> Void = { _ in }
+
+    override func paste(_ sender: Any?) {
+        if takeImages(from: .general) { return }
+        super.paste(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if takeImages(from: sender.draggingPasteboard) { return true }
+        return super.performDragOperation(sender)
+    }
+
+    /// Images on the pasteboard, or image files dropped in, as PNG. False when there were none.
+    private func takeImages(from pasteboard: NSPasteboard) -> Bool {
+        var images: [NSImage] = []
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+            as? [URL]
+        {
+            images += urls.compactMap { NSImage(contentsOf: $0) }
+        }
+        if images.isEmpty, let pasted = pasteboard.readObjects(forClasses: [NSImage.self]) as? [NSImage] {
+            images = pasted
+        }
+        let pngs = images.compactMap { image -> Data? in
+            guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+            return bitmap.representation(using: .png, properties: [:])
+        }
+        for png in pngs { onImage(ChatImage(mediaType: "image/png", data: png)) }
+        return !pngs.isEmpty
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
@@ -195,6 +238,7 @@ private struct ComposerTextView: NSViewRepresentable {
     let onReturn: () -> Void
     let onEscape: () -> Void
     let onDigit: (Int) -> Bool
+    let onImage: (ChatImage) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -216,6 +260,8 @@ private struct ComposerTextView: NSViewRepresentable {
         let (pane, composers) = (paneID, self.composers)
         view.onWindow = { composers.joinedWindow(pane) }
         view.onDigit = { [weak coordinator = context.coordinator] in coordinator?.parent.onDigit($0) ?? false }
+        view.onImage = { [weak coordinator = context.coordinator] in coordinator?.parent.onImage($0) }
+        view.registerForDraggedTypes([.fileURL, .png, .tiff])
         view.delegate = context.coordinator
         view.drawsBackground = false
         view.isRichText = false
@@ -358,5 +404,32 @@ private struct ChatChips: View {
 
     private static func tint(_ mode: String) -> Color? {
         mode == "bypassPermissions" ? ChatStyle.removed : nil
+    }
+}
+
+/// A pasted image waiting to be sent, with a button that takes it out.
+private struct ImageThumbnail: View {
+    let image: ChatImage
+    let remove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let picture = NSImage(data: image.data) {
+                Image(nsImage: picture)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+            }
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+            .padding(2)
+            .help("Remove")
+        }
     }
 }
