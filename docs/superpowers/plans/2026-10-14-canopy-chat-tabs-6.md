@@ -62,10 +62,10 @@ Delivery is still credited in order per pane, as for a terminal: a message the a
 ## The two flakes
 
 - `RemoteImageLoaderTests.viewsAskingAtOnceShareOneDownloadAndTheCacheKeepsIt` failed when `NSCache` dropped the image it checks, which it may do whenever the machine runs short of memory, as during a full test run.
-  The loader now takes its cache through a small protocol, and the test gives it one that keeps everything.
-- The phone's `ConversationModelTests` flake came from `MacConnection.foreground()`: coming back to the foreground while an attempt was under way left that attempt to hang or fail on its own time.
-  Now the attempt under way is cancelled and a new one starts at once, and `TCPChannel.open` gives up when its task is cancelled.
-  Pinned by `comingToTheForegroundAbandonsAnAttemptAlreadyUnderWay` and `aConnectNobodyWaitsForAnyMoreIsGivenUp`.
+  Box server PR 60 fixed the same flake the same way (`LoadedImages`, `KeptImages`), so merging main kept its version.
+- The phone's `ConversationModelTests` flake came from coming back to the foreground while an attempt was under way.
+  PR 60 fixed it too: the attempt under way finishes, within its 10 second timeout, and the next one starts at once; merging main kept that.
+  What stays from this PR is that a connect whose task is cancelled gives up at once, in `TCPChannel.open` and between hosts, pinned by `aConnectNobodyWaitsForAnyMoreIsGivenUp`.
 
 ## Decisions to review
 
