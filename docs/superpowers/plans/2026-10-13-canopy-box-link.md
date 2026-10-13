@@ -9,7 +9,7 @@
 `BoxInstall` copies it to `~/.canopy/<home id>/bin/canopy-box` when the host's copy differs, writes a systemd user unit, and starts it.
 `BoxLink`, one per upgraded host, forwards a socket of the app's own to the daemon's `box.sock` through the master, says hello, configures the daemon, subscribes, and makes requests.
 `Workspace` takes an upgraded host's rows from the snapshots and makes and removes its rows through the link; `BoxMirror` on the main actor opens tabs for the daemon's panes, mirrors their agents onto the Mac's panes, and sends what happens at the Mac (closing a pane, keys that move an agent, seeing a finish) to the daemon.
-The host's relay prefers `box.sock` when it exists, so hooks and the box's CLI go to the daemon.
+The host's relay uses `box.sock` once the Mac has marked the host adopted, so hooks and the box's CLI go to the daemon.
 
 **Tech Stack:** Swift 6.4, Swift Testing, `scripts/fake-ssh` with a fake `systemctl`, tmux.
 
@@ -20,7 +20,9 @@ The host's relay prefers `box.sock` when it exists, so hooks and the box's CLI g
 - A host that is not upgraded behaves exactly as before: every existing test and `make e2e` pass unchanged.
 - Nothing here runs against hindie-box: the author's steps (lingering, the `busy` check, `host upgrade hindie-box`) stay theirs, and `scripts/e2e-hosts.sh --host <real host>` skips the box part unless `--with-box` is passed.
 - The daemon is installed for the Mac's own home id only; e2e runs use a throwaway home on the fake host.
-- Swift 6 language mode, strict concurrency, no warnings. Markdown one sentence per line, no em dashes. Conventional commits, no trailers.
+- Swift 6 language mode, strict concurrency, no warnings.
+- Markdown one sentence per line, no em dashes.
+- Conventional commits, no trailers.
 
 ## Rulings carried from the spec
 
@@ -86,10 +88,10 @@ Steps:
 - `HostEntry.box: Bool`, saved as `"box": true` in the host's section.
 - `Workspace.applyBoxSnapshot(_:host:)`: the host's remote rows become the snapshot's rows that are not main, matched to repos by `HostEntry.repos` names, with stand-ins made for new ones and rows gone from the box forgotten, their terminals closed by the caller.
 - On an upgraded host, `createRemoteRow`, `removeRemoteRow`, and `remoteHasUncommittedChanges` go through the link, and `refreshRemote` reads nothing.
-- `HostFiles` relay: uses `~/.canopy/<home id>/box/box.sock` while it exists, else `$CANOPY_SOCKET`.
+- `HostFiles` relay: uses `~/.canopy/<home id>/box/box.sock` while it and the `adopted` mark beside it exist, else `$CANOPY_SOCKET`.
 
 Steps:
-- [ ] Tests: `aSnapshotsRowsBecomeRemoteRows`, `aRowGoneFromTheBoxIsForgotten`, `rowNewOnAnUpgradedHostGoesThroughTheLink`, `theRelayUsesTheBoxOnlyWhileItsSocketExists` (the relay script run against a temporary home with and without `box.sock`).
+- [ ] Tests: `aSnapshotsRowsBecomeRemoteRows`, `aRowGoneFromTheBoxIsForgotten`, `rowNewOnAnUpgradedHostGoesThroughTheLink`, `theRelayUsesTheBoxOnlyWhileItsSocketExists` (the relay script run against a temporary home with and without `box.sock` and the `adopted` mark).
 - [ ] Implement; commit `feat: an upgraded host's rows come from canopy-box, and its relay talks to it`.
 
 ### Task 5: BoxMirror: panes and agents on the Mac

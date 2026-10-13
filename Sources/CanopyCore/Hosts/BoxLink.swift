@@ -9,6 +9,8 @@ public actor BoxLink {
     private let config: @Sendable () -> BoxConfig
     private var connection: UnixConnection?
     private var pending: [String: CheckedContinuation<ControlResponse, any Error>] = [:]
+    /// Each call's timeout, cancelled once it is answered.
+    private var timers: [String: Task<Void, Never>] = [:]
     private var observers: [UUID: AsyncStream<BoxSnapshot>.Continuation] = [:]
     private var latest: BoxSnapshot?
     private var running: Task<Void, Never>?
@@ -88,8 +90,9 @@ public actor BoxLink {
                 if !written { self.fail(id, with: self.notConnected()) }
             }
             if method != BoxMethod.wait {
-                Task {
+                timers[id] = Task {
                     try? await Task.sleep(for: Self.callWait)
+                    guard !Task.isCancelled else { return }
                     self.fail(
                         id, with: WorkspaceError.hostUnreachable(self.alias, reason: "canopy-box did not answer."))
                 }
@@ -102,6 +105,7 @@ public actor BoxLink {
     }
 
     private func fail(_ id: String, with error: any Error) {
+        timers.removeValue(forKey: id)?.cancel()
         pending.removeValue(forKey: id)?.resume(throwing: error)
     }
 
@@ -149,6 +153,7 @@ public actor BoxLink {
         guard let message = try? BoxMessage(line: line) else { return }
         switch message {
         case .response(let response):
+            timers.removeValue(forKey: response.id)?.cancel()
             pending.removeValue(forKey: response.id)?.resume(returning: response)
         case .event(let event) where event.event == BoxEvent.snapshot:
             guard let snapshot = try? event.data.decode(BoxSnapshot.self) else { return }
@@ -169,6 +174,8 @@ public actor BoxLink {
         connection = nil
         let failed = pending
         pending.removeAll()
+        for timer in timers.values { timer.cancel() }
+        timers.removeAll()
         for continuation in failed.values { continuation.resume(throwing: notConnected()) }
     }
 

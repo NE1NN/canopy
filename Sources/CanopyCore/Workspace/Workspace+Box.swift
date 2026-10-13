@@ -287,7 +287,14 @@ extension Workspace {
         defer { upgradingHosts.remove(alias) }
         // Hooks go to the app again before the box lets go, so none lands on a box that no longer has its pane.
         _ = try await output(of: markCommand(adopted: false), on: connection)
-        let released: BoxReleaseResult = try await link.call(BoxMethod.release, JSONValue.object([:]))
+        let released: BoxReleaseResult
+        do {
+            released = try await link.call(BoxMethod.release, JSONValue.object([:]))
+        } catch {
+            // The box still has the panes, so hooks go back to it.
+            _ = try? await output(of: markCommand(adopted: true), on: connection)
+            throw error
+        }
         entry.box = false
         try HostsConfigFile(url: home.configFile).save(alias, entry)
         await connection.update(entry)

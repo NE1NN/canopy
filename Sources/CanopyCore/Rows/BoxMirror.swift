@@ -62,6 +62,12 @@ public final class BoxMirror {
                     $0.remote.contains { $0.standIn == entry.standIn }
                 })
             else { continue }
+            // Another apply may have opened it while this one waited on the workspace.
+            if terminals.panes.contains(where: {
+                $0.context.remote?.host == update.host && $0.remoteSession == boxPane.id
+            }) {
+                continue
+            }
             let row = Row(remote: entry, repoPath: repo.path)
             let context = PaneContext(row: row, repoName: await workspace.repoName(repo.path))
             let opened = terminals.openTab(for: context, select: false, session: boxPane.id)

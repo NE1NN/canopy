@@ -147,6 +147,8 @@ public enum BoxInstall {
                 if [ "$restart" = 1 ] && [ -f "$pid" ]; then
                     kill "$(cat "$pid")" 2>/dev/null
                     i=0; while [ $i -lt 30 ] && "$b" status --home-id "$h"; do sleep 0.1; i=$((i + 1)); done
+                    # One that ignored SIGTERM would keep the old build running.
+                    "$b" status --home-id "$h" && kill -9 "$(cat "$pid")" 2>/dev/null && sleep 0.5
                 fi
                 if ! "$b" status --home-id "$h"; then
                     mkdir -p "$HOME/.canopy/$h/box"
