@@ -74,4 +74,11 @@ An opus review found no critical issues and seven important ones:
 - Ruling: `kind=box` in the pairing link and `phone.hello` waits for milestone 5, where the phone first tells servers apart; older phones ignore it either way.
 - Tests the plan named but did not write (delivery, a stand-in `tailscale`, a phone over loopback in unit tests, a dropping phone) are covered by the hosts e2e or deferred; the e2e pairs, reads, replies, and removes a phone.
 
+Before merging, `HostMonitorRoundTests.aStuckPortsProbeHoldsUpNoOtherHost` failed in two of three full runs.
+`make test`'s strict pool has one Swift concurrency thread, and samples of a full run showed it busy 94% of the time, over half of that in tests waiting for subprocesses and in `TempDir` deleting its folder.
+Each actor hop then waited up to a second, and milestone 3b's hop onto each connection to read its box flag pushed the test's rounds past its 20 second waits.
+Tests now run subprocesses through `Subprocess.runOffPool`, `TempDir` deletes on a queue of its own, and `HostConnection.isBox` is read without a hop; the test's first wait went from over 20 seconds to about 10.
+`aPortNobodyHoldsIsFree`, which failed once along the way when another test's socket took the port it had just let go, tries a few ports.
+Left for later: `StateStore.save`'s fsync and `DirectoryWatcher`'s FSEvents setup still block the pool briefly in the app as in tests.
+
 Deferred minors: the delivery tracker outlives its window on a quiet box and marks several replies at once; the activity log uses the legacy `FileHandle.write`, which traps on I/O errors on Linux, and is never pruned; the phone listener starts before the socket check; the Mac's transcript-based last line is not used on the box.
