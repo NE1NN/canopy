@@ -252,10 +252,13 @@ public struct BoxPaneNewParams: Codable, Sendable, Equatable {
     public var rowPath: String
     /// Typed into the pane once its shell is up.
     public var command: String?
+    /// Variables the pane's shell gets beside Canopy's own, such as a task's brief, which is never typed.
+    public var environment: [String: String]?
 
-    public init(rowPath: String, command: String? = nil) {
+    public init(rowPath: String, command: String? = nil, environment: [String: String]? = nil) {
         self.rowPath = rowPath
         self.command = command
+        self.environment = environment
     }
 }
 

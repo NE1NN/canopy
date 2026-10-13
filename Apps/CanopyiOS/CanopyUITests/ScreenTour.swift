@@ -98,6 +98,32 @@ final class ScreenTour: XCTestCase {
             wait(timeout: 30) { self.app.staticTexts["connection"].label.contains("devbox connected") },
             "the box did not connect again")
 
+        // New task on the box: its agent starts on the brief, and the phone lands in its conversation.
+        app.buttons["new-task"].tap()
+        XCTAssert(app.navigationBars["New task"].waitForExistence(timeout: 5), "New task did not open")
+        app.buttons["where-devbox"].tap()
+        XCTAssert(wait { self.app.buttons["where-devbox"].isSelected }, "Where did not choose the box")
+        let branch = app.textFields["task-branch"]
+        branch.tap()
+        branch.typeText("feat/health-check")
+        let brief = app.textViews["task-brief"].exists ? app.textViews["task-brief"] : app.textFields["task-brief"]
+        brief.tap()
+        brief.typeText("Add a health check to the usage page, next to the totals.")
+        // Done above the keyboard puts it away, as Return in the brief starts a new line.
+        app.buttons["keyboard-done"].tap()
+        XCTAssert(wait { !self.app.keyboards.firstMatch.exists }, "the keyboard stayed up")
+        shot("new-task")
+        app.buttons["task-start"].tap()
+        XCTAssert(
+            text("Add a health check to the usage page").waitForExistence(timeout: 30),
+            "the task's conversation did not open with its brief")
+        XCTAssert(
+            text("The health check goes next to the totals.").waitForExistence(timeout: 20),
+            "the task's agent never answered")
+        XCTAssert(element("title").label.contains("devbox"), "the task's conversation does not name the box")
+        shot("conversation-new-task")
+        app.navigationBars.buttons["Inbox"].tap()
+
         // A question with options, answered with a chip.
         self.open("item-feat/ios-companion")
         XCTAssert(app.buttons["option-Tailscale"].waitForExistence(timeout: 10), "no option chips")
@@ -163,8 +189,11 @@ final class ScreenTour: XCTestCase {
         XCTAssert(element("server-devbox").exists, "Settings does not list the box")
         shot("settings")
         element("server-devbox").tap()
-        XCTAssert(app.buttons["remove-server"].waitForExistence(timeout: 5), "no server detail")
+        XCTAssert(app.navigationBars["devbox"].waitForExistence(timeout: 5), "no server detail")
+        XCTAssert(text("fixture-claude").waitForExistence(timeout: 5), "the server detail has no agent command")
         shot("settings-server")
+        app.swipeUp()
+        XCTAssert(app.buttons["remove-server"].waitForExistence(timeout: 5), "the server detail has no Remove")
         app.navigationBars["devbox"].buttons.element(boundBy: 0).tap()
         // Away and back with Settings open: the lock covers the sheet too, so its switch cannot turn the lock off.
         XCUIDevice.shared.press(.home)

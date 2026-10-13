@@ -207,6 +207,16 @@ if ((box)); then
     echo "127.0.0.1 $(cat "$work/aws.port")" > "$host_home/.canopy/$box_id/box/imds"
     "$cli" host upgrade devbox >/dev/null
     printf 'AKIAFAKEWAKEKEY\nfixture-wake-secret\n' | "$cli" host wake-key devbox >/dev/null
+    # New task on the box runs a stand-in that starts on the brief, named apart from `claude`, which the box's panes
+    # would find first here: they are this Mac's zsh, whose /etc/zprofile puts the system's folders ahead of
+    # canopy-box's bin. Each pane writes a transcript of its own.
+    cat > "$host_home/.canopy/$box_id/bin/fixture-claude" <<CLAUDE
+#!/bin/sh
+exec /usr/bin/python3 -I $(printf %q "$PWD/scripts/fake-claude.py") $(printf %q "$host_home/.local/bin/canopy") task \
+    $(printf %q "$host_home/transcripts")/task-\$\$.jsonl "\$@"
+CLAUDE
+    chmod +x "$host_home/.canopy/$box_id/bin/fixture-claude"
+    "$cli" phone agent --on devbox "fixture-claude --model 'opus[1m]' --permission-mode bypassPermissions" >/dev/null
     run=$(printf 'clear; exec /usr/bin/python3 -I %q %q migrate %q' "$PWD/scripts/fake-claude.py" \
         "$host_home/.local/bin/canopy" "$host_home/transcripts/migrate.jsonl")
     "$cli" row new feat/usage-migration --repo solis --on devbox --run "$run" >/dev/null

@@ -43,7 +43,8 @@ let portableTargets: [Target] = [
     .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
     .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
     .testTarget(name: "CanopyAgentsTests", dependencies: ["CanopyAgents", "CanopyWire", "CanopyTestSupport"]),
-    .testTarget(name: "CanopyServerTests", dependencies: ["CanopyServer", "CanopyWire", "CanopyTestSupport"]),
+    .testTarget(
+        name: "CanopyServerTests", dependencies: ["CanopyServer", "CanopyWire", "CanopySystem", "CanopyTestSupport"]),
     .testTarget(name: "CanopyGitTests", dependencies: ["CanopyGit", "CanopyTestSupport"]),
     .testTarget(
         name: "CanopyBoxTests",

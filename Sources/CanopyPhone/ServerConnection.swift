@@ -264,6 +264,7 @@ public final class ServerConnection: Identifiable {
         if let kind = hello.kind { updated.kind = kind }
         // A box with no key now, as after `host wake-key --clear`, takes the phone's away too.
         updated.wake = hello.wake
+        updated.agentCommand = hello.agentCommand
         if updated != server {
             try? credentials.save(updated)
             self.server = updated

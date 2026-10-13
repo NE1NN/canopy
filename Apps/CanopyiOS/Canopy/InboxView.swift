@@ -5,6 +5,7 @@ import SwiftUI
 struct InboxView: View {
     @Environment(PhoneApp.self) private var app
     @State private var showsSettings = false
+    @State private var showsNewTask = false
     @State private var path: [PaneRef] = []
 
     private var model: InboxModel { app.inbox }
@@ -58,6 +59,11 @@ struct InboxView: View {
             .backButtonTitle("Inbox")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button("New task", systemImage: "square.and.pencil") { showsNewTask = true }
+                        .disabled(app.servers.paired.isEmpty)
+                        .accessibilityIdentifier("new-task")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") { showsSettings = true }
                         .accessibilityIdentifier("settings")
                 }
@@ -68,6 +74,9 @@ struct InboxView: View {
             .refreshable { app.servers.foreground() }
             .sheet(isPresented: $showsSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showsNewTask) {
+                NewTaskView { path.append($0) }
             }
         }
         .environment(\.openPane, OpenPaneAction { path.append($0) })

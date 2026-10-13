@@ -2,11 +2,12 @@
 """A stand-in Claude Code for the phone fixture: it draws a Claude-like screen, writes its conversation in Claude
 Code's transcript format, and reports to Canopy through `canopy agent-hook` as Claude Code's hooks do.
 
-  fake-claude.py <canopy-cli> <scenario> <transcript-file>
+  fake-claude.py <canopy-cli> <scenario> <transcript-file> [<option>...] [<brief>]
 
 Run it in a pane, which sets CANOPY_PANE. It answers the phone the way Claude Code would: a reply (a bracketed paste,
 then Return) becomes the next prompt, a digit answers its question, and Return allows its command.
-Scenarios: main, companion, drain, labels, lost, ticket, and migrate for a box.
+Scenarios: main, companion, drain, labels, lost, ticket, migrate for a box, and task, which starts on the brief that
+New task on the phone passes as the last argument.
 """
 import json
 import os
@@ -20,6 +21,8 @@ import uuid
 from datetime import datetime, timezone
 
 CLI, SCENARIO, TRANSCRIPT = sys.argv[1:4]
+# The brief comes last, after whatever options the agent command passes.
+BRIEF = sys.argv[-1] if len(sys.argv) > 4 else ""
 SESSION = str(uuid.uuid4())
 CWD = os.getcwd()
 lock = threading.Lock()
@@ -153,6 +156,11 @@ def start():
         hook("Stop", last_assistant_message="READY: staging migrated, totals match")
         draw(f"{BLUE}⏺{RESET} The migration ran on staging and the totals match.", "",
              f"  {GREEN}READY:{RESET} staging migrated, totals match", "", f"{GREY}>{RESET} ")
+    elif SCENARIO == "task":
+        write(prompt(BRIEF), *ran("Read", {"file_path": f"{CWD}/README.md"}))
+        hook("UserPromptSubmit", prompt=BRIEF)
+        draw(f"{DIM}⏺ Read(README.md){RESET}", "", f"{GREY}✻ Reading… (esc to interrupt){RESET}")
+        threading.Thread(target=finish, args=("Read the usage page. The health check goes next to the totals.",)).start()
     elif SCENARIO == "ticket":
         tool_id = "toolu_deploy"
         state["permission"] = tool_id

@@ -80,7 +80,8 @@ extension Workspace {
     /// join the ones it has, and `wake` and `idleDetachMinutes` replace theirs when given.
     @discardableResult
     public func addHost(
-        alias: String, repos requested: [String: String], wake: String?, idleDetachMinutes: Int?
+        alias: String, repos requested: [String: String], wake: String?, idleDetachMinutes: Int?,
+        agentCommand: String? = nil
     ) async throws -> HostInfo {
         guard !alias.isEmpty, !alias.hasPrefix("-"), !alias.contains(where: \.isWhitespace) else {
             throw WorkspaceError.hostUnknown(alias)
@@ -98,6 +99,16 @@ extension Workspace {
         var entry = saved ?? HostEntry()
         if let wake { entry.wake = wake }
         if let idleDetachMinutes { entry.idleDetachMinutes = max(idleDetachMinutes, 0) }
+        if let agentCommand = agentCommand?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            guard !agentCommand.isEmpty else {
+                throw ControlError(
+                    code: "bad_params",
+                    message:
+                        "The agent command is empty. canopy phone agent --on \(alias) --default goes back to the standard one."
+                )
+            }
+            entry.agentCommand = agentCommand
+        }
         // Connecting already uses the new settings, so a new wake command can start the host.
         let connection = await connection(alias, entry)
         let facts: HostFacts
@@ -116,6 +127,8 @@ extension Workspace {
             throw error
         }
         await connection.update(entry)
+        // An upgraded host's canopy-box takes changed repos and agent command now, not at its next connect.
+        if entry.box, entry != saved, let link = boxLinks[alias] { _ = try? await link.reconfigure() }
         activity.record(ActivityType.hostAdded, data: ["host": .string(alias)])
         var added = await info(alias, entry)
         added.warnings = HostChecks.warnings(facts, alias: alias)

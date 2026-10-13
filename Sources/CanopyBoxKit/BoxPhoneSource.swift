@@ -160,6 +160,26 @@ public final class BoxPhoneSource: PhoneSource {
         try await daemon.screen(pane: params.pane, scrollback: scrollback)
     }
 
+    /// Rows on the box run no setup, as `row new` there does not, so the agent starts at once.
+    public func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult {
+        let made = try await daemon.rowNew(BoxRowNewParams(repo: params.repo, branch: params.branch, base: params.base))
+        let pane: String
+        do {
+            pane = try await daemon.paneNew(
+                BoxPaneNewParams(
+                    rowPath: made.row.path, command: line,
+                    environment: params.brief.isEmpty ? nil : [PhoneAgentCommand.briefVariable: params.brief]))
+        } catch {
+            throw ControlError(
+                code: "pane_failed",
+                message: "Made the row \(made.row.branch ?? params.branch), but its pane did not start: "
+                    + ((error as? ControlError)?.message ?? "\(error)"))
+        }
+        return PhoneNewRowResult(
+            path: made.row.path, branch: made.row.branch ?? params.branch, pane: pane,
+            warnings: made.warnings.isEmpty ? nil : made.warnings)
+    }
+
     private actor Subscriptions {
         var tasks: [UUID: Task<Void, Never>] = [:]
 

@@ -39,6 +39,9 @@ public enum BoxMain {
                 },
                 kind: PhoneServerKind.box,
                 wake: { phoneWake(paths) },
+                agentCommand: {
+                    PhoneAgentCommand.chosen(BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.agentCommand)
+                },
                 version: CanopyVersion.current,
                 port: port ?? config?.phonePort ?? PhonePort.standard,
                 addresses: { address.map { [$0] } ?? TailnetAddresses.current() },

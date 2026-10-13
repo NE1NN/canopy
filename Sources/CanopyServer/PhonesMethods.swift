@@ -8,6 +8,36 @@ public enum PhonesMethod {
     public static let list = "phones.list"
     public static let remove = "phones.remove"
     public static let status = "phones.status"
+    /// Shows or sets what a task from the phone runs.
+    public static let agent = "phones.agent"
+}
+
+public struct PhonesAgentParams: Codable, Sendable {
+    /// The new command. Nil, without `reset`, only shows the one there is.
+    public var command: String?
+    /// Goes back to `PhoneAgentCommand.standard`.
+    public var reset: Bool
+    /// A host whose canopy-box runs the tasks, rather than this Mac.
+    public var on: String?
+
+    public init(command: String? = nil, reset: Bool = false, on: String? = nil) {
+        self.command = command
+        self.reset = reset
+        self.on = on
+    }
+}
+
+public struct PhonesAgentResult: Codable, Sendable, Equatable {
+    public var command: String
+    /// No command is set, so the standard one runs.
+    public var isDefault: Bool
+    public var on: String?
+
+    public init(command: String, isDefault: Bool, on: String? = nil) {
+        self.command = command
+        self.isDefault = isDefault
+        self.on = on
+    }
 }
 
 /// A new pairing code and the link its QR code holds.

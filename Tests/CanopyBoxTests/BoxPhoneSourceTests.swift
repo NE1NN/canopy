@@ -184,6 +184,39 @@ struct BoxPhoneSourceTests {
         await daemon.tickBusy()
         #expect(!FileManager.default.fileExists(atPath: home.paths.busyFile))
     }
+
+    /// A task from the phone: a row by the box's branch rules, and a pane typing the agent's line with the brief whole.
+    @Test(arguments: ["Fix it's $(touch pwned) and `touch pwned`", "tab\there", "\u{15}touch pwned\r", "\u{3}a\nb"])
+    func newRowOnTheBoxMakesARowAndAPane(_ brief: String) async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let source = BoxPhoneSource(daemon: daemon)
+        let out = home.dir.sub("ran")
+
+        let made = try await source.newRow(
+            PhoneNewRowParams(repo: "demo", branch: "feat/task", brief: brief),
+            line: PhoneAgentCommand.line("printf '%s|' > \(out)", brief: brief))
+        #expect(!FileManager.default.fileExists(atPath: home.dir.sub("pwned")))
+
+        #expect(made.branch == "feat/task")
+        let snapshot = await daemon.snapshot()
+        #expect(snapshot.rows.contains { $0.path == made.path && $0.branch == "feat/task" })
+        #expect(snapshot.panes.contains { $0.id == made.pane && $0.rowPath == made.path })
+        #expect(await eventually { contents(out) == brief + "|" })
+        #expect(!FileManager.default.fileExists(atPath: made.path + "/pwned"))
+    }
+
+    @Test func aRefusedBranchMakesNoPane() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let source = BoxPhoneSource(daemon: daemon)
+
+        await #expect(throws: ControlError.self) {
+            try await source.newRow(PhoneNewRowParams(repo: "demo", branch: "bad..name", brief: ""), line: "true")
+        }
+
+        #expect(await daemon.snapshot().panes.isEmpty)
+    }
 }
 
 /// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
@@ -208,6 +241,35 @@ struct BoxPhonesMethodsTests {
 
         let result = try #require(paired.result).decode(PhonePairResult.self)
         #expect(result.mac == "box" && result.kind == PhoneServerKind.box)
+    }
+
+    /// Hello names the command the Mac set for the box, and the standard one until it sets one.
+    @Test func helloCarriesTheCommandTheMacSet() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        try "127.0.0.1 0".write(toFile: home.paths.folder + "/phone-listen", atomically: true, encoding: .utf8)
+        let phones = BoxMain.phoneServer(daemon: daemon, paths: home.paths, environment: [:])
+        await phones.refresh()
+        defer { phones.stop() }
+        let port = try #require(await phones.status().endpoints.first?.port)
+        let code = await phones.registry.newCode().code
+        let client = try PhoneTestClient(port: port)
+        let paired = try await offPool {
+            try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "iPhone")))
+        }
+        let token = try #require(paired.result).decode(PhonePairResult.self).token
+        func greeting() async throws -> PhoneHelloResult {
+            let hello = try await offPool {
+                try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: token)))
+            }
+            return try #require(hello.result).decode(PhoneHelloResult.self)
+        }
+
+        #expect(try await greeting().agentCommand == PhoneAgentCommand.standard)
+        var config = home.config
+        config.agentCommand = "codex --yolo"
+        try await daemon.configure(config)
+        #expect(try await greeting().agentCommand == "codex --yolo")
     }
 
     @Test func pairingGivesACodeAndListingShowsNoPhonesYet() async throws {

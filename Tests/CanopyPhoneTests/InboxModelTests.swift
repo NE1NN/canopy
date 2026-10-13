@@ -14,7 +14,6 @@ struct InboxModelTests {
     @Test func theInboxHoldsWhatNeedsTheAuthor() async throws {
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         #expect(model.sections.needsYou.map(\.row.name) == ["feat/ios-companion", "#0853"])
         #expect(model.sections.done.map(\.row.name) == ["fix/port-scan-drain"])
@@ -26,7 +25,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         let item = try #require(model.sections.done.first)
         await model.markRead(item)
@@ -45,7 +43,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
         mac.setInbox(PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         #expect(model.sections.done.count == 2)
         await model.markAllRead()
@@ -63,7 +60,6 @@ struct InboxModelTests {
         }
         mac.setInbox(PhoneInbox(rows: Rows.inbox.rows + [Self.other]))
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         await model.markAllRead()
         #expect(model.sections.done.map(\.agent.pane) == ["p4"])
@@ -77,7 +73,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.seen) { _ in .error("pane_not_found") }
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         await model.markRead(try #require(model.sections.done.first))
         #expect(model.sections.done.isEmpty)
@@ -87,7 +82,6 @@ struct InboxModelTests {
     @Test func caughtUpCountsRunningAgentsWhileConnected() async throws {
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         #expect(model.caughtUpDetail == "Nothing is waiting for you.\n2 agents are running.")
         mac.setInbox(PhoneInbox(rows: [Rows.idle]))
@@ -97,7 +91,6 @@ struct InboxModelTests {
     @Test func caughtUpOutOfReachSaysWhenItWasTrue() async throws {
         mac.setInbox(PhoneInbox(rows: [Rows.main, Rows.idle]))
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         mac.goAway()
         #expect(await eventually { model.isStale })
@@ -123,7 +116,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.seen) { .result($0.params ?? .null) }
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         await model.markRead(try #require(model.sections.done.first))
         #expect(model.sections.done.isEmpty)
@@ -137,7 +129,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.answer) { .result(($0.params ?? .null)) }
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         let item = try #require(model.sections.needsYou.first { $0.agent.prompt != nil })
         await model.answer(item, allow: true)
@@ -156,7 +147,6 @@ struct InboxModelTests {
         mac.on(PhoneMethod.answer) { _ in .error("prompt_gone") }
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         let item = try #require(model.sections.needsYou.first { $0.agent.prompt != nil })
         await model.answer(item, allow: true)
@@ -195,7 +185,6 @@ struct InboxModelTests {
     @Test func labelsNamePluginsAndReposOnlyWhenThereAreSeveral() async throws {
         mac.setInbox(Rows.inbox)
         let servers = try await servers(mac)
-        let connection = try #require(servers.connections.first)
         let model = InboxModel(servers: servers)
         #expect(model.label(for: Rows.ticket) == "ticket")
         #expect(model.label(for: Rows.companion) == nil)

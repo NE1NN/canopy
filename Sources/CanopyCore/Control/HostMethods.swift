@@ -67,12 +67,18 @@ public struct HostAddParams: Codable, Sendable {
     public var repos: [String: String]
     public var wake: String?
     public var idleDetachMinutes: Int?
+    /// What a task from the phone runs there.
+    public var agentCommand: String?
 
-    public init(alias: String, repos: [String: String], wake: String? = nil, idleDetachMinutes: Int? = nil) {
+    public init(
+        alias: String, repos: [String: String], wake: String? = nil, idleDetachMinutes: Int? = nil,
+        agentCommand: String? = nil
+    ) {
         self.alias = alias
         self.repos = repos
         self.wake = wake
         self.idleDetachMinutes = idleDetachMinutes
+        self.agentCommand = agentCommand
     }
 }
 

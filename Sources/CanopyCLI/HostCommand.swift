@@ -22,7 +22,8 @@ struct HostCommand: AsyncParsableCommand {
                 its clone on the host, such as --repo solis-v1=~/Projects/solis-v1. --wake runs on this Mac when \
                 the host cannot be reached, such as a command that starts it. Panes detach after --idle-detach \
                 minutes with nothing running and nothing typed, 30 by default, so the host can power itself off; 0 \
-                never detaches.
+                never detaches. --agent is what a task from the phone runs there, with the brief as its last \
+                argument; canopy phone agent --on <host> shows or changes it later.
 
                 Programs on the host can then run canopy, which drives this Mac's Canopy as a local agent can, so \
                 add only a host whose account you trust as you trust this Mac.
@@ -37,6 +38,8 @@ struct HostCommand: AsyncParsableCommand {
         var wake: String?
         @Option(help: ArgumentHelp("Minutes before quiet panes detach.", valueName: "minutes"))
         var idleDetach: Int?
+        @Option(help: ArgumentHelp("What a task from the phone runs on the host.", valueName: "command"))
+        var agent: String?
         @OptionGroup var output: OutputOptions
 
         func validate() throws {
@@ -52,7 +55,8 @@ struct HostCommand: AsyncParsableCommand {
                 repos[parts[0]] = parts.count > 1 ? parts[1] : ""
             }
             let client = Client(json: output.json)
-            let params = HostAddParams(alias: alias, repos: repos, wake: wake, idleDetachMinutes: idleDetach)
+            let params = HostAddParams(
+                alias: alias, repos: repos, wake: wake, idleDetachMinutes: idleDetach, agentCommand: agent)
             let result = client.call(HostMethod.add, params)
             if let host = try? result.decode(HostInfo.self) {
                 for warning in host.warnings {

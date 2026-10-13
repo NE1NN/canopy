@@ -31,7 +31,7 @@ public final class PhoneServer: Sendable {
             port: settings.port, addresses: settings.addresses,
             gate: PhoneGate(
                 registry: registry, name: settings.serverName, kind: settings.kind, wake: settings.wake,
-                version: settings.version,
+                agentCommand: settings.agentCommand, version: settings.version,
                 helloTimeout: helloTimeout,
                 handler: { request, session in
                     guard let server = handle.server.withLock({ $0 }) else {
@@ -165,6 +165,31 @@ public final class PhoneServer: Sendable {
                 streams.remove(params.subscription, on: session)
             }
             return try success(params)
+
+        case PhoneMethod.newRow:
+            var params = try request.decodeParams(PhoneNewRowParams.self)
+            params.repo = params.repo.trimmingCharacters(in: .whitespacesAndNewlines)
+            params.branch = params.branch.trimmingCharacters(in: .whitespacesAndNewlines)
+            params.base = params.base?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if params.base?.isEmpty == true { params.base = nil }
+            guard !params.repo.isEmpty, !params.branch.isEmpty else {
+                throw ControlError(code: "bad_params", message: "A new task needs a repo and a branch.")
+            }
+            guard params.brief.utf8.count <= PhoneAgentCommand.briefLimit else {
+                throw ControlError(
+                    code: "bad_params",
+                    message: "The brief is too long. Keep it under \(PhoneAgentCommand.briefLimit / 1024) KB.")
+            }
+            guard !params.brief.contains("\u{0}") else {
+                throw ControlError(
+                    code: "bad_params", message: "The brief holds a NUL character, which no shell can pass on.")
+            }
+            let line = PhoneAgentCommand.line(settings.agentCommand(), brief: params.brief)
+            let made = try await source.newRow(params, line: line)
+            var extra: [String: JSONValue] = ["repo": .string(params.repo), "branch": .string(made.branch)]
+            if settings.logsCommands() { extra["brief"] = .string(params.brief) }
+            record(request, session, pane: made.pane, extra: extra)
+            return try success(made)
 
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")

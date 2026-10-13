@@ -483,11 +483,33 @@ if ((with_box)); then
         "$cli" host wake-key "$alias" --clear >/dev/null || fail "host wake-key --clear failed"
         wait_for 20 eval '[[ -z "$(wake_instance)" ]]' || fail "a cleared wake key still reaches the phone"
         [[ "$(ps -o command= -p "$aws_pid" 2>/dev/null)" == *fake-aws.py* ]] && kill "$aws_pid"
+        step "a task from the phone makes a row on the box running the command the Mac set, with the brief whole"
+        "$cli" phone agent --on "$alias" "printf '%s|' > '$work/box-task.out'" >/dev/null \
+            || fail "phone agent --on could not set the box's command"
+        box_agent() { $phone hello-json "$link" "$work/box-token" | json 'd.get("agentCommand", "")'; }
+        wait_for 20 eval '[[ "$(box_agent)" == *box-task.out* ]]' \
+            || fail "the box's hello does not carry the command: $(box_agent)"
+        /usr/bin/python3 - "$work" <<'PY'
+import json, sys
+brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME\u0015touch pwned\r\tdone"
+open(sys.argv[1] + "/box-brief.txt", "w").write(brief)
+json.dump({"repo": "demo", "branch": "e2e/box-task", "brief": brief}, open(sys.argv[1] + "/box-task.json", "w"))
+PY
+        $phone call "$link" "$work/box-token" phone.newRow "$(cat "$work/box-task.json")" > "$work/box-task-made.json" \
+            || fail "phone.newRow on the box failed: $(cat "$work/box-task-made.json")"
+        box_task_row=$(json 'd["path"]' < "$work/box-task-made.json")
+        box_task_ran() { [[ "$(cat "$work/box-task.out" 2>/dev/null)" == "$(cat "$work/box-brief.txt")|" ]]; }
+        wait_for 20 box_task_ran || fail "the box's agent did not get the brief whole: $(cat "$work/box-task.out" 2>/dev/null)"
+        on_host "test ! -e '$box_task_row/pwned'" || fail "the brief ran in the box's shell"
+        box_task_here() { "$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/box-task"][0]'; }
+        wait_for 30 box_task_here || fail "the row the phone made on the box does not show here"
         "$cli" phone remove e2e-phone --on "$alias" >/dev/null || fail "phone remove --on failed"
         [[ "$($phone hello "$link" "$work/box-token")" != ok ]] || fail "a removed phone still says hello to the box"
     fi
 
     step "row new --run in the pane makes a row on the box, whose pane shows here as a tab"
+    box_sessions() { on_host "tmux -u -L $server list-sessions -F '#{session_name}'" | grep -c '^b' || true; }
+    sessions_on_box=$(box_sessions)
     in_pane row-box "canopy row new e2e/boxed --run 'echo boxed-\$((6 * 7))'"
     succeeded row-box
     boxed_row() { "$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/boxed"][0]'; }
@@ -498,10 +520,10 @@ if ((with_box)); then
     boxed_says() { "$cli" term read "$(boxed_pane)" --lines 50 | grep -q boxed-42; }
     wait_for 60 boxed_says || fail "the box's pane did not run its command"
     boxed_session=$("$cli" term list --all --json | json '[t["pane"] for t in d if t["row"] == "e2e/boxed"][0]')
-    box_sessions() { on_host "tmux -u -L $server list-sessions -F '#{session_name}'" | grep -c '^b' || true; }
-    [[ "$(box_sessions)" == 1 ]] || fail "the box has $(box_sessions) panes of its own, not 1"
+    [[ "$(box_sessions)" == $((sessions_on_box + 1)) ]] \
+        || fail "the box has $(box_sessions) panes of its own, not $((sessions_on_box + 1))"
     "$cli" term close "$boxed_session" --force >/dev/null || fail "the box's pane could not be closed here"
-    box_pane_gone() { [[ "$(box_sessions)" == 0 ]]; }
+    box_pane_gone() { [[ "$(box_sessions)" == "$sessions_on_box" ]]; }
     wait_for 20 box_pane_gone || fail "closing the box's pane here did not end its session on the host"
 
     step "host upgrade --undo gives the host back, and hooks reach this Mac again"
@@ -515,6 +537,10 @@ if ((with_box)); then
     succeeded hook-undo
     wait_for 20 eval '[[ "$(agent_state)" == done ]]' || fail "after --undo the agent is $(agent_state), not done"
     "$cli" row rm e2e/boxed --repo demo --force --delete-branch >/dev/null || fail "the box's row could not be removed"
+    if [[ "$alias" == fake-box ]]; then
+        "$cli" row rm e2e/box-task --repo demo --force --delete-branch >/dev/null \
+            || fail "the row the phone made on the box could not be removed"
+    fi
 fi
 
 step "row rm ends the session, removes the worktree, and forgets the row"

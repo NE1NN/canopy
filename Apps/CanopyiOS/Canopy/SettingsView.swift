@@ -118,6 +118,16 @@ private struct ServerDetail: View {
                             : "The key can only start this instance.")
                 }
             }
+            Section {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent")
+                    Text(server.agentCommand ?? "None").font(.footnote.monospaced()).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("New task")
+            } footer: {
+                Text(server.agentHint)
+            }
             Section("This iPhone") {
                 LabeledContent("Paired as", value: server.phone)
             }

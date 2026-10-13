@@ -51,6 +51,8 @@ final class FakeMac: PhoneTransport, Sendable {
         var codes: Set<String>
         /// What hello hands the phone to start this box with.
         var wake: PhoneWake?
+        /// What hello says a task from the phone runs.
+        var agentCommand: String?
         var tokens: [String: String] = [:]
         var inbox = PhoneInbox()
         var rows = PhoneRowsResult(sections: [])
@@ -180,7 +182,8 @@ final class FakeMac: PhoneTransport, Sendable {
             return .result(
                 (try? .from(
                     PhoneHelloResult(
-                        mac: name, version: "0.9", phone: phone, kind: kind, wake: state.withLock { $0.wake })))
+                        mac: name, version: "0.9", phone: phone, kind: kind, wake: state.withLock { $0.wake },
+                        agentCommand: state.withLock { $0.agentCommand })))
                     ?? .null)
         case PhoneMethod.subscribe:
             link.inboxSubscription = request.id

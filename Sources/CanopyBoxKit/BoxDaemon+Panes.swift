@@ -30,6 +30,8 @@ extension BoxDaemon {
             host: config.host, rowPath: row.path, clone: mainRows[row.repo]?.path ?? row.path, hostHome: paths.root,
             homeID: paths.homeID)
         environment["PATH"] = paths.bin + ":" + (tmux.environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin")
+        // Canopy's own variables win, so a caller cannot pass the pane off as another.
+        environment.merge(params.environment ?? [:]) { own, _ in own }
         do {
             try await tmux.newSession(id, folder: row.path, environment: environment)
         } catch {

@@ -25,6 +25,8 @@ public final class Pane: Identifiable {
     }
     @ObservationIgnored private let settings: ShellSettings
     @ObservationIgnored private let activity: ActivityLog
+    /// Variables beside Canopy's own, such as a task's brief, which is never typed.
+    @ObservationIgnored private let extraEnvironment: [String: String]
     @ObservationIgnored private var process: PtyProcess?
     @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
@@ -68,9 +70,11 @@ public final class Pane: Identifiable {
 
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
-        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil
+        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil,
+        environment: [String: String] = [:]
     ) {
         self.id = id
+        self.extraEnvironment = environment
         self.context = context
         self.command = command
         let isRemote = context.remote != nil
@@ -299,7 +303,9 @@ public final class Pane: Identifiable {
     private func start(_ command: PaneCommand) {
         self.command = command
         if case .script = command { isScript = true } else { isScript = false }
+        // Canopy's own variables win, so a caller cannot pass the pane off as another.
         let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
+            .merging(extraEnvironment) { own, _ in own }
         // A new secret for each shell, so only reports this shell prints count.
         let token = settings.reportsCommands ? UUID().uuidString : nil
         let launch =

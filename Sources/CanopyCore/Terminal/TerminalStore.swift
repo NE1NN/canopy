@@ -196,10 +196,10 @@ public final class TerminalStore {
     @discardableResult
     public func openTab(
         for context: PaneContext, name: String? = nil, command: PaneCommand = .shell, directory: String? = nil,
-        select: Bool = true, session: String? = nil
+        select: Bool = true, session: String? = nil, environment: [String: String] = [:]
     ) -> (tab: TerminalTab, pane: Pane) {
         let tabs = tabs(inRow: context.rowPath)
-        let pane = makePane(context, command: command, directory: directory, session: session)
+        let pane = makePane(context, command: command, directory: directory, session: session, environment: environment)
         let tab = TerminalTab(
             id: TabID(nextTab), name: name ?? TabNaming.next(after: tabs.filter { $0.grid != nil }.map(\.name)),
             grid: TerminalGrid(pane: pane))
@@ -589,7 +589,8 @@ public final class TerminalStore {
     /// A remote row's terminals attach to their host rather than start a shell here. A restored one takes the ID its
     /// session is named after, which the session's shell and the agents in it know as CANOPY_PANE.
     private func makePane(
-        _ context: PaneContext, command: PaneCommand, directory: String?, session: String? = nil, id: PaneID? = nil
+        _ context: PaneContext, command: PaneCommand, directory: String?, session: String? = nil, id: PaneID? = nil,
+        environment: [String: String] = [:]
     ) -> Pane {
         let id = id ?? PaneID(nextPane)
         nextPane = max(nextPane, id.number + 1)
@@ -597,7 +598,7 @@ public final class TerminalStore {
         let pane = Pane(
             id: id, context: context, command: command, settings: settings,
             emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory,
-            session: session)
+            session: session, environment: environment)
         pane.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
