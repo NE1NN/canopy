@@ -137,6 +137,13 @@ public actor HostConnection {
         return await launcher.run(ssh.exec(["true"]), timeout: .seconds(10)).status == 255
     }
 
+    /// Runs `remote` on the host with `stdin` as its input, connecting first.
+    public func run(_ remote: [String], timeout: Duration, stdin: Data) async throws -> SubprocessResult {
+        try await connect()
+        lastUse = clock.now
+        return await launcher.run(ssh.exec(remote), timeout: timeout, stdin: stdin)
+    }
+
     /// Runs `remote` only while the master is up, without counting as use, so watching an idle host never keeps it.
     public func probe(_ remote: [String], timeout: Duration) async -> SubprocessResult? {
         guard state == .connected, master?.isRunning == true else { return nil }
