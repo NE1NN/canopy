@@ -238,3 +238,26 @@ extension BoxDaemon {
         return groups
     }
 }
+
+extension BoxDaemon {
+    /// Pastes text into a pane as one bracketed paste, with newlines as Return and no escape characters, so the text
+    /// cannot end its own paste.
+    public func paste(pane id: String, text: String) async throws {
+        guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
+        let clean = text.replacingOccurrences(of: "\r\n", with: "\n").filter { $0 != "\u{1b}" }
+        typed(Data(clean.utf8), into: id)
+        try await tmux.paste(clean, to: id)
+    }
+
+    /// The pane's screen with colours, and with `scrollback`, that many lines above it.
+    public func screen(pane id: String, scrollback: Int?) async throws -> PhoneScreen {
+        guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
+        let size = (try? await tmux.size(id)) ?? (columns: 80, rows: 24)
+        let all = try await tmux.capture(id, lines: size.rows + (scrollback ?? 0), escapes: true)
+            .components(separatedBy: "\n")
+        let screen = Array(all.suffix(size.rows))
+        return PhoneScreen(
+            pane: id, columns: size.columns, rows: size.rows,
+            scrollback: scrollback.map { _ in Array(all.dropLast(screen.count)) }, lines: screen)
+    }
+}

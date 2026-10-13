@@ -94,3 +94,19 @@ private struct KeptReport: Decodable {
     /// When it was kept, in seconds since 1970.
     var kept: Double?
 }
+
+extension BoxDaemon {
+    /// Takes the answer to a pane's open prompt, if `promptID` still names it, so a second answer finds it gone.
+    func takeAnswer(pane id: String, promptID: String) -> OpenPrompt? {
+        guard let index = state.panes.firstIndex(where: { $0.id == id }),
+            let prompt = state.panes[index].agent.prompt, prompt.id == promptID,
+            state.panes[index].agent.answer(promptID: promptID)
+        else { return nil }
+        changed()
+        return prompt
+    }
+
+    func agent(of id: String) -> PaneAgent? {
+        pane(id)?.agent
+    }
+}

@@ -103,6 +103,14 @@ public struct Tmux: Sendable {
         return rows.joined(separator: "\n")
     }
 
+    /// The pane's size in cells.
+    public func size(_ name: String) async throws -> (columns: Int, rows: Int) {
+        let printed = try await run(["display-message", "-p", "-t", "=\(name):", "#{pane_width} #{pane_height}"])
+        let parts = printed.split(separator: " ").compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard parts.count == 2 else { throw TmuxError(arguments: ["display-message"], message: printed) }
+        return (parts[0], parts[1])
+    }
+
     /// Types text as it is, never reading words such as `Enter` as keys.
     public func sendText(_ text: String, to name: String) async throws {
         guard !text.isEmpty else { return }
