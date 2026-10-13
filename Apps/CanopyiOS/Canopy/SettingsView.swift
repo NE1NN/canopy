@@ -119,8 +119,9 @@ private struct ServerDetail: View {
                 }
             }
             Section {
-                LabeledContent("Agent") {
-                    Text(server.agentCommand ?? "None").font(.footnote.monospaced()).multilineTextAlignment(.trailing)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agent")
+                    Text(server.agentCommand ?? "None").font(.footnote.monospaced()).foregroundStyle(.secondary)
                 }
             } header: {
                 Text("New task")

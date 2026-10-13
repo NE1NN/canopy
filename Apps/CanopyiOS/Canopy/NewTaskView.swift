@@ -33,27 +33,18 @@ struct NewTaskView: View {
                 }
                 Section("Task") {
                     if model.repos.isEmpty {
-                        TextField("Repo", text: $model.repo)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($isTyping)
-                            .accessibilityIdentifier("task-repo")
+                        Field("Repo", text: $model.repo, prompt: "solis", id: "task-repo", isTyping: $isTyping)
                     } else {
                         Picker("Repo", selection: $model.repo) {
                             ForEach(model.repos, id: \.self) { Text($0).tag($0) }
                         }
                         .accessibilityIdentifier("task-repo")
                     }
-                    TextField("Branch", text: $model.branch, prompt: Text("feat/new-thing"))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($isTyping)
-                        .accessibilityIdentifier("task-branch")
-                    TextField("From", text: $model.base, prompt: Text("From origin's default branch"))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($isTyping)
-                        .accessibilityIdentifier("task-base")
+                    Field(
+                        "Branch", text: $model.branch, prompt: "feat/new-thing", id: "task-branch", isTyping: $isTyping)
+                    Field(
+                        "From", text: $model.base, prompt: "origin's default branch", id: "task-base",
+                        isTyping: $isTyping)
                 }
                 Section {
                     TextField("What should the agent do?", text: $model.brief, axis: .vertical)
@@ -116,6 +107,34 @@ struct NewTaskView: View {
         .onChange(of: model.repos) { model.chose() }
     }
 
+}
+
+/// A labeled field for a name git takes, its value on the right as the Repo picker's is.
+private struct Field: View {
+    var label: String
+    @Binding var text: String
+    var prompt: String
+    var id: String
+    var isTyping: FocusState<Bool>.Binding
+
+    init(_ label: String, text: Binding<String>, prompt: String, id: String, isTyping: FocusState<Bool>.Binding) {
+        self.label = label
+        _text = text
+        self.prompt = prompt
+        self.id = id
+        self.isTyping = isTyping
+    }
+
+    var body: some View {
+        LabeledContent(label) {
+            TextField(label, text: $text, prompt: Text(prompt))
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused(isTyping)
+                .accessibilityIdentifier(id)
+        }
+    }
 }
 
 /// A server Where offers: its kind's symbol, its name, whether Start can reach it, and a check when chosen.

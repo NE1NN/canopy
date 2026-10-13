@@ -189,8 +189,11 @@ final class ScreenTour: XCTestCase {
         XCTAssert(element("server-devbox").exists, "Settings does not list the box")
         shot("settings")
         element("server-devbox").tap()
-        XCTAssert(app.buttons["remove-server"].waitForExistence(timeout: 5), "no server detail")
+        XCTAssert(app.navigationBars["devbox"].waitForExistence(timeout: 5), "no server detail")
+        XCTAssert(text("fixture-claude").waitForExistence(timeout: 5), "the server detail has no agent command")
         shot("settings-server")
+        app.swipeUp()
+        XCTAssert(app.buttons["remove-server"].waitForExistence(timeout: 5), "the server detail has no Remove")
         app.navigationBars["devbox"].buttons.element(boundBy: 0).tap()
         // Away and back with Settings open: the lock covers the sheet too, so its switch cannot turn the lock off.
         XCUIDevice.shared.press(.home)
