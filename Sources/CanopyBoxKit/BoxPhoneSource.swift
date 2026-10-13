@@ -8,6 +8,8 @@ import Foundation
 public final class BoxPhoneSource: PhoneSource {
     let daemon: BoxDaemon
     private let subscriptions = Subscriptions()
+    /// Each pane's conversation's last entry, which words its agent's line as on the Mac.
+    let tails = TranscriptTails()
 
     public init(daemon: BoxDaemon) {
         self.daemon = daemon
@@ -26,11 +28,11 @@ public final class BoxPhoneSource: PhoneSource {
     /// How long a reply waits to be taken before it no longer counts as delivered.
     static let deliveryWindow = Duration.seconds(10 * 60)
 
-    static func inbox(_ snapshot: BoxSnapshot) -> PhoneInbox {
-        PhoneInbox(rows: phoneRows(snapshot))
+    static func inbox(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> PhoneInbox {
+        PhoneInbox(rows: phoneRows(snapshot, tails: tails))
     }
 
-    static func phoneRows(_ snapshot: BoxSnapshot) -> [PhoneRow] {
+    static func phoneRows(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> [PhoneRow] {
         snapshot.rows.map { row in
             PhoneRow(
                 path: row.path, name: row.branch ?? (row.path as NSString).lastPathComponent, repo: row.repo,
@@ -41,38 +43,25 @@ public final class BoxPhoneSource: PhoneSource {
                 }.map { pane in
                     PhoneAgent(
                         pane: pane.id, state: pane.agent, unseen: pane.unseen, since: pane.since,
-                        lastLine: lastLine(pane),
+                        lastLine: lastLine(pane, tail: pane.transcriptPath.flatMap { tails?.last(in: $0) }),
                         backgroundTasks: pane.backgroundTasks.isEmpty ? nil : pane.backgroundTasks,
                         prompt: pane.prompt, hasTranscript: pane.transcriptPath != nil)
                 })
         }
     }
 
-    /// What the agent waits on, as the Mac words it, or else the screen's last line.
-    static func lastLine(_ pane: BoxPane) -> String? {
-        func short(_ text: String) -> String { text.count > 120 ? String(text.prefix(119)) + "…" : text }
-        if let prompt = pane.prompt {
-            switch prompt.kind {
-            case .permission where prompt.tool == "Bash": return "Wants to run \(short(prompt.detail ?? "a command"))"
-            case .permission:
-                return "Wants to use \(prompt.tool ?? "a tool")" + (prompt.detail.map { ": \(short($0))" } ?? "")
-            case .question: return "Asks: \(short(prompt.questions?.first?.question ?? "a question"))"
-            case .plan: return "Has a plan ready"
-            case .reply: return "Asks: \(short(prompt.detail ?? "a question"))"
-            }
-        }
-        if pane.agent == .background, !pane.backgroundTasks.isEmpty {
-            return "Waiting on \(pane.backgroundTasks.joined(separator: ", ")) in the background"
-        }
-        return pane.lastLine.map(short)
+    /// What the agent waits on or last said, as the Mac words it, or else the screen's last line.
+    static func lastLine(_ pane: BoxPane, tail: TranscriptEntry?) -> String? {
+        AgentLine.line(prompt: pane.prompt, state: pane.agent, backgroundTasks: pane.backgroundTasks, tail: tail)
+            ?? pane.lastLine.map(AgentLine.short)
     }
 
     public func inbox() async -> PhoneInbox {
-        Self.inbox(await daemon.snapshot())
+        Self.inbox(await daemon.snapshot(), tails: tails)
     }
 
     public func rows() async -> PhoneRowsResult {
-        let rows = Self.phoneRows(await daemon.snapshot())
+        let rows = Self.phoneRows(await daemon.snapshot(), tails: tails)
         var names: [String] = []
         for row in rows where !names.contains(row.repo ?? "") { names.append(row.repo ?? "") }
         return PhoneRowsResult(
@@ -89,10 +78,11 @@ public final class BoxPhoneSource: PhoneSource {
         if let previous { await subscriptions.cancel(previous) }
         let id = UUID()
         let daemon = daemon
+        let tails = tails
         let task = Task {
             var last = lastSent
             for await snapshot in await daemon.changes() {
-                let inbox = Self.inbox(snapshot)
+                let inbox = Self.inbox(snapshot, tails: tails)
                 if inbox != last {
                     last = inbox
                     send(inbox)

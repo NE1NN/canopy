@@ -30,6 +30,27 @@ struct BoxPhoneSourceTests {
         #expect(rows.sections.first?.others.map(\.path) == [made.row.path])
     }
 
+    /// A done agent's line is what it last said, as on the Mac, not the prompt its screen ends on.
+    @Test func aDoneAgentsLineIsItsLastWords() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let transcript = home.dir.sub("t.jsonl")
+        let said: [String: Any] = [
+            "type": "assistant", "uuid": "u1", "timestamp": "2026-10-14T00:00:00.000Z", "sessionId": "s",
+            "message": [
+                "role": "assistant", "content": [["type": "text", "text": "Migrated.\n\nREADY: totals match"]],
+            ],
+        ]
+        try (JSONSerialization.data(withJSONObject: said) + Data("\n".utf8)).write(to: URL(fileURLWithPath: transcript))
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s", transcriptPath: transcript))
+        let source = BoxPhoneSource(daemon: daemon)
+
+        let agent = await source.inbox().rows.flatMap(\.agents).first
+
+        #expect(agent?.lastLine == "READY: totals match")
+    }
+
     @Test func aTranscriptIsThePanesFile() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
