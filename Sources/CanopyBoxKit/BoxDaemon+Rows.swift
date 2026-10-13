@@ -25,6 +25,16 @@ extension BoxDaemon {
         let path = Paths.canonical(params.path)
         if isMain(path) { throw BoxErrors.cannotRemoveMain }
         guard let row = state.rows.first(where: { $0.path == path }) else { throw BoxErrors.rowNotFound(params.path) }
+        if !params.force {
+            let running = state.panes.filter { $0.rowPath == path }.compactMap { pane in
+                activity[pane.id].flatMap { $0.busy ? ($0.foreground ?? "A program") : nil }
+            }
+            var seen = Set<String>()
+            let programs = running.filter { seen.insert($0).inserted }
+            if !programs.isEmpty {
+                throw BoxErrors.rowBusy(row.branch ?? (row.path as NSString).lastPathComponent, programs: programs)
+            }
+        }
         let clone = try clonePath(of: row.repo)
         return try await inQueue(clone) {
             try await self.rowRemoveNow(row, clone: clone, force: params.force, deleteBranch: params.deleteBranch)
@@ -84,6 +94,8 @@ extension BoxDaemon {
                 BranchSlug.folder(for: choice.branch, in: URL(fileURLWithPath: parent)) {
                     known.contains(Paths.canonical($0.path)) || FileManager.default.fileExists(atPath: $0.path)
                 }.path)
+            makingRows.insert(folder)
+            defer { makingRows.remove(folder) }
             do {
                 try await git.run(["worktree", "add", "--quiet"] + choice.worktreeArguments(folder: folder))
             } catch let error as GitError
@@ -91,6 +103,7 @@ extension BoxDaemon {
             {
                 throw BoxErrors.checkedOutElsewhere(choice.branch)
             }
+            state.rows.removeAll { $0.path == folder }
             state.rows.append(StoredRow(path: folder, repo: repo, branch: choice.branch))
             var notes = choice.notes
             let worktree = git.at(folder)

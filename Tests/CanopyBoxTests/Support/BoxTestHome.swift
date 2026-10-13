@@ -1,4 +1,5 @@
 import CanopyAgents
+import CanopyGit
 import CanopySystem
 import CanopyTestSupport
 import CanopyWire
@@ -15,9 +16,9 @@ final class BoxTestHome: Sendable {
     let clone: String
     let paths: BoxPaths
 
-    init() async throws {
+    init(pauses: [String: Double] = [:]) async throws {
         dir = try TempDir(in: "/tmp")
-        server = try TmuxServer()
+        server = try TmuxServer(pauses: pauses)
         clone = try await GitFixture.repo(in: dir, origin: true)
         paths = BoxPaths(root: dir.path, homeID: Self.homeID)
     }
@@ -25,8 +26,10 @@ final class BoxTestHome: Sendable {
     var config: BoxConfig { BoxConfig(host: "box", repos: ["demo": clone]) }
 
     /// A daemon on this home, configured unless `configured` is false, and started.
-    func daemon(configured: Bool = true) async throws -> BoxDaemon {
-        let daemon = BoxDaemon(paths: paths, tmux: server.tmux, git: { GitFixture.clone($0) })
+    func daemon(
+        configured: Bool = true, git: @escaping @Sendable (String) -> GitClone = { GitFixture.clone($0) }
+    ) async throws -> BoxDaemon {
+        let daemon = BoxDaemon(paths: paths, tmux: server.tmux, git: git)
         if configured, !FileManager.default.fileExists(atPath: paths.configFile) {
             try BoxFiles.write(try JSONEncoder().encode(config), to: paths.configFile)
         }

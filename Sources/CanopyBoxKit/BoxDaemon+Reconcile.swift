@@ -20,6 +20,8 @@ extension BoxDaemon {
             return
         }
         var mains: [String: StoredRow] = [:]
+        // Rows made while git lists are not in its listing, so only rows from before it can be missing.
+        let known = Set(state.rows.map(\.path))
         for (repo, clonePath) in config.repos {
             let clone = Paths.canonical(clonePath)
             guard let listed = try? await git(clone).run(["worktree", "list", "--porcelain", "-z"]) else {
@@ -35,6 +37,7 @@ extension BoxDaemon {
             for worktree in worktrees.dropFirst() where !worktree.isBare {
                 let path = Paths.canonical(worktree.path)
                 seen.insert(path)
+                guard !makingRows.contains(path) else { continue }
                 if let index = state.rows.firstIndex(where: { $0.path == path }) {
                     state.rows[index].branch = worktree.branch
                     state.rows[index].head = worktree.head
@@ -47,7 +50,9 @@ extension BoxDaemon {
                 }
             }
             for index in state.rows.indices
-            where state.rows[index].repo == repo && !seen.contains(state.rows[index].path) {
+            where state.rows[index].repo == repo && known.contains(state.rows[index].path)
+                && !seen.contains(state.rows[index].path) && !makingRows.contains(state.rows[index].path)
+            {
                 state.rows[index].missing = true
             }
         }
@@ -55,11 +60,14 @@ extension BoxDaemon {
     }
 
     private func reconcilePanes() async {
+        // Panes made while tmux lists are not in its listing, so only panes from before it can be gone.
+        let known = Set(state.panes.map(\.id))
         // A server that cannot be asked says nothing about which sessions run, so the saved panes stay.
         guard let sessions = try? await tmux.panes() else { return }
         let names = Set(sessions.map(\.session))
-        state.panes.removeAll { !names.contains($0.id) }
-        for session in sessions where !state.panes.contains(where: { $0.id == session.session }) {
+        state.panes.removeAll { known.contains($0.id) && !names.contains($0.id) && !makingPanes.contains($0.id) }
+        for session in sessions
+        where !state.panes.contains(where: { $0.id == session.session }) && !makingPanes.contains(session.session) {
             let folder = Paths.canonical(session.start)
             guard let row = row(holding: folder) else { continue }
             state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))

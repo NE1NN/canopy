@@ -37,9 +37,11 @@ public struct BoxPaths: Sendable, Equatable {
     public var tmuxConf: String { home + "/tmux.conf" }
     public var bin: String { home + "/bin" }
 
-    /// Where the repo's rows go: `~/.canopy/worktrees/<repo>`, shared by every home, as the Mac's remote rows use.
+    /// Where the repo's rows go: `~/.canopy/<home id>/worktrees/<repo>`, this home's alone, so a dev build's daemon
+    /// and the release app's on one host never take each other's rows. Rows the Mac made before the host upgraded
+    /// stay where they are, in the folder every home shares, and come over by `box.adopt`.
     public func worktrees(repo: String) -> String {
-        canopy + "/worktrees/" + repo
+        home + "/worktrees/" + repo
     }
 }
 

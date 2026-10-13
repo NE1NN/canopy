@@ -248,3 +248,39 @@ Steps:
 - The built x86_64 binary runs `version` and `serve` in `ubuntu:24.04` under emulation, with `tmux` installed there, and answers `box.hello` through its socket.
 - An opus review of the whole branch, its findings fixed, and an After Review section here.
 - CI's `check` and `linux` jobs pass.
+
+## After Review
+
+An opus review of the whole branch found no critical issues and seven important ones, each fixed with a test that failed first (`BoxReviewTests`):
+
+- A pane or row being made could be dropped or taken twice by a poll or reconcile whose listing came from before it.
+  Panes and rows being made are now skipped by listings, only things known before a listing can be dropped by it, and the appends replace by id.
+  Pinned by `aPollThatListedBeforeAPaneWasMadeKeepsIt`, `aPollDuringAPanesMakingDoesNotTakeItTwice`, and `aRowBeingMadeIsNeitherDoubledNorMissing`, which pause tmux or git in the gap.
+- `term wait b1 b1` trapped on a duplicate dictionary key and killed the daemon; ids are now deduplicated (`aRepeatedPaneInAWaitIsFine`).
+- Socket writes blocked threads of Swift's pool for up to a minute when the Mac stopped reading, and a write that timed out left half a line on a connection that stayed open.
+  Each connection now writes on a queue of its own, and a write that fails or times out closes the connection (`aWriterNeverBlocksAndDropsAPeerThatStopsReading`).
+- An agent whose program was killed, with no `SessionEnd` hook, stayed working and held the box on for good.
+  The poll now ends a pane's agent when its shell gets the terminal back, as the Mac does (`anAgentWhoseProgramEndedWithoutAHookStops`).
+- `term send` over about 16 KB failed, as tmux refuses a command that long; longer text now goes in as an unbracketed paste (`longTextArrivesWhole`).
+- `row rm` killed programs running in the row's panes without `--force`; it now refuses with the Mac's `row_busy` message (`removingARowWithAProgramRunningNeedsForce`).
+  This replaces Task 7's ruling.
+- Two homes' daemons on one host adopted each other's worktrees in the shared `~/.canopy/worktrees/<repo>/`.
+  Box rows now go in `~/.canopy/<home id>/worktrees/<repo>/`, and only that folder is adopted from git; the spec says so (`anotherHomesWorktreesAreLeftAlone`).
+
+The fix to the writer also needed the server to drain a connection's writes before closing it, which `answersWhatCameBeforeTheClientClosedItsSide` caught.
+
+Deferred minors, for 3b, which reworks the server's link anyway:
+
+- Relay framing at the server is tested only for ack then reply: heartbeats, a hang-up cancelling a call, and a hook finishing after one are not pinned.
+- `hungUp` peeks without draining, so a client that sends after its request spins the call's thread.
+- `UnixListener` spins on descriptor exhaustion, where the Mac's relay server sleeps 100 ms.
+- `serve` reconciles and saves state before learning another daemon holds the socket; bind first.
+- Calls are not cancelled when the Mac disconnects fully, so a `box.wait` holds its thread until its timeout.
+- `paneNew` types its command at once, without waiting for the shell, and a typing failure leaves the pane with an error returned.
+- Rows of a repo taken out of `config.json` cannot be removed.
+- After `release()`, the poll takes main-row sessions back within 2 seconds; harmless only while the service stops at once.
+- A huge `box.wait` timeout traps in `Duration.seconds`.
+- `ProcessInfo.hostName` may resolve DNS on first use, on the actor.
+- `read` reports every tmux failure as `pane_not_found`.
+- `row list --json` prints `BoxRow` on the box and `SidebarRow` on the Mac (ruled in Task 10).
+- Interrupts typed through the Mac's `tmux attach` never reach the box's key rules; 3b's input path decides how.

@@ -23,6 +23,8 @@ extension BoxDaemon {
         guard let row = row(path) else { throw BoxErrors.rowNotFound(params.rowPath) }
         let id = "b\(state.nextPane)"
         state.nextPane += 1
+        makingPanes.insert(id)
+        defer { makingPanes.remove(id) }
         var environment = HostLayout.paneEnvironment(
             pane: id, rowName: row.branch ?? (row.path as NSString).lastPathComponent, repoName: row.repo,
             host: config.host, rowPath: row.path, clone: mainRows[row.repo]?.path ?? row.path, hostHome: paths.root,
@@ -86,6 +88,8 @@ extension BoxDaemon {
     public func wait(panes ids: [String], for target: AgentWaitTarget, timeout: Duration) async throws -> (
         pane: String, state: AgentState
     ) {
+        var seen = Set<String>()
+        let ids = ids.filter { seen.insert($0).inserted }
         for id in ids where pane(id) == nil { throw BoxErrors.paneNotFound(id) }
         for id in ids {
             guard let pane = pane(id) else { continue }
@@ -130,15 +134,18 @@ extension BoxDaemon {
     /// Reads what each pane runs, its title, whether a program holds its terminal, and its last line. Panes whose
     /// session ended go, and sessions the box does not know, in one of its rows, become panes.
     public func pollPanes() async {
+        // Panes made while tmux lists are not in its listing, so only panes from before it can be gone.
+        let known = Set(state.panes.map(\.id))
         guard let sessions = try? await tmux.panes() else { return }
         let groups = await Self.foregroundGroups()
         let byName = Dictionary(sessions.map { ($0.session, $0) }, uniquingKeysWith: { first, _ in first })
         var changedPanes = false
-        for pane in state.panes where byName[pane.id] == nil {
+        for pane in state.panes
+        where byName[pane.id] == nil && known.contains(pane.id) && !makingPanes.contains(pane.id) {
             forgetPane(pane.id)
             changedPanes = true
         }
-        for session in sessions where pane(session.session) == nil {
+        for session in sessions where pane(session.session) == nil && !makingPanes.contains(session.session) {
             let folder = Paths.canonical(session.start)
             guard let row = row(holding: folder) else { continue }
             state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))
@@ -146,16 +153,27 @@ extension BoxDaemon {
             changedPanes = true
         }
         var next = activity
+        var ended: [String] = []
         for pane in state.panes {
             guard let session = byName[pane.id] else { continue }
             let group = groups[session.pid] ?? 0
+            let busy = group > 0 && group != session.pid
             let screen = try? await tmux.capture(pane.id, lines: nil)
             let lastLine = screen?.split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            // The shell has its terminal back, so the program an agent ran in has ended, hook or no hook, as when
+            // it was killed.
+            if activity[pane.id]?.busy == true, !busy { ended.append(pane.id) }
             next[pane.id] = PaneActivity(
                 foreground: session.command,
                 title: session.title.isEmpty || Self.machineNames.contains(session.title) ? nil : session.title,
-                busy: group > 0 && group != session.pid,
-                lastLine: lastLine.map { $0.trimmingCharacters(in: .whitespaces) })
+                busy: busy, lastLine: lastLine.map { $0.trimmingCharacters(in: .whitespaces) })
+        }
+        for id in ended {
+            guard let index = state.panes.firstIndex(where: { $0.id == id }),
+                state.panes[index].agent.ended(at: Date()) != nil
+            else { continue }
+            changedPanes = true
+            wakeWaiters()
         }
         next = next.filter { id, _ in state.panes.contains { $0.id == id } }
         if changedPanes { changed() }

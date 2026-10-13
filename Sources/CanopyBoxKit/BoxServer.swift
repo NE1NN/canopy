@@ -13,12 +13,13 @@ public final class BoxServer: Sendable {
     let daemon: BoxDaemon
     private let listener: UnixListener
     static let heartbeatEvery = Duration.seconds(15)
-    static let writeWait = Duration.seconds(60)
+    /// How long a write may wait for a peer to read, before the connection is given up.
+    public static let writeWait = Duration.seconds(60)
 
-    public init(daemon: BoxDaemon, socketPath: String) throws {
+    public init(daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait) throws {
         self.daemon = daemon
         listener = try UnixListener(path: socketPath) { connection in
-            Self.serve(connection, daemon: daemon)
+            Self.serve(connection, daemon: daemon, writer: ConnectionWriter(connection, wait: writeWait))
         }
     }
 
@@ -30,7 +31,7 @@ public final class BoxServer: Sendable {
     /// after its last request, as `printf ... | nc -U` does, so calls already under way still answer before the
     /// connection closes. A subscription ends with the client's sending, since its client keeps that open while it
     /// listens, and one that went away would otherwise hold this thread until the box next changed.
-    private static func serve(_ connection: UnixConnection, daemon: BoxDaemon) {
+    private static func serve(_ connection: UnixConnection, daemon: BoxDaemon, writer: ConnectionWriter) {
         let work = Mutex<[Task<Void, Never>]>([])
         let subscriptions = Mutex<[Task<Void, Never>]>([])
         defer {
@@ -42,6 +43,7 @@ public final class BoxServer: Sendable {
                 finished.signal()
             }
             finished.wait()
+            writer.flush()
             connection.close()
         }
         while let line = try? connection.readLine(deadline: nil) {
@@ -55,14 +57,14 @@ public final class BoxServer: Sendable {
                 send(
                     ControlResponse.failure(
                         id: "", error: ControlError(code: "bad_request", message: "Request is not valid JSON.")),
-                    on: connection)
+                    with: writer)
                 continue
             }
             if request.method == BoxMethod.subscribe {
-                let task = Task { await subscribe(request, on: connection, daemon: daemon) }
+                let task = Task { await subscribe(request, with: writer, daemon: daemon) }
                 subscriptions.withLock { $0.append(task) }
             } else {
-                let task = Task { send(await handle(request, daemon: daemon), on: connection) }
+                let task = Task { send(await handle(request, daemon: daemon), with: writer) }
                 work.withLock { $0.append(task) }
             }
         }
@@ -100,20 +102,20 @@ public final class BoxServer: Sendable {
         try? connection.write(data, deadline: .now + writeWait)
     }
 
-    private static func subscribe(_ request: ControlRequest, on connection: UnixConnection, daemon: BoxDaemon) async {
-        send(.success(id: request.id, result: .bool(true)), on: connection)
+    private static func subscribe(_ request: ControlRequest, with writer: ConnectionWriter, daemon: BoxDaemon) async {
+        send(.success(id: request.id, result: .bool(true)), with: writer)
         for await snapshot in await daemon.changes() {
-            guard let data = try? JSONValue.from(snapshot),
+            guard !writer.failed, let data = try? JSONValue.from(snapshot),
                 let line = try? ControlCodec.encodeLine(
-                    BoxEvent(event: BoxEvent.snapshot, subscription: request.id, data: data)),
-                (try? connection.write(line, deadline: .now + writeWait)) != nil
+                    BoxEvent(event: BoxEvent.snapshot, subscription: request.id, data: data))
             else { return }
+            writer.send(line)
         }
     }
 
-    private static func send(_ response: ControlResponse, on connection: UnixConnection) {
+    private static func send(_ response: ControlResponse, with writer: ConnectionWriter) {
         guard let line = try? ControlCodec.encodeLine(response) else { return }
-        try? connection.write(line, deadline: .now + writeWait)
+        writer.send(line)
     }
 
     /// The answer to one control request.
@@ -175,6 +177,40 @@ public final class BoxServer: Sendable {
             return try .from(await daemon.release())
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
+        }
+    }
+}
+
+/// Writes a connection's lines in order on a queue of its own, so a peer that stops reading holds up no thread of
+/// Swift's pool. A write that fails or waits past `wait` closes the connection, rather than leaving half a line in it.
+final class ConnectionWriter: Sendable {
+    let connection: UnixConnection
+    private let wait: Duration
+    private let queue = DispatchQueue(label: "canopy.box-writer")
+    private let broken = Atomic(false)
+
+    init(_ connection: UnixConnection, wait: Duration) {
+        self.connection = connection
+        self.wait = wait
+    }
+
+    /// Whether a write failed, after which nothing more is sent.
+    var failed: Bool { broken.load(ordering: .acquiring) }
+
+    /// Returns once everything sent before has been written, or given up.
+    func flush() {
+        queue.sync {}
+    }
+
+    func send(_ data: Data) {
+        queue.async { [self] in
+            guard !failed else { return }
+            do {
+                try connection.write(data, deadline: .now + wait)
+            } catch {
+                broken.store(true, ordering: .releasing)
+                connection.close()
+            }
         }
     }
 }

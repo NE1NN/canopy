@@ -106,8 +106,18 @@ public struct Tmux: Sendable {
     /// Types text as it is, never reading words such as `Enter` as keys.
     public func sendText(_ text: String, to name: String) async throws {
         guard !text.isEmpty else { return }
+        guard text.utf8.count <= Self.longestKeys else {
+            // tmux refuses a command this long, so the text goes in as an unbracketed paste of it as it is.
+            let buffer = "canopy-text-\(name)"
+            try await run(["load-buffer", "-b", buffer, "-"], stdin: Data(text.utf8))
+            try await run(["paste-buffer", "-r", "-d", "-b", buffer, "-t", "=\(name):"])
+            return
+        }
         try await run(["send-keys", "-t", "=\(name):", "-l", "--", Self.literal(text)])
     }
+
+    /// The most text `send-keys` takes in one command, well under the 16 KB or so tmux allows.
+    static let longestKeys = 8_000
 
     /// tmux reads an argument ending in `;` as the end of a command, and one ending in `\;` as ending in `;`.
     static func literal(_ argument: String) -> String {

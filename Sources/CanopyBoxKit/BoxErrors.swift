@@ -37,6 +37,20 @@ enum BoxErrors {
             code: "branch_checked_out", message: "Branch \(branch) is already checked out in another worktree.")
     }
 
+    static func rowBusy(_ row: String, programs: [String]) -> ControlError {
+        let names =
+            switch programs.count {
+            case 0: "A program"
+            case 1: programs[0]
+            case 2: "\(programs[0]) and \(programs[1])"
+            default: programs.dropLast().joined(separator: ", ") + ", and " + programs.last!
+            }
+        return ControlError(
+            code: "row_busy",
+            message: "\(names) \(programs.count == 1 ? "is" : "are") still running in \(row). "
+                + "Pass --force to remove the row anyway.")
+    }
+
     static func git(_ error: GitError) -> ControlError {
         ControlError(code: "git_failed", message: error.description)
     }

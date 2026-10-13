@@ -20,6 +20,9 @@ public actor BoxDaemon {
     var cloneQueues: [String: Task<Void, Never>] = [:]
     /// The fetch each clone last made, so rows made together share one.
     var lastFetch: [String: (finishedAt: ContinuousClock.Instant, failure: String?)] = [:]
+    /// Panes and rows being made, which a listing taken meanwhile neither takes in nor drops.
+    var makingPanes: Set<String> = []
+    var makingRows: Set<String> = []
     /// What `wait` calls are waiting on, woken on each agent change or pane end.
     var waiters: [UUID: @Sendable () -> Void] = [:]
 
