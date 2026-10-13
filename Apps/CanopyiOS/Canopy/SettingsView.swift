@@ -75,6 +75,7 @@ private struct ServerLine: View {
 }
 
 private struct ServerDetail: View {
+    @Environment(PhoneApp.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var confirmsRemove = false
     var server: ServerSettings
@@ -92,6 +93,21 @@ private struct ServerDetail: View {
                 }
                 if let version = server.version {
                     LabeledContent("Canopy", value: version)
+                }
+            }
+            if server.isBox {
+                Section {
+                    LabeledContent("Wake key", value: server.wakeInstance ?? "None")
+                    if server.wakeInstance != nil {
+                        Button("Wake now") { Task { await app.waker.wake(server.connection) } }
+                            .disabled(server.connection.isConnected || app.waker.isWaking(server.connection))
+                            .accessibilityIdentifier("wake-now")
+                    }
+                } footer: {
+                    Text(
+                        server.wakeInstance == nil
+                            ? "Run canopy host wake-key \(server.name) on the Mac to wake it from here when it is off."
+                            : "The key can only start this instance.")
                 }
             }
             Section("This iPhone") {

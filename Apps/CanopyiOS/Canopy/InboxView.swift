@@ -34,7 +34,11 @@ struct InboxView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
-                    if let problem = model.staleBanner {
+                    let cards = app.waker.cards(for: app.servers)
+                    ForEach(cards) { card in
+                        WakeCardView(card: card)
+                    }
+                    if let problem = model.staleBanner(apart: Set(cards.map(\.id))) {
                         Banner(problem: problem, tint: Theme.yellow, icon: "wifi.slash")
                     }
                     // A pairing link opened while paired fails here, since Pairing is not on screen.

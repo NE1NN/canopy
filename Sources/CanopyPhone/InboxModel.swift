@@ -151,9 +151,10 @@ public final class InboxModel {
         servers.count > 2 ? "\(servers.count) servers" : Servers.names(servers)
     }
 
-    /// One banner for the servers out of reach: the server's own problem, or for several, their names.
-    public var staleBanner: PhoneProblem? {
-        let stale = staleServers
+    /// One banner for the servers out of reach: the server's own problem, or for several, their names. Servers in
+    /// `apart` have a card of their own, as a box the phone can wake does.
+    public func staleBanner(apart: Set<String> = []) -> PhoneProblem? {
+        let stale = staleServers.filter { !apart.contains($0.id) }
         if stale.count == 1, case .unreachable(let problem) = stale[0].status { return problem }
         guard stale.count > 1 else { return nil }
         return PhoneProblem(title: "Can't reach \(Servers.names(stale)).", detail: PhoneProblem.checkTailscale)

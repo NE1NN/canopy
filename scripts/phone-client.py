@@ -92,6 +92,9 @@ def main(args):
         link, token_file = args[1:3]
         response = Phone(link).hello(token_file)
         print(response["error"]["code"] if response.get("error") else "ok")
+    elif command == "hello-json":
+        link, token_file = args[1:3]
+        print(json.dumps(result_or_exit(Phone(link).hello(token_file)), sort_keys=True))
     elif command == "wait-inbox":
         link, token_file, expression = args[1:4]
         deadline = time.monotonic() + (float(args[4]) if len(args) > 4 else 30)
