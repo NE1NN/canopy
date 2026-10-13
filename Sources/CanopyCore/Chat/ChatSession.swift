@@ -142,6 +142,13 @@ public final class ChatSession {
     public private(set) var isLoadingOlder = false
     /// Commands running now, by tool call ID, as Claude Code's task events say.
     public private(set) var runningCommands: Set<String> = []
+    /// Items the author opened, such as a tool line's list of calls or a diff card's whole diff.
+    public private(set) var expanded: Set<String> = []
+
+    public func toggle(_ id: String) {
+        if expanded.remove(id) == nil { expanded.insert(id) }
+    }
+
     /// The last lines of each running command's output, by tool call ID.
     public private(set) var tails: [String: [String]] = [:]
     /// How many lines a tail keeps.

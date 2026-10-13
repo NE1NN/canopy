@@ -7,7 +7,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     case empty
     /// Claude Code does not trust the folder yet.
     case trust
-    case item(ChatItem)
+    case item(ChatItem, expanded: Bool = false)
     /// A block of the text Claude is writing. Settled blocks keep their key, so only the growing one redraws.
     case streaming(index: Int, block: ChatBlock, growth: Int)
     case queued(QueuedPrompt)
@@ -22,7 +22,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         switch self {
         case .empty: "empty"
         case .trust: "trust"
-        case .item(let item): item.id
+        case .item(let item, _): item.id
         case .streaming(let index, _, _): "streaming-\(index)"
         case .queued(let prompt): "queued-" + prompt.id
         case .permission(let permission): "permission-" + permission.id
@@ -35,7 +35,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     /// Changes whenever what the row shows does, cheaply: an item's revision rather than its content.
     public var key: String {
         switch self {
-        case .item(let item): "\(item.id)#\(item.revision)"
+        case .item(let item, let expanded): "\(item.id)#\(item.revision)#\(expanded)"
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
@@ -52,7 +52,7 @@ public enum ChatRows {
         let waiting = Set(chat.pendingPermissions.compactMap { $0.kind == .permission ? nil : $0.toolUse })
         var rows: [ChatRow] = []
         for item in chat.items where !waiting.contains(item.id) {
-            rows.append(.item(item))
+            rows.append(.item(item, expanded: chat.expanded.contains(item.id)))
             // A running command shows what it prints, under its line.
             guard case .tools(let group) = item.content else { continue }
             for call in group.calls where chat.runningCommands.contains(call.id) {

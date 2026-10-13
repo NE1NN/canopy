@@ -27,8 +27,8 @@ struct ChatRowView: View {
             EmptyChatView()
         case .trust:
             TrustCard(onTrust: actions.trust, onDecline: actions.declineTrust)
-        case .item(let item):
-            ChatItemView(item: item)
+        case .item(let item, let expanded):
+            ChatItemView(item: item, expanded: expanded) { chat.toggle(item.id) }
         case .streaming(_, let block, _):
             MarkdownView(blocks: [block])
         case .queued(let queued):
@@ -51,6 +51,8 @@ struct ChatRowView: View {
 
 private struct ChatItemView: View {
     let item: ChatItem
+    let expanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
         switch item.content {
@@ -59,9 +61,9 @@ private struct ChatItemView: View {
         case .text(let text):
             MarkdownView(blocks: text.blocks)
         case .tools(let group):
-            ToolLine(group: group)
+            ToolLine(group: group, expanded: expanded, toggle: toggle)
         case .edit(let call):
-            EditCard(call: call)
+            EditCard(call: call, isOpen: expanded, toggle: toggle)
         case .question(let question):
             HistoryLine(
                 symbol: "questionmark.bubble",
@@ -118,24 +120,73 @@ struct PromptBubble: View {
 /// A run of tool calls folded to one line: "Read TopBarView.swift and 3 more".
 private struct ToolLine: View {
     let group: ChatToolGroup
+    let expanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: Self.symbol(group.kind))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(ChatStyle.secondaryText)
-                .frame(width: 18, height: 18)
-                .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
-            Text(group.summary)
-                .font(ChatStyle.toolLine)
-                .foregroundStyle(group.failed ? ChatStyle.removed : ChatStyle.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if group.calls.contains(where: { $0.result == nil }) {
-                ProgressView().controlSize(.mini)
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    DisclosureChevron(isExpanded: expanded)
+                    Image(systemName: Self.symbol(group.kind))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(ChatStyle.secondaryText)
+                        .frame(width: 18, height: 18)
+                        .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                    Text(group.summary)
+                        .font(ChatStyle.toolLine)
+                        .foregroundStyle(group.failed ? ChatStyle.removed : ChatStyle.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if group.calls.contains(where: { $0.result == nil }) {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(group.calls, id: \.id) { call in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(Self.input(call))
+                                .font(ChatStyle.monoSmall)
+                                .foregroundStyle(ChatStyle.primaryText)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let result = call.result, !result.isEmpty {
+                                Text(Self.excerpt(result))
+                                    .font(ChatStyle.monoSmall)
+                                    .foregroundStyle(call.isError ? ChatStyle.removed : ChatStyle.tertiaryText)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.leading, 26)
             }
         }
-        .frame(minHeight: 22)
+    }
+
+    /// What a call was asked to do: its command, file, pattern, or address, else its name.
+    static func input(_ call: ChatToolCall) -> String {
+        let keys = ["command", "file_path", "pattern", "url", "query", "description", "prompt"]
+        let value = keys.lazy.compactMap { key -> String? in
+            if case .string(let text)? = call.input[key] { text } else { nil }
+        }.first
+        return value.map { "\(call.name): \($0)" } ?? call.name
+    }
+
+    /// An output's first 12 lines, so a long one stays readable.
+    static func excerpt(_ text: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.prefix(12).joined(separator: "\n")
+        return lines.count > 12 ? kept + "\n… \(lines.count - 12) more lines" : kept
     }
 
     static func symbol(_ kind: TranscriptParser.ToolKind) -> String {
@@ -484,16 +535,15 @@ struct ChatButton: View {
 /// A file change: its name and counts, then its changed lines, six until opened.
 struct EditCard: View {
     let call: ChatToolCall
-    @State private var isOpen = false
+    let isOpen: Bool
+    let toggle: () -> Void
 
     private static let folded = 6
 
     var body: some View {
         let lines = call.edit?.hunks.flatMap(\.lines) ?? []
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                isOpen.toggle()
-            } label: {
+            Button(action: toggle) {
                 HStack(spacing: 8) {
                     DisclosureChevron(isExpanded: isOpen)
                     Image(systemName: "pencil")
