@@ -12,7 +12,7 @@ team=${1:-}
 if [[ -z "$team" ]]; then
     teams=$(security find-certificate -a -c "Apple Development" -p 2>/dev/null \
         | awk '/BEGIN CERT/{cert=""} {cert=cert $0 "\n"} /END CERT/{printf "%s", cert | "openssl x509 -noout -subject"; close("openssl x509 -noout -subject")}' \
-        | sed -n 's/.*OU=\([A-Z0-9]\{10\}\).*/\1/p' | sort -u)
+        | sed -n 's/.*OU=\([A-Z0-9]\{10\}\).*/\1/p' | sort -u) || true
     case $(printf '%s' "$teams" | grep -c .) in
         1) team=$teams ;;
         0)
