@@ -23,7 +23,7 @@ fi
 swift build -c "$configuration" --product CanopyApp
 swift build -c "$configuration" --product canopy
 bin=$(swift build -c "$configuration" --show-bin-path)
-version=$(sed -n 's/.*current = "\(.*\)".*/\1/p' Sources/CanopyCore/Support/CanopyHome.swift)
+version=$(sed -n 's/.*current = "\(.*\)".*/\1/p' Sources/CanopyWire/CanopyVersion.swift)
 
 app="build/$app_name.app"
 rm -rf "$app"

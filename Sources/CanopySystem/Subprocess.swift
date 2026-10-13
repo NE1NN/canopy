@@ -54,6 +54,13 @@ public final class SubprocessHandle: Sendable {
         }
     }
 
+    /// Sends `number` to the process alone, such as SIGTERM to ask it to stop. Nothing once it has exited.
+    public func signal(_ number: Int32) {
+        state.withLock { state in
+            if let pid = state.pid { kill(pid, number) }
+        }
+    }
+
     /// Up to the last `limit` bytes of stderr so far. Empty before the process starts and after it exits.
     public func errorOutput(last limit: Int = 4096) -> Data {
         state.withLock { state in

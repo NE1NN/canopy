@@ -57,17 +57,17 @@ public enum HostPaths {
 
     /// The host's end of the forwarded relay socket, in the folder of this home's files under the host's `home`.
     public static func relaySocket(home: String, homeID: String) -> String {
-        "\(home)/.canopy/\(homeID)/app.sock"
+        HostLayout.relaySocket(home: home, homeID: homeID)
     }
 
     /// This home's `canopy` on the host.
     public static func relayCLI(home: String, homeID: String) -> String {
-        "\(home)/.canopy/\(homeID)/bin/canopy"
+        HostLayout.relayCLI(home: home, homeID: homeID)
     }
 
     /// The tmux server, as `tmux -L` names it.
     public static func tmuxServer(homeID: String) -> String {
-        "canopy-\(homeID)"
+        HostLayout.tmuxServer(homeID: homeID)
     }
 
     public static func shortFolder(uid: uid_t = getuid()) -> String {

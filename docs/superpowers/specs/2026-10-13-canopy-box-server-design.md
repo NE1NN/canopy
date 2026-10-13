@@ -112,7 +112,8 @@ It keeps its files under `~/.canopy/<home id>/box/`:
 It owns, for its home:
 
 - **Rows.** Each registered repo's clone on the host is that repo's main row on the host, which cannot be removed.
-  Other rows are worktrees in `~/.canopy/worktrees/<repo>/<slug>`, made and removed by `canopy-box` with the same branch rules as local rows.
+  Other rows are worktrees in `~/.canopy/<home id>/worktrees/<repo>/<slug>`, made and removed by `canopy-box` with the same branch rules as local rows.
+  The folder is the home's own, so a dev build's daemon and the release app's on one host never take each other's rows; rows the Mac made before the upgrade stay in `~/.canopy/worktrees/` and come over by `box.adopt`.
 - **Panes.** One tmux session per pane on `tmux -L canopy-<home id>`, with the variables a remote pane gets today.
   A pane's id is its session name.
   Panes the Mac made keep their `p<N>` names; panes `canopy-box` makes are `b<N>`, from its own counter, so the two never collide.
@@ -126,7 +127,7 @@ It owns, for its home:
 - **Ports.** It lists listening ports with `ss` every 5 seconds, as `canopy-host probe --ports` does today, for the Mac to forward.
 
 On start it loads `state.json`, then reconciles it with `git worktree list` for each repo and with the tmux server's sessions.
-A worktree it does not know that sits under `~/.canopy/worktrees/<repo>/` becomes a row again, a session it does not know becomes a pane of the row whose folder holds it, and a saved row whose worktree is gone is marked missing.
+A worktree it does not know that sits under `~/.canopy/<home id>/worktrees/<repo>/` becomes a row again, a session it does not know becomes a pane of the row whose folder holds it, and a saved row whose worktree is gone is marked missing.
 So a lost or damaged `state.json` costs only pane order and agent states, which the next hook brings back.
 
 ### The Mac's link to the box
@@ -377,3 +378,4 @@ This design replaces these parts of `2026-10-12-canopy-iphone-design.md`:
 - The daemon passes Mac-bound CLI commands to the Mac rather than refusing them outright, so agents on the box keep the whole CLI while the Mac is connected.
 - The daemon learns tailnet addresses by polling `getifaddrs` every 5 seconds.
 - PR numbers on the phone for box rows are the Mac's last report, so they can trail while the Mac is off.
+- New box rows go in `~/.canopy/<home id>/worktrees/<repo>/`, not the folder every home shares, so two homes' daemons on one host never adopt each other's worktrees (found in milestone 3a's review).

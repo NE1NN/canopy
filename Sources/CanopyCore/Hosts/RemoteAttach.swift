@@ -69,19 +69,14 @@ public enum RemoteAttach {
         return ["sh", "-c", script, homeID, HostPaths.tmuxServer(homeID: homeID), session, folder] + variables
     }
 
-    /// What a remote pane's shell gets, as a local pane would, with the host's paths, and this home's `canopy` on the
-    /// host and the socket it relays through. No CANOPY_HOME or ZDOTDIR: those name folders on this Mac.
+    /// What a remote pane's shell gets, as `HostLayout.paneEnvironment` says.
     public static func environment(
         pane: String, rowName: String, repoName: String, host: String, rowPath: String, clone: String,
         hostHome: String, homeID: String
     ) -> [String: String] {
-        [
-            "CANOPY_PANE": pane, "CANOPY_ROW": rowName, "CANOPY_REPO": repoName, "CANOPY_HOST": host,
-            "CANOPY_ROW_PATH": rowPath, "CANOPY_ROOT_PATH": clone,
-            "CANOPY_SOCKET": HostPaths.relaySocket(home: hostHome, homeID: homeID),
-            "CANOPY_CLI": HostPaths.relayCLI(home: hostHome, homeID: homeID), "CANOPY_HOME_ID": homeID,
-            "TERM_PROGRAM": "Canopy", "TERM_PROGRAM_VERSION": CanopyVersion.current, "COLORTERM": "truecolor",
-        ]
+        HostLayout.paneEnvironment(
+            pane: pane, rowName: rowName, repoName: repoName, host: host, rowPath: rowPath, clone: clone,
+            hostHome: hostHome, homeID: homeID)
     }
 
     /// ssh exits 255 for its own failures. The session ending ends ssh with 0. A host that refuses sessions through a

@@ -11,6 +11,13 @@ public final class TempDir: Sendable {
         path = Paths.canonical(url.path)
     }
 
+    /// A folder in `parent`, such as /tmp, where Unix sockets inside it fit their path's length limit.
+    public init(in parent: String) throws {
+        let folder = parent + "/ct-\(UUID().uuidString.prefix(8))"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        path = Paths.canonical(folder)
+    }
+
     public func sub(_ name: String) -> String {
         path + "/" + name
     }

@@ -48,33 +48,6 @@ public enum ControlMethod {
     }
 }
 
-/// What the CLI knows about where it runs. The app resolves it against registered repos.
-public struct TargetHint: Codable, Sendable, Equatable {
-    /// `--repo`: a repo display name or path.
-    public var repo: String?
-    /// A row argument: a branch name or a path.
-    public var row: String?
-    /// CANOPY_REPO from the environment.
-    public var envRepo: String?
-    /// CANOPY_ROW_PATH from the environment.
-    public var envRowPath: String?
-    public var cwd: String?
-
-    public init(
-        repo: String? = nil,
-        row: String? = nil,
-        envRepo: String? = nil,
-        envRowPath: String? = nil,
-        cwd: String? = nil
-    ) {
-        self.repo = repo
-        self.row = row
-        self.envRepo = envRepo
-        self.envRowPath = envRowPath
-        self.cwd = cwd
-    }
-}
-
 public struct StatusResult: Codable, Sendable, Equatable {
     /// Always true here. The CLI prints `"running": false` itself when it cannot connect.
     public var running = true
