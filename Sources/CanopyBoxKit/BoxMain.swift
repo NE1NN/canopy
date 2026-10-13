@@ -160,6 +160,16 @@ public enum BoxMain {
         }
         signal(SIGPIPE, SIG_IGN)
         let paths = BoxPaths(root: Paths.canonical(root), homeID: homeID)
+        // One daemon per home, held until it exits: two started at the same moment would both pass the socket check
+        // below, and both load and save the home's state before one lost the socket.
+        try? FileManager.default.createDirectory(atPath: paths.folder, withIntermediateDirectories: true)
+        guard let lock = try? InstanceLock(path: paths.folder + "/serve.lock") else {
+            printError("canopy-box already runs for this home.")
+            return 1
+        }
+        defer { withExtendedLifetime(lock) {} }
+        // The machine's name may take a DNS lookup on first use, which must not hold the daemon's actor.
+        _ = await onOwnThread { BoxDaemon.machineNames }
         var environment = ProcessInfo.processInfo.environment
         environment["TMUX"] = nil
         let tmux = Tmux(
