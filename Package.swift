@@ -47,7 +47,7 @@ let portableTargets: [Target] = [
     .testTarget(name: "CanopyGitTests", dependencies: ["CanopyGit", "CanopyTestSupport"]),
     .testTarget(
         name: "CanopyBoxTests",
-        dependencies: ["CanopyBoxKit", "CanopyWire", "CanopyAgents", "CanopyGit", "CanopyTestSupport"]),
+        dependencies: ["CanopyBoxKit", "CanopyBox", "CanopyWire", "CanopyAgents", "CanopyGit", "CanopyTestSupport"]),
 ]
 
 let macTargets: [Target] = [

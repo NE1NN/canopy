@@ -228,6 +228,11 @@ public final class UnixConnection: Sendable {
         }
     }
 
+    /// Ends this side's sending, as a client that has said all it will does. Reading goes on.
+    public func finishSending() {
+        shutdown(fd, Int32(SHUT_WR))
+    }
+
     /// Ends the connection both ways. A thread waiting on it wakes; the descriptor closes once nothing holds the
     /// connection, so it is never reused under a thread still polling it.
     public func close() {

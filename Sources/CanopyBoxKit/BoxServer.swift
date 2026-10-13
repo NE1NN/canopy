@@ -1,0 +1,180 @@
+import CanopyAgents
+import CanopySystem
+import CanopyWire
+import Dispatch
+import Foundation
+import Synchronization
+
+/// canopy-box's socket, `box.sock`, which the Mac reaches through its ssh master and the host's relay reaches locally.
+/// A line with `method` is a control request: answered when done, with `box.subscribe` sending snapshots after.
+/// A line with `args` is a relayed CLI call, framed as the Mac's relay server frames it: an acknowledgement at once,
+/// a heartbeat every 15 seconds, then the reply, so the host's relay script works unchanged against either.
+public final class BoxServer: Sendable {
+    let daemon: BoxDaemon
+    private let listener: UnixListener
+    static let heartbeatEvery = Duration.seconds(15)
+    static let writeWait = Duration.seconds(60)
+
+    public init(daemon: BoxDaemon, socketPath: String) throws {
+        self.daemon = daemon
+        listener = try UnixListener(path: socketPath) { connection in
+            Self.serve(connection, daemon: daemon)
+        }
+    }
+
+    public func close() {
+        listener.close()
+    }
+
+    /// Reads the connection's lines until it closes, on the connection's own thread. A client may stop sending right
+    /// after its last request, as `printf ... | nc -U` does, so calls already under way still answer before the
+    /// connection closes. A subscription ends with the client's sending, since its client keeps that open while it
+    /// listens, and one that went away would otherwise hold this thread until the box next changed.
+    private static func serve(_ connection: UnixConnection, daemon: BoxDaemon) {
+        let work = Mutex<[Task<Void, Never>]>([])
+        let subscriptions = Mutex<[Task<Void, Never>]>([])
+        defer {
+            for subscription in subscriptions.withLock({ $0 }) { subscription.cancel() }
+            let finished = DispatchSemaphore(value: 0)
+            let pending = work.withLock { $0 }
+            Task {
+                for task in pending { await task.value }
+                finished.signal()
+            }
+            finished.wait()
+            connection.close()
+        }
+        while let line = try? connection.readLine(deadline: nil) {
+            guard !line.isEmpty else { continue }
+            let keys = try? JSONDecoder().decode([String: JSONValue].self, from: line)
+            if keys?["args"] != nil, let request = try? JSONDecoder().decode(RelayRequest.self, from: line) {
+                relay(request, on: connection, daemon: daemon)
+                return
+            }
+            guard let request = try? ControlCodec.decode(ControlRequest.self, from: line) else {
+                send(
+                    ControlResponse.failure(
+                        id: "", error: ControlError(code: "bad_request", message: "Request is not valid JSON.")),
+                    on: connection)
+                continue
+            }
+            if request.method == BoxMethod.subscribe {
+                let task = Task { await subscribe(request, on: connection, daemon: daemon) }
+                subscriptions.withLock { $0.append(task) }
+            } else {
+                let task = Task { send(await handle(request, daemon: daemon), on: connection) }
+                work.withLock { $0.append(task) }
+            }
+        }
+    }
+
+    /// Runs a relayed CLI call to its end, beating while it runs, and cancels it once the relay hangs up, except a
+    /// hook's report, which is the box's from its acknowledgement on.
+    private static func relay(_ request: RelayRequest, on connection: UnixConnection, daemon: BoxDaemon) {
+        guard (try? connection.write(Data("{\"ack\": true}\n".utf8), deadline: .now + writeWait)) != nil else { return }
+        let reply = Mutex<RelayReply?>(nil)
+        let finished = Atomic(false)
+        let task = Task {
+            let answered = await BoxCommands.answer(request, on: daemon)
+            reply.withLock { $0 = answered }
+            finished.store(true, ordering: .releasing)
+        }
+        var nextBeat = ContinuousClock.now + heartbeatEvery
+        let isHook = RelayInput.reading(request.args) == .hookReport
+        while !finished.load(ordering: .acquiring) {
+            if connection.hungUp(within: .milliseconds(100)) {
+                if !isHook { task.cancel() }
+                return
+            }
+            if ContinuousClock.now >= nextBeat {
+                guard (try? connection.write(Data("{\"alive\": true}\n".utf8), deadline: .now + writeWait)) != nil
+                else {
+                    if !isHook { task.cancel() }
+                    return
+                }
+                nextBeat = .now + heartbeatEvery
+            }
+        }
+        guard let answered = reply.withLock({ $0 }), var data = try? JSONEncoder().encode(answered) else { return }
+        data.append(0x0A)
+        try? connection.write(data, deadline: .now + writeWait)
+    }
+
+    private static func subscribe(_ request: ControlRequest, on connection: UnixConnection, daemon: BoxDaemon) async {
+        send(.success(id: request.id, result: .bool(true)), on: connection)
+        for await snapshot in await daemon.changes() {
+            guard let data = try? JSONValue.from(snapshot),
+                let line = try? ControlCodec.encodeLine(
+                    BoxEvent(event: BoxEvent.snapshot, subscription: request.id, data: data)),
+                (try? connection.write(line, deadline: .now + writeWait)) != nil
+            else { return }
+        }
+    }
+
+    private static func send(_ response: ControlResponse, on connection: UnixConnection) {
+        guard let line = try? ControlCodec.encodeLine(response) else { return }
+        try? connection.write(line, deadline: .now + writeWait)
+    }
+
+    /// The answer to one control request.
+    static func handle(_ request: ControlRequest, daemon: BoxDaemon) async -> ControlResponse {
+        do {
+            return .success(id: request.id, result: try await result(of: request, daemon: daemon))
+        } catch let error as ControlError {
+            return .failure(id: request.id, error: error)
+        } catch {
+            return .failure(id: request.id, error: ControlError(code: "internal", message: "\(error)"))
+        }
+    }
+
+    private static func result(of request: ControlRequest, daemon: BoxDaemon) async throws -> JSONValue {
+        switch request.method {
+        case BoxMethod.hello:
+            return try .from(
+                BoxHelloResult(
+                    version: CanopyVersion.current, protocolVersion: BoxProtocol.version, homeID: daemon.paths.homeID,
+                    configured: await daemon.isConfigured))
+        case BoxMethod.configure:
+            try await daemon.configure(request.decodeParams(BoxConfig.self))
+            return .bool(true)
+        case BoxMethod.rowNew:
+            return try .from(try await daemon.rowNew(request.decodeParams(BoxRowNewParams.self)))
+        case BoxMethod.rowRemove:
+            let warnings = try await daemon.rowRemove(request.decodeParams(BoxRowRemoveParams.self))
+            return try .from(BoxRowRemoveResult(warnings: warnings))
+        case BoxMethod.paneNew:
+            return try .from(
+                BoxPaneNewResult(pane: try await daemon.paneNew(request.decodeParams(BoxPaneNewParams.self))))
+        case BoxMethod.paneClose:
+            try await daemon.paneClose(request.decodeParams(BoxPaneParams.self).pane)
+            return .bool(true)
+        case BoxMethod.send:
+            let params = try request.decodeParams(TermSendParams.self)
+            try await daemon.send(pane: params.pane, text: params.text, enter: params.enter)
+            return .bool(true)
+        case BoxMethod.keys:
+            try await daemon.keys(request.decodeParams(BoxKeysParams.self))
+            return .bool(true)
+        case BoxMethod.read:
+            let params = try request.decodeParams(TermReadParams.self)
+            return try .from(TermReadResult(text: try await daemon.read(pane: params.pane, lines: params.lines)))
+        case BoxMethod.wait:
+            let params = try request.decodeParams(TermWaitParams.self)
+            let reached = try await daemon.wait(
+                panes: params.panes, for: params.target, timeout: .seconds(params.timeout))
+            return try .from(TermWaitResult(pane: reached.pane, state: reached.state))
+        case BoxMethod.seen:
+            try await daemon.seen(pane: request.decodeParams(BoxPaneParams.self).pane)
+            return .bool(true)
+        case BoxMethod.prs:
+            await daemon.setPRs(try request.decodeParams(BoxPRsParams.self).prs)
+            return .bool(true)
+        case BoxMethod.adopt:
+            return try .from(await daemon.adopt(try request.decodeParams(BoxAdoptParams.self)))
+        case BoxMethod.release:
+            return try .from(await daemon.release())
+        default:
+            throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
+        }
+    }
+}
