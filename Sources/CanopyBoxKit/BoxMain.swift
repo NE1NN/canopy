@@ -128,9 +128,11 @@ public enum BoxMain {
             return 1
         }
         await daemon.start()
+        let phones = phoneServer(daemon: daemon, paths: paths, environment: environment)
+        await phones.refresh()
         let server: BoxServer
         do {
-            server = try BoxServer(daemon: daemon, socketPath: paths.socket)
+            server = try BoxServer(daemon: daemon, socketPath: paths.socket, phones: phones)
         } catch UnixSocketError.alreadyRunning(let path) {
             printError("canopy-box already runs for this home, on \(path).")
             return 1
@@ -149,8 +151,6 @@ public enum BoxMain {
             return source
         }
         await daemon.replayPending()
-        let phones = phoneServer(daemon: daemon, paths: paths, environment: environment)
-        await phones.refresh()
         await withDiscardingTaskGroup { group in
             group.addTask {
                 // The tailnet's addresses can change, as when Tailscale comes up after the daemon.

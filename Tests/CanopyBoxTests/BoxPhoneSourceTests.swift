@@ -1,4 +1,5 @@
 import CanopyAgents
+import CanopyServer
 import CanopyTestSupport
 import CanopyWire
 import Foundation
@@ -108,5 +109,30 @@ struct BoxPhoneSourceTests {
         await daemon.setPhonesConnected(false)
         await daemon.tickBusy()
         #expect(!FileManager.default.fileExists(atPath: home.paths.busyFile))
+    }
+}
+
+/// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
+struct BoxPhonesMethodsTests {
+    @Test func pairingGivesACodeAndListingShowsNoPhonesYet() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let phones = PhoneServer(
+            source: BoxPhoneSource(daemon: daemon),
+            settings: PhoneServerSettings(
+                registryFile: URL(fileURLWithPath: home.paths.folder + "/phones.json"), serverName: "box",
+                version: "1", port: 0, addresses: { ["127.0.0.1"] }, tailnetName: { nil }, closedReason: { "off" },
+                record: { _ in }))
+        await phones.refresh()
+        defer { phones.stop() }
+        let paired = await BoxServer.handle(
+            ControlRequest(method: BoxMethod.phonesPair), daemon: daemon, phones: phones)
+        #expect(paired.error == nil)
+        #expect(paired.result.map { "\($0)" }?.contains("code") == true)
+        let listed = await BoxServer.handle(
+            ControlRequest(method: BoxMethod.phonesList), daemon: daemon, phones: phones)
+        #expect(listed.result == .array([]))
+        let off = await BoxServer.handle(ControlRequest(method: BoxMethod.phonesList), daemon: daemon)
+        #expect(off.error?.code == "phones_off")
     }
 }
