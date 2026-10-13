@@ -17,7 +17,10 @@ public struct TmuxPane: Sendable, Equatable {
     public var pid: Int32
     /// The foreground program's name, as tmux sees it.
     public var command: String
+    /// The foreground program's folder.
     public var folder: String
+    /// The folder the session started in.
+    public var start: String
     public var title: String
 }
 
@@ -68,7 +71,8 @@ public struct Tmux: Sendable {
 
     /// Every pane of every session. None when no server runs.
     public func panes() async throws -> [TmuxPane] {
-        let format = "#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}"
+        let format =
+            "#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{session_path}\t#{pane_title}"
         let listed: String
         do {
             listed = try await run(["list-panes", "-a", "-F", format])
@@ -76,11 +80,11 @@ public struct Tmux: Sendable {
             return []
         }
         return listed.split(separator: "\n").compactMap { line in
-            let fields = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false)
-            guard fields.count == 5, let pid = Int32(fields[1]) else { return nil }
+            let fields = line.split(separator: "\t", maxSplits: 5, omittingEmptySubsequences: false)
+            guard fields.count == 6, let pid = Int32(fields[1]) else { return nil }
             return TmuxPane(
                 session: String(fields[0]), pid: pid, command: String(fields[2]), folder: String(fields[3]),
-                title: String(fields[4]))
+                start: String(fields[4]), title: String(fields[5]))
         }
     }
 
