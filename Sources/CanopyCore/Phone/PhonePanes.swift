@@ -59,11 +59,16 @@ public final class PhonePanes {
         waitingReplies = [:]
     }
 
-    /// Pastes the reply and presses Return. `delivered` runs when the agent takes it, as its next prompt.
     /// Pastes the reply into Claude Code and presses Return. `delivered` runs when the agent takes it, as its next
     /// prompt. A reply is refused while a dialog is open, and Return is held back if one opens during the paste.
+    /// A chat takes it as a message, as its composer does: an open prompt is turned down first.
     public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
+        if let chat = pane.chat {
+            chat.send(params.text)
+            waitingReplies[pane.id, default: []].append((Date(), delivered))
+            return
+        }
         let terminal = try Self.terminal(of: pane)
         guard pane.agent.session != nil else { throw Self.agentNotRunning }
         guard !Self.showsDialog(pane) else { throw Self.promptOpen }
@@ -79,11 +84,34 @@ public final class PhonePanes {
 
     public func answer(_ params: PhoneAnswerParams) async throws {
         let pane = try running(params.pane)
-        let terminal = try Self.terminal(of: pane)
         guard let prompt = pane.agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
+        // Checks the answer fits the prompt, for a chat too, which answers through its session instead of keys.
         let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+        if let chat = pane.chat {
+            guard chat.permission != nil, pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
+            Self.answer(chat, params.answer)
+            return
+        }
+        let terminal = try Self.terminal(of: pane)
         guard pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
         await terminal.press(keys)
+    }
+
+    /// As the author would in the chat: Return allows a permission and approves a plan with edits accepted, as the
+    /// terminal's first option does, Escape turns either down, and a question takes each one's options in turn.
+    private static func answer(_ chat: ChatSession, _ answer: PhoneAnswer) {
+        guard let permission = chat.permission else { return }
+        switch permission.kind {
+        case .permission:
+            if answer.allow == true { chat.allow() } else { chat.deny() }
+        case .plan:
+            if answer.allow == true { chat.approvePlan(acceptingEdits: true) } else { chat.deny() }
+        case .question(let questions):
+            for (question, picked) in zip(questions, answer.options ?? []) {
+                for index in picked { chat.pick(index) }
+                if question.multiSelect { chat.submitSelection() }
+            }
+        }
     }
 
     public func keys(_ params: PhoneKeysParams) throws {
@@ -118,7 +146,7 @@ public final class PhonePanes {
         return pane
     }
 
-    /// Chats take replies and answers through their own session, which comes with a later milestone.
+    /// A chat has no screen or keys; it takes replies and answers through its session.
     private static func terminal(of pane: Pane) throws -> TerminalBody {
         guard let terminal = pane.terminal else { throw WorkspaceError.notATerminal(pane.id.description) }
         return terminal

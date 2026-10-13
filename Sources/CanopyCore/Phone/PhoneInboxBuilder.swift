@@ -58,7 +58,7 @@ public enum PhoneInboxBuilder {
                 since: agent.since.timeIntervalSince1970,
                 lastLine: lastLine(agent, tail: transcript.flatMap { tails?.last(in: $0) }),
                 backgroundTasks: agent.backgroundTasks.isEmpty ? nil : agent.backgroundTasks, prompt: agent.prompt,
-                hasTranscript: transcript != nil)
+                hasTranscript: transcript != nil, kind: pane.chat == nil ? .terminal : .chat)
         }
     }
 

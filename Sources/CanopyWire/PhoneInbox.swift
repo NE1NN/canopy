@@ -1,5 +1,16 @@
 import Foundation
 
+/// What a pane is: a terminal, or a chat, which has no screen or keys.
+public enum PaneKind: String, Codable, Sendable, Equatable, Hashable {
+    case terminal
+    case chat
+
+    /// A kind a newer Mac sends that this one does not know reads as a terminal.
+    public init(from decoder: any Decoder) throws {
+        self = PaneKind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .terminal
+    }
+}
+
 /// One pane's agent, as the phone shows it.
 public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
     public var pane: String
@@ -16,11 +27,15 @@ public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
     public var prompt: OpenPrompt?
     /// Whether the pane has a transcript the phone can read.
     public var hasTranscript: Bool
+    /// A chat has no Terminal tab. A Mac that sends no kind has only terminals.
+    public var kind: PaneKind
 
     public init(
         pane: String, state: AgentState, unseen: Bool = false, since: Double, lastLine: String? = nil,
-        backgroundTasks: [String]? = nil, prompt: OpenPrompt? = nil, hasTranscript: Bool = false
+        backgroundTasks: [String]? = nil, prompt: OpenPrompt? = nil, hasTranscript: Bool = false,
+        kind: PaneKind = .terminal
     ) {
+        self.kind = kind
         self.prompt = prompt
         self.hasTranscript = hasTranscript
         self.pane = pane
@@ -42,6 +57,7 @@ public struct PhoneAgent: Codable, Sendable, Equatable, Hashable {
         backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks)
         prompt = try? container.decodeIfPresent(OpenPrompt.self, forKey: .prompt)
         hasTranscript = try container.decodeIfPresent(Bool.self, forKey: .hasTranscript) ?? false
+        kind = (try? container.decodeIfPresent(PaneKind.self, forKey: .kind)) ?? .terminal
     }
 
     /// The same dot the Mac's sidebar shows for it.
