@@ -159,7 +159,8 @@ public struct PaneAgent: Sendable, Equatable {
     }
 
     /// Keys typed into the pane, or text sent with `canopy term send`. Claude Code runs no hook for an interrupt or a
-    /// dismissed prompt, so Escape and Control-C clear the state, and Return answers a prompt.
+    /// dismissed prompt, so Escape and Control-C clear the state, and Return answers a prompt. ⌥Return, ESC CR, does
+    /// not.
     public mutating func typed(_ data: Data, at: Date) -> AgentChange? {
         let interrupts = Self.interruptKeys.contains(data)
         switch state {
@@ -167,7 +168,7 @@ public struct PaneAgent: Sendable, Equatable {
             return change(to: .none, via: "key", session: nil, at: at, now: at)
         case .waiting where !waitsOnQuestion && interrupts:
             return change(to: .none, via: "key", session: nil, at: at, now: at)
-        case .waiting where !waitsOnQuestion && data.contains(0x0D):
+        case .waiting where !waitsOnQuestion && data.contains(0x0D) && data != Self.optionReturn:
             return change(to: .working, via: "key", session: nil, at: at, now: at)
         case .waiting where !waitsOnQuestion:
             // Any other key in a dialog, a digit or an arrow, makes what the phone saw out of date.
@@ -235,6 +236,8 @@ public struct PaneAgent: Sendable, Equatable {
         return text.hasPrefix("\u{1b}[") && ["R", "c", "n", "y", "t"].contains(text.last.map(String.init) ?? "")
             && text.dropFirst(2).dropLast().allSatisfy { "0123456789;?$>=".contains($0) }
     }
+
+    static let optionReturn = Data([0x1B, 0x0D])
 
     /// Escape and Control-C as a terminal sends them, plainly or in the kitty keyboard protocol's form.
     static let interruptKeys: Set<Data> = [

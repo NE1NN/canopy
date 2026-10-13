@@ -142,7 +142,7 @@ struct OpenPromptTests {
     }
 
     @Test mutating func anyKeyAtTheMacClosesADialogsPrompt() throws {
-        for key in ["1", "2", "\u{1b}[B", "y"] {
+        for key in ["1", "2", "\u{1b}[B", "y", "\u{1b}\r"] {
             var agent = PaneAgent()
             apply(&agent, CapturedHook.bashPermission, at: 1)
             #expect(agent.prompt != nil)
