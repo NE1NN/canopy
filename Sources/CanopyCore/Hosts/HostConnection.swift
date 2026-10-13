@@ -27,7 +27,12 @@ public actor HostConnection {
 
     public nonisolated let alias: String
     public nonisolated let ssh: SSHCommand
-    public private(set) var entry: HostEntry
+    public private(set) var entry: HostEntry {
+        didSet { upgraded.withLock { $0 = entry.box } }
+    }
+    /// Whether the host runs canopy-box, read without waiting for the connection, as each round of probes does.
+    public nonisolated var isBox: Bool { upgraded.withLock { $0 } }
+    private nonisolated let upgraded: Mutex<Bool>
     public private(set) var state = HostState.idle
     /// ssh's message from the last failure to connect.
     public private(set) var lastError: String?
@@ -63,6 +68,7 @@ public actor HostConnection {
     ) {
         self.alias = alias
         self.entry = entry
+        upgraded = Mutex(entry.box)
         self.ssh = ssh
         self.launcher = launcher
         self.clock = clock

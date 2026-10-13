@@ -146,7 +146,7 @@ public final class HostMonitor {
     /// The host's sessions, onto its panes. Returns whether the host answered.
     private func probeSessions(on connection: HostConnection) async -> Bool {
         let alias = connection.alias
-        let isBox = await connection.entry.box
+        let isBox = connection.isBox
         if isBox { await workspace.ensureBoxLink(connection) }
         guard
             let result = await connection.probe(HostProbe.command(homeID: workspace.homeID), timeout: .seconds(10)),

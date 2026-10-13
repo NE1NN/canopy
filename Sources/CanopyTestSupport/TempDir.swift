@@ -2,6 +2,8 @@ import CanopySystem
 import Foundation
 
 /// A temporary folder that is deleted when the value is released. Paths are canonical.
+/// The deletion runs on a queue of its own: on a Swift concurrency thread it holds up every other test, and under
+/// `make test`'s strict pool there is only one.
 public final class TempDir: Sendable {
     public let path: String
 
@@ -23,6 +25,15 @@ public final class TempDir: Sendable {
     }
 
     deinit {
-        try? FileManager.default.removeItem(atPath: path)
+        let path = path
+        Removal.queue.async { try? FileManager.default.removeItem(atPath: path) }
     }
+}
+
+private enum Removal {
+    static let queue: DispatchQueue = {
+        let queue = DispatchQueue(label: "canopy.tests.removal", qos: .utility)
+        atexit { Removal.queue.sync {} }
+        return queue
+    }()
 }

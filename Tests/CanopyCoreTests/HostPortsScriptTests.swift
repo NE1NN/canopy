@@ -19,7 +19,7 @@ struct HostPortsScriptTests {
         let path: String
 
         /// Without `ss`, the host's PATH has none, as this Mac has none.
-        init(ss: Bool = true) throws {
+        init(ss: Bool = true) async throws {
             dir = try TempDir()
             let bin = dir.sub("ss-bin")
             try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
@@ -29,7 +29,7 @@ struct HostPortsScriptTests {
             path = (ss ? bin + ":" : "") + "/opt/homebrew/bin:/usr/bin:/bin"
             host = try FakeHost(in: dir, path: path)
             lines = dir.sub("ss-lines")
-            try HostFilesTests().install(host, homeID: homeID)
+            try await HostFilesTests().install(host, homeID: homeID)
         }
 
         var environment: [String: String] {
@@ -111,7 +111,7 @@ struct HostPortsScriptTests {
     }
 
     @Test func theProbeListsListeningPortsWithTheirAddressProcessesAncestorsAndFolders() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let server = try Self.sleeper(in: setup.dir.sub("work/app"))
         defer { server.terminate() }
         let helper = try Self.sleeper(in: setup.dir.sub("work/helper"))
@@ -158,7 +158,7 @@ struct HostPortsScriptTests {
 
     /// Linux names its range in /proc, which this Mac lacks, so the test points the helper at a file of its own.
     @Test func portsInTheHostsEphemeralRangeAreLeftOut() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let server = try Self.sleeper(in: setup.dir.sub("work"))
         defer { server.terminate() }
         let pid = server.processIdentifier
@@ -179,7 +179,7 @@ struct HostPortsScriptTests {
 
     /// The probe runs every 2 seconds, and a host whose `ss` is missing still shows its sessions.
     @Test func withoutSSThereAreNoPorts() async throws {
-        let setup = try Setup(ss: false)
+        let setup = try await Setup(ss: false)
 
         let result = try await setup.probe()
 
@@ -194,8 +194,8 @@ struct HostPortsScriptTests {
 
     /// A busy host's `ss` can fail or take too long, which says nothing about its ports, so the app keeps what it had.
     @Test func whenSSFailsOrTakesTooLongThePortsAreUnknown() async throws {
-        let failing = try Setup()
-        let slow = try Setup()
+        let failing = try await Setup()
+        let slow = try await Setup()
         try slow.write([])
         let arguments = { (setup: Setup) in
             ["probe", "--server", "none-\(setup.homeID)", "--home-id", setup.homeID, "--ports"]
@@ -216,12 +216,12 @@ struct HostPortsScriptTests {
 
     @Test(.enabled(if: HostFilesTests.tmux != nil, "needs tmux: brew install tmux"))
     func aProcessStartedInASessionListsItsShellAmongItsAncestors() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let server = HostPaths.tmuxServer(homeID: setup.homeID)
         let tmux = try #require(HostFilesTests.tmux)
         let folder = setup.dir.sub("work")
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        _ = try Subprocess.run(
+        _ = try await Subprocess.runOffPool(
             tmux, ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", "p1", "-c", folder, "/bin/sh"],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         defer {
@@ -236,7 +236,7 @@ struct HostPortsScriptTests {
             return shell != nil
         }
         let shellPID = try #require(shell)
-        _ = try Subprocess.run(
+        _ = try await Subprocess.runOffPool(
             tmux, ["-L", server, "send-keys", "-t", "p1", "/bin/sleep 4242", "Enter"],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         var child: Int32?
@@ -269,7 +269,7 @@ struct HostPortsScriptTests {
     }
 
     @Test func stopPortStopsAListenerAndLeavesAPidNotOnThePortAlone() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let listener = try await ListeningChild.start()
         defer { listener.process.terminate() }
         let other = try await ListeningChild.start()
@@ -293,7 +293,7 @@ struct HostPortsScriptTests {
     }
 
     @Test func stopPortKillsAListenerThatIgnoresSIGTERM() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let listener = try await ListeningChild.start(onSIGTERM: .ignore)
         defer { listener.process.terminate() }
         let pid = listener.port.pid
@@ -310,7 +310,7 @@ struct HostPortsScriptTests {
 
     /// Without `ss` the helper cannot tell who listens, so it signals nobody and says so.
     @Test func stopPortWithoutSSSignalsNothingAndFails() async throws {
-        let setup = try Setup(ss: false)
+        let setup = try await Setup(ss: false)
         let listener = try await ListeningChild.start()
         defer { listener.process.terminate() }
 
@@ -323,7 +323,7 @@ struct HostPortsScriptTests {
     }
 
     @Test func theHelperTakesPortsOnlyAfterTheProbesArgumentsAndStopPortOnlyNumbers() async throws {
-        let setup = try Setup()
+        let setup = try await Setup()
         let wrong = [
             ["probe", "--ports", "--server", "s", "--home-id", setup.homeID],
             ["probe", "--server", "s", "--home-id", setup.homeID, "--ports", "--ports"],
