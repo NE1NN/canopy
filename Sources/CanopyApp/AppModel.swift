@@ -845,8 +845,9 @@ final class AppModel {
         terminals.openChat(for: context(for: row), session: conversation.id, title: conversation.title)
     }
 
-    func openInTerminal(_ pane: Pane) {
-        terminals.openInTerminal(pane)
+    /// With a prompt, such as a full-screen command, the terminal's Claude Code runs it first.
+    func openInTerminal(_ pane: Pane, running prompt: String? = nil) {
+        terminals.openInTerminal(pane, running: prompt)
         focusSelectedTerminal()
     }
 

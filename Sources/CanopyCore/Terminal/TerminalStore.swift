@@ -349,7 +349,7 @@ public final class TerminalStore {
     /// Moves a chat's conversation to a terminal: ends the chat's Claude Code and puts a terminal tab in its place,
     /// which resumes the same session with the same model and mode.
     @discardableResult
-    public func openInTerminal(_ chatPane: Pane) -> Pane? {
+    public func openInTerminal(_ chatPane: Pane, running prompt: String? = nil) -> Pane? {
         guard let chat = chatPane.chat, let (path, tab) = tab(containing: chatPane.id),
             let index = tabs(inRow: path).firstIndex(where: { $0.id == tab.id })
         else { return nil }
@@ -358,6 +358,7 @@ public final class TerminalStore {
         if let session = chat.sessionID { words += ["--resume", session] }
         if let model = chat.model { words += ["--model", model] }
         words += ["--permission-mode", chat.mode]
+        if let prompt { words.append(prompt) }
         let command = ([words[0]] + words.dropFirst().map(SetupScript.quoted)).joined(separator: " ")
         chatPane.close()
         let pane = makePane(chatPane.context, command: .shell, directory: nil)

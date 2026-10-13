@@ -34,7 +34,9 @@ struct ChatView: View {
             }
             ChatComposer(
                 chat: chat, composers: model.chatComposers, paneID: pane.id, onTrust: actions.trust,
-                onDeclineTrust: actions.declineTrust)
+                onDeclineTrust: actions.declineTrust,
+                onTerminalCommand: { model.openInTerminal(pane, running: $0) },
+                onResume: { model.showsConversations = true })
         }
         .background(ChatStyle.background)
         .environment(\.openURL, OpenURLAction { model.open($0) })
