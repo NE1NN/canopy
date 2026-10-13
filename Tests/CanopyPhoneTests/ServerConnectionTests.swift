@@ -37,6 +37,18 @@ struct ServerConnectionTests {
         #expect(connection.generation == 1)
     }
 
+    /// Back on screen while a try is under way: the next try goes once it fails, not after the backoff.
+    @Test func foregroundDuringATryRetriesAtOnceAfterIt() async throws {
+        // The first try reaches neither the name nor the address.
+        mac.state.withLock { $0.failingConnects = 2 }
+        let (connection, _) = connection()
+        connection.start()
+        connection.foreground()
+
+        #expect(await eventually { connection.isConnected })
+        #expect(sleeper.sleeping == 0)
+    }
+
     /// A server renamed, updated, or upgraded to canopy-box says so in hello, and the phone keeps what it says.
     @Test func helloUpdatesTheKindAndName() async throws {
         let box = FakeMac.box()
