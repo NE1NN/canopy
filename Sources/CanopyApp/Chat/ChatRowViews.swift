@@ -54,6 +54,8 @@ private struct ChatItemView: View {
             MarkdownView(blocks: text.blocks)
         case .tools(let group):
             ToolLine(group: group)
+        case .edit(let call):
+            EditCard(call: call)
         case .question(let question):
             HistoryLine(
                 symbol: "questionmark.bubble",
@@ -470,5 +472,94 @@ struct ChatButton: View {
     private var fill: Color {
         if isPrimary { return Color.accentColor.opacity(isHovering ? 0.85 : 1) }
         return isHovering ? ChatStyle.buttonFill.opacity(1.6) : ChatStyle.buttonFill
+    }
+}
+
+/// A file change: its name and counts, then its changed lines, six until opened.
+struct EditCard: View {
+    let call: ChatToolCall
+    @State private var isOpen = false
+
+    private static let folded = 6
+
+    var body: some View {
+        let lines = call.edit?.hunks.flatMap(\.lines) ?? []
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                isOpen.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    DisclosureChevron(isExpanded: isOpen)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 18, height: 18)
+                        .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                    Text(call.result == nil ? "Editing" : (call.isError ? "Could not edit" : "Edited"))
+                    Text(Self.fileName(call.edit?.file ?? ""))
+                        .font(ChatStyle.monoSmall)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    if let edit = call.edit {
+                        Text(verbatim: "+\(edit.added)").foregroundStyle(ChatStyle.added)
+                        Text(verbatim: "−\(edit.removed)").foregroundStyle(ChatStyle.removed)
+                    }
+                }
+                .font(ChatStyle.meta)
+                .foregroundStyle(ChatStyle.primaryText)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !lines.isEmpty {
+                Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array((isOpen ? lines : Array(lines.prefix(Self.folded))).enumerated()), id: \.offset) {
+                        _, line in DiffLine(line: line)
+                    }
+                    if !isOpen, lines.count > Self.folded {
+                        Text("\(lines.count - Self.folded) more lines")
+                            .font(.system(size: 11))
+                            .foregroundStyle(ChatStyle.tertiaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(.vertical, 7)
+            }
+        }
+        .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
+    }
+
+    static func fileName(_ path: String) -> String {
+        (path as NSString).lastPathComponent
+    }
+}
+
+private struct DiffLine: View {
+    let line: String
+
+    var body: some View {
+        Text(verbatim: line.isEmpty ? " " : line)
+            .font(ChatStyle.monoSmall)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 17, alignment: .leading)
+            .background(fill)
+    }
+
+    private var color: Color {
+        if line.hasPrefix("+") { return ChatStyle.added }
+        if line.hasPrefix("-") { return ChatStyle.removed }
+        return ChatStyle.secondaryText
+    }
+
+    private var fill: Color {
+        if line.hasPrefix("+") { return ChatStyle.added.opacity(0.11) }
+        if line.hasPrefix("-") { return ChatStyle.removed.opacity(0.1) }
+        return .clear
     }
 }

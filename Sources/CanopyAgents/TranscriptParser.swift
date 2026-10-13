@@ -60,6 +60,9 @@ public enum TranscriptParser {
         /// The author's own words, as a plain string.
         public var plainText: String?
         public var isCompactSummary: Bool
+        /// A tool's structured result, such as an edit's patch: `toolUseResult` in a transcript, `tool_use_result` in
+        /// Claude Code's stream.
+        public var toolUseResult: JSONValue?
 
         public init?(line: Data) {
             guard let object = try? JSONDecoder().decode([String: JSONValue].self, from: line),
@@ -71,6 +74,7 @@ public enum TranscriptParser {
             self.id = id
             role = type
             at = Self.date(object["timestamp"])
+            toolUseResult = object["toolUseResult"] ?? object["tool_use_result"]
             if case .bool(true)? = object["isCompactSummary"] {
                 isCompactSummary = true
             } else {

@@ -213,7 +213,7 @@ struct ChatBuilderRecordedTests {
         switch item.content {
         case .prompt: "prompt"
         case .text: "text"
-        case .tools: "tools"
+        case .tools, .edit: "tools"
         case .question: "question"
         case .plan: "plan"
         case .notice: "notice"

@@ -20,6 +20,8 @@ public enum ChatContent: Equatable, Sendable {
     case prompt(ChatPrompt)
     case text(ChatText)
     case tools(ChatToolGroup)
+    /// A file change, as a diff card.
+    case edit(ChatToolCall)
     case question(ChatQuestion)
     case plan(ChatPlan)
     case notice(String)
@@ -53,6 +55,8 @@ public struct ChatToolCall: Equatable, Sendable {
     /// Nil until the call returns.
     public var result: String?
     public var isError: Bool
+    /// A file change's diff: from its input while it waits, from its result once it ran.
+    public var edit: ChatEdit?
 }
 
 /// Consecutive tool calls of one kind, read as one line: "Read TopBarView.swift and 3 more".
