@@ -39,12 +39,15 @@ else
     echo "warning: Docker is not running, so canopy-box is not rebuilt for hosts." >&2
 fi
 # Hosts install the bundled canopy-box whenever its hash differs, so one older than its sources would replace a newer
-# build there. Left out, hosts keep the one they have.
+# build there. Left out, hosts keep the one they run, though this app cannot start one that stopped or upgrade a host.
 stale=""
-if ((!rebuilt)) && [[ -x build/box/x86_64/canopy-box ]]; then
-    stale=$(find Sources/CanopyBox Sources/CanopyBoxKit Sources/CanopyAgents Sources/CanopyServer Sources/CanopyWire \
-        Sources/CanopySystem Sources/CanopyGit Sources/CSystemShims Package.swift Package.resolved \
-        -newer build/box/x86_64/canopy-box -type f -print -quit 2>/dev/null)
+if ((!rebuilt)); then
+    for arch in x86_64 aarch64; do
+        [[ -x build/box/$arch/canopy-box && -z "$stale" ]] || continue
+        stale=$(find Sources/CanopyBox Sources/CanopyBoxKit Sources/CanopyAgents Sources/CanopyServer \
+            Sources/CanopyWire Sources/CanopySystem Sources/CanopyGit Sources/CSystemShims Package.swift Package.resolved \
+            -newer "build/box/$arch/canopy-box" -type f -print -quit 2>/dev/null || true)
+    done
 fi
 if [[ -n "$stale" ]]; then
     echo "warning: build/box is older than canopy-box's sources ($stale), so this app leaves it out rather than" \

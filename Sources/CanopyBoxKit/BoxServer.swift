@@ -97,7 +97,7 @@ public final class BoxServer: Sendable {
     }
 
     /// Runs a relayed CLI call to its end, beating while it runs, and cancels it once the relay hangs up, except a
-    /// hook's report, which is the box's from its acknowledgement on.
+    /// hook's report, which is the box's once received.
     private static func relay(
         _ request: RelayRequest, on connection: UnixConnection, daemon: BoxDaemon, heartbeat: Duration
     ) {

@@ -15,7 +15,7 @@
   The last found a bug: the acknowledgement went out before the hook started, so a hook whose process was already gone was dropped. The work now starts first.
 - [x] canopy-box holds a lock on its home (`box/serve.lock`) from the start, so two daemons started at the same moment never both load and save its state; `InstanceLock` moved to `CanopySystem` to build on Linux.
 - [x] canopy-box reads the machine's name on a thread of its own at start, as it may take a DNS lookup, rather than on its actor's first poll.
-- [x] `bundle.sh` without Docker leaves out a canopy-box older than its sources, as hosts would install it over a newer build; hosts keep theirs.
+- [x] `bundle.sh` without Docker leaves out a canopy-box older than either of its binaries' sources, as hosts would install it over a newer build. Hosts keep the one they run, though such an app cannot start one that stopped or upgrade a host, as before when `build/box` was empty.
 
 ## Left as they are
 
@@ -29,3 +29,11 @@
 ## Checks
 
 `make lint`, `make build` with no warnings, `make test` three times clean, `make e2e`, `make linux`, an opus review with its findings fixed below, and CI's `check`.
+
+## After Review
+
+An opus review found one important issue and seven minor ones, and confirmed each reason under "Left as they are".
+
+- Important, fixed: a restart as a plain process could reach the lock a moment before the old daemon had gone, report that one already ran, and leave the host with none; the lock waits up to five seconds, on a thread of its own.
+- Minor, fixed: only a lock held elsewhere reads as "already runs", other failures say why; the home's folder is made private; learning the machine's name no longer delays the socket; `bundle.sh` checks both binaries and cannot stop on a missing path; the lock test fails rather than hangs without its fix; a stale doc comment.
+- Minor, not changed: `aHookLandsAfterItsCallerHangsUp` catches the bug when the caller's close beats the acknowledgement, which is very likely but not certain; with the fix in, it cannot fail.

@@ -82,9 +82,15 @@ struct BoxProcessTests {
         try FileManager.default.createDirectory(atPath: paths.folder, withIntermediateDirectories: true)
         let held = try InstanceLock(path: paths.folder + "/serve.lock")
 
-        let status = await BoxMain.run(["serve", "--home-id", "abc12347", "--root", dir.path])
+        // Without the lock it would serve on and never return, so it gets a while, not forever.
+        let status = Shared<Int32?>(nil)
+        let run = Task { [path = dir.path] in
+            let result = await BoxMain.run(["serve", "--home-id", "abc12347", "--root", path])
+            status.withLock { $0 = result }
+        }
+        defer { run.cancel() }
 
-        #expect(status == 1)
+        #expect(await eventually(timeout: .seconds(15)) { status.withLock { $0 } == 1 })
         #expect(!FileManager.default.fileExists(atPath: paths.stateFile))
         withExtendedLifetime(held) {}
     }
