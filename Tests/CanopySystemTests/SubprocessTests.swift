@@ -102,3 +102,51 @@ extension SubprocessTests {
         #expect(result.stdout.isEmpty)
     }
 }
+
+extension SubprocessTests {
+    /// A child that is gone before anything watches it must be seen as exited, not waited on until the timeout.
+    @Test func aChildThatExitsAtOnceIsNotWaitedOn() async throws {
+        let started = ContinuousClock.now
+        let result = try await offPool {
+            try Subprocess.run("/bin/sh", ["-c", "exit 0"], environment: [:], directory: nil, timeout: .seconds(10))
+        }
+
+        #expect(result.status == 0)
+        #expect(!result.timedOut)
+        #expect(ContinuousClock.now - started < .seconds(2))
+    }
+
+    /// Linux has no POSIX_SPAWN_CLOEXEC_DEFAULT, so a descriptor this process holds open must still not reach a child.
+    @Test func aChildInheritsNoDescriptors() async throws {
+        let dir = try TempDir()
+        let opened = open(dir.sub("held"), O_CREAT | O_RDWR, 0o600)
+        defer { close(opened) }
+        // High enough that the child's shell never opens one of its own there.
+        let held = fcntl(opened, F_DUPFD, 200)
+        defer { close(held) }
+        #expect(held >= 200)
+
+        let result = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", "for fd in /dev/fd/*; do echo ${fd##*/}; done"], environment: [:], directory: nil,
+                timeout: .seconds(20))
+        }
+
+        let descriptors = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").compactMap { Int32($0) }
+        #expect(descriptors.contains(1))
+        #expect(!descriptors.contains(held))
+    }
+
+    @Test func exitStatusAndSignalAreReported() async throws {
+        let exited = try await offPool {
+            try Subprocess.run("/bin/sh", ["-c", "exit 3"], environment: [:], directory: nil, timeout: .seconds(20))
+        }
+        let killed = try await offPool {
+            try Subprocess.run(
+                "/bin/sh", ["-c", "kill -TERM $$"], environment: [:], directory: nil, timeout: .seconds(20))
+        }
+
+        #expect(exited.status == 3)
+        #expect(killed.status == 128 + SIGTERM)
+    }
+}

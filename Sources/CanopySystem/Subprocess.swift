@@ -81,11 +81,29 @@ public final class SubprocessHandle: Sendable {
             state.errors = -1
         }
     }
+
+    /// Reaps the child if it has exited, holding the lock, so `cancel` never signals a pid that is free to be reused.
+    /// With `wait`, blocks until it exits.
+    fileprivate func reap(_ pid: pid_t, wait: Bool) -> Int32? {
+        state.withLock { state in
+            var status: Int32 = 0
+            var reaped: pid_t
+            repeat {
+                reaped = waitpid(pid, &status, wait ? 0 : WNOHANG)
+            } while reaped == -1 && errno == EINTR
+            guard reaped != 0 else { return nil }
+            state.pid = nil
+            state.errors = -1
+            return status
+        }
+    }
 }
 
-private typealias KeventCall = (
-    Int32, UnsafePointer<kevent>?, Int32, UnsafeMutablePointer<kevent>?, Int32, UnsafePointer<timespec>?
-) -> Int32
+#if canImport(Darwin)
+    private typealias KeventCall = (
+        Int32, UnsafePointer<kevent>?, Int32, UnsafeMutablePointer<kevent>?, Int32, UnsafePointer<timespec>?
+    ) -> Int32
+#endif
 
 public enum Subprocess {
     /// Runs a program in a session of its own, with no controlling terminal, stdin from `stdin` or else /dev/null, no
@@ -112,7 +130,12 @@ public enum Subprocess {
         let errors = try temporaryFile(for: executable)
         defer { close(errors) }
 
-        var actions: posix_spawn_file_actions_t?
+        // A pointer on Darwin, a struct on Glibc and Musl.
+        #if canImport(Darwin)
+            var actions: posix_spawn_file_actions_t?
+        #else
+            var actions = posix_spawn_file_actions_t()
+        #endif
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         if let input {
@@ -126,7 +149,11 @@ public enum Subprocess {
             posix_spawn_file_actions_addchdir_np(&actions, directory)
         }
 
-        var attributes: posix_spawnattr_t?
+        #if canImport(Darwin)
+            var attributes: posix_spawnattr_t?
+        #else
+            var attributes = posix_spawnattr_t()
+        #endif
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
         // Dispatch's threads, and threads they start, block most signals, a child inherits the caller's mask, and an
@@ -139,7 +166,17 @@ public enum Subprocess {
         var every = sigset_t()
         sigfillset(&every)
         posix_spawnattr_setsigdefault(&attributes, &every)
-        let flags = POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #if canImport(Darwin)
+            let flags =
+                POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #else
+            // Linux has no POSIX_SPAWN_CLOEXEC_DEFAULT, so every descriptor open now is marked close-on-exec instead.
+            // One another thread opens after this without O_CLOEXEC can still reach the child.
+            closeOnExec()
+            // glibc declares POSIX_SPAWN_SETSID only under _GNU_SOURCE, which Swift's import leaves out; it is 0x80
+            // there and in musl.
+            let flags = 0x80 | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #endif
         posix_spawnattr_setflags(&attributes, Int16(flags))
 
         let argv = ([executable] + arguments).map { strdup($0) } + [nil]
@@ -154,13 +191,17 @@ public enum Subprocess {
         handle?.started(pid: pid, errors: errors)
 
         // Until waitpid reaps it, the child is at worst a zombie, so its pid and process group cannot be reused.
-        let timedOut = !waitForExit(pid, timeout: timeout)
-        if timedOut {
-            kill(-pid, SIGKILL)
-        }
-        handle?.exited()
-        var status: Int32 = 0
-        while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+        #if canImport(Darwin)
+            let timedOut = !waitForExit(pid, timeout: timeout)
+            if timedOut {
+                kill(-pid, SIGKILL)
+            }
+            handle?.exited()
+            var status: Int32 = 0
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+        #else
+            let (status, timedOut) = reap(pid, timeout: timeout, handle: handle ?? SubprocessHandle())
+        #endif
 
         let signal = status & 0x7f
         return SubprocessResult(
@@ -171,33 +212,61 @@ public enum Subprocess {
         )
     }
 
-    /// Waits for `pid` to exit without reaping it. Returns false if the timeout passed first.
-    private static func waitForExit(_ pid: pid_t, timeout: Duration?) -> Bool {
-        let queue = kqueue()
-        guard queue >= 0 else { return true }
-        defer { close(queue) }
-        var change = Darwin.kevent(
-            ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT),
-            fflags: NOTE_EXIT, data: 0, udata: nil)
-        var event = Darwin.kevent()
-        // Typed to pick the kevent(2) function over the kevent struct's initializer.
-        let watch: KeventCall = kevent
-        let deadline = timeout.map { ContinuousClock.now + $0 }
-        while true {
-            let count: Int32
-            if let deadline {
-                let left = max(deadline - ContinuousClock.now, .zero).components
-                var limit = timespec(tv_sec: Int(left.seconds), tv_nsec: Int(left.attoseconds / 1_000_000_000))
-                count = watch(queue, &change, 1, &event, 1, &limit)
-            } else {
-                count = watch(queue, &change, 1, &event, 1, nil)
+    #if !canImport(Darwin)
+        /// Polls until `pid` exits, reaping it under the handle's lock, or kills its group once the timeout passes.
+        /// Linux's way to wait without reaping, `waitid` with `WNOWAIT`, reports through a `siginfo_t` whose layout
+        /// differs between Glibc and Musl.
+        private static func reap(_ pid: pid_t, timeout: Duration?, handle: SubprocessHandle) -> (Int32, Bool) {
+            let deadline = timeout.map { ContinuousClock.now + $0 }
+            while true {
+                if let status = handle.reap(pid, wait: false) { return (status, false) }
+                if let deadline, ContinuousClock.now >= deadline {
+                    kill(-pid, SIGKILL)
+                    return (handle.reap(pid, wait: true) ?? 0, true)
+                }
+                usleep(5_000)
             }
-            if count > 0 { return true }
-            if count == 0 { return false }
-            if errno == ESRCH { return true }  // Already exited before the watch was added.
-            guard errno == EINTR else { return true }
         }
-    }
+
+        /// Marks every descriptor above stderr close-on-exec.
+        private static func closeOnExec() {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd") else { return }
+            for descriptor in names.compactMap(Int32.init) where descriptor > 2 {
+                let flags = fcntl(descriptor, F_GETFD)
+                if flags >= 0 { _ = fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) }
+            }
+        }
+    #endif
+
+    #if canImport(Darwin)
+        /// Waits for `pid` to exit without reaping it. Returns false if the timeout passed first.
+        private static func waitForExit(_ pid: pid_t, timeout: Duration?) -> Bool {
+            let queue = kqueue()
+            guard queue >= 0 else { return true }
+            defer { close(queue) }
+            var change = Darwin.kevent(
+                ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT),
+                fflags: NOTE_EXIT, data: 0, udata: nil)
+            var event = Darwin.kevent()
+            // Typed to pick the kevent(2) function over the kevent struct's initializer.
+            let watch: KeventCall = kevent
+            let deadline = timeout.map { ContinuousClock.now + $0 }
+            while true {
+                let count: Int32
+                if let deadline {
+                    let left = max(deadline - ContinuousClock.now, .zero).components
+                    var limit = timespec(tv_sec: Int(left.seconds), tv_nsec: Int(left.attoseconds / 1_000_000_000))
+                    count = watch(queue, &change, 1, &event, 1, &limit)
+                } else {
+                    count = watch(queue, &change, 1, &event, 1, nil)
+                }
+                if count > 0 { return true }
+                if count == 0 { return false }
+                if errno == ESRCH { return true }  // Already exited before the watch was added.
+                guard errno == EINTR else { return true }
+            }
+        }
+    #endif
 
     private static func temporaryFile(for executable: String) throws -> Int32 {
         var template = Array((NSTemporaryDirectory() + "canopy-output.XXXXXX").utf8CString)

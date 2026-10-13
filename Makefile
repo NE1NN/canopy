@@ -1,13 +1,18 @@
 TEST_FLAGS := $(shell scripts/test-flags.sh)
 SOURCES := Package.swift Sources Tests Apps
 
-.PHONY: build test lint format app release install signing-cert e2e ios ios-install ios-shots clean
+.PHONY: build test linux lint format app release install signing-cert e2e ios ios-install ios-shots clean
 
 build:
 	swift build
 
 test:
 	LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(TEST_FLAGS)
+
+# The portable modules, built and tested on Linux in Docker, apart from the Mac's own build folder.
+linux:
+	docker run --rm -v "$(CURDIR)":/src -w /src swift:6.4 \
+		sh -c 'swift build --scratch-path .build/linux -Xswiftc -warnings-as-errors && swift test --scratch-path .build/linux'
 
 lint:
 	swift format lint --strict --recursive $(SOURCES)
