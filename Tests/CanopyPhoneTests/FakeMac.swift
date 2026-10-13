@@ -59,6 +59,8 @@ final class FakeMac: PhoneTransport, Sendable {
         var handlers: [String: @Sendable (ControlRequest) -> Reply] = [:]
         var links: [Link] = []
         var connects: [String] = []
+        /// How many connects fail before they go through again.
+        var failingConnects = 0
     }
 
     let state: Mutex<State>
@@ -85,7 +87,11 @@ final class FakeMac: PhoneTransport, Sendable {
     func connect(host: String, port: UInt16) async throws -> any PhoneChannel {
         let (reachable, refused, hanging) = state.withLock { state in
             state.connects.append(host)
-            return (state.reachable.contains(host), state.refused.contains(host), state.hanging.contains(host))
+            let failing = state.failingConnects > 0
+            if failing { state.failingConnects -= 1 }
+            return (
+                state.reachable.contains(host) && !failing, state.refused.contains(host), state.hanging.contains(host)
+            )
         }
         if hanging {
             try await Task.sleep(for: .seconds(3600))

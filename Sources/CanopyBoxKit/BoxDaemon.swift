@@ -31,6 +31,8 @@ public actor BoxDaemon {
     var waiters: [UUID: @Sendable () -> Void] = [:]
 
     private var observers: [UUID: AsyncStream<BoxSnapshot>.Continuation] = [:]
+    /// How many follow the snapshots, as phones' inboxes and replies waiting to be taken do.
+    var observerCount: Int { observers.count }
     private var publishing: Task<Void, Never>?
     private var lastPublished: ContinuousClock.Instant?
 

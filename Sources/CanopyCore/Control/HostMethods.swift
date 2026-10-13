@@ -69,16 +69,19 @@ public struct HostAddParams: Codable, Sendable {
     public var idleDetachMinutes: Int?
     /// What a task from the phone runs there.
     public var agentCommand: String?
+    /// False keeps a new host on this Mac's relay rather than starting canopy-box there. Nil starts it.
+    public var box: Bool?
 
     public init(
         alias: String, repos: [String: String], wake: String? = nil, idleDetachMinutes: Int? = nil,
-        agentCommand: String? = nil
+        agentCommand: String? = nil, box: Bool? = nil
     ) {
         self.alias = alias
         self.repos = repos
         self.wake = wake
         self.idleDetachMinutes = idleDetachMinutes
         self.agentCommand = agentCommand
+        self.box = box
     }
 }
 

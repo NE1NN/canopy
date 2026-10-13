@@ -14,11 +14,18 @@ public enum AgentHook {
             let home = environment[CanopyHome.environmentKey], !home.isEmpty,
             let report = ClaudeHookMapping.report(
                 from: input, startedAt: relayedStart(in: environment) ?? startedAt),
-            let params = try? JSONValue.from(TermStateParams(pane: pane, report))
+            let params = try? JSONValue.from(Self.params(pane: pane, report, environment: environment))
         else { return nil }
         return AgentHookRequest(
             socketPath: CanopyHome(path: home).socketPath,
             request: ControlRequest(method: TermMethod.state, params: params))
+    }
+
+    /// A relayed hook names its pane by the host's session, which only that host's pane has.
+    static func params(pane: String, _ report: AgentReport, environment: [String: String]) -> TermStateParams {
+        var params = TermStateParams(pane: pane, report)
+        params.host = RelayRun.host(in: environment)
+        return params
     }
 
     static func relayedStart(in environment: [String: String]) -> Date? {

@@ -64,9 +64,24 @@ extension Workspace {
     }
 
     /// Brings up an upgraded host's link once per connection: the forward to its `box.sock` through the master, and
-    /// the link itself, which connects and reconnects on its own.
+    /// the link itself, which connects and reconnects on its own. A caller while a start is under way waits for it,
+    /// as a second forward would unlink the socket the first one is making.
     public func ensureBoxLink(_ connection: HostConnection) async {
         let alias = connection.alias
+        while let running = boxLinkStarts[alias] { await running.task.value }
+        let id = UUID()
+        // The start leaves the table itself before it ends, so a caller its end wakes finds it gone.
+        let start = Task {
+            await self.startBoxLink(connection)
+            if self.boxLinkStarts[alias]?.id == id { self.boxLinkStarts[alias] = nil }
+        }
+        boxLinkStarts[alias] = (id, start)
+        await start.value
+    }
+
+    private func startBoxLink(_ connection: HostConnection) async {
+        let alias = connection.alias
+        guard !removingHosts.contains(alias) else { return }
         guard hosts.hosts[alias]?.box == true, await connection.state == .connected else { return }
         let generation = await connection.generation
         if boxInstalled[alias] != generation {
@@ -124,9 +139,16 @@ extension Workspace {
         var gone: [String] = []
         var touched: Set<String> = []
         for (repoName, _) in entry.repos {
-            guard let index = state.repos.firstIndex(where: { self.repoName($0.path) == repoName }) else { continue }
+            // The box names rows by the host's key, which may be the repo's folder name rather than its name here.
+            guard
+                let index = state.repos.firstIndex(where: {
+                    entry.repoKey(repoName: self.repoName($0.path), repoPath: $0.path) == repoName
+                })
+            else { continue }
             var repoChanged = false
-            let rows = snapshot.rows.filter { !$0.isMain && $0.repo == repoName }
+            // A host upgraded before the Mac sent the host's key has its rows under the Mac's name for the repo.
+            let macName = self.repoName(state.repos[index].path)
+            let rows = snapshot.rows.filter { !$0.isMain && ($0.repo == repoName || $0.repo == macName) }
             let paths = Set(rows.map(\.path))
             for row in rows {
                 if let position = state.repos[index].remote.firstIndex(where: {
@@ -140,12 +162,11 @@ extension Workspace {
                         state.repos[index].remote[position] = updated
                         repoChanged = true
                     }
-                } else {
+                } else if remoteRow(host: alias, path: row.path) == nil {
+                    // A row another repo here already has, as when two repos match one key, stays there.
                     let entry = RemoteRowEntry(
                         host: alias, path: row.path,
-                        standIn: standInPath(
-                            alias: alias, dirName: state.repos[index].dirName,
-                            leaf: (row.path as NSString).lastPathComponent),
+                        standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: row.path),
                         branch: row.branch, head: row.head, missing: row.missing)
                     try? entry.makeStandIn()
                     state.repos[index].remote.removeAll { $0.standIn == entry.standIn }
@@ -189,12 +210,14 @@ extension Workspace {
         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
         let made: BoxRowNewResult = try await link.call(
             BoxMethod.rowNew,
-            BoxRowNewParams(repo: target.repoName, branch: branch, base: base, existing: existing))
+            BoxRowNewParams(repo: target.hostRepo, branch: branch, base: base, existing: existing))
         let index = try entryIndex(repoPath: repoPath)
+        // A snapshot may have brought the row in first; it keeps the stand-in it has.
+        let known = state.repos[index].remote.first { $0.host == alias && $0.path == made.row.path }
         let entry = RemoteRowEntry(
             host: alias, path: made.row.path,
-            standIn: standInPath(
-                alias: alias, dirName: state.repos[index].dirName, leaf: (made.row.path as NSString).lastPathComponent),
+            standIn: known?.standIn
+                ?? freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: made.row.path),
             branch: made.row.branch, head: made.row.head)
         if state.repos[index].remote.contains(where: { $0.host == alias && $0.path == entry.path }) {
             state.repos[index].remote.removeAll { $0.host == alias && $0.path == entry.path }
@@ -255,7 +278,8 @@ extension Workspace {
                 guard let repo = state.repos.first(where: { $0.remote.contains { $0.standIn == row.standIn } }) else {
                     return nil
                 }
-                return BoxAdoptedRow(repo: repoName(repo.path), path: row.path, branch: row.branch)
+                let name = entry.repoKey(repoName: repoName(repo.path), repoPath: repo.path) ?? repoName(repo.path)
+                return BoxAdoptedRow(repo: name, path: row.path, branch: row.branch)
             }
             let adopted: BoxAdoptResult = try await link.call(
                 BoxMethod.adopt, BoxAdoptParams(rows: rows, panes: panes, nextPane: 1))
@@ -301,6 +325,23 @@ extension Workspace {
             _ = try? await output(of: markCommand(adopted: false), on: connection)
             try? await BoxInstall.stop(on: connection, homeID: homeID)
             throw error
+        }
+    }
+
+    /// Stops an upgraded host's canopy-box and its service for good, as the host is removed. Returns why it could not.
+    func stopBox(_ alias: String, _ entry: HostEntry) async -> String? {
+        await stopBoxLink(alias)
+        let connection = await connection(alias, entry)
+        do {
+            try await connection.connect(waking: false)
+            _ = try? await output(of: markCommand(adopted: false), on: connection)
+            try await BoxInstall.stop(on: connection, homeID: homeID)
+            return nil
+        } catch {
+            let reason = (error as? WorkspaceError)?.message ?? "\(error)"
+            return "canopy-box may still run on \(alias), as Canopy could not reach it to stop it. "
+                + "Stop it there with `systemctl --user disable --now canopy-box-\(homeID)`, or end its "
+                + "`canopy-box serve --home-id \(homeID)` process. \(reason)"
         }
     }
 
@@ -359,15 +400,18 @@ extension Workspace {
 
     /// Rows the box gave back that the Mac has no entry for, as one made on the box while no snapshot reached the Mac.
     func restoreReleasedRows(_ rows: [BoxAdoptedRow], host alias: String) {
+        let host = hosts.hosts[alias]
         var touched = Set<String>()
         for row in rows {
             guard remoteRow(host: alias, path: row.path) == nil,
-                let index = state.repos.firstIndex(where: { repoName($0.path) == row.repo })
+                let index = state.repos.firstIndex(where: {
+                    repoName($0.path) == row.repo
+                        || host?.repoKey(repoName: repoName($0.path), repoPath: $0.path) == row.repo
+                })
             else { continue }
             let entry = RemoteRowEntry(
                 host: alias, path: row.path,
-                standIn: standInPath(
-                    alias: alias, dirName: state.repos[index].dirName, leaf: (row.path as NSString).lastPathComponent),
+                standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: row.path),
                 branch: row.branch, head: nil)
             try? entry.makeStandIn()
             state.repos[index].remote.append(entry)

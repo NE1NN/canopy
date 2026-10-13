@@ -42,6 +42,8 @@ public enum ControlMethod {
         if [rowNew, rowRemove, repoClone, PluginMethod.new, HostMethod.add].contains(method) { return nil }
         if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
+        // Removing an upgraded host stops its canopy-box, whose service can take a while to stop.
+        if method == HostMethod.remove { return 300 }
         // Waits for a pairing code, which lasts five minutes.
         if method == PhonesMethod.paired { return PhoneRegistry.codeLifetime + 30 }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30

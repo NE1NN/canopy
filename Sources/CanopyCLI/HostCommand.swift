@@ -20,7 +20,9 @@ struct HostCommand: AsyncParsableCommand {
             discussion: """
                 The host needs Linux, git, tmux 3.0 or later, and python3. Each --repo names a registered repo and \
                 its clone on the host, such as --repo solis-v1=~/Projects/solis-v1. --wake runs on this Mac when \
-                the host cannot be reached, such as a command that starts it. Panes detach after --idle-detach \
+                the host cannot be reached, such as a command that starts it. A new host runs canopy-box, which keeps \
+                its rows, panes, and agents while this Mac is away and serves phones there; --no-box keeps it on this \
+                Mac's relay, and canopy host upgrade switches it later. Panes detach after --idle-detach \
                 minutes with nothing running and nothing typed, 30 by default, so the host can power itself off; 0 \
                 never detaches. --agent is what a task from the phone runs there, with the brief as its last \
                 argument; canopy phone agent --on <host> shows or changes it later.
@@ -40,6 +42,8 @@ struct HostCommand: AsyncParsableCommand {
         var idleDetach: Int?
         @Option(help: ArgumentHelp("What a task from the phone runs on the host.", valueName: "command"))
         var agent: String?
+        @Flag(name: .customLong("no-box"), help: "Keep a new host on this Mac's relay, without canopy-box.")
+        var noBox = false
         @OptionGroup var output: OutputOptions
 
         func validate() throws {
@@ -56,7 +60,8 @@ struct HostCommand: AsyncParsableCommand {
             }
             let client = Client(json: output.json)
             let params = HostAddParams(
-                alias: alias, repos: repos, wake: wake, idleDetachMinutes: idleDetach, agentCommand: agent)
+                alias: alias, repos: repos, wake: wake, idleDetachMinutes: idleDetach, agentCommand: agent,
+                box: noBox ? false : nil)
             let result = client.call(HostMethod.add, params)
             if let host = try? result.decode(HostInfo.self) {
                 for warning in host.warnings {
@@ -180,7 +185,8 @@ struct HostCommand: AsyncParsableCommand {
 
     struct Remove: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            commandName: "rm", abstract: "Forget a host without rows. Its files on the host stay.")
+            commandName: "rm",
+            abstract: "Forget a host without rows, stopping its canopy-box. Its files on the host stay.")
 
         @Argument(help: "The host's alias.")
         var alias: String
@@ -189,6 +195,11 @@ struct HostCommand: AsyncParsableCommand {
         func run() async throws {
             let client = Client(json: output.json)
             let result = client.call(HostMethod.remove, HostRemoveParams(alias: alias))
+            if case .object(let fields) = result, case .array(let warnings)? = fields["warnings"] {
+                for case .string(let warning) in warnings {
+                    FileHandle.standardError.write(Data("warning: \(warning)\n".utf8))
+                }
+            }
             try client.print(result) { "Removed \(alias)." }
         }
     }

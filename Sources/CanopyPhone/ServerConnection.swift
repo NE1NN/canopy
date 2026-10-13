@@ -34,6 +34,8 @@ public final class ServerConnection: Identifiable {
     private let transport: any PhoneTransport
     private let credentials: any CredentialStore
     private let timeout: Duration
+    /// Set by `foreground` while a try is under way, so the next goes at once.
+    private var retriesAtOnce = false
     private let sleep: Sleep
     private let now: @Sendable () -> Date
 
@@ -80,12 +82,14 @@ public final class ServerConnection: Identifiable {
         loop = Task { await self.run(opened: nil) }
     }
 
-    /// Back on screen: try at once rather than waiting out the backoff.
+    /// Back on screen: try at once rather than waiting out the backoff, also when a try is under way, whose failure
+    /// would otherwise start one.
     public func foreground() {
         failures = 0
         if loop == nil {
             start()
         } else {
+            retriesAtOnce = true
             nap?.cancel()
         }
     }
@@ -222,12 +226,17 @@ public final class ServerConnection: Identifiable {
                 guard !Task.isCancelled else { return }
                 status = .unreachable(PhoneProblem(error, server: server.name))
             }
+            if retriesAtOnce {
+                retriesAtOnce = false
+                continue
+            }
             let wait = Self.backoff[min(failures, Self.backoff.count - 1)]
             failures += 1
             let sleep = self.sleep
             nap = Task { try? await sleep(wait) }
             await nap?.value
             nap = nil
+            retriesAtOnce = false
         }
     }
 

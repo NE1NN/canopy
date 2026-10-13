@@ -177,7 +177,8 @@ on_host "set -e; mkdir -p '$host_dir/out'; git init -q --bare -b main '$host_dir
 step "host add checks the host and installs Canopy's files"
 launch
 "$cli" repo add "$work/demo" >/dev/null
-"$cli" host add "$alias" --repo "demo=$host_dir/demo" >/dev/null
+# Kept on the Mac's relay at first, so the relay's own steps run, and canopy-box takes the host later on.
+"$cli" host add "$alias" --repo "demo=$host_dir/demo" --no-box >/dev/null
 server=$("$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
 [[ "$(host_state)" == connected ]] || fail "the host is $(host_state), not connected"
 on_host "test -x ~/.canopy/${server#canopy-}/bin/canopy-host" || fail "canopy-host is not on the host"
@@ -363,7 +364,7 @@ step "a second home on the same host has its own tmux server, sessions, and file
 home2() { CANOPY_HOME="$work/home2" "$@"; }
 CANOPY_HOME="$work/home2" launch
 home2 "$cli" repo add "$work/demo" >/dev/null
-home2 "$cli" host add "$alias" --repo "demo=$host_dir/demo" >/dev/null 2>&1
+home2 "$cli" host add "$alias" --repo "demo=$host_dir/demo" --no-box >/dev/null 2>&1
 server2=$(home2 "$cli" host list --json | json '[h["tmuxServer"] for h in d if h["alias"] == "'"$alias"'"][0]')
 [[ "$server2" != "$server" ]] || fail "both homes use the tmux server $server"
 on_host "test -x ~/.canopy/${server2#canopy-}/bin/canopy-host && test -x ~/.canopy/${server#canopy-}/bin/canopy-host" ||
@@ -554,6 +555,19 @@ on_host "test ! -e '$remote'" || fail "the worktree is still on the host"
 step "host rm forgets the host"
 "$cli" host rm "$alias" >/dev/null
 [[ "$("$cli" host list --json | json 'len(d)')" == 0 ]] || fail "the host is still listed"
+
+if ((with_box)); then
+    step "host add runs canopy-box on a new host from the start, and host rm stops it"
+    "$cli" host add "$alias" --repo "demo=$host_dir/demo" > "$work/readd.out" 2> "$work/readd.err" \
+        || fail "host add failed: $(cat "$work/readd.err")"
+    "$cli" host list --json | json '[h["box"] for h in d if h["alias"] == "'"$alias"'"][0]' | grep -qx True \
+        || fail "a new host is not upgraded: $(cat "$work/readd.err")"
+    on_host "test -S $box_sock" || fail "canopy-box does not listen on the new host"
+    "$cli" host rm "$alias" >/dev/null 2> "$work/rm.err" || fail "host rm failed: $(cat "$work/rm.err")"
+    [[ ! -s "$work/rm.err" ]] || fail "host rm warned: $(cat "$work/rm.err")"
+    box_stopped() { ! on_host "test -S $box_sock"; }
+    wait_for 20 box_stopped || fail "canopy-box still listens after host rm"
+fi
 
 echo
 echo "e2e-hosts passed against $alias"

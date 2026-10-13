@@ -99,6 +99,8 @@ public final class TCPListener: Sendable {
                 let client = canopy_accept_closing_on_exec(fd)
                 if client < 0 {
                     if errno == EINTR || errno == ECONNABORTED { continue }
+                    // Out of descriptors the waiting connection stays queued, and the source fires again at once.
+                    if errno == EMFILE || errno == ENFILE { usleep(100_000) }
                     return
                 }
                 accept(TCPConnection(fd: client, options: options))

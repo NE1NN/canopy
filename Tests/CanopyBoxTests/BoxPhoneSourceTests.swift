@@ -74,6 +74,52 @@ struct BoxPhoneSourceTests {
         #expect(await eventually { contents(out) == "first line\nsecond\n" })
     }
 
+    /// The agent takes one prompt per turn, so a working state marks one reply delivered: the oldest waiting.
+    @Test func eachWorkingTurnTakesOneReplyTheOldestFirst() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        try await daemon.send(pane: pane, text: "cat > /dev/null", enter: true)
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        let source = BoxPhoneSource(daemon: daemon)
+        let delivered = Shared<[String]>([])
+        for text in ["first", "second"] {
+            try await source.reply(PhoneReplyParams(pane: pane, text: text)) {
+                delivered.withLock { $0.append(text) }
+            }
+        }
+
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+        #expect(await eventually { delivered.withLock { $0 } == ["first"] })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(delivered.withLock { $0 } == ["first"])
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+
+        #expect(await eventually { delivered.withLock { $0 } == ["first", "second"] })
+    }
+
+    /// On a box that stays quiet, a reply's watch ends with its window rather than waiting for the next change.
+    @Test func aReplyNotTakenWithinItsWindowIsNeverMarked() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        try await daemon.send(pane: pane, text: "cat > /dev/null", enter: true)
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        let source = BoxPhoneSource(daemon: daemon, deliveryWindow: .seconds(1))
+        let delivered = Shared(false)
+        let watching = await daemon.observerCount
+        try await source.reply(PhoneReplyParams(pane: pane, text: "late")) { delivered.withLock { $0 = true } }
+        #expect(await eventually { await daemon.observerCount == watching + 1 })
+
+        // Nothing changes on the box, and the watch still ends.
+        #expect(await eventually { await daemon.observerCount == watching })
+        await daemon.report(pane: pane, AgentReport(state: .working, session: "s"))
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(!delivered.withLock { $0 })
+    }
+
     @Test func aReplyIsRefusedWhileADialogShowsOrNoAgentRuns() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
@@ -216,6 +262,39 @@ struct BoxPhoneSourceTests {
         }
 
         #expect(await daemon.snapshot().panes.isEmpty)
+    }
+}
+
+/// The box's activity log, which phones' calls go into.
+struct BoxActivityLogTests {
+    @Test func aFullLogMovesAsideAndTheNextEntryStartsAnew() throws {
+        let dir = try TempDir()
+        let log = dir.sub("activity.jsonl")
+
+        for name in ["a", "b", "c"] { BoxMain.appendActivity(.paired(phone: name), to: log, limit: 120) }
+
+        let current = try String(contentsOfFile: log, encoding: .utf8)
+        let older = try String(contentsOfFile: log + ".1", encoding: .utf8)
+        #expect(current.split(separator: "\n").count == 1 && current.contains(#""phone":"c""#))
+        #expect(older.contains(#""phone":"a""#) && older.contains(#""phone":"b""#))
+    }
+
+    #if os(Linux)
+        /// Writing to /dev/full fails as a full disk does, which trapped the old `FileHandle.write`.
+        @Test func aWriteThatFailsLosesTheEntryNotTheDaemon() {
+            BoxMain.appendActivity(.paired(phone: "a"), to: "/dev/full")
+        }
+    #endif
+
+    @Test func aLogThatCannotBeOpenedLosesTheEntryNotTheDaemon() throws {
+        let dir = try TempDir()
+        let log = dir.sub("activity.jsonl")
+        try FileManager.default.createDirectory(atPath: log, withIntermediateDirectories: true)
+
+        BoxMain.appendActivity(.paired(phone: "a"), to: log)
+
+        var isFolder: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: log, isDirectory: &isFolder) && isFolder.boolValue)
     }
 }
 

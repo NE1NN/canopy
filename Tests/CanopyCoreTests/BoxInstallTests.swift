@@ -31,32 +31,36 @@ struct BoxInstallTests {
         init(systemd: Bool = false) throws {
             dir = try TempDir(in: "/tmp")
             fake = try FakeHost(in: dir)
-            if systemd {
-                let bin = fake.home + "/.fake-ssh-bin"
-                try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
-                let script = #"""
-                    #!/bin/sh
-                    echo "$*" >> "$HOME/systemctl.log"
-                    case "$2" in
-                    restart|start)
-                        u="$HOME/.config/systemd/user/$3.service"
-                        cmd=$(sed -n 's/^ExecStart=//p' "$u" | sed "s|%h|$HOME|")
-                        [ "$2" = restart ] && pkill -f "canopy-box serve --home-id ${3#canopy-box-}" 2>/dev/null; sleep 0.3
-                        nohup $cmd </dev/null >/dev/null 2>&1 &
-                        echo $! > "$HOME/systemd.pid" ;;
-                    disable)
-                        [ -f "$HOME/systemd.pid" ] && kill "$(cat "$HOME/systemd.pid")" ;;
-                    esac
-                    exit 0
-                    """#
-                try script.write(toFile: bin + "/systemctl", atomically: true, encoding: .utf8)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/systemctl")
-            }
+            if systemd { try Self.giveSystemd(to: fake) }
             let environment = fake.environment
             connection = HostConnection(
                 alias: fake.alias, entry: HostEntry(), ssh: fake.ssh,
                 launcher: SubprocessHostLauncher(environment: { environment }),
                 activity: ActivityLog(folder: URL(fileURLWithPath: dir.sub("activity"))))
+        }
+
+        /// A `systemctl` that answers for the user's manager and runs the unit's ExecStart in the background, logging
+        /// what it was asked.
+        static func giveSystemd(to fake: FakeHost) throws {
+            let bin = fake.home + "/.fake-ssh-bin"
+            try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+            let script = #"""
+                #!/bin/sh
+                echo "$*" >> "$HOME/systemctl.log"
+                case "$2" in
+                restart|start)
+                    u="$HOME/.config/systemd/user/$3.service"
+                    cmd=$(sed -n 's/^ExecStart=//p' "$u" | sed "s|%h|$HOME|")
+                    [ "$2" = restart ] && pkill -f "canopy-box serve --home-id ${3#canopy-box-}" 2>/dev/null; sleep 0.3
+                    nohup $cmd </dev/null >/dev/null 2>&1 &
+                    echo $! > "$HOME/systemd.pid" ;;
+                disable)
+                    [ -f "$HOME/systemd.pid" ] && kill "$(cat "$HOME/systemd.pid")" ;;
+                esac
+                exit 0
+                """#
+            try script.write(toFile: bin + "/systemctl", atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin + "/systemctl")
         }
 
         var binaries: BoxBinaries { BoxBinaries(folder: nil, override: BoxInstallTests.program) }
@@ -111,6 +115,25 @@ struct BoxInstallTests {
         #expect(
             !FileManager.default.fileExists(
                 atPath: host.fake.home + "/.config/systemd/user/canopy-box-\(host.homeID).service"))
+    }
+
+    /// A daemon started as a plain process, before the host's user manager answered, would hold the socket and leave
+    /// the unit restarting every two seconds for good.
+    @Test func aHostThatGainsSystemdStopsItsPlainDaemonFirst() async throws {
+        let host = try Host()
+        _ = try await BoxInstall.install(on: host.connection, homeID: host.homeID, binaries: host.binaries)
+        let pidFile = host.fake.home + "/.canopy/\(host.homeID)/box/pid"
+        let plain = try #require(
+            Int32(try String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        try Host.giveSystemd(to: host.fake)
+
+        let report = try await BoxInstall.install(on: host.connection, homeID: host.homeID, binaries: host.binaries)
+
+        #expect(report.systemd)
+        #expect(await eventually { kill(plain, 0) != 0 })
+        #expect(!FileManager.default.fileExists(atPath: pidFile))
+        #expect(try await host.isLive())
+        await host.stop()
     }
 
     @Test func aHostWithNoBinaryForItSaysSo() async throws {
