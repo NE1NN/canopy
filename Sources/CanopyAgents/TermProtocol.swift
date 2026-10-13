@@ -109,11 +109,14 @@ public struct TermSendParams: Codable, Sendable {
     public var pane: String
     public var text: String
     public var enter: Bool
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, text: String, enter: Bool = false) {
+    public init(pane: String, text: String, enter: Bool = false, host: String? = nil) {
         self.pane = pane
         self.text = text
         self.enter = enter
+        self.host = host
     }
 
     public init(from decoder: any Decoder) throws {
@@ -121,6 +124,7 @@ public struct TermSendParams: Codable, Sendable {
         pane = try container.decode(String.self, forKey: .pane)
         text = try container.decode(String.self, forKey: .text)
         enter = try container.decodeIfPresent(Bool.self, forKey: .enter) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 
@@ -128,10 +132,13 @@ public struct TermReadParams: Codable, Sendable {
     public var pane: String
     /// The last this many lines, scrollback included. Nil reads the visible screen.
     public var lines: Int?
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, lines: Int? = nil) {
+    public init(pane: String, lines: Int? = nil, host: String? = nil) {
         self.pane = pane
         self.lines = lines
+        self.host = host
     }
 }
 
@@ -146,16 +153,20 @@ public struct TermReadResult: Codable, Sendable, Equatable {
 public struct TermCloseParams: Codable, Sendable {
     public var pane: String
     public var force: Bool
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, force: Bool = false) {
+    public init(pane: String, force: Bool = false, host: String? = nil) {
         self.pane = pane
         self.force = force
+        self.host = host
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         pane = try container.decode(String.self, forKey: .pane)
         force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 
@@ -176,12 +187,15 @@ public struct TermStateParams: Codable, Sendable {
     public var backgroundTasks: [String]
     public var transcriptPath: String?
     public var prompt: AgentPrompt?
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
     public init(
         pane: String, state: AgentState?, session: String? = nil, event: String? = nil, at: Double? = nil,
         question: Bool = false, takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = [],
-        transcriptPath: String? = nil, prompt: AgentPrompt? = nil
+        transcriptPath: String? = nil, prompt: AgentPrompt? = nil, host: String? = nil
     ) {
+        self.host = host
         self.transcriptPath = transcriptPath
         self.prompt = prompt
         self.pane = pane
@@ -213,6 +227,7 @@ public struct TermStateParams: Codable, Sendable {
         question = try container.decodeIfPresent(Bool.self, forKey: .question) ?? false
         takesOver = try container.decodeIfPresent(Bool.self, forKey: .takesOver) ?? false
         releases = try container.decodeIfPresent(Bool.self, forKey: .releases) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
         backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         // A prompt this build cannot read is left out rather than losing the state.
@@ -221,6 +236,7 @@ public struct TermStateParams: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case pane, state, session, event, at, question, takesOver, releases, backgroundTasks, transcriptPath, prompt
+        case host
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -236,6 +252,7 @@ public struct TermStateParams: Codable, Sendable {
         if !backgroundTasks.isEmpty { try container.encode(backgroundTasks, forKey: .backgroundTasks) }
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
         try container.encodeIfPresent(prompt, forKey: .prompt)
+        try container.encodeIfPresent(host, forKey: .host)
     }
 
     public var report: AgentReport {

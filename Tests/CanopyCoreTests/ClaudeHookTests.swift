@@ -45,6 +45,12 @@ struct AgentHookTests {
         let params = try #require(built.request.params).decode(TermStateParams.self)
         #expect(params.pane == "p12")
         #expect(params.report == expected(.done, "Stop"))
+        #expect(params.host == nil)
+        // A hook relayed from a host names it, as two hosts can each have the session.
+        var relayed = environment
+        relayed["CANOPY_HOST"] = "box"
+        let fromHost = try #require(AgentHook.request(input: input, environment: relayed, startedAt: started))
+        #expect(try #require(fromHost.request.params).decode(TermStateParams.self).host == "box")
 
         #expect(AgentHook.request(input: input, environment: ["CANOPY_PANE": "p12"], startedAt: started) == nil)
         #expect(AgentHook.request(input: input, environment: ["CANOPY_HOME": "/tmp/x"], startedAt: started) == nil)

@@ -50,6 +50,30 @@ struct BoxMirrorTests {
         #expect(terminals.panes.count == 1)
     }
 
+    /// Two upgraded hosts each have a `b1`; a hook relayed from one reaches its own.
+    @Test func aRelayedCallNamingASessionReachesThatHostsPane() async throws {
+        defer { terminals.closeAll() }
+        try HostsConfigFile(url: workspace.home.configFile).save(
+            "box2", HostEntry(repos: ["demo": "/home/u/demo"], box: true))
+        await mirror.apply(await update([Self.pane("b1")]))
+        let snapshot = BoxSnapshot(
+            rows: [
+                BoxRow(path: "/home/u/demo", repo: "demo", isMain: true),
+                BoxRow(path: Self.rowPath, repo: "demo", branch: "feat/a"),
+            ],
+            panes: [Self.pane("b1")])
+        await workspace.applyBoxSnapshot(snapshot, host: "box2")
+        await mirror.apply(BoxUpdate(host: "box2", snapshot: snapshot, goneRows: []))
+        let rows = RowLifecycle(workspace: workspace, terminals: terminals)
+        let second = try #require(terminals.panes.first { $0.context.remote?.host == "box2" })
+        let first = try #require(terminals.panes.first { $0.context.remote?.host == "box" })
+
+        _ = try rows.reportAgent(TermStateParams(pane: "b1", state: .waiting, host: "box2"))
+
+        #expect(second.agent.state == .waiting)
+        #expect(first.agent.state == AgentState.none)
+    }
+
     @Test func anAgentFromTheBoxShowsOnItsPane() async throws {
         defer { terminals.closeAll() }
         await mirror.apply(await update([Self.pane("b1", .working)]))
