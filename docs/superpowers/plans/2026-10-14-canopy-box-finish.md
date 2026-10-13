@@ -54,7 +54,7 @@ The rest are fixes in place, each with a test that fails before it.
 
 ### Task 3: listeners and logs
 
-- [x] `TCPListener` suspends its accept source for 100 ms when out of descriptors, as `UnixListener` sleeps.
+- [x] `TCPListener` sleeps 100 ms on its own queue when out of descriptors, as `UnixListener` does, so a close from elsewhere waits at most that long.
 - [x] The box's activity log appends without trapping and keeps its last 5 MB.
 
 ### Task 4: rows and panes across hosts
@@ -79,3 +79,17 @@ The rest are fixes in place, each with a test that fails before it.
 - Relayed `term state`, `term send`, `term read`, and `term close`, and `canopy agent-hook`, send the `CANOPY_HOST` the relay sets, and the Mac looks the pane up on that host only.
 - `HostEntry.repoKey` is the name the host's settings give a repo, which the Mac sends canopy-box for new rows and adopted rows, and maps snapshots and released rows back by.
 - `host rm` returns its warnings, which the CLI prints on standard error.
+
+## After Review
+
+An opus review found two critical issues, three important ones, and nine minor ones.
+
+- Critical, fixed: a host upgraded before this milestone adopted its rows under the Mac's name for a repo, while the Mac now reads snapshots by the host's key, so those rows would have left the Mac; snapshots and released rows match either name (`rowsAdoptedUnderTheMacsNameStay`).
+- Critical, fixed: the host monitor's two-second probe could start the link, and with it install and start canopy-box, while `host rm` stopped it; removal now marks the host so no link starts, waits out a start under way, then stops the box.
+- Important, fixed: a host removed and added back in one session kept its old install and forward marks for the new connection's generation, so its socket was never forwarded; removal forgets them.
+- Important, fixed: `host rm` had the CLI's 30-second wait, shorter than stopping a service can take; it waits five minutes.
+- Important, fixed: three tests passed without their fixes; the delivery test now checks the watch ends on a quiet box, a Linux-only test writes the log to `/dev/full`, and the removal test checks the daemon, its pid file, and the relay's mark are gone.
+- Minor, fixed: the systemd branch reads `/proc` where `ps -o args` may not work, stops only this home's daemon, and keeps the pid file while it names a process it could not tell apart; a row a snapshot brought in first keeps its stand-in; a row two repos match stays with the first; the activity log's writes go one at a time; the delivery queue forgets a pane's last taken state with its last reply; warnings put the reason last and name the plain-process way to stop canopy-box; misplaced doc comments.
+- Minor, not changed: `connect(waking: false)` joins a waking try already under way, which only a removal racing a reconnect meets; a bare clone's rows are not found through `--git-common-dir`, as canopy-box makes none.
+
+Also fixed on the way: `WakerTests` failed once in a full run, as `foreground()` during a connection try found no backoff to cut short, so the try's failure then waited the whole backoff (`foregroundDuringATryRetriesAtOnceAfterIt`).
