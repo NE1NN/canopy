@@ -50,4 +50,4 @@ An independent opus review found 4 high, 8 medium, and 4 low findings and missin
 16. Low: output past 30 lines could not be seen, and a TUI block cut by a page could spin forever. Blocks open to all of their output, and a transcript's blocks never spin.
 17. `ChatRealClaudeTests` now runs a failing `!` command and checks that Claude read its output and exit code. It showed that Claude Code does not echo a message holding `<bash-input>`, so the queued message never cleared; chats now send a block of their own, and the stand-in drops the echo as Claude Code does.
 
-Also fixed along the way: a warning for a `switch` case handled twice.
+Also fixed along the way: a warning for a `switch` case handled twice, and, found while taking the shots, Return in an untrusted folder trusted it but left the typed message unsent, so the next Return sent it joined to whatever came after. Trusting now sends what was written. Test: `trustingSendsWhatWasWritten`.

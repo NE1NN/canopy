@@ -260,6 +260,21 @@ struct ChatSessionTests {
         #expect(texts(chat).contains("[Interrupted]"))
     }
 
+    /// Return answers the trust question, so a message written before it goes once the folder is trusted.
+    @Test func trustingSendsWhatWasWritten() async throws {
+        let chat = session(trusted: false)
+        chat.open()
+        #expect(chat.needsTrust)
+        chat.draft = "say trusted"
+
+        try await chat.grantTrust()
+
+        #expect(chat.draft.isEmpty)
+        #expect(await soon { !chat.isWorking })
+        #expect(texts(chat).last == "trusted")
+        chat.close()
+    }
+
     @Test func countsASubagentsToolCallsOnItsLine() async throws {
         let chat = session()
 

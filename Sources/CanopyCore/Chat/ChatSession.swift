@@ -544,9 +544,16 @@ public final class ChatSession {
         onChange()
     }
 
+    /// Trusts the folder, then sends what the author wrote while the question showed, since Return answered both.
     public func grantTrust() async throws {
         try await trust.grant()
         needsTrust = !trust.isTrusted()
+        let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftImages.isEmpty
+        guard !needsTrust, hasDraft, takes(draft) else { return }
+        let (text, images) = (draft, draftImages)
+        draft = ""
+        draftImages = []
+        send(text, images: images)
     }
 
     /// Ends Claude Code for good.
