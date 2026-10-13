@@ -25,6 +25,21 @@ public enum ChatContent: Equatable, Sendable {
     case question(ChatQuestion)
     case plan(ChatPlan)
     case notice(String)
+    /// A `!` command the author ran, and what it printed.
+    case shell(ChatShell)
+}
+
+public struct ChatShell: Equatable, Sendable {
+    public var command: String
+    public var output: String
+    /// Nil while it runs, for one the author is running now.
+    public var exitCode: Int32?
+
+    public init(command: String, output: String, exitCode: Int32?) {
+        self.command = command
+        self.output = output
+        self.exitCode = exitCode
+    }
 }
 
 public struct ChatPrompt: Equatable, Sendable {

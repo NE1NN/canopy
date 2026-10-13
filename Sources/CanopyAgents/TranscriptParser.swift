@@ -211,7 +211,7 @@ public enum TranscriptParser {
             return nil
         }
 
-        static func tag(_ name: String, in text: String) -> String? {
+        public static func tag(_ name: String, in text: String) -> String? {
             guard let open = text.range(of: "<\(name)>"),
                 let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)
             else { return nil }

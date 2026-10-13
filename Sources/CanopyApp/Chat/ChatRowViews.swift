@@ -74,6 +74,8 @@ private struct ChatItemView: View {
                 .help(plan.markdown)
         case .notice(let notice):
             NoticeLine(text: notice)
+        case .shell(let shell):
+            ShellBlock(shell: shell)
         }
     }
 }
@@ -800,6 +802,46 @@ private struct RunningCard: View {
             }
         }
         .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
+    }
+}
+
+/// A `!` command the author ran: the command, "you ran this", and the last 30 lines it printed.
+struct ShellBlock: View {
+    let shell: ChatShell
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(verbatim: "$").font(ChatStyle.mono).foregroundStyle(ChatStyle.tertiaryText)
+                Text(shell.command).font(ChatStyle.mono).foregroundStyle(ChatStyle.strongText).lineLimit(1)
+                Spacer()
+                if shell.exitCode == nil {
+                    ProgressView().controlSize(.mini)
+                } else if let code = shell.exitCode, code != 0 {
+                    Text("exit \(code)").foregroundStyle(ChatStyle.removed)
+                }
+                Text("you ran this").foregroundStyle(ChatStyle.tertiaryText)
+            }
+            .font(.system(size: 11.5))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            if !shell.output.isEmpty {
+                Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
+                Text(
+                    shell.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(30).joined(
+                        separator: "\n")
+                )
+                .font(ChatStyle.monoSmall)
+                .foregroundStyle(ChatStyle.secondaryText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(ChatStyle.codeFill, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
     }
 }

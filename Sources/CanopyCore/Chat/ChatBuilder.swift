@@ -85,6 +85,34 @@ public struct ChatBuilder: Sendable {
             case .tool: break
             }
         }
+        // `!` commands come as `<bash-input>` and `<bash-stdout>` text, alone or ahead of a message.
+        var shellIndex: Int?
+        parts = parts.filter { part in
+            let text = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let command = TranscriptParser.Builder.tag("bash-input", in: text), text.hasPrefix("<bash-input>") {
+                append(
+                    ChatItem(
+                        id: record.id + "#shell\(items.count)",
+                        content: .shell(ChatShell(command: command, output: "", exitCode: nil)), at: record.at))
+                shellIndex = items.count - 1
+                return false
+            }
+            if text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") {
+                let output = [
+                    TranscriptParser.Builder.tag("bash-stdout", in: text),
+                    TranscriptParser.Builder.tag("bash-stderr", in: text),
+                ].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+                let index = shellIndex ?? items.lastIndex { if case .shell = $0.content { true } else { false } }
+                if let index, case .shell(var shell) = items[index].content {
+                    shell.output = output
+                    shell.exitCode = 0
+                    items[index].content = .shell(shell)
+                    items[index].revision = nextRevision()
+                }
+                return false
+            }
+            return true
+        }
         if record.isCompactSummary {
             append(ChatItem(id: record.id, content: .notice("The conversation was compacted"), at: record.at))
             return

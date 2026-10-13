@@ -141,6 +141,28 @@ struct ChatBuilderTests {
             ])
     }
 
+    /// The TUI saves a `!` command as two user lines; a chat sends both ahead of the next message.
+    @Test func readsShellCommandsAsShellBlocks() {
+        let items = build([
+            ChatLines.prompt("<bash-input>git status</bash-input>", uuid: "u1"),
+            ChatLines.prompt("<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>", uuid: "u2"),
+            ChatLines.line(
+                "user",
+                .array([
+                    .object(["type": "text", "text": "<bash-input>ls</bash-input>"]),
+                    .object(["type": "text", "text": "<bash-stdout>a.txt</bash-stdout><bash-stderr></bash-stderr>"]),
+                    .object(["type": "text", "text": "what is a.txt?"]),
+                ]), uuid: "u3"),
+        ])
+
+        #expect(
+            items.map(\.content) == [
+                .shell(ChatShell(command: "git status", output: "clean", exitCode: 0)),
+                .shell(ChatShell(command: "ls", output: "a.txt", exitCode: 0)),
+                .prompt(ChatPrompt(text: "what is a.txt?", images: 0)),
+            ])
+    }
+
     @Test func countsImagesInAPrompt() {
         let items = build([
             ChatLines.line(
@@ -217,6 +239,7 @@ struct ChatBuilderRecordedTests {
         case .question: "question"
         case .plan: "plan"
         case .notice: "notice"
+        case .shell: "shell"
         }
     }
 
