@@ -36,7 +36,7 @@ public enum BoxMain {
             settings: PhoneServerSettings(
                 registryFile: URL(fileURLWithPath: paths.folder + "/phones.json"),
                 serverName: {
-                    BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.host ?? ProcessInfo.processInfo.hostName
+                    BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.host ?? BoxDaemon.machineName
                 },
                 kind: PhoneServerKind.box,
                 wake: { phoneWake(paths) },
@@ -180,9 +180,6 @@ public enum BoxMain {
             return 1
         }
         defer { withExtendedLifetime(lock) {} }
-        // The machine's name may take a DNS lookup on first use, which must hold neither the daemon's actor nor its
-        // socket, so it is learned on a thread of its own meanwhile.
-        Thread.detachNewThread { _ = BoxDaemon.machineNames }
         var environment = ProcessInfo.processInfo.environment
         environment["TMUX"] = nil
         let tmux = Tmux(
