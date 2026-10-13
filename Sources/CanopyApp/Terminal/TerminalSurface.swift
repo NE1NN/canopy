@@ -95,6 +95,12 @@ final class TerminalContainerView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    /// ⌘ keys reach views as key equivalents, before the menus and the terminal see them.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === emulator.view, emulator.pressSubstitute(for: event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
     /// Clicks on the padding focus the terminal too.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(emulator.view)

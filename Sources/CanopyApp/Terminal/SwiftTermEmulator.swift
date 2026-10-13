@@ -1,5 +1,6 @@
 import AppKit
 import CanopyCore
+import Carbon.HIToolbox
 import SwiftTerm
 
 /// SwiftTerm behind Canopy's emulator interface. Nothing else in Canopy imports SwiftTerm.
@@ -144,6 +145,34 @@ final class SwiftTermEmulator: NSObject, TerminalEmulator, @preconcurrency Termi
     /// Gives the terminal the keyboard, if it is on screen.
     func focus() {
         view.window?.makeFirstResponder(view)
+    }
+
+    private static let modifierFlags: [(NSEvent.ModifierFlags, TerminalKeys.Modifier)] = [
+        (.shift, .shift), (.control, .control), (.option, .option), (.command, .command),
+    ]
+
+    /// Hands SwiftTerm the key Canopy presses instead, such as ⌥Return for ⌘Return. Returns false for keys it keeps.
+    func pressSubstitute(for event: NSEvent) -> Bool {
+        let key: TerminalKeys.Key =
+            switch Int(event.keyCode) {
+            case kVK_Return: .return
+            case kVK_ANSI_KeypadEnter: .keypadEnter
+            default: .other
+            }
+        let modifiers = Set(Self.modifierFlags.filter { event.modifierFlags.contains($0.0) }.map(\.1))
+        guard let substitute = TerminalKeys.substitute(for: TerminalKeys.Press(key: key, modifiers: modifiers)),
+            substitute.key == .return
+        else { return false }
+        let flags = Self.modifierFlags.filter { substitute.modifiers.contains($0.1) }
+            .reduce(event.modifierFlags.intersection(.capsLock)) { $0.union($1.0) }
+        guard
+            let pressed = NSEvent.keyEvent(
+                with: .keyDown, location: event.locationInWindow, modifierFlags: flags, timestamp: event.timestamp,
+                windowNumber: event.windowNumber, context: nil, characters: "\r",
+                charactersIgnoringModifiers: "\r", isARepeat: event.isARepeat, keyCode: UInt16(kVK_Return))
+        else { return false }
+        terminalView.keyDown(with: pressed)
+        return true
     }
 
     func feed(_ data: Data) {
