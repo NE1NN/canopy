@@ -73,10 +73,19 @@ struct ChatControlTests {
         #expect(chat.draft == "say draft")
         #expect(!chat.isRunning)
 
-        try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "ed", enter: true))
+        try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "ed"))
+        #expect(chat.draft == "say drafted")
+        // Enter with no text sends what the sends before put in the composer.
+        try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "", enter: true))
         #expect(chat.draft.isEmpty)
         #expect(await eventually { !chat.isWorking && chat.items.count == 2 })
         #expect(try read(result.pane, lines: 1) == "drafted")
+
+        // Text sent with Enter goes alone, and leaves what the author is writing.
+        chat.draft = "half a thought"
+        try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "say alone", enter: true))
+        #expect(chat.draft == "half a thought")
+        #expect(await eventually { !chat.isWorking && (try? read(result.pane, lines: 1)) == "alone" })
     }
 
     @Test func termSendToAChatDeniesAnOpenPromptAndSends() async throws {
@@ -90,6 +99,43 @@ struct ChatControlTests {
 
         #expect(chat.permission == nil)
         #expect(await eventually { !chat.isWorking && (try? read(result.pane, lines: 1)) == "do this instead" })
+    }
+
+    @Test func chatNewLeavesTheSelectedTab() throws {
+        defer { terminals.closeAll() }
+        let (tab, _) = terminals.openTab(for: context)
+
+        _ = try rows.newChat(context, ChatNewParams())
+
+        #expect(terminals.selectedTab(inRow: dir.path)?.id == tab.id)
+    }
+
+    @Test func chatNewOfAConversationThatIsGoneFails() throws {
+        defer { terminals.closeAll() }
+
+        #expect(throws: ControlError.self) { try rows.newChat(context, ChatNewParams(resume: "no-such-session")) }
+        #expect(terminals.tabs(inRow: dir.path).isEmpty)
+    }
+
+    @Test func termSendBeforeTrustSaysTheMessageWaits() async throws {
+        terminals.chatTrust = { _ in ChatTrust(isTrusted: { false }, grant: {}) }
+        defer { terminals.closeAll() }
+        let result = try rows.newChat(context, ChatNewParams())
+
+        await #expect(throws: ControlError.self) {
+            try await rows.sendToTerminal(TermSendParams(pane: result.pane, text: "say later", enter: true))
+        }
+        #expect(try chat(result).draft == "say later")
+        #expect(try read(result.pane).hasSuffix("trust this folder for Claude Code, then it sends: say later"))
+    }
+
+    @Test func termReadSaysWhenClaudeCodeStopped() async throws {
+        defer { terminals.closeAll() }
+        let result = try rows.newChat(context, ChatNewParams(prompt: "crash"))
+        let chat = try chat(result)
+
+        #expect(await eventually { chat.failure != nil })
+        #expect(try read(result.pane, lines: 1) == "Stopped: Claude Code exited with code 1: boom: something broke")
     }
 
     @Test func termListShowsTheKind() throws {

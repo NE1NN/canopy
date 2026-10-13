@@ -57,7 +57,9 @@ public enum PhoneInboxBuilder {
                 pane: pane.id.description, state: agent.state, unseen: agent.unseen,
                 since: agent.since.timeIntervalSince1970,
                 lastLine: lastLine(agent, tail: transcript.flatMap { tails?.last(in: $0) }),
-                backgroundTasks: agent.backgroundTasks.isEmpty ? nil : agent.backgroundTasks, prompt: agent.prompt,
+                backgroundTasks: agent.backgroundTasks.isEmpty ? nil : agent.backgroundTasks,
+                // A chat's own open prompt, which the phone answers by its ID, rather than its hook's copy.
+                prompt: pane.chat.map(\.openPrompt) ?? agent.prompt,
                 hasTranscript: transcript != nil, kind: pane.chat == nil ? .terminal : .chat)
         }
     }

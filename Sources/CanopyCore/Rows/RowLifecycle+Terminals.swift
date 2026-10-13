@@ -54,23 +54,48 @@ extension RowLifecycle {
             throw ControlError(
                 code: "session_open", message: "Session \(session) is open in \(holder.id.description) already.")
         }
+        // As term new, it leaves the tab the author looks at, which is often the agent's own, selected.
         let (tab, pane) = terminals.openChat(
-            for: context, session: params.resume, model: params.model, mode: params.mode)
-        if let prompt = params.prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            pane.chat?.send(prompt)
+            for: context, session: params.resume, select: false, model: params.model, mode: params.mode)
+        if let session = params.resume, let chat = pane.chat {
+            chat.open()
+            if chat.failure == .transcriptMissing {
+                terminals.closePane(pane.id)
+                throw ControlError(
+                    code: "session_not_found", message: "Claude Code has no conversation \(session) for this row.")
+            }
         }
+        if let prompt = params.prompt { try Self.sendMessage(prompt, to: pane) }
         return ChatNewResult(pane: pane.id.description, tab: tab.name)
+    }
+
+    /// Sends an agent's message to a chat as a message of its own, and says so when it could only wait in the draft.
+    static func sendMessage(_ text: String, to pane: Pane) throws {
+        guard let chat = pane.chat else { return }
+        if chat.send(text, asMessage: true) == .drafted {
+            throw ControlError(
+                code: "chat_waiting",
+                message:
+                    "\(pane.id.description) waits on the author, \(chat.needsTrust ? "to trust its folder" : "as its Claude Code is not running"). The message waits in its composer."
+            )
+        }
     }
 
     public func sendToTerminal(_ params: TermSendParams) async throws {
         let pane = try terminal(params.pane)
-        // A chat takes it as the composer would: Enter sends it, otherwise it waits in the draft.
+        // Without --enter the text goes into the composer, as typing would. With it, the text goes as a message of its own
+        // and the author's draft stays theirs; with no text, what earlier sends put in the composer goes.
         if let chat = pane.chat {
-            if params.enter {
-                chat.send(chat.draft + params.text)
-                chat.draft = ""
-            } else {
+            guard params.enter else {
                 chat.draft += params.text
+                return
+            }
+            if params.text.isEmpty {
+                let draft = chat.draft
+                chat.draft = ""
+                try Self.sendMessage(draft, to: pane)
+            } else {
+                try Self.sendMessage(params.text, to: pane)
             }
             return
         }

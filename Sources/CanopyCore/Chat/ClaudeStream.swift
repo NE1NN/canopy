@@ -72,15 +72,23 @@ public enum ClaudeLaunch {
         let folder =
             FileManager.default.fileExists(atPath: context.rowPath)
             ? context.rowPath : settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
-        // UI fixtures and e2e runs set CANOPY_CLAUDE on the app to a stand-in.
-        let command = settings.baseEnvironment["CANOPY_CLAUDE"] ?? "claude"
         return settings.script(
-            script(arguments: arguments(model: model, mode: mode, resume: resume), command: command),
+            script(arguments: arguments(model: model, mode: mode, resume: resume), command: command(settings)),
             environment: environment, directory: folder)
     }
 
     /// The line a login shell runs, so `claude` is found on the author's PATH and replaces the shell. `command` stands
     /// in for `claude`, as fixtures' stand-in does.
+    /// `claude`, or in a debug build the stand-in that UI fixtures, e2e runs, and tests name in CANOPY_CLAUDE.
+    public static func command(_ settings: ShellSettings) -> String {
+        #if DEBUG
+            if let standIn = settings.baseEnvironment["CANOPY_CLAUDE"], !standIn.isEmpty {
+                return SetupScript.quoted(standIn)
+            }
+        #endif
+        return "claude"
+    }
+
     public static func script(arguments: [String], command: String = "claude") -> String {
         (["exec " + command] + arguments.map(SetupScript.quoted)).joined(separator: " ")
     }

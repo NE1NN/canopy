@@ -14,6 +14,9 @@ public final class PhonePanes {
         message: "Claude Code is not running in this pane, so a reply would go to whatever is. Use the Terminal tab.")
     /// How long a reply waits to be taken before it is forgotten.
     static let deliveryWindow: TimeInterval = 10 * 60
+    public nonisolated static let chatWaits = ControlError(
+        code: "chat_waiting",
+        message: "The chat waits on the Mac, such as for its folder to be trusted. The reply waits in its composer.")
     public nonisolated static let noTranscript = ControlError(
         code: "no_transcript",
         message: "This pane has no Claude Code conversation on this Mac. Its terminal shows what it does.")
@@ -65,8 +68,11 @@ public final class PhonePanes {
     public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
         if let chat = pane.chat {
-            chat.send(params.text)
-            waitingReplies[pane.id, default: []].append((Date(), delivered))
+            switch chat.send(params.text, asMessage: true) {
+            case .queued: waitingReplies[pane.id, default: []].append((Date(), delivered))
+            case .drafted: throw Self.chatWaits
+            case .answered, .ranShell, .ignored: break
+            }
             return
         }
         let terminal = try Self.terminal(of: pane)
@@ -84,34 +90,20 @@ public final class PhonePanes {
 
     public func answer(_ params: PhoneAnswerParams) async throws {
         let pane = try running(params.pane)
-        guard let prompt = pane.agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
-        // Checks the answer fits the prompt, for a chat too, which answers through its session instead of keys.
-        let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+        // A chat answers its own open prompt, which the inbox shows by its request ID.
         if let chat = pane.chat {
-            guard chat.permission != nil, pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
-            Self.answer(chat, params.answer)
+            guard let prompt = chat.openPrompt, prompt.id == params.prompt else { throw Self.promptGone }
+            _ = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+            guard chat.answer(prompt: prompt.id, allow: params.answer.allow, options: params.answer.options) else {
+                throw Self.promptGone
+            }
             return
         }
+        guard let prompt = pane.agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
+        let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
         let terminal = try Self.terminal(of: pane)
         guard pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
         await terminal.press(keys)
-    }
-
-    /// As the author would in the chat: Return allows a permission and approves a plan with edits accepted, as the
-    /// terminal's first option does, Escape turns either down, and a question takes each one's options in turn.
-    private static func answer(_ chat: ChatSession, _ answer: PhoneAnswer) {
-        guard let permission = chat.permission else { return }
-        switch permission.kind {
-        case .permission:
-            if answer.allow == true { chat.allow() } else { chat.deny() }
-        case .plan:
-            if answer.allow == true { chat.approvePlan(acceptingEdits: true) } else { chat.deny() }
-        case .question(let questions):
-            for (question, picked) in zip(questions, answer.options ?? []) {
-                for index in picked { chat.pick(index) }
-                if question.multiSelect { chat.submitSelection() }
-            }
-        }
     }
 
     public func keys(_ params: PhoneKeysParams) throws {

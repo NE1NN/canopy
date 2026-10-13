@@ -374,8 +374,7 @@ public final class TerminalStore {
         guard let (path, tab) = tab(containing: chatPane.id),
             let index = tabs(inRow: path).firstIndex(where: { $0.id == tab.id })
         else { return nil }
-        // UI fixtures, e2e runs, and tests set CANOPY_CLAUDE to a stand-in.
-        var words = [settings.baseEnvironment["CANOPY_CLAUDE"] ?? "claude"]
+        var words = [ClaudeLaunch.command(settings)]
         if let session = chat.sessionID { words += ["--resume", session] }
         if let model = chat.model { words += ["--model", model] }
         words += ["--permission-mode", chat.mode]

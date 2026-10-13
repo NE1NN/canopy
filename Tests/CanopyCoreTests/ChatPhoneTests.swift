@@ -34,12 +34,6 @@ struct ChatPhoneTests {
         chat.items.compactMap { if case .text(let text) = $0.content { text.markdown } else { nil } }
     }
 
-    /// As its PermissionRequest hook would report it.
-    func reportPrompt(_ pane: Pane, _ prompt: AgentPrompt) throws -> OpenPrompt {
-        pane.report(AgentReport(state: .waiting, session: "s1", event: "PermissionRequest", prompt: prompt))
-        return try #require(pane.agent.prompt)
-    }
-
     @Test func phoneReplyToAChatWithAnOpenPromptSendsIt() async throws {
         let (_, pane) = terminals.openChat(for: context)
         defer { terminals.closeAll() }
@@ -59,7 +53,8 @@ struct ChatPhoneTests {
         let chat = try #require(pane.chat)
         chat.send("run make deploy")
         #expect(await eventually { chat.permission != nil })
-        let prompt = try reportPrompt(pane, AgentPrompt(kind: .permission, tool: "Bash", detail: "make deploy"))
+        let prompt = try #require(chat.openPrompt)
+        #expect(prompt.detail == "make deploy")
 
         try await panes.answer(
             PhoneAnswerParams(pane: pane.id.description, prompt: prompt.id, answer: PhoneAnswer(allow: true)))
@@ -77,11 +72,8 @@ struct ChatPhoneTests {
         let chat = try #require(pane.chat)
         chat.send("ask")
         #expect(await eventually { chat.permission != nil })
-        let questions = [
-            PromptQuestion(
-                question: "Which color?", options: [.init(label: "Blue (Recommended)"), .init(label: "Red")])
-        ]
-        let prompt = try reportPrompt(pane, AgentPrompt(kind: .question, questions: questions))
+        let prompt = try #require(chat.openPrompt)
+        #expect(prompt.questions?.first?.question == "Which color?")
 
         // An answer that does not fit the question is refused, as for a terminal.
         await #expect(throws: ControlError.self) {
@@ -96,6 +88,64 @@ struct ChatPhoneTests {
             if case .question(let question) = $0.content { question.answer } else { nil }
         }
         #expect(answers == ["Red"])
+    }
+
+    /// Parallel subagents can ask twice at once. The phone answers the one it showed, and only while it is the front one.
+    @Test func phoneAnswerReachesOnlyThePromptItShowed() async throws {
+        let (_, pane) = terminals.openChat(for: context)
+        defer { terminals.closeAll() }
+        let chat = try #require(pane.chat)
+        chat.send("two")
+        #expect(await eventually { chat.pendingPermissions.count == 2 })
+        let first = try #require(chat.openPrompt)
+        let second = chat.pendingPermissions[1].id
+        // The hook may have reported the second, which the phone must not use to answer the first.
+        pane.report(
+            AgentReport(
+                state: .waiting, session: "s1", event: "PermissionRequest",
+                prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "second")))
+
+        await #expect(throws: PhonePanes.promptGone) {
+            try await panes.answer(
+                PhoneAnswerParams(pane: pane.id.description, prompt: second, answer: PhoneAnswer(allow: true)))
+        }
+        #expect(chat.pendingPermissions.count == 2)
+        try await panes.answer(
+            PhoneAnswerParams(pane: pane.id.description, prompt: first.id, answer: PhoneAnswer(allow: true)))
+
+        #expect(chat.pendingPermissions.map(\.id) == [second])
+        #expect(chat.openPrompt?.id == second)
+        chat.interrupt()
+    }
+
+    @Test func phoneReplyWhileAQuestionIsOpenTurnsItDownAndSends() async throws {
+        let (_, pane) = terminals.openChat(for: context)
+        defer { terminals.closeAll() }
+        let chat = try #require(pane.chat)
+        chat.send("ask")
+        #expect(await eventually { chat.permission != nil })
+
+        try await panes.reply(PhoneReplyParams(pane: pane.id.description, text: "say never mind"))
+
+        #expect(chat.permission == nil)
+        #expect(await eventually { !chat.isWorking && texts(chat).last == "never mind" })
+        let answers = chat.items.compactMap {
+            if case .question(let question) = $0.content { question.answer } else { nil }
+        }
+        #expect(answers == ["Declined"])
+    }
+
+    @Test func phoneReplyBeforeTrustSaysItWaits() async throws {
+        terminals.chatTrust = { _ in ChatTrust(isTrusted: { false }, grant: {}) }
+        let (_, pane) = terminals.openChat(for: context)
+        defer { terminals.closeAll() }
+
+        await #expect(throws: PhonePanes.chatWaits) {
+            try await panes.reply(PhoneReplyParams(pane: pane.id.description, text: "!rm -rf build"))
+        }
+        // From the phone a leading ! is text, never a command run on the Mac.
+        #expect(pane.chat?.shellRuns.isEmpty == true)
+        #expect(pane.chat?.draft == "!rm -rf build")
     }
 
     @Test func phoneScreenOfAChatIsNotATerminal() throws {

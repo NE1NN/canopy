@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 import Observation
 
@@ -284,30 +285,47 @@ public final class ChatSession {
 
     // MARK: The author
 
+    /// What `send` did with what it was given.
+    public enum SendOutcome: Equatable, Sendable {
+        /// Claude Code has it, or will read it when its current step ends.
+        case queued
+        /// It answered the open question in the author's own words.
+        case answered
+        /// It ran as a `!` command.
+        case ranShell
+        /// It waits in the draft, as for a folder not yet trusted or a session a terminal holds.
+        case drafted
+        /// There was nothing to send.
+        case ignored
+    }
+
     /// Sends a message, starting Claude if it is not running. While a permission prompt is open, it denies the prompt
     /// first, so the message tells Claude what to do instead. That is how the TUI's "No, and tell Claude what to do
     /// differently" works: a denial's own message reaches Claude as the tool's output, which it may distrust.
-    public func send(_ text: String, images: [ChatImage] = []) {
+    /// `asMessage`, for agents and the phone, sends the text as a message alone: a leading `!` is text, and an open
+    /// question is turned down rather than answered.
+    @discardableResult
+    public func send(_ text: String, images: [ChatImage] = [], asMessage: Bool = false) -> SendOutcome {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !images.isEmpty else { return }
+        guard !text.isEmpty || !images.isEmpty else { return .ignored }
         open()
-        if text.hasPrefix("!"), images.isEmpty {
+        if !asMessage, text.hasPrefix("!"), images.isEmpty {
             runShell(String(text.dropFirst()).trimmingCharacters(in: .whitespaces))
-            return
+            return .ranShell
         }
         if failure == .transcriptMissing { startFresh() }
         if needsTrust { needsTrust = !trust.isTrusted() }
         // Text typed at a question answers it in the author's own words.
-        if case .question? = permission?.kind, images.isEmpty {
+        if !asMessage, case .question? = permission?.kind, images.isEmpty {
             record(answer: text)
-            return
+            return .answered
         }
         deny()
         guard !needsTrust else {
             // Kept for when the folder is trusted, which sends the draft, as when an agent sends before the author has.
             draft = draft.isEmpty ? text : draft + "\n\n" + text
             draftImages += images
-            return
+            return .drafted
         }
         if !isWorking {
             turnStarted = Date()
@@ -327,11 +345,53 @@ public final class ChatSession {
         }
         if !isRunning {
             start()
-            guard isRunning else { return }
+            // It could not start, or a terminal holds the session: the message is back in the draft.
+            guard isRunning else { return .drafted }
         }
         onInput(Self.returnKey)
         stream?.send(
             Self.shellBlocks(ran) + images.map { .image(mediaType: $0.mediaType, data: $0.data) } + [.text(text)])
+        return .queued
+    }
+
+    /// The open prompt as the phone shows it, by its own request ID, so an answer reaches exactly this prompt.
+    public var openPrompt: OpenPrompt? {
+        guard let permission else { return nil }
+        switch permission.kind {
+        case .permission:
+            return OpenPrompt(id: permission.id, kind: .permission, tool: permission.tool, detail: permission.subject)
+        case .question(let questions):
+            return OpenPrompt(id: permission.id, kind: .question, questions: questions)
+        case .plan(let plan):
+            return OpenPrompt(id: permission.id, kind: .plan, detail: plan)
+        }
+    }
+
+    /// Answers the open prompt with this ID, as the phone does, or returns false when it is no longer the one open or
+    /// the answer does not fit it. A question takes all of its answers at once, whatever was picked on the Mac.
+    public func answer(prompt id: String, allow: Bool?, options: [[Int]]?) -> Bool {
+        guard let permission, permission.id == id else { return false }
+        switch permission.kind {
+        case .permission:
+            guard let allow else { return false }
+            if allow { self.allow() } else { deny() }
+        case .plan:
+            guard let allow else { return false }
+            if allow { approvePlan(acceptingEdits: true) } else { deny() }
+        case .question(let questions):
+            guard let options, options.count == questions.count,
+                zip(questions, options).allSatisfy({ question, picked in
+                    !picked.isEmpty && Set(picked).count == picked.count
+                        && picked.allSatisfy(question.options.indices.contains)
+                        && (question.multiSelect || picked.count == 1)
+                })
+            else { return false }
+            resetQuestion()
+            for (question, picked) in zip(questions, options) {
+                record(answer: picked.sorted().map { question.options[$0].label }.joined(separator: ", "))
+            }
+        }
+        return true
     }
 
     /// Whether `send` takes `text` now. A `!` command waits for the one running, and a bare `!` is not one.

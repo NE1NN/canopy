@@ -44,3 +44,28 @@ As milestone 1, and: `kind` is optional in CanopyWire, so an older phone app and
 - The CLI hands `CANOPY_CLAUDE` to the app it launches, as it does `CLAUDE_CONFIG_DIR`, so e2e chats run the stand-in.
 
 ## After Review
+
+An independent opus review found 3 high, 4 medium, and 2 low findings; all fixed:
+
+1. High: the phone's Allow answered the chat's front permission while checking the hook's prompt, which can be another one, so it could allow a command the phone never showed.
+   A chat's phone prompt is now its own front permission, by its request ID, and an answer reaches only that one.
+   Test: `phoneAnswerReachesOnlyThePromptItShowed`.
+2. High: `ChatTabTests` still expected a phone reply to a chat to be refused, so `make test` failed.
+3. High: `term send --enter` before trust cleared the draft the message had just been kept in.
+   Enter sends the text alone and leaves the draft be; a message that can only wait fails with `chat_waiting` and stays in the composer.
+   Test: `termSendBeforeTrustSaysTheMessageWaits`.
+4. Medium: `chat new` selected its tab, pulling the author off the agent's own.
+   It opens without selecting, as `term new` does. Test: `chatNewLeavesTheSelectedTab`.
+5. Medium: a phone reply or `term send` with a question open became its answer, and a leading `!` ran a command on the Mac.
+   They go as messages: the question is turned down, and `!` is text. Tests: `phoneReplyWhileAQuestionIsOpenTurnsItDownAndSends`, `phoneReplyBeforeTrustSaysItWaits`.
+6. Medium: a phone answer to a question collided with picks made on the Mac.
+   The chat takes all of a question's answers at once, from its own questions.
+7. Medium: `term send` mixed the agent's text with what the author was writing.
+   Text with Enter goes alone.
+8. Medium-low: `term read` hid why Claude Code stopped, and `--resume` of a missing conversation started a new one.
+   It says so, and `--resume` fails with `session_not_found`. Tests: `termReadSaysWhenClaudeCodeStopped`, `chatNewOfAConversationThatIsGoneFails`.
+9. Low: `CANOPY_CLAUDE` worked in release builds and went into a shell script unquoted.
+   Only debug builds read and pass it on, quoted.
+
+Not changed: `--model` is not checked, since Claude Code takes full model names as well as aliases; `term wait` on a chat waits on its agent state as for a terminal.
+

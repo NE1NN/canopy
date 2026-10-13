@@ -164,10 +164,12 @@ enum AppLocator {
         if let claude = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], !claude.isEmpty {
             environment.append("CLAUDE_CONFIG_DIR=\(claude)")
         }
-        // Tests and fixtures run chats against a stand-in for Claude Code.
-        if let claude = ProcessInfo.processInfo.environment["CANOPY_CLAUDE"], !claude.isEmpty {
-            environment.append("CANOPY_CLAUDE=\(claude)")
-        }
+        #if DEBUG
+            // Tests and fixtures run a dev build's chats against a stand-in for Claude Code.
+            if let claude = ProcessInfo.processInfo.environment["CANOPY_CLAUDE"], !claude.isEmpty {
+                environment.append("CANOPY_CLAUDE=\(claude)")
+            }
+        #endif
         // Dev builds listen for phones where this says, so tests reach them without Tailscale. Release builds ignore it.
         if let listen = ProcessInfo.processInfo.environment[PhoneListenAddress.environmentKey], !listen.isEmpty {
             environment.append("\(PhoneListenAddress.environmentKey)=\(listen)")

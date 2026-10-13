@@ -33,6 +33,15 @@ extension ChatSession {
         }
         if let streaming, !streaming.text.isEmpty { lines.append(streaming.text) }
         lines += queued.map { "You (queued): " + $0.prompt.text }
+        switch failure {
+        case .exited(let code, let errors)?:
+            lines.append("Stopped: Claude Code exited with code \(code)" + (errors.last.map { ": " + $0 } ?? ""))
+        case .couldNotStart(let reason)?: lines.append("Stopped: Claude Code could not start: " + reason)
+        case .tooOld(let version)?: lines.append("Stopped: this Mac's Claude Code \(version) is too old for chats")
+        case .transcriptMissing?: lines.append("Stopped: the conversation's transcript is gone")
+        case .heldElsewhere(let holder)?: lines.append("Waiting: \(holder) runs this conversation")
+        case nil: break
+        }
         if needsTrust {
             lines.append(
                 "Waiting for you: trust this folder for Claude Code"
