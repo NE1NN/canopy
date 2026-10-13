@@ -133,7 +133,7 @@ private struct ToolLine: View {
                         .foregroundStyle(ChatStyle.secondaryText)
                         .frame(width: 18, height: 18)
                         .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
-                    Text(group.summary)
+                    Text(group.summary + Self.innerCount(group))
                         .font(ChatStyle.toolLine)
                         .foregroundStyle(group.failed ? ChatStyle.removed : ChatStyle.secondaryText)
                         .lineLimit(1)
@@ -171,6 +171,12 @@ private struct ToolLine: View {
                 .padding(.leading, 26)
             }
         }
+    }
+
+    /// "· 4 tool calls" for subagents that made some.
+    static func innerCount(_ group: ChatToolGroup) -> String {
+        let count = group.calls.reduce(0) { $0 + $1.innerCalls }
+        return count == 0 ? "" : " · \(count) tool call" + (count == 1 ? "" : "s")
     }
 
     /// What a call was asked to do: its command, file, pattern, or address, else its name.

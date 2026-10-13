@@ -57,6 +57,8 @@ public struct ChatToolCall: Equatable, Sendable {
     public var isError: Bool
     /// A file change's diff: from its input while it waits, from its result once it ran.
     public var edit: ChatEdit?
+    /// For a subagent: how many tool calls it has made so far.
+    public var innerCalls = 0
 }
 
 /// Consecutive tool calls of one kind, read as one line: "Read TopBarView.swift and 3 more".

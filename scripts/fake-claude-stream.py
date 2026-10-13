@@ -16,6 +16,7 @@ What it does with a message depends on how the message starts:
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
   tail           runs a command that prints ten lines over two seconds, written to its task file as Claude Code does
+  agent          runs a subagent that makes three tool calls of its own
   plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
@@ -241,6 +242,17 @@ def turn(text):
               "status": "completed"})
         emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "line 10"}]))
         finish("counted")
+    elif text == "agent":
+        tool_id = "toolu_" + uuid.uuid4().hex[:20]
+        emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Agent",
+                                   "input": {"description": "Look around", "prompt": "Look"}}]))
+        for n in range(3):
+            inner = {"type": "assistant", "uuid": str(uuid.uuid4()), "parent_tool_use_id": tool_id,
+                     "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_in%d" % n,
+                                                                   "name": "Read", "input": {"file_path": "/x"}}]}}
+            emit(inner)
+        emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "looked"}]))
+        finish("looked")
     elif text == "plan":
         tool_id, answer = ask("ExitPlanMode", {"plan": "# Plan\n\n1. Add the case\n2. Save it"}, needs_author=True)
         if answer and answer.get("behavior") == "allow":

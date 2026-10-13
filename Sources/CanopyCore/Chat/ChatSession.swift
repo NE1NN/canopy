@@ -555,8 +555,11 @@ public final class ChatSession {
     }
 
     private func received(_ message: ClaudeMessage) {
-        // A subagent's own messages fold under its call, which comes with a later milestone.
-        guard message.parentToolUse == nil else { return }
+        // A subagent's own messages count under the call that started it.
+        if let parent = message.parentToolUse {
+            builder.add(subagentLine: message.line, parent: parent)
+            return
+        }
         if message.role == "assistant" {
             endStreaming()
             if let tokens = message.contextTokens { contextTokens = tokens }

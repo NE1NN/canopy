@@ -19,6 +19,20 @@ public struct ChatBuilder: Sendable {
         add(record)
     }
 
+    /// A subagent's own message, which counts its tool calls on the call that started it.
+    public mutating func add(subagentLine line: Data, parent: String) {
+        guard let record = TranscriptParser.Record(line: line), seen.insert(record.id).inserted,
+            let itemID = callItems[parent], let index = items.lastIndex(where: { $0.id == itemID }),
+            case .tools(let group) = items[index].content
+        else { return }
+        let calls = record.blocks.filter { if case .tool = $0 { true } else { false } }.count
+        guard calls > 0 else { return }
+        var updated = group.calls
+        if let call = updated.firstIndex(where: { $0.id == parent }) { updated[call].innerCalls += calls }
+        items[index].content = .tools(ChatToolGroup(calls: updated))
+        items[index].revision = nextRevision()
+    }
+
     /// A notice from Canopy rather than the transcript, such as an error Claude Code reported.
     public mutating func addNotice(_ text: String) {
         append(ChatItem(id: "notice-" + UUID().uuidString, content: .notice(text), at: Date().timeIntervalSince1970))

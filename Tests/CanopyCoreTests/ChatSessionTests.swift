@@ -138,6 +138,21 @@ struct ChatSessionTests {
         chat.close()
     }
 
+    @Test func countsASubagentsToolCallsOnItsLine() async throws {
+        let chat = session()
+
+        chat.send("agent")
+
+        #expect(await soon { !chat.isWorking })
+        guard case .tools(let group)? = chat.items.first(where: { $0.id.hasPrefix("toolu_") })?.content else {
+            Issue.record("no agent line in \(chat.items)")
+            return
+        }
+        #expect(group.calls.first?.innerCalls == 3)
+        #expect(chat.items.count == 2)
+        chat.close()
+    }
+
     @Test func tailsARunningCommand() async throws {
         let tasks = try TempDir()
         let chat = session(environment: ["FAKE_CLAUDE_TASKS": tasks.path], tasksRoot: URL(fileURLWithPath: tasks.path))
