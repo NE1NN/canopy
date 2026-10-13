@@ -27,8 +27,6 @@ public final class ServerConnection: Identifiable {
     public private(set) var inboxAsOf: Date?
     /// Counts connections, so a stream knows to start again on a new one.
     public private(set) var generation = 0
-    /// When the server forgot this phone.
-    public private(set) var forgottenAt: Date?
 
     /// Waits between attempts, from the first retry on.
     static let backoff: [Duration] = [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16), .seconds(30)]
@@ -103,7 +101,6 @@ public final class ServerConnection: Identifiable {
         inbox = nil
         inboxAsOf = nil
         status = .connecting
-        forgottenAt = nil
         loop = Task { await self.run(opened: opened) }
     }
 
@@ -185,7 +182,6 @@ public final class ServerConnection: Identifiable {
         inbox = nil
         inboxAsOf = nil
         status = .unpaired(notice)
-        forgottenAt = now()
         failWaiters()
     }
 

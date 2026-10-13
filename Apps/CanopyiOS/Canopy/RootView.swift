@@ -10,7 +10,7 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if app.connection.paired == nil {
+            if !app.servers.isPaired {
                 PairingView()
             } else {
                 TabView(selection: $tab) {

@@ -326,7 +326,7 @@ struct ServersTests {
         mac.forget(phone: "iPhone")
         mac.dropAll()
         #expect(await eventually { !servers.isPaired })
-        #expect(servers.pairingNotice == "Studio no longer knows this iPhone. Pair it again.")
+        #expect(servers.pairingNotice == "Studio and hindie-box no longer know this iPhone. Pair them again.")
     }
 
     @Test func removingAServerForgetsOnlyIt() async throws {

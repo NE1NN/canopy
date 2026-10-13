@@ -3,7 +3,8 @@ import XCTest
 /// Walks every screen of the app against a dev build from scripts/phone-fixture.sh, answering its agents along the
 /// way, and keeps a screenshot of each. scripts/ios-shots.sh runs it and sets:
 ///
-/// - `CANOPY_TOUR_LINK`: a pairing link from the fixture.
+/// - `CANOPY_TOUR_LINK`: a pairing link from the fixture's Mac.
+/// - `CANOPY_TOUR_BOX_LINK`: one from the fixture's box, paired second.
 /// - `CANOPY_TOUR_DIR`: a folder on the Mac the tour leaves requests in, `stop-mac` and `restart-mac`, which the
 ///   script carries out, since only the Mac can stop its Canopy.
 @MainActor
@@ -18,6 +19,8 @@ final class ScreenTour: XCTestCase {
     func testEveryScreen() throws {
         let environment = ProcessInfo.processInfo.environment
         let link = try XCTUnwrap(environment["CANOPY_TOUR_LINK"].flatMap(URL.init(string:)), "CANOPY_TOUR_LINK")
+        let boxLink = try XCTUnwrap(
+            environment["CANOPY_TOUR_BOX_LINK"].flatMap(URL.init(string:)), "CANOPY_TOUR_BOX_LINK")
         let requests = try XCTUnwrap(environment["CANOPY_TOUR_DIR"].map(URL.init(fileURLWithPath:)), "CANOPY_TOUR_DIR")
 
         app = XCUIApplication()
@@ -27,9 +30,7 @@ final class ScreenTour: XCTestCase {
         shot("pairing")
 
         // The link opens the app as the camera's scan would, through its URL scheme.
-        XCUIDevice.shared.system.open(link)
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        if springboard.buttons["Open"].waitForExistence(timeout: 5) { springboard.buttons["Open"].tap() }
+        open(link)
         XCTAssert(
             app.staticTexts.matching(identifier: "connection").firstMatch.waitForExistence(timeout: 15),
             "the link did not pair")
@@ -37,17 +38,53 @@ final class ScreenTour: XCTestCase {
         XCTAssert(element("item-feat/ios-companion").waitForExistence(timeout: 10), "no waiting agent in the Inbox")
         XCTAssert(element("item-fix/port-scan-drain").exists, "the done agent is not in the Inbox")
         XCTAssertFalse(element("item-feat/port-labels").exists, "a working agent is in the Inbox")
+        // The Mac lists the box's row too, as one of its remote rows, until the phone pairs with the box.
+        XCTAssert(element("item-feat/usage-migration").waitForExistence(timeout: 10), "no box row from the Mac")
+
+        // A second server, from Settings: the camera's screen, then the box's link.
+        app.buttons["settings"].tap()
+        app.buttons["pair-another"].tap()
+        XCTAssert(app.staticTexts["Pair another server"].waitForExistence(timeout: 5), "no Pair another server")
+        shot("pair-another")
+        app.buttons["Cancel"].tap()
+        app.navigationBars["Settings"].buttons["Done"].tap()
+        open(boxLink)
+        XCTAssert(
+            wait(timeout: 20) { self.app.staticTexts["connection"].label.contains(" and devbox connected") },
+            "the box never connected")
+        XCTAssert(element("item-feat/usage-migration").waitForExistence(timeout: 10), "no box agent in the Inbox")
+        // Counted against a row only the Mac has, as an item can be more than one element in the tree.
+        XCTAssertEqual(
+            items("item-feat/usage-migration"), items("item-fix/port-scan-drain"),
+            "the box's row shows from the Mac and the box")
         shot("inbox")
 
         app.tabBars.buttons["Rows"].tap()
         XCTAssert(element("main-canopy").waitForExistence(timeout: 10), "Rows has no main card")
         XCTAssert(element("row-fix/hand-checks").exists, "Rows has no idle row")
-        XCTAssert(element("host").label.contains("connected"), "Rows does not say the Mac is connected")
+        let hosts = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'host-'"))
+        XCTAssert(hosts.firstMatch.label.contains("connected"), "Rows does not say the Mac is connected")
         shot("rows")
+        app.swipeUp()
+        XCTAssert(element("row-feat/usage-migration").waitForExistence(timeout: 5), "Rows has no box row")
+        XCTAssert(element("host-devbox").label.contains("connected"), "Rows does not say the box is connected")
+        XCTAssertEqual(
+            items("row-feat/usage-migration"), items("row-fix/hand-checks"),
+            "the box's row shows under the Mac and the box")
+        shot("rows-box")
+        app.swipeDown()
         app.tabBars.buttons["Inbox"].tap()
 
+        // The box's agent, read through the box, names its host.
+        self.open("item-feat/usage-migration")
+        XCTAssert(text("staging migrated, totals match").waitForExistence(timeout: 10), "no box transcript")
+        XCTAssert(element("title").label.contains("devbox"), "the conversation does not name the box")
+        shot("conversation-box")
+        app.navigationBars.buttons["Inbox"].tap()
+        XCTAssert(wait { !self.element("item-feat/usage-migration").exists }, "opening the box's agent left it unread")
+
         // A question with options, answered with a chip.
-        open("item-feat/ios-companion")
+        self.open("item-feat/ios-companion")
         XCTAssert(app.buttons["option-Tailscale"].waitForExistence(timeout: 10), "no option chips")
         XCTAssert(text("It needs a way in from outside your network.").waitForExistence(timeout: 10), "no transcript")
         shot("conversation")
@@ -108,7 +145,12 @@ final class ScreenTour: XCTestCase {
 
         app.buttons["settings"].tap()
         XCTAssert(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Settings did not open")
+        XCTAssert(element("server-devbox").exists, "Settings does not list the box")
         shot("settings")
+        element("server-devbox").tap()
+        XCTAssert(app.buttons["remove-server"].waitForExistence(timeout: 5), "no server detail")
+        shot("settings-server")
+        app.navigationBars["devbox"].buttons.element(boundBy: 0).tap()
         // Away and back with Settings open: the lock covers the sheet too, so its switch cannot turn the lock off.
         XCUIDevice.shared.press(.home)
         app.activate()
@@ -128,7 +170,7 @@ final class ScreenTour: XCTestCase {
         app.buttons["unlock"].tap()
         XCTAssert(app.staticTexts["connection"].waitForExistence(timeout: 15), "Unlock did not open the inbox")
 
-        // The Mac goes away: the last inbox stays, greyed, with what to check.
+        // The Mac and the box go away: the last inbox stays, greyed, with what to check.
         request("stop-mac", in: requests)
         XCTAssert(
             app.descendants(matching: .any)["banner"].waitForExistence(timeout: 30), "no banner once the Mac stopped")
@@ -137,11 +179,22 @@ final class ScreenTour: XCTestCase {
             "the inbox does not say when it is from")
         shot("unreachable")
 
-        // A Mac that no longer knows the phone sends it back to Pairing.
+        // Servers that no longer know the phone send it back to Pairing.
         request("restart-mac", in: requests)
         XCTAssert(app.staticTexts["Pair with your Mac"].waitForExistence(timeout: 90), "an unpaired phone stayed")
-        XCTAssert(text("no longer knows this iPhone").exists, "Pairing does not say why")
+        XCTAssert(text("no longer know this iPhone").exists, "Pairing does not say why")
         shot("unpaired")
+    }
+
+    /// Opens a pairing link through the app's URL scheme, as the camera's scan would.
+    private func open(_ link: URL) {
+        XCUIDevice.shared.system.open(link)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if springboard.buttons["Open"].waitForExistence(timeout: 5) { springboard.buttons["Open"].tap() }
+    }
+
+    private func items(_ identifier: String) -> Int {
+        app.descendants(matching: .any).matching(identifier: identifier).count
     }
 
     private func element(_ identifier: String) -> XCUIElement {

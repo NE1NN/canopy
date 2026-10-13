@@ -44,20 +44,28 @@ struct CanopyApp: App {
 }
 
 #if DEBUG
-    /// The screen tour's pairing, kept in its own settings rather than the Keychain, so a run starts clean.
+    /// The screen tour's pairings, kept in its own settings rather than the Keychain, so a run starts clean.
     struct TourCredentialStore: CredentialStore, @unchecked Sendable {
         var defaults: UserDefaults
 
-        func load() -> PairedMac? {
-            defaults.data(forKey: "paired").flatMap { try? JSONDecoder().decode(PairedMac.self, from: $0) }
+        private var stored: [PairedServer] {
+            defaults.data(forKey: "servers").flatMap { try? JSONDecoder().decode([PairedServer].self, from: $0) } ?? []
         }
 
-        func save(_ mac: PairedMac) throws {
-            defaults.set(try JSONEncoder().encode(mac), forKey: "paired")
+        private func store(_ servers: [PairedServer]) {
+            defaults.set(try? JSONEncoder().encode(servers), forKey: "servers")
         }
 
-        func clear() {
-            defaults.removeObject(forKey: "paired")
+        func loadAll() -> [PairedServer] {
+            stored.sorted { $0.pairedAt < $1.pairedAt }
+        }
+
+        func save(_ server: PairedServer) throws {
+            store(stored.filter { $0.id != server.id } + [server])
+        }
+
+        func remove(id: String) {
+            store(stored.filter { $0.id != id })
         }
     }
 

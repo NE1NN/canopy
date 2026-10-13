@@ -40,12 +40,24 @@ public final class Servers {
     /// Whether any server still knows this phone. Without one the app is back at Pairing.
     public var isPaired: Bool { connections.contains(where: \.isPaired) }
 
-    /// Why the phone is back at Pairing, when the last server that knew it forgot it.
+    /// Why the phone is back at Pairing, when every server that knew it forgot it.
     public var pairingNotice: String? {
         guard !isPaired else { return nil }
-        let last = connections.filter { $0.forgottenAt != nil }.max { $0.forgottenAt! < $1.forgottenAt! }
-        guard case .unpaired(let notice) = last?.status else { return nil }
-        return notice
+        let forgot = connections.filter { !$0.isPaired }
+        if forgot.count == 1, case .unpaired(let notice) = forgot[0].status { return notice }
+        guard !forgot.isEmpty else { return nil }
+        return "\(Servers.names(forgot)) no longer know this iPhone. Pair them again."
+    }
+
+    /// "Studio", "Studio and hindie-box", or "Studio, hindie-box, and box2".
+    static func names(_ servers: [ServerConnection]) -> String {
+        let names = servers.map(\.name)
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        case 2: return "\(names[0]) and \(names[1])"
+        default: return names.dropLast().joined(separator: ", ") + ", and " + names[names.count - 1]
+        }
     }
 
     /// Whether a row a server sent shows here: not the Mac's copy of a row on a box this phone pairs with, which the

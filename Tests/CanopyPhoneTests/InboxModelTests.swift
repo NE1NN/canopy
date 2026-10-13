@@ -282,8 +282,22 @@ struct InboxAcrossServersTests {
         #expect(await eventually { model.staleServers.map(\.name) == ["hindie-box"] })
         #expect(!model.isStale)
         #expect(model.sections.needsYou.map(\.row.name) == ["feat/box", "feat/ios-companion"])
+        #expect(model.staleBanner?.title == "Can't reach hindie-box.")
         mac.goAway()
         #expect(await eventually { model.isStale })
+        #expect(model.staleBanner?.title == "Can't reach Studio and hindie-box.")
+    }
+
+    @Test func theLineAboveTheInboxNamesWhatIsOutOfReach() async throws {
+        mac.setInbox(Rows.inbox)
+        box.setInbox(PhoneInbox())
+        let model = InboxModel(servers: try await servers(mac, box))
+        #expect(model.connectionLine == .init(state: .connected, text: "Studio and hindie-box connected"))
+
+        box.goAway()
+        #expect(await eventually { model.connectionLine == .init(state: .unreachable, text: "Can't reach hindie-box") })
+        mac.goAway()
+        #expect(await eventually { model.connectionLine.text.hasPrefix("As of ") })
     }
 
     @Test func theMacsCopyOfABoxRowIsLeftOut() async throws {

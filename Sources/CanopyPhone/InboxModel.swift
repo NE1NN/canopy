@@ -122,6 +122,43 @@ public final class InboxModel {
 
     public var hasInbox: Bool { servers.paired.contains { $0.inbox != nil } }
 
+    /// The line above the Inbox, on how the servers are: connected, connecting, or which are out of reach.
+    public struct ConnectionLine: Equatable, Sendable {
+        public enum State: Sendable { case connected, connecting, unreachable }
+        public var state: State
+        public var text: String
+    }
+
+    public var connectionLine: ConnectionLine {
+        let paired = servers.paired
+        let unreachable = paired.filter(\.isUnreachable)
+        if !unreachable.isEmpty {
+            if unreachable.count == paired.count, let asOf {
+                return ConnectionLine(
+                    state: .unreachable, text: "As of \(asOf.formatted(date: .omitted, time: .shortened))")
+            }
+            return ConnectionLine(state: .unreachable, text: "Can't reach \(Self.names(unreachable))")
+        }
+        let connecting = paired.filter { !$0.isConnected }
+        if !connecting.isEmpty {
+            return ConnectionLine(state: .connecting, text: "Connecting to \(Self.names(connecting))")
+        }
+        return ConnectionLine(state: .connected, text: "\(Self.names(paired)) connected")
+    }
+
+    /// Names up to two servers, and counts more, to fit on one line.
+    private static func names(_ servers: [ServerConnection]) -> String {
+        servers.count > 2 ? "\(servers.count) servers" : Servers.names(servers)
+    }
+
+    /// One banner for the servers out of reach: the server's own problem, or for several, their names.
+    public var staleBanner: PhoneProblem? {
+        let stale = staleServers
+        if stale.count == 1, case .unreachable(let problem) = stale[0].status { return problem }
+        guard stale.count > 1 else { return nil }
+        return PhoneProblem(title: "Can't reach \(Servers.names(stale)).", detail: PhoneProblem.checkTailscale)
+    }
+
     /// The small label after a row's name: its plugin's item, or its repo when the inbox spans several.
     public func label(for row: PhoneRow) -> String? {
         if let plugin = row.plugin { return plugin }
