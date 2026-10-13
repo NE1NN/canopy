@@ -120,21 +120,30 @@ struct LocalPortChooserTests {
 
     /// ssh closing a browser's connections through a forward leaves the Mac port in TIME_WAIT, which holds nothing.
     @Test func aPortInTimeWaitIsFree() async throws {
-        let port = FakeSSHForwardTests.freePort()
-        // The side that closes first keeps TIME_WAIT, here the server's accepted socket on the port.
-        let program = """
-            import socket, time
-            listener = socket.socket(); listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            listener.bind(("127.0.0.1", \(port))); listener.listen()
-            client = socket.create_connection(("127.0.0.1", \(port))); accepted, _ = listener.accept()
-            accepted.close(); client.recv(1); client.close(); listener.close()
-            """
-        let result = try await offPool {
-            try Subprocess.run(
-                "/usr/bin/python3", ["-c", program], environment: Fixture.environment, directory: nil,
-                timeout: .seconds(10))
+        // The side that closes first keeps TIME_WAIT, here the listener's accepted socket on the port.
+        let port = try await offPool { () throws -> UInt16 in
+            let listener = try Listener(family: AF_INET)
+            let client = socket(AF_INET, SOCK_STREAM, 0)
+            guard client >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            defer { close(client) }
+            var address = sockaddr_in()
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = listener.port.bigEndian
+            address.sin_addr.s_addr = UInt32(0x7f00_0001).bigEndian
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            let accepted = accept(listener.fd, nil, nil)
+            guard accepted >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            close(accepted)
+            // Returns once the accepted socket's close arrives, so the client closes second.
+            var byte: UInt8 = 0
+            _ = recv(client, &byte, 1, 0)
+            return listener.port
         }
-        #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
         await #expect(try Self.timeWait(on: port))
 
         #expect(LocalPortChooser.isFree(port))
