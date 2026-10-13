@@ -6,6 +6,13 @@ public struct SubprocessResult: Sendable {
     public var stdout: Data
     public var stderr: Data
     public var timedOut: Bool
+
+    public init(status: Int32, stdout: Data, stderr: Data, timedOut: Bool) {
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timedOut = timedOut
+    }
 }
 
 public struct SubprocessError: Error, Sendable, Equatable, CustomStringConvertible {

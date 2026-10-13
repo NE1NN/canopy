@@ -1,4 +1,5 @@
 import CanopyFixturePlugin
+import CanopyTestSupport
 import Foundation
 import Testing
 

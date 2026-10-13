@@ -1,7 +1,8 @@
+import CanopyTestSupport
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopySystem
 
 struct SubprocessTests {
     /// Dispatch's threads block most signals, and so does every thread they start, like the one `onOwnThread` runs git

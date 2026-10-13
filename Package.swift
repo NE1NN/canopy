@@ -21,7 +21,11 @@ let package = Package(
         .target(name: "CanopyWire"),
         // The iPhone app's models and its connection to the Mac, kept out of its views so they test on the Mac.
         .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
-        .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire"]),
+        // What the Mac app and canopy-box need from the operating system, on macOS and Linux alike.
+        .target(name: "CanopySystem"),
+        .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem"]),
+        // Helpers every test target shares.
+        .target(name: "CanopyTestSupport", dependencies: ["CanopySystem"], path: "Sources/CanopyTestSupport"),
         // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
         .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
         .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
@@ -41,8 +45,10 @@ let package = Package(
         ),
         .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
         .testTarget(name: "CanopyPhoneTests", dependencies: ["CanopyPhone"]),
+        .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
         .testTarget(
-            name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin"], resources: [.copy("Fixtures")]
+            name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "CanopyCLITests",

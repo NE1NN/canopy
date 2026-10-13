@@ -1,14 +1,16 @@
 import Foundation
 
 /// Splits a byte stream into newline-delimited lines.
-struct LineBuffer {
+public struct LineBuffer {
     /// A line longer than this is not a request anyone meant to send.
-    static let maximumLine = 1 << 20
+    public static let maximumLine = 1 << 20
 
     private var pending = Data()
 
+    public init() {}
+
     /// The complete lines in what has arrived so far, or nil once the unfinished line is longer than `maximumLine`.
-    mutating func append(_ data: Data) -> [Data]? {
+    public mutating func append(_ data: Data) -> [Data]? {
         pending.append(data)
         var lines: [Data] = []
         while let newline = pending.firstIndex(of: 0x0A) {
