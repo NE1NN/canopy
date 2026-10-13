@@ -245,3 +245,41 @@ public struct PaneAgent: Sendable, Equatable {
         Data([0x1B]), Data([0x03]), Data("\u{1b}[27u".utf8), Data("\u{1b}[99;5u".utf8),
     ]
 }
+
+/// Kept whole, with times in seconds since 1970, so canopy-box can save it and hand it to the Mac. Missing fields read
+/// as a pane with no agent.
+extension PaneAgent: Codable {
+    enum CodingKeys: String, CodingKey {
+        case state, unseen, session, waitsOnQuestion, backgroundTasks, transcriptPath, prompt, since, changedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decodeIfPresent(AgentState.self, forKey: .state) ?? .none
+        unseen = try container.decodeIfPresent(Bool.self, forKey: .unseen) ?? false
+        session = try container.decodeIfPresent(String.self, forKey: .session)
+        waitsOnQuestion = try container.decodeIfPresent(Bool.self, forKey: .waitsOnQuestion) ?? false
+        backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
+        transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
+        prompt = try? container.decodeIfPresent(OpenPrompt.self, forKey: .prompt)
+        since =
+            try container.decodeIfPresent(Double.self, forKey: .since).map(Date.init(timeIntervalSince1970:))
+            ?? .distantPast
+        changedAt =
+            try container.decodeIfPresent(Double.self, forKey: .changedAt).map(Date.init(timeIntervalSince1970:))
+            ?? .distantPast
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encode(unseen, forKey: .unseen)
+        try container.encodeIfPresent(session, forKey: .session)
+        try container.encode(waitsOnQuestion, forKey: .waitsOnQuestion)
+        try container.encode(backgroundTasks, forKey: .backgroundTasks)
+        try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
+        try container.encodeIfPresent(prompt, forKey: .prompt)
+        try container.encode(since.timeIntervalSince1970, forKey: .since)
+        try container.encode(changedAt.timeIntervalSince1970, forKey: .changedAt)
+    }
+}

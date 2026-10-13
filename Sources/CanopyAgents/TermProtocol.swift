@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 public enum TermMethod {
@@ -28,6 +29,25 @@ public struct TermInfo: Codable, Sendable, Equatable {
     public var agent: AgentState?
     /// What a background agent waits on, left out when nothing runs.
     public var backgroundTasks: [String]?
+
+    public init(
+        pane: String, repo: String? = nil, plugin: String? = nil, row: String, rowPath: String, tab: String,
+        title: String, folder: String, foreground: String? = nil, exited: Int32? = nil, agent: AgentState? = nil,
+        backgroundTasks: [String]? = nil
+    ) {
+        self.pane = pane
+        self.repo = repo
+        self.plugin = plugin
+        self.row = row
+        self.rowPath = rowPath
+        self.tab = tab
+        self.title = title
+        self.folder = folder
+        self.foreground = foreground
+        self.exited = exited
+        self.agent = agent
+        self.backgroundTasks = backgroundTasks
+    }
 }
 
 public struct TermListParams: Codable, Sendable {
@@ -78,6 +98,11 @@ public struct TermNewParams: Codable, Sendable {
 public struct TermNewResult: Codable, Sendable, Equatable {
     public var pane: String
     public var tab: String
+
+    public init(pane: String, tab: String) {
+        self.pane = pane
+        self.tab = tab
+    }
 }
 
 public struct TermSendParams: Codable, Sendable {
@@ -112,6 +137,10 @@ public struct TermReadParams: Codable, Sendable {
 
 public struct TermReadResult: Codable, Sendable, Equatable {
     public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
 }
 
 public struct TermCloseParams: Codable, Sendable {
@@ -221,6 +250,11 @@ public struct TermStateResult: Codable, Sendable, Equatable {
     public var pane: String
     /// The state after the report, which is the state the pane kept when the report was ignored.
     public var state: AgentState
+
+    public init(pane: String, state: AgentState) {
+        self.pane = pane
+        self.state = state
+    }
 }
 
 public struct TermWaitParams: Codable, Sendable {
@@ -254,4 +288,66 @@ public struct TermWaitParams: Codable, Sendable {
 public struct TermWaitResult: Codable, Sendable, Equatable {
     public var pane: String
     public var state: AgentState
+
+    public init(pane: String, state: AgentState) {
+        self.pane = pane
+        self.state = state
+    }
+}
+
+/// What the CLI knows about where it runs. The app resolves it against registered repos.
+public struct TargetHint: Codable, Sendable, Equatable {
+    /// `--repo`: a repo display name or path.
+    public var repo: String?
+    /// A row argument: a branch name or a path.
+    public var row: String?
+    /// CANOPY_REPO from the environment.
+    public var envRepo: String?
+    /// CANOPY_ROW_PATH from the environment.
+    public var envRowPath: String?
+    public var cwd: String?
+
+    public init(
+        repo: String? = nil,
+        row: String? = nil,
+        envRepo: String? = nil,
+        envRowPath: String? = nil,
+        cwd: String? = nil
+    ) {
+        self.repo = repo
+        self.row = row
+        self.envRepo = envRepo
+        self.envRowPath = envRowPath
+        self.cwd = cwd
+    }
+}
+
+/// Which states `canopy term wait` waits for.
+public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
+    case done
+    case waiting
+    /// A turn that ended with background work still running.
+    case background
+    /// Done or waiting. Coordinators wait on a row to learn it finished, and a background row has not.
+    case any
+    /// Done, waiting, or background: the turn is over, whatever it left running.
+    case ended
+
+    public func matches(_ state: AgentState) -> Bool {
+        switch self {
+        case .done: state == .done
+        case .waiting: state == .waiting
+        case .background: state == .background
+        case .any: state == .done || state == .waiting
+        case .ended: state == .done || state == .waiting || state == .background
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .any: "done or waiting"
+        case .ended: "done, waiting, or background"
+        default: rawValue
+        }
+    }
 }
