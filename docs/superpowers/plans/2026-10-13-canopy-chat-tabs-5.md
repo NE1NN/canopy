@@ -21,18 +21,26 @@ As milestone 1, and: `kind` is optional in CanopyWire, so an older phone app and
 
 1. `term send --enter` to a chat with an open permission or question must do what the composer does: deny, then send. Pinned by `termSendToAChatDeniesAnOpenPromptAndSends`.
 2. `term send` without `--enter` must only fill the draft, never send. Pinned by `termSendWithoutEnterFillsTheDraft`.
-3. `chat new` must never change which row is selected. Pinned by `chatNewLeavesTheSelectionAlone`.
+3. `chat new` must never change which row is selected. The handler opens the tab through the store, which knows nothing of the app's selection, as `term new` does.
 4. An older phone app must still read and answer a chat; only its Terminal tab errors. Pinned by `anAgentWithoutKindDecodesAsATerminal` and `phoneScreenOfAChatIsNotATerminal`.
 5. `phone.reply` to a chat with an open prompt goes in as a message, not `prompt_open`. Pinned by `phoneReplyToAChatWithAnOpenPromptSendsIt`.
 
 ## Tasks
 
-- [ ] **Task 1: `chat new`.** `ChatMethod.new`, `ChatNewParams`, `ChatNewResult`, the handler, `RowLifecycle.newChat`, `ChatCommand`. Tests: `chatNewOpensAChatWithItsModelModeAndPrompt`, `chatNewLeavesTheSelectionAlone`, an e2e step.
-- [ ] **Task 2: `term` on chats.** `send` (message or draft), `read` (the conversation as text, `--lines`), `list` with `kind`, `close` naming Claude as the busy program. Tests: `termSendToAChatDeniesAnOpenPromptAndSends`, `termSendWithoutEnterFillsTheDraft`, `termReadPrintsTheConversation`, `termListShowsTheKind`.
-- [ ] **Task 3: The agent guide.** A Chats section: `chat new`, `term send`, `term wait`, `term read`.
-- [ ] **Task 4: The phone.** `PhoneAgent.kind`; `PhonePanes.reply` and `answer` through the chat's session; `screen` and `keys` refuse a chat. Tests: `phoneReplyToAChatWithAnOpenPromptSendsIt`, `phoneAnswerToAChatAnswersItsQuestion`, `phoneScreenOfAChatIsNotATerminal`, `anAgentWithoutKindDecodesAsATerminal`.
-- [ ] **Task 5: The phone app.** No Terminal tab or key bar for a chat. Test: `aChatHasNoTerminalTab` in `ConversationModelTests`.
+- [x] **Task 1: `chat new`.** `ChatMethod.new`, `ChatNewParams`, `ChatNewResult`, the handler, `RowLifecycle.newChat`, `ChatCommand`. Tests: `chatNewOpensAChatWithItsModelModeAndPrompt`, `chatNewRefusesAnUnknownModeAndASessionThatIsOpen`, an e2e step.
+- [x] **Task 2: `term` on chats.** `send` (message or draft), `read` (the conversation as text, `--lines`), `list` with `kind`, `close` naming Claude as the busy program. Tests: `termSendToAChatDeniesAnOpenPromptAndSends`, `termSendWithoutEnterFillsTheDraft`, `termListShowsTheKind`, `closingAWorkingChatNamesClaude`; `term read` is checked in each.
+- [x] **Task 3: The agent guide.** A Chats section: `chat new`, `term send`, `term wait`, `term read`.
+- [x] **Task 4: The phone.** `PhoneAgent.kind`; `PhonePanes.reply` and `answer` through the chat's session; `screen` and `keys` refuse a chat. Tests: `phoneReplyToAChatWithAnOpenPromptSendsIt`, `phoneAnswerToAChatAllowsItsPermission`, `phoneAnswerToAChatAnswersItsQuestion`, `phoneScreenOfAChatIsNotATerminal`, `anAgentWithoutKindDecodesAsATerminal`.
+- [x] **Task 5: The phone app.** No Terminal tab or key bar for a chat. Test: `aChatHasNoTerminalTab` in `ConversationModelTests`.
 
 ## Decisions to review
+
+- `term send` without `--enter` adds to the chat's draft, as typing would; with `--enter` it sends the draft and the text together.
+- A message sent before the author trusts the folder waits in the draft, and trusting sends it; `term read` says so. Before, it was dropped.
+- `chat new --model` and `--mode` set that chat only; New Chat's defaults stay what the author last picked.
+- `chat new --resume` of a session a pane already holds fails with `session_open`, naming the pane.
+- A phone's "allow" on a chat's plan approves it with edits accepted, as Return on the terminal's first option does.
+- `term list` shows `claude` as a chat's process while its Claude Code runs, and nothing otherwise.
+- The CLI hands `CANOPY_CLAUDE` to the app it launches, as it does `CLAUDE_CONFIG_DIR`, so e2e chats run the stand-in.
 
 ## After Review
