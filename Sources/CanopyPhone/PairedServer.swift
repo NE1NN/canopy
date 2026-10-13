@@ -217,6 +217,8 @@ public struct KeychainCredentialStore: CredentialStore {
 
     public func remove(id: String) {
         items.delete(account: Self.account(id))
+        // A move that never finished leaves the old item, which the next load would move back.
+        if id == Self.legacyID { items.delete(account: Self.legacyAccount) }
     }
 }
 

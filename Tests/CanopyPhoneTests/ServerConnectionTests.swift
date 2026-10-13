@@ -472,6 +472,19 @@ struct KeychainMoveTests {
         #expect(first.map(\.id) == ["mac"] && second.map(\.id) == ["mac"])
     }
 
+    /// Removing the moved Mac while the move never finished must not bring it back on the next launch.
+    @Test func removingAServerWhoseMoveNeverFinishedForgetsTheOldItemToo() throws {
+        let keychain = FakeKeychain()
+        keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }
+        keychain.refusesWrites.withLock { $0 = true }
+        let store = KeychainCredentialStore(items: keychain)
+        let server = try #require(store.loadAll().first)
+
+        store.remove(id: server.id)
+
+        #expect(KeychainCredentialStore(items: keychain).loadAll().isEmpty)
+    }
+
     @Test func anOldItemLeftBehindByAnEarlierMoveIsDropped() throws {
         let keychain = FakeKeychain()
         keychain.items.withLock { $0["mac"] = CredentialStoreTests.legacy }

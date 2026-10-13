@@ -114,7 +114,7 @@ private struct ServerDetail: View {
                 remove()
             }
         } message: {
-            Text("This iPhone forgets \(server.name). Pairing again needs canopy phone pair on the Mac.")
+            Text("This iPhone forgets \(server.name). Pairing again needs \(server.connection.pairCommand) on the Mac.")
         }
     }
 }
