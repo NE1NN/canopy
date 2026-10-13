@@ -18,13 +18,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 usage() {
-    echo "usage: scripts/e2e-hosts.sh [--host <alias>]" >&2
+    echo "usage: scripts/e2e-hosts.sh [--host <alias> [--with-box]]" >&2
     exit 2
 }
 alias=""
+with_box=0
 case "${1:-}" in
-    "") ;;
-    --host) [[ -n "${2:-}" && $# == 2 ]] || usage; alias="$2" ;;
+    "") with_box=1 ;;
+    --host)
+        [[ -n "${2:-}" ]] || usage
+        alias="$2"
+        case "${3:-}" in
+            "") [[ $# == 2 ]] || usage ;;
+            # Installs canopy-box and its systemd user service on the host, for this run's throwaway home only.
+            --with-box) [[ $# == 3 ]] || usage; with_box=1 ;;
+            *) usage ;;
+        esac ;;
     *) usage ;;
 esac
 app="$PWD/build/Canopy Dev.app"
@@ -66,6 +75,9 @@ if [[ -z "$alias" ]]; then
     touch "$host_home/.fake-ss-home-only"
     on_host() { "$CANOPY_SSH" -- "$alias" "$@"; }
     host_dir="$host_home/canopy-e2e/$id"
+    # The fake host is this Mac, so it runs canopy-box built for macOS.
+    swift build --product canopy-box >/dev/null
+    export CANOPY_BOX_BINARY="$(swift build --show-bin-path)/canopy-box"
 else
     on_host() { ssh -o BatchMode=yes "$alias" "$@"; }
     host_dir="$(on_host 'printf %s "$HOME"')/canopy-e2e/$id"
@@ -92,6 +104,8 @@ cleanup() {
     on_host "pkill -f 'http[.]server [0-9]* --bind [^ ]* --directory $www'" >/dev/null 2>&1 || true
     for name in "$server" "${server2:-}"; do
         [[ -n "$name" ]] || continue
+        # canopy-box, for this run's throwaway home only.
+        on_host "systemctl --user disable --now ${name/canopy-/canopy-box-} >/dev/null 2>&1; rm -f ~/.config/systemd/user/${name/canopy-/canopy-box-}.service; pkill -f 'canopy-box serve --home-id ${name#canopy-}'" >/dev/null 2>&1 || true
         on_host "tmux -u -L $name kill-server; rm -f \"\${TMUX_TMPDIR:-/tmp}/tmux-\$(id -u)/$name\"" >/dev/null 2>&1 || true
         # The throwaway home's own files on the host, which no other home uses.
         [[ "$name" =~ ^canopy-[0-9a-f]{8}$ ]] && on_host "rm -rf ~/.canopy/${name#canopy-}" >/dev/null 2>&1 || true
@@ -417,6 +431,52 @@ wait_for 10 screen_has "can sleep. Press Return to reconnect" || fail "the pane 
 wait_for 90 state_is connected || fail "Return did not reconnect"
 "$cli" term send "$pane" "echo back-\$((4 + 4))" --enter >/dev/null
 wait_for 60 screen_has back-8 || fail "the pane did not rejoin after Return"
+
+if ((with_box)); then
+    step "host upgrade hands the host to canopy-box, which takes the session as it runs"
+    "$cli" host upgrade "$alias" > "$work/upgrade.out" 2> "$work/upgrade.err" \
+        || fail "host upgrade failed: $(cat "$work/upgrade.err")"
+    box_sock="~/.canopy/${server#canopy-}/box/box.sock"
+    on_host "test -S $box_sock" || fail "canopy-box does not listen on the host"
+    [[ "$(created_at)" == "$started" && "$(session_count)" == 1 ]] \
+        || fail "upgrading touched the session: made $(created_at), not $started, with $(session_count) sessions. Box state: $(on_host "cat ~/.canopy/${server#canopy-}/box/state.json"). Activity: $("$cli" log --json | json '" ".join(e["type"] for e in d[-15:])'). Processes: $(ps -Ao pid,command | grep -E "canopy-box|tmux -u -L $server" | grep -v grep)"
+    "$cli" host list --json | json '[h["box"] for h in d if h["alias"] == "'"$alias"'"][0]' | grep -qx True \
+        || fail "host list does not say the host is upgraded"
+
+    step "a hook in the pane reaches canopy-box, and its agent shows here"
+    in_pane hook-box "$(hook_report 'Over to you?')"
+    succeeded hook-box
+    wait_for 20 eval '[[ "$(agent_state)" == waiting ]]' || fail "the box's agent is $(agent_state), not waiting"
+
+    step "row new --run in the pane makes a row on the box, whose pane shows here as a tab"
+    in_pane row-box "canopy row new e2e/boxed --run 'echo boxed-\$((6 * 7))'"
+    succeeded row-box
+    boxed_row() { "$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/boxed"][0]'; }
+    wait_for 30 boxed_row || fail "the row made on the box does not show here"
+    boxed_pane() { "$cli" term list --all --json | json '[t["pane"] for t in d if t["row"] == "e2e/boxed"][0]'; }
+    wait_for 30 boxed_pane || fail "the box's pane does not show here as a tab"
+    "$cli" row select e2e/boxed --repo demo >/dev/null
+    boxed_says() { "$cli" term read "$(boxed_pane)" --lines 50 | grep -q boxed-42; }
+    wait_for 60 boxed_says || fail "the box's pane did not run its command"
+    boxed_session=$("$cli" term list --all --json | json '[t["pane"] for t in d if t["row"] == "e2e/boxed"][0]')
+    box_sessions() { on_host "tmux -u -L $server list-sessions -F '#{session_name}'" | grep -c '^b' || true; }
+    [[ "$(box_sessions)" == 1 ]] || fail "the box has $(box_sessions) panes of its own, not 1"
+    "$cli" term close "$boxed_session" --force >/dev/null || fail "the box's pane could not be closed here"
+    box_pane_gone() { [[ "$(box_sessions)" == 0 ]]; }
+    wait_for 20 box_pane_gone || fail "closing the box's pane here did not end its session on the host"
+
+    step "host upgrade --undo gives the host back, and hooks reach this Mac again"
+    sessions_before=$(session_count)
+    "$cli" host upgrade "$alias" --undo >/dev/null 2> "$work/undo.err" || fail "--undo failed: $(cat "$work/undo.err")"
+    stopped() { ! on_host "test -S $box_sock"; }
+    wait_for 20 stopped || fail "canopy-box still listens after --undo"
+    [[ "$(created_at)" == "$started" && "$(session_count)" == "$sessions_before" ]] \
+        || fail "--undo touched the sessions: $(session_count), not $sessions_before"
+    in_pane hook-undo "$(hook_report 'Done.')"
+    succeeded hook-undo
+    wait_for 20 eval '[[ "$(agent_state)" == done ]]' || fail "after --undo the agent is $(agent_state), not done"
+    "$cli" row rm e2e/boxed --repo demo --force --delete-branch >/dev/null || fail "the box's row could not be removed"
+fi
 
 step "row rm ends the session, removes the worktree, and forgets the row"
 stand_in=$("$cli" row list --json | json '[r["path"] for r in d if r.get("branch") == "e2e/remote"][0]')

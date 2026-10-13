@@ -255,6 +255,11 @@ public struct WorkspaceControlHandler: Sendable {
             listing.hosts = infos
             return try .from(listing)
 
+        case HostMethod.upgrade:
+            let params = try request.decodeParams(HostUpgradeParams.self)
+            return try .from(
+                params.undo ? try await rows.undoUpgrade(params.alias) : try await rows.upgradeHost(params.alias))
+
         case HostMethod.remove:
             let params = try request.decodeParams(HostRemoveParams.self)
             try await workspace.removeHost(alias: params.alias)

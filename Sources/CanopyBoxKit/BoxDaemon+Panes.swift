@@ -39,8 +39,14 @@ extension BoxDaemon {
         state.panes.append(StoredPane(id: id, rowPath: row.path, folder: row.path, agent: PaneAgent()))
         changed()
         if let command = params.command {
-            try await tmux.sendText(command, to: id)
-            try await tmux.sendBytes(Data([0x0D]), to: id)
+            // Typed once the shell has drawn its prompt, so the line is not echoed twice, or after 2 s anyway.
+            let deadline = ContinuousClock.now + .seconds(2)
+            while ContinuousClock.now < deadline, ((try? await tmux.capture(id, lines: nil)) ?? "").isEmpty {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            // The pane is made either way; a command that could not be typed shows as a shell waiting.
+            try? await tmux.sendText(command, to: id)
+            try? await tmux.sendBytes(Data([0x0D]), to: id)
         }
         return id
     }
@@ -73,13 +79,21 @@ extension BoxDaemon {
         }
     }
 
+    /// Keys typed into a pane elsewhere, as through the Mac's tmux attach: the agent's key rules see them, and nothing
+    /// goes into the pane.
+    public func typedElsewhere(_ params: BoxKeysParams) throws {
+        guard pane(params.pane) != nil else { throw BoxErrors.paneNotFound(params.pane) }
+        for key in params.keys { typed(Data(key.utf8), into: params.pane) }
+    }
+
     /// The pane's screen, or its last `lines` lines with scrollback, as plain text.
     public func read(pane id: String, lines: Int?) async throws -> String {
         guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
         do {
             return try await tmux.capture(id, lines: lines)
         } catch {
-            throw BoxErrors.paneNotFound(id)
+            guard await tmux.hasSession(id) else { throw BoxErrors.paneNotFound(id) }
+            throw ControlError(code: "tmux_failed", message: "\(error)")
         }
     }
 

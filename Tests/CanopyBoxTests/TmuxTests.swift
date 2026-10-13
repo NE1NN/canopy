@@ -64,8 +64,9 @@ struct TmuxTests {
     }
 
     @Test func bytesArriveExactly() async throws {
-        try await tmux.newSession("k", folder: dir.path, environment: [:], command: "stty raw -echo; head -c 4 > out")
-        try await Task.sleep(for: .milliseconds(300))
+        try await tmux.newSession(
+            "k", folder: dir.path, environment: [:], command: "stty raw -echo; touch ready; head -c 4 > out")
+        #expect(await eventually { contents("ready") != nil })
         try await tmux.sendBytes(Data([0x1B, 0x03, 0x41, 0x0D]), to: "k")
         #expect(await eventually { contents("out") == Data([0x1B, 0x03, 0x41, 0x0D]) })
     }
@@ -74,8 +75,8 @@ struct TmuxTests {
         let pasted = Data("\u{1b}[200~hello\rworld\u{1b}[201~".utf8)
         try await tmux.newSession(
             "p", folder: dir.path, environment: [:],
-            command: "printf '\\033[?2004h'; stty raw -echo; head -c \(pasted.count) > out")
-        try await Task.sleep(for: .milliseconds(300))
+            command: "printf '\\033[?2004h'; stty raw -echo; touch ready; head -c \(pasted.count) > out")
+        #expect(await eventually { contents("ready") != nil })
         try await tmux.paste("hello\nworld", to: "p")
         #expect(await eventually { contents("out") == pasted })
     }

@@ -85,9 +85,10 @@ struct BoxReviewTests {
         let text = String(repeating: "abcdefghij", count: 2_500) + "\nsecond line;"
         // Raw, since a terminal in line mode holds only a few KB of one line.
         try await home.server.tmux.newSession(
-            "l", folder: home.dir.path, environment: [:], command: "stty raw -echo; head -c \(text.utf8.count) > \(out)"
+            "l", folder: home.dir.path, environment: [:],
+            command: "stty raw -echo; touch \(out).ready; head -c \(text.utf8.count) > \(out)"
         )
-        try await Task.sleep(for: .milliseconds(300))
+        #expect(await eventually { FileManager.default.fileExists(atPath: out + ".ready") })
         try await home.server.tmux.sendText(text, to: "l")
         #expect(
             await eventually {

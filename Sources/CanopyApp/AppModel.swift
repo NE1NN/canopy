@@ -60,6 +60,9 @@ final class AppModel {
         let hostMonitor = HostMonitor(workspace: workspace, terminals: terminals)
         self.hostMonitor = hostMonitor
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals, hostMonitor: hostMonitor)
+        let boxMirror = BoxMirror(workspace: workspace, terminals: terminals)
+        self.rows.boxMirror = boxMirror
+        boxMirror.start()
         let environment = ProcessInfo.processInfo.environment
         let builtInPlugins = BuiltInPlugins.make(environment: environment)
         self.builtInPlugins = builtInPlugins

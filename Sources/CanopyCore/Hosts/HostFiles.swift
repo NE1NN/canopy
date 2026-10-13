@@ -409,9 +409,22 @@ public enum HostFiles {
                     base64.b64decode(reply["stderr"], validate=True), int(reply["status"]))
 
 
+        def socket_path():
+            """Where the relay sends calls: this home's canopy-box once it has taken the host's panes, as the app marks
+            with `adopted` after `canopy host upgrade`, which answers what it can and passes the rest to the app, or
+            else the app's socket."""
+            home_id = os.environ.get("CANOPY_HOME_ID", "")
+            if NAME.fullmatch(home_id):
+                folder = os.path.join(os.path.expanduser("~/.canopy"), home_id, "box")
+                box = os.path.join(folder, "box.sock")
+                if os.path.exists(os.path.join(folder, "adopted")) and os.path.exists(box):
+                    return box
+            return os.environ.get("CANOPY_SOCKET", "")
+
+
         def relay(arguments):
             """The host's `canopy`: runs the app's CLI with these arguments and prints what it printed."""
-            path = os.environ.get("CANOPY_SOCKET", "")
+            path = socket_path()
             reads = command_input(arguments)
             if reads == "hook":
                 # A hook never prints and never fails, so it can never disturb Claude.
@@ -554,7 +567,7 @@ public enum HostFiles {
 
         def open_link(arguments):
             """The host's `xdg-open`: an artifact opens in its row in Canopy, anything else as it would without Canopy."""
-            if len(arguments) == 1 and is_artifact(arguments[0]) and os.environ.get("CANOPY_SOCKET"):
+            if len(arguments) == 1 and is_artifact(arguments[0]) and socket_path():
                 return relay(["web", "open", arguments[0]])
             opener = next_opener()
             if opener is not None:

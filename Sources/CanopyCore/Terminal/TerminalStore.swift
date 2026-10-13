@@ -91,6 +91,12 @@ public protocol RemotePaneHooks: AnyObject {
     func run(_ text: String, in pane: Pane) async
     /// The user closed these panes, so their sessions on the host end too.
     func closed(_ panes: [Pane])
+    /// The author saw a remote pane's finish.
+    func seen(_ pane: Pane)
+}
+
+extension RemotePaneHooks {
+    public func seen(_ pane: Pane) {}
 }
 
 /// Every row's tabs and terminals. Terminals keep running while their row or tab is out of view.
@@ -190,10 +196,10 @@ public final class TerminalStore {
     @discardableResult
     public func openTab(
         for context: PaneContext, name: String? = nil, command: PaneCommand = .shell, directory: String? = nil,
-        select: Bool = true
+        select: Bool = true, session: String? = nil
     ) -> (tab: TerminalTab, pane: Pane) {
         let tabs = tabs(inRow: context.rowPath)
-        let pane = makePane(context, command: command, directory: directory)
+        let pane = makePane(context, command: command, directory: directory, session: session)
         let tab = TerminalTab(
             id: TabID(nextTab), name: name ?? TabNaming.next(after: tabs.filter { $0.grid != nil }.map(\.name)),
             grid: TerminalGrid(pane: pane))
@@ -374,8 +380,9 @@ public final class TerminalStore {
         endSessions(of: panes)
     }
 
-    /// Closes the row's terminals here and leaves remote sessions running on their hosts.
-    private func closeRowQuietly(path: String) {
+    /// Closes the row's terminals here and leaves remote sessions running on their hosts, as for a row canopy-box no
+    /// longer lists, whose sessions are the box's to end.
+    public func closeRowQuietly(path: String) {
         for pane in tabs(inRow: path).flatMap(\.paneList) {
             pane.close()
         }
@@ -595,6 +602,7 @@ public final class TerminalStore {
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
         pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
+        pane.onSeen = { [weak self] in self?.remoteHooks?.seen($0) }
         pane.onOpenLink = { [weak self] pane, link in
             guard let self else { return }
             self.onFollowLink(pane, self.followLink(link, from: pane))

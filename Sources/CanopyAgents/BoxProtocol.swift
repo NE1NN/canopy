@@ -22,6 +22,9 @@ public enum BoxMethod {
     public static let send = "box.send"
     /// Params: `BoxKeysParams`.
     public static let keys = "box.keys"
+    /// Keys typed into a pane elsewhere, as through the Mac's tmux attach, for the agent's key rules alone: they do
+    /// not go into the pane. Params: `BoxKeysParams`.
+    public static let typed = "box.typed"
     /// Params: `TermReadParams`. Result: `TermReadResult`.
     public static let read = "box.read"
     /// Params: `TermWaitParams`. Result: `TermWaitResult`.

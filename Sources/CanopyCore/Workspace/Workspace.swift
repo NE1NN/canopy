@@ -63,6 +63,16 @@ public actor Workspace {
     var preparedHosts: [String: (generation: Int, task: Task<Void, any Error>)] = [:]
     /// Each host's socket for its relayed `canopy` calls, which its connections forward here.
     var relayServers: [String: HostRelayServer] = [:]
+    /// Each upgraded host's link to its canopy-box, and the connection generation its socket was forwarded for.
+    var boxLinks: [String: BoxLink] = [:]
+    var boxForwarded: [String: Int] = [:]
+    /// The connection generation each upgraded host's canopy-box was last checked and started for.
+    var boxInstalled: [String: Int] = [:]
+    /// Hosts being upgraded, whose snapshots from before the box took their rows say nothing of them.
+    var upgradingHosts: Set<String> = []
+    var boxWatchers: [String: Task<Void, Never>] = [:]
+    /// Told of each upgraded host's snapshot after its rows are applied, with the stand-ins of rows it no longer has.
+    var boxObservers: [UUID: AsyncStream<BoxUpdate>.Continuation] = [:]
     /// The Mac ports every host's forwards hold, so one host's never take another's.
     nonisolated let macPorts = MacPortReservations()
 

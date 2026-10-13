@@ -9,6 +9,8 @@ public struct HostTooling: Sendable {
     public var clock: any HostClock
     /// The app's bundled CLI. Without one, hosts' calls are refused.
     public var relayCLI: String?
+    /// The canopy-box binaries `host upgrade` installs.
+    public var boxBinaries: BoxBinaries = .current()
     /// What runs each host's ssh, by alias; nil runs `sshExecutable`.
     public var launcher: (@Sendable (String) -> any HostProcessLauncher)?
 
@@ -209,6 +211,7 @@ extension Workspace {
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
         relayServers.removeValue(forKey: alias)?.stop()
+        await stopBoxLink(alias)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
     }
 
@@ -227,7 +230,7 @@ extension Workspace {
             alias: alias, state: await connection?.state ?? .idle, repos: entry.repos, wake: entry.wake,
             idleDetachMinutes: entry.idleDetachMinutes,
             rows: state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.standIn),
-            tmuxServer: HostPaths.tmuxServer(homeID: homeID), error: await connection?.lastError)
+            tmuxServer: HostPaths.tmuxServer(homeID: homeID), error: await connection?.lastError, box: entry.box)
     }
 
     /// Lets every host go, as Canopy quits. Sessions on hosts only detach.
@@ -240,6 +243,7 @@ extension Workspace {
             server.stop()
         }
         relayServers.removeAll()
+        for alias in Array(boxLinks.keys) { await stopBoxLink(alias) }
     }
 }
 

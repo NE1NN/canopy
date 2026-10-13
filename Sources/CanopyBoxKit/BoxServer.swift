@@ -16,15 +16,27 @@ public final class BoxServer: Sendable {
     /// How long a write may wait for a peer to read, before the connection is given up.
     public static let writeWait = Duration.seconds(60)
 
+    /// The connections being served, which closing the server ends.
+    private let open = OpenConnections()
+
     public init(daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait) throws {
         self.daemon = daemon
+        let open = open
         listener = try UnixListener(path: socketPath) { connection in
+            open.all.withLock { $0[ObjectIdentifier(connection)] = connection }
+            defer { _ = open.all.withLock { $0.removeValue(forKey: ObjectIdentifier(connection)) } }
             Self.serve(connection, daemon: daemon, writer: ConnectionWriter(connection, wait: writeWait))
         }
     }
 
+    /// Stops listening and ends every connection, as the daemon stopping does.
     public func close() {
         listener.close()
+        for connection in open.all.withLock({ Array($0.values) }) { connection.close() }
+    }
+
+    private final class OpenConnections: Sendable {
+        let all = Mutex<[ObjectIdentifier: UnixConnection]>([:])
     }
 
     /// Reads the connection's lines until it closes, on the connection's own thread. A client may stop sending right
@@ -36,6 +48,10 @@ public final class BoxServer: Sendable {
         let subscriptions = Mutex<[Task<Void, Never>]>([])
         defer {
             for subscription in subscriptions.withLock({ $0 }) { subscription.cancel() }
+            // A client gone altogether hears no answers, so its calls stop; one that only stopped sending still reads.
+            if connection.peerClosed() {
+                for task in work.withLock({ $0 }) { task.cancel() }
+            }
             let finished = DispatchSemaphore(value: 0)
             let pending = work.withLock { $0 }
             Task {
@@ -156,6 +172,9 @@ public final class BoxServer: Sendable {
             return .bool(true)
         case BoxMethod.keys:
             try await daemon.keys(request.decodeParams(BoxKeysParams.self))
+            return .bool(true)
+        case BoxMethod.typed:
+            try await daemon.typedElsewhere(request.decodeParams(BoxKeysParams.self))
             return .bool(true)
         case BoxMethod.read:
             let params = try request.decodeParams(TermReadParams.self)

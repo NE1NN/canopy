@@ -4,6 +4,35 @@ public enum HostMethod {
     public static let add = "host.add"
     public static let list = "host.list"
     public static let remove = "host.remove"
+    public static let upgrade = "host.upgrade"
+}
+
+public struct HostUpgradeParams: Codable, Sendable {
+    public var alias: String
+    /// Goes back: the Mac tracks the host's rows and panes again, and canopy-box stops.
+    public var undo: Bool
+
+    public init(alias: String, undo: Bool = false) {
+        self.alias = alias
+        self.undo = undo
+    }
+}
+
+public struct HostUpgradeResult: Codable, Sendable, Equatable {
+    public var alias: String
+    public var rows: Int
+    public var panes: Int
+    /// Panes whose session the host no longer had.
+    public var missing: [String]
+    public var warnings: [String]
+
+    public init(alias: String, rows: Int, panes: Int, missing: [String] = [], warnings: [String] = []) {
+        self.alias = alias
+        self.rows = rows
+        self.panes = panes
+        self.missing = missing
+        self.warnings = warnings
+    }
 }
 
 public struct HostAddParams: Codable, Sendable {
@@ -45,11 +74,15 @@ public struct HostInfo: Codable, Sendable, Equatable {
     public var tmuxServer: String
     /// What `host add` found that may need the author, such as a low MaxSessions.
     public var warnings: [String]
+    /// canopy-box runs the host's rows, since `canopy host upgrade`.
+    public var box: Bool = false
 
     public init(
         alias: String, state: HostState, repos: [String: String], wake: String?, idleDetachMinutes: Int,
-        rows: [String], tmuxServer: String, panes: [String] = [], error: String? = nil, warnings: [String] = []
+        rows: [String], tmuxServer: String, panes: [String] = [], error: String? = nil, warnings: [String] = [],
+        box: Bool = false
     ) {
+        self.box = box
         self.tmuxServer = tmuxServer
         self.warnings = warnings
         self.alias = alias

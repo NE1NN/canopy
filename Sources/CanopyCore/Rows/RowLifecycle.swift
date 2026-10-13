@@ -42,6 +42,8 @@ public final class RowLifecycle {
     /// Remote rows' ports come from its probes. Without one, rows list this Mac's ports alone.
     public let hostMonitor: HostMonitor?
     let localPorts: LocalPorts
+    /// Shows upgraded hosts' panes and agents. Set once the app starts it.
+    public var boxMirror: BoxMirror?
 
     public init(
         workspace: Workspace, terminals: TerminalStore, hostMonitor: HostMonitor? = nil,
@@ -199,10 +201,32 @@ extension RowLifecycle: RemotePaneHooks {
         var sessions: [String: [String]] = [:]
         for pane in panes {
             guard let remote = pane.context.remote, let session = pane.remoteSession else { continue }
+            boxMirror?.closedAtTheMac(session, host: remote.host)
             sessions[remote.host, default: []].append(session)
         }
         for (host, names) in sessions {
-            Task { await workspace.killSessions(names, on: host) }
+            Task {
+                // An upgraded host's canopy-box ends its panes, so it forgets them as it does.
+                if let link = await workspace.boxLink(for: host) {
+                    var left: [String] = []
+                    for name in names {
+                        let closed: Bool? = try? await link.call(BoxMethod.paneClose, BoxPaneParams(pane: name))
+                        if closed == nil { left.append(name) }
+                    }
+                    // Not closed by the box, as while its link is down or before it has seen the pane: tmux ends them.
+                    await workspace.killSessions(left, on: host)
+                } else {
+                    await workspace.killSessions(names, on: host)
+                }
+            }
+        }
+    }
+
+    public func seen(_ pane: Pane) {
+        guard let remote = pane.context.remote, let session = pane.remoteSession else { return }
+        Task {
+            guard let link = await workspace.boxLink(for: remote.host) else { return }
+            let _: Bool? = try? await link.call(BoxMethod.seen, BoxPaneParams(pane: session))
         }
     }
 
@@ -214,5 +238,35 @@ extension RowLifecycle: RemotePaneHooks {
             pane: id, host: remote.host, session: session,
             folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, repoPath: repoPath,
             rowPath: pane.context.rowPath, rowName: pane.context.rowName)
+    }
+}
+
+extension RowLifecycle {
+    /// `canopy host upgrade`: the host's panes, with their sessions and agents, go to canopy-box with its rows.
+    public func upgradeHost(_ alias: String) async throws -> HostUpgradeResult {
+        let panes = terminals.panes.compactMap { pane -> BoxAdoptedPane? in
+            guard let remote = pane.context.remote, remote.host == alias, let session = pane.remoteSession else {
+                return nil
+            }
+            return BoxAdoptedPane(
+                id: session, rowPath: remote.path,
+                folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, agent: pane.agent)
+        }
+        return try await workspace.upgradeHost(alias, panes: panes)
+    }
+
+    /// `canopy host upgrade --undo`: the box's panes keep their tabs, and their agents stay as the box last had them.
+    public func undoUpgrade(_ alias: String) async throws -> HostUpgradeResult {
+        let (result, released) = try await workspace.undoUpgrade(alias)
+        // Each pane the box gave back keeps or gets a tab here, with its agent as the box last had it.
+        let panes = released.panes.map { given in
+            BoxPane(
+                id: given.id, rowPath: given.rowPath, folder: given.folder, agent: given.agent.state,
+                unseen: given.agent.unseen, backgroundTasks: given.agent.backgroundTasks,
+                transcriptPath: given.agent.transcriptPath, prompt: given.agent.prompt,
+                since: given.agent.since.timeIntervalSince1970)
+        }
+        await boxMirror?.apply(BoxUpdate(host: alias, snapshot: BoxSnapshot(panes: panes), goneRows: []))
+        return result
     }
 }

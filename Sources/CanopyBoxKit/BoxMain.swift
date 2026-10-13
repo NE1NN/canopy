@@ -14,7 +14,8 @@ import Foundation
 
 /// `canopy-box`'s commands: `version`, and `serve`, which runs the daemon for one Canopy home until SIGTERM or SIGINT.
 public enum BoxMain {
-    static let usage = "usage: canopy-box version | serve --home-id <id> [--root <folder>]"
+    static let usage =
+        "usage: canopy-box version | serve --home-id <id> [--root <folder>] | status --home-id <id> [--root <folder>]"
     /// How often panes are read, the busy file is touched, and kept reports are looked for.
     static let pollEvery = Duration.seconds(2)
     static let replayEvery = Duration.seconds(30)
@@ -27,13 +28,24 @@ public enum BoxMain {
             return 0
         case "serve":
             return await serve(Array(arguments.dropFirst()))
+        case "status":
+            // Whether a daemon answers for the home: 0 when one does, 1 when none.
+            guard let (homeID, root) = homeOptions(Array(arguments.dropFirst())) else {
+                printError(usage)
+                return 2
+            }
+            let paths = BoxPaths(root: Paths.canonical(root), homeID: homeID)
+            guard let live = try? UnixConnection.connect(path: paths.socket) else { return 1 }
+            live.close()
+            return 0
         default:
             printError(usage)
             return 2
         }
     }
 
-    private static func serve(_ arguments: [String]) async -> Int32 {
+    /// `--home-id <id> [--root <folder>]`, or nil when they are not that.
+    static func homeOptions(_ arguments: [String]) -> (homeID: String, root: String)? {
         var homeID: String?
         var root = ProcessInfo.processInfo.environment["HOME"] ?? Paths.homeDirectory
         var rest = arguments[...]
@@ -41,13 +53,17 @@ public enum BoxMain {
             switch (flag, rest.popFirst()) {
             case ("--home-id", let value?): homeID = value
             case ("--root", let value?): root = value
-            default:
-                printError(usage)
-                return 2
+            default: return nil
             }
         }
-        guard let homeID, homeID.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }), !homeID.isEmpty
-        else {
+        guard let homeID, !homeID.isEmpty,
+            homeID.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+        else { return nil }
+        return (homeID, root)
+    }
+
+    private static func serve(_ arguments: [String]) async -> Int32 {
+        guard let (homeID, root) = homeOptions(arguments) else {
             printError(usage)
             return 2
         }

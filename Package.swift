@@ -75,7 +75,9 @@ let macTargets: [Target] = [
         ]
     ),
     .testTarget(name: "CanopyPhoneTests", dependencies: ["CanopyPhone"]),
-    .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport"]),
+    .testTarget(
+        name: "CanopyCoreTests",
+        dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport", "CanopyBoxKit", "CanopyBox"]),
     .testTarget(
         name: "CanopyCLITests",
         dependencies: [

@@ -82,6 +82,8 @@ public final class UnixListener: Sendable {
                 let client = canopy_accept_closing_on_exec(fd)
                 if client < 0 {
                     if errno == EINTR || errno == ECONNABORTED { continue }
+                    // Out of descriptors: the connection waits in the backlog rather than spinning this queue.
+                    if errno == EMFILE || errno == ENFILE { usleep(100_000) }
                     return
                 }
                 let connection = UnixConnection(fd: client)
@@ -208,7 +210,8 @@ public final class UnixConnection: Sendable {
         }
     }
 
-    /// Whether the other side hangs up within `timeout`. What it sends meanwhile stays to be read.
+    /// Whether the other side hangs up within `timeout`. What it sends meanwhile is read and dropped, as a relayed
+    /// call's client has nothing more to say, so a chatty peer cannot make this return at once over and over.
     public func hungUp(within timeout: Duration) -> Bool {
         let deadline = ContinuousClock.now + timeout
         while true {
@@ -220,12 +223,27 @@ public final class UnixConnection: Sendable {
             } catch {
                 return true
             }
-            var byte: UInt8 = 0
-            let peeked = recv(fd, &byte, 1, Int32(MSG_PEEK))
-            if peeked == 0 { return true }
-            if peeked > 0 { return false }
-            if errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK { return true }
+            var discard = [UInt8](repeating: 0, count: 4096)
+            let count = recv(fd, &discard, discard.count, 0)
+            if count == 0 { return true }
+            if count < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK { return true }
         }
+    }
+
+    /// Whether the other side closed its end altogether, rather than only its sending, as a client that has said all
+    /// it will but still reads does. poll(2) on macOS reports the two alike, so this writes an empty line, which line
+    /// readers pass over, and sees whether it can.
+    public func peerClosed() -> Bool {
+        guard !closed.load(ordering: .acquiring) else { return true }
+        return
+            (try? writing.withLock { _ -> Int in
+                var newline: UInt8 = 0x0A
+                let sent = sendBytes(fd, &newline, 1)
+                if sent < 0 && (errno == EPIPE || errno == ECONNRESET || errno == ENOTCONN) {
+                    throw UnixSocketError.closed
+                }
+                return sent
+            }) == nil
     }
 
     /// Ends this side's sending, as a client that has said all it will does. Reading goes on.
