@@ -34,8 +34,8 @@ public struct TermInfo: Codable, Sendable, Equatable {
 
     public init(
         pane: String, repo: String? = nil, plugin: String? = nil, row: String, rowPath: String, tab: String,
-        title: String, folder: String, foreground: String? = nil, exited: Int32? = nil, agent: AgentState? = nil,
-        backgroundTasks: [String]? = nil
+        title: String, folder: String, foreground: String? = nil, exited: Int32? = nil, kind: String? = nil,
+        agent: AgentState? = nil, backgroundTasks: [String]? = nil
     ) {
         self.pane = pane
         self.repo = repo
@@ -47,6 +47,7 @@ public struct TermInfo: Codable, Sendable, Equatable {
         self.folder = folder
         self.foreground = foreground
         self.exited = exited
+        self.kind = kind
         self.agent = agent
         self.backgroundTasks = backgroundTasks
     }
