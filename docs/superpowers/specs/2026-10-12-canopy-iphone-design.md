@@ -234,7 +234,8 @@ A connection may follow 16 conversations and screens at once.
 A SwiftUI app in `Apps/CanopyiOS`, with its Xcode project checked in, depending on the local package.
 Its views live in the Xcode project; everything else, the connection, pairing, and each screen's model, lives in a `CanopyPhone` package target that builds for macOS and iOS, so `make test` covers it on the Mac against a fake Mac that speaks the real protocol.
 Bundle ID `com.ne1nn.Canopy.Phone`, iOS 18 and later, iPhone only.
-`make ios` builds it for the Simulator, and `make ios-install TEAM=<team id>` signs it with the author's Apple ID and installs it on the plugged-in iPhone with `xcrun devicectl`.
+`make ios` builds it for the Simulator, and `make ios-install` signs it with the author's Apple ID and installs it on the plugged-in iPhone with `xcrun devicectl`.
+It takes the team from the Mac's Apple Development certificate, or from `TEAM=<team id>` when the Mac has more than one, and builds for that phone so a free team can add it and make a profile.
 `scripts/ios-shots.sh` walks every screen in the Simulator against a dev build, in light and dark.
 
 Screens, as in the mockups:
