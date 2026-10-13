@@ -2,7 +2,7 @@
 """A stand-in Claude Code for the phone fixture: it draws a Claude-like screen, writes its conversation in Claude
 Code's transcript format, and reports to Canopy through `canopy agent-hook` as Claude Code's hooks do.
 
-  fake-claude.py <canopy-cli> <scenario> <transcript-file> [<brief>]
+  fake-claude.py <canopy-cli> <scenario> <transcript-file> [<option>...] [<brief>]
 
 Run it in a pane, which sets CANOPY_PANE. It answers the phone the way Claude Code would: a reply (a bracketed paste,
 then Return) becomes the next prompt, a digit answers its question, and Return allows its command.
@@ -21,7 +21,8 @@ import uuid
 from datetime import datetime, timezone
 
 CLI, SCENARIO, TRANSCRIPT = sys.argv[1:4]
-BRIEF = sys.argv[4] if len(sys.argv) > 4 else ""
+# The brief comes last, after whatever options the agent command passes.
+BRIEF = sys.argv[-1] if len(sys.argv) > 4 else ""
 SESSION = str(uuid.uuid4())
 CWD = os.getcwd()
 lock = threading.Lock()

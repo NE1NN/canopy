@@ -15,6 +15,11 @@ public final class NewTaskModel {
         public var wakesFirst: Bool
 
         public var id: String { server.id }
+
+        @MainActor public var status: String {
+            if wakesFirst { return "Out of reach. Start wakes it first." }
+            return server.isConnected ? "Connected" : "Can't reach \(server.name)"
+        }
     }
 
     public enum Phase: Equatable, Sendable {
@@ -38,6 +43,8 @@ public final class NewTaskModel {
     public var brief = ""
     public private(set) var phase = Phase.editing
     public private(set) var problem: PhoneProblem?
+    /// The start under way from `begin`, which Cancel stops.
+    private var starting: (id: UUID, task: Task<Void, Never>)?
 
     public init(servers: Servers, rows: RowsModel, waker: Waker, defaults: UserDefaults = .standard) {
         self.servers = servers
@@ -66,6 +73,18 @@ public final class NewTaskModel {
     /// What Start runs there, or nil from a server older than New task.
     public var agentCommand: String? { choice?.server.server.agentCommand }
 
+    public var startTitle: String { choice?.wakesFirst == true ? "Wake and start" : "Start" }
+
+    /// What Start is doing, or nil while the fields can be changed.
+    public var progress: String? {
+        let name = choice?.server.name ?? ""
+        switch phase {
+        case .waking: return "Waking \(name)…"
+        case .starting: return "Making the row on \(name)…"
+        case .editing: return nil
+        }
+    }
+
     public var canStart: Bool {
         phase == .editing && choice?.isAvailable == true && !Self.trimmed(repo).isEmpty
             && !Self.trimmed(branch).isEmpty
@@ -87,6 +106,25 @@ public final class NewTaskModel {
         if !repos.isEmpty, !repos.contains(repo) { repo = repos[0] }
     }
 
+    /// Starts the task, and hands `opened` the pane its agent runs in, unless `cancel` came first.
+    public func begin(then opened: @escaping @MainActor (PaneRef) -> Void) {
+        guard canStart, starting == nil else { return }
+        let id = UUID()
+        let task = Task {
+            let pane = await start()
+            let cancelled = Task.isCancelled
+            if starting?.id == id { starting = nil }
+            if let pane, !cancelled { opened(pane) }
+        }
+        starting = (id, task)
+    }
+
+    /// Stops waiting for a wake, and forgets a row being made: the server still makes it, and nothing opens.
+    public func cancel() {
+        starting?.task.cancel()
+        starting = nil
+    }
+
     /// Wakes a box that is off, makes the row there, and returns the pane its agent runs in, or nil with `problem`
     /// saying why. The fields stay as they were when it fails.
     public func start() async -> PaneRef? {
@@ -100,7 +138,7 @@ public final class NewTaskModel {
             } else {
                 await waker.wake(server)
             }
-            guard server.isConnected else {
+            guard server.isConnected, !Task.isCancelled else {
                 phase = .editing
                 if case .failed(let failure) = waker.step(of: server) {
                     problem = failure

@@ -14,11 +14,16 @@ struct PhoneNewRowTests {
     /// Writes the pane and each argument after the command, so a test sees what the agent would get.
     static let recorder = #"printf '%s|' "$CANOPY_PANE" > "$CANOPY_ROOT_PATH/../ran""#
 
-    @Test func newRowMakesTheRowAndRunsTheLine() async throws {
+    /// Typed text would reach the shell's line editor, where a control character is a key even inside quotes.
+    nonisolated static let briefs = [
+        "Fix it's $(touch pwned) login", "tab\there", "\u{15}touch pwned\r", "\u{3}two\nlines \u{7}",
+    ]
+
+    @Test(arguments: briefs)
+    func newRowMakesTheRowAndRunsTheLine(_ brief: String) async throws {
         let dir = try TempDir()
         let rows = try await setUp(dir, config: nil)
         defer { rows.terminals.closeAll() }
-        let brief = "Fix it's $(touch pwned) login"
 
         let made = try await rows.phoneNewRow(
             PhoneNewRowParams(repo: "demo", branch: "feat/phone", brief: brief),
@@ -29,6 +34,7 @@ struct PhoneNewRowTests {
         #expect(rows.terminals.tabs(inRow: row.path).compactMap(\.focused?.id.description) == [made.pane])
         #expect(await eventually { RowSetupTests().read(dir.sub("ran")) == "\(made.pane)|\(brief)|" })
         #expect(!FileManager.default.fileExists(atPath: row.path + "/pwned"))
+        #expect(!FileManager.default.fileExists(atPath: dir.sub("home/pwned")))
     }
 
     @Test func aFailedSetupStartsNoAgent() async throws {
@@ -45,9 +51,22 @@ struct PhoneNewRowTests {
         #expect(error?.code == "setup_failed")
         #expect(error?.message.contains("feat/broken") == true)
         #expect(error?.message.contains("Setup tab") == true)
-        #expect(await rows.workspace.snapshot.repos.first?.rows.contains { $0.branch == "feat/broken" } == true)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(!FileManager.default.fileExists(atPath: dir.sub("ran")))
+        let row = try #require(await rows.workspace.snapshot.repos.first?.rows.first { $0.branch == "feat/broken" })
+        // No tab was opened for the agent: only the failed Setup tab is there.
+        #expect(rows.terminals.tabs(inRow: row.path).map(\.name) == ["Setup"])
+    }
+
+    @Test func aBranchAlreadyMadeIsRefused() async throws {
+        let dir = try TempDir()
+        let rows = try await setUp(dir, config: nil)
+        defer { rows.terminals.closeAll() }
+        let params = PhoneNewRowParams(repo: "demo", branch: "feat/twice", brief: "")
+        _ = try await rows.phoneNewRow(params, line: "true")
+
+        let error = await #expect(throws: WorkspaceError.self) { try await rows.phoneNewRow(params, line: "true") }
+
+        #expect(error.map { ControlError($0).code } != nil)
+        #expect(rows.terminals.tabs(inRow: dir.path).isEmpty)
     }
 
     @Test func anUnknownRepoIsRefused() async throws {

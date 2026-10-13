@@ -491,7 +491,7 @@ if ((with_box)); then
             || fail "the box's hello does not carry the command: $(box_agent)"
         /usr/bin/python3 - "$work" <<'PY'
 import json, sys
-brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME"
+brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME\u0015touch pwned\r\tdone"
 open(sys.argv[1] + "/box-brief.txt", "w").write(brief)
 json.dump({"repo": "demo", "branch": "e2e/box-task", "brief": brief}, open(sys.argv[1] + "/box-task.json", "w"))
 PY

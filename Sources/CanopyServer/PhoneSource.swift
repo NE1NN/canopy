@@ -23,8 +23,8 @@ public protocol PhoneSource: Sendable {
     func seen(_ params: PhonePaneParams) async throws
     /// The pane's visible screen, with up to `scrollback` lines above it.
     func screen(_ params: PhonePaneParams, scrollback: Int?) async throws -> PhoneScreen
-    /// Makes a row by `row new`'s branch rules and opens a pane in it that runs `line`, the agent command with the
-    /// brief.
+    /// Makes a row by `row new`'s branch rules and opens a pane in it that types `line`, the agent command, with the
+    /// brief in the pane's `PhoneAgentCommand.briefVariable`.
     func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult
 }
 

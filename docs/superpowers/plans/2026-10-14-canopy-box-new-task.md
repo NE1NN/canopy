@@ -104,3 +104,26 @@ Each server's agent command comes from the Mac's `config.json`: the Mac's own fr
 ### Checks
 
 `make lint`, `make build` with no warnings, `make test` three times clean, `make e2e`, `make linux`, the tour in light and dark, an opus review with its findings fixed below, and CI's `check`.
+
+## As built
+
+- The box's agent command is set with `canopy phone agent --on <host>`, as `phone pair --on` names a box, instead of a separate `canopy host agent`.
+  `canopy host add <host> --agent` sets it too, and refuses an empty one, as `phone agent` does; `--default` goes back to the standard command.
+- The brief is never typed.
+  Each server opens the task's pane with the brief in `CANOPY_TASK_BRIEF` and types `<command> "$CANOPY_TASK_BRIEF"`, so no character in it reaches a shell's line editor.
+  A brief over 32 KB, or one holding a NUL, is refused with `bad_params`, as Linux limits one environment entry to 128 KiB and none can hold a NUL.
+- `phone.newRow` runs beside the connection's later calls instead of ahead of them (`PhoneGate.lengthyMethods`), since on the Mac it waits for the row's setup; the phone matches answers by id.
+- The fixture's box runs `fixture-claude`, a stand-in in canopy-box's bin, as the box's panes on the fake host are this Mac's zsh, whose `/etc/zprofile` puts the system's folders, and the real `claude`, ahead of that bin.
+- Also fixed on the way: the inbox tests' unused bindings, which warned.
+
+## After Review
+
+An opus review found one critical issue, three important ones, and seven minor ones.
+
+- Critical, fixed: a control character in the brief, such as Ctrl-U then Return, ran commands in place of the agent, because both servers type the line into an interactive shell, whose line editor reads control characters as keys even inside quotes.
+  The brief now goes in the pane's environment, and tests on both servers and in the e2e send Ctrl-U, Ctrl-C, a carriage return, and a tab.
+- Important, fixed: on the Mac a new row held up the phone's other calls until setup ended; it now runs beside them.
+- Important, fixed: a start outlived Cancel and later opened its conversation on its own; `NewTaskModel.begin` keeps the task, Cancel and closing the sheet cancel it, and `waitUntil` ends on cancellation.
+- Important, fixed: a brief too long for Linux failed in the pane after the phone was told it succeeded; the server refuses one over 32 KB.
+- Minor, fixed: a failed setup reads as "The row is made, and its setup failed, so the agent did not start." with where to look; `host add --agent ""` is refused like `phone agent ""`; the sheet's wording (status, Start's title, progress) moved into `NewTaskModel`; a box out of reach with a key says "Out of reach. Start wakes it first."; a pane that does not start after its row says so; the failed-setup test checks the tabs instead of sleeping; a branch made twice is tested.
+- Minor, not changed: the phone does not show the server's warnings, such as a failed fetch, or a branch other than the one asked for, since the conversation opens at once; the row's name in the conversation's title shows the branch.

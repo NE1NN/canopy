@@ -17,6 +17,8 @@ final class FakePhoneSource: PhoneSource {
     let transcripts = Shared<[String: URL]>([:])
     let newRows = Shared<[(params: PhoneNewRowParams, line: String)]>([])
     let newRowError = Shared<ControlError?>(nil)
+    /// While false, a new row waits, as one whose setup runs long.
+    let newRowGoes = Shared(true)
 
     func setInbox(_ inbox: PhoneInbox) {
         inboxNow.withLock { $0 = inbox }
@@ -76,6 +78,7 @@ final class FakePhoneSource: PhoneSource {
 
     func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult {
         if let error = newRowError.withLock({ $0 }) { throw error }
+        while !newRowGoes.withLock({ $0 }) { try await Task.sleep(for: .milliseconds(10)) }
         newRows.withLock { $0.append((params, line)) }
         return PhoneNewRowResult(path: "/box/\(params.branch)", branch: params.branch, pane: "b7")
     }
@@ -255,7 +258,7 @@ struct PhoneServerTests {
         #expect(try #require(made.result).decode(PhoneNewRowResult.self).pane == "b7")
         let asked = try #require(harness.source.newRows.withLock { $0.first })
         #expect(asked.params == PhoneNewRowParams(repo: "canopy", branch: "fix/login", brief: "Fix the login."))
-        #expect(asked.line == "codex --yolo 'Fix the login.'")
+        #expect(asked.line == #"codex --yolo "$CANOPY_TASK_BRIEF""#)
     }
 
     @Test func aNewRowNeedsARepoAndABranch() async throws {
@@ -293,24 +296,62 @@ struct PhoneServerTests {
         #expect(call?["brief"] == (logsCommands ? .string("secret plan") : nil))
     }
 
-    /// Whatever the brief holds reaches the agent as one argument, and none of it runs in the shell.
+    /// Whatever the brief holds reaches the agent as one argument from the pane's environment, and none of it runs.
     @Test(arguments: [
         "plain", "it's here", #"say "hi""#, "$(touch pwned) and `touch pwned` and $HOME", "two\nlines", "a\\b ' ''",
-        "!! and !$",
+        "!! and !$", "tab\there", "\u{15}touch pwned\r", "\u{3}\u{7}\u{1b}[A",
     ])
-    func theBriefIsOneQuotedArgument(_ brief: String) async throws {
+    func theBriefReachesTheCommandWhole(_ brief: String) async throws {
         let dir = try TempDir()
-        let line = PhoneAgentCommand.line("printf '%s|' ", brief: brief)
+        let line = PhoneAgentCommand.line("printf '%s|'", brief: brief)
 
         let result = try await Subprocess.runOffPool(
-            "/bin/sh", ["-c", line], environment: ["PATH": "/usr/bin:/bin"], directory: dir.path,
-            timeout: .seconds(10))
+            "/bin/sh", ["-c", line], environment: ["PATH": "/usr/bin:/bin", PhoneAgentCommand.briefVariable: brief],
+            directory: dir.path, timeout: .seconds(10))
 
         #expect(String(decoding: result.stdout, as: UTF8.self) == brief + "|")
         #expect(!FileManager.default.fileExists(atPath: dir.sub("pwned")))
     }
 
+    @Test(arguments: [String(repeating: "x", count: PhoneAgentCommand.briefLimit + 1), "a\u{0}b"])
+    func aBriefTooLongOrWithANulIsRefused(_ brief: String) async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        defer { harness.server.stop() }
+        let phone = try await harness.phone()
+
+        let made = try await offPool {
+            try phone.call(PhoneMethod.newRow, try .from(PhoneNewRowParams(repo: "canopy", branch: "x", brief: brief)))
+        }
+
+        #expect(made.error?.code == "bad_params")
+        #expect(harness.source.newRows.withLock { $0.isEmpty })
+    }
+
+    /// A new row can wait minutes for its setup; the phone's other calls go on meanwhile.
+    @Test func aSlowNewRowHoldsUpNoOtherCall() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        defer { harness.server.stop() }
+        harness.source.newRowGoes.withLock { $0 = false }
+        let phone = try await harness.phone()
+
+        try phone.send(
+            PhoneMethod.newRow, try .from(PhoneNewRowParams(repo: "canopy", branch: "slow", brief: "")), id: "slow")
+        let rows = try await offPool { try phone.call(PhoneMethod.rows) }
+        #expect(rows.result != nil)
+        harness.source.newRowGoes.withLock { $0 = true }
+
+        let late = try await offPool { try phone.next() }
+        guard case .response(let response) = late else {
+            Issue.record("no answer to the new row: \(String(describing: late))")
+            return
+        }
+        #expect(response.id == "slow" && response.error == nil)
+    }
+
     @Test func anEmptyBriefRunsTheCommandAlone() {
         #expect(PhoneAgentCommand.line("claude", brief: "") == "claude")
+        #expect(PhoneAgentCommand.line("claude", brief: "go") == #"claude "$CANOPY_TASK_BRIEF""#)
     }
 }

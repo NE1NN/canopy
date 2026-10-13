@@ -175,6 +175,15 @@ public final class PhoneServer: Sendable {
             guard !params.repo.isEmpty, !params.branch.isEmpty else {
                 throw ControlError(code: "bad_params", message: "A new task needs a repo and a branch.")
             }
+            guard params.brief.utf8.count <= PhoneAgentCommand.briefLimit else {
+                throw ControlError(
+                    code: "bad_params",
+                    message: "The brief is too long. Keep it under \(PhoneAgentCommand.briefLimit / 1024) KB.")
+            }
+            guard !params.brief.contains("\u{0}") else {
+                throw ControlError(
+                    code: "bad_params", message: "The brief holds a NUL character, which no shell can pass on.")
+            }
             let line = PhoneAgentCommand.line(settings.agentCommand(), brief: params.brief)
             let made = try await source.newRow(params, line: line)
             var extra: [String: JSONValue] = ["repo": .string(params.repo), "branch": .string(made.branch)]

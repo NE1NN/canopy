@@ -93,7 +93,7 @@ step "a task from the phone makes a row here running the Mac's agent command wit
 $phone hello-json "$link" "$work/token" | grep -q "task.out" || fail "the phone's hello does not carry the agent command"
 /usr/bin/python3 - "$work" <<'PY'
 import json, sys
-brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME"
+brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME\u0015touch pwned\r\tdone"
 open(sys.argv[1] + "/brief.txt", "w").write(brief)
 json.dump({"repo": "demo", "branch": "e2e/phone-task", "brief": brief}, open(sys.argv[1] + "/task.json", "w"))
 PY

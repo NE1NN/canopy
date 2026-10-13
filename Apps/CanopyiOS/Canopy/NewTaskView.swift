@@ -5,6 +5,7 @@ import SwiftUI
 struct NewTaskView: View {
     @Environment(PhoneApp.self) private var app
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isTyping: Bool
     var started: (PaneRef) -> Void
 
     var body: some View {
@@ -35,6 +36,7 @@ struct NewTaskView: View {
                         TextField("Repo", text: $model.repo)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .focused($isTyping)
                             .accessibilityIdentifier("task-repo")
                     } else {
                         Picker("Repo", selection: $model.repo) {
@@ -45,15 +47,18 @@ struct NewTaskView: View {
                     TextField("Branch", text: $model.branch, prompt: Text("feat/new-thing"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($isTyping)
                         .accessibilityIdentifier("task-branch")
                     TextField("From", text: $model.base, prompt: Text("From origin's default branch"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($isTyping)
                         .accessibilityIdentifier("task-base")
                 }
                 Section {
                     TextField("What should the agent do?", text: $model.brief, axis: .vertical)
                         .lineLimit(4...12)
+                        .focused($isTyping)
                         .accessibilityIdentifier("task-brief")
                 } header: {
                     Text("Brief")
@@ -63,18 +68,27 @@ struct NewTaskView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.immediately)
             .disabled(model.phase != .editing)
             .navigationTitle("New task")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Return in the brief starts a new line, so the keyboard needs a way away.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isTyping = false }
+                        .accessibilityIdentifier("keyboard-done")
+                }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        model.cancel()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if model.phase == .editing {
-                        Button(model.choice?.wakesFirst == true ? "Wake and start" : "Start") {
-                            Task {
-                                guard let pane = await model.start() else { return }
+                        Button(model.startTitle) {
+                            model.begin { pane in
                                 dismiss()
                                 started(pane)
                             }
@@ -87,7 +101,7 @@ struct NewTaskView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if model.phase != .editing {
+                if let progress = model.progress {
                     Text(progress)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -97,18 +111,11 @@ struct NewTaskView: View {
             }
         }
         .onAppear { model.open() }
+        .onDisappear { model.cancel() }
         // Repos can arrive after the sheet opens, as Rows refreshes.
         .onChange(of: model.repos) { model.chose() }
     }
 
-    private var progress: String {
-        let name = app.newTask.choice?.server.name ?? ""
-        switch app.newTask.phase {
-        case .waking: return "Waking \(name)…"
-        case .starting: return "Making the row on \(name)…"
-        case .editing: return ""
-        }
-    }
 }
 
 /// A server Where offers: its kind's symbol, its name, whether Start can reach it, and a check when chosen.
@@ -125,7 +132,7 @@ private struct WhereLine: View {
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(choice.server.name).foregroundStyle(.primary)
-                    Text(status).font(.footnote).foregroundStyle(.secondary)
+                    Text(choice.status).font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 if isChosen {
@@ -134,15 +141,10 @@ private struct WhereLine: View {
             }
             .contentShape(.rect)
         }
+        .buttonStyle(.plain)
         .disabled(!choice.isAvailable)
         .opacity(choice.isAvailable ? 1 : 0.45)
         .accessibilityIdentifier("where-\(choice.server.name)")
         .accessibilityAddTraits(isChosen ? .isSelected : [])
-    }
-
-    private var status: String {
-        if choice.wakesFirst { return "Off. Start wakes it first." }
-        if choice.server.isConnected { return "Connected" }
-        return "Can't reach \(choice.server.name)"
     }
 }

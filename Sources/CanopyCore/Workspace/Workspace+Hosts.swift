@@ -100,7 +100,14 @@ extension Workspace {
         if let wake { entry.wake = wake }
         if let idleDetachMinutes { entry.idleDetachMinutes = max(idleDetachMinutes, 0) }
         if let agentCommand = agentCommand?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            entry.agentCommand = agentCommand.isEmpty ? nil : agentCommand
+            guard !agentCommand.isEmpty else {
+                throw ControlError(
+                    code: "bad_params",
+                    message:
+                        "The agent command is empty. canopy phone agent --on \(alias) --default goes back to the standard one."
+                )
+            }
+            entry.agentCommand = agentCommand
         }
         // Connecting already uses the new settings, so a new wake command can start the host.
         let connection = await connection(alias, entry)

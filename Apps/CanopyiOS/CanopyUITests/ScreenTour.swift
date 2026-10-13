@@ -109,6 +109,9 @@ final class ScreenTour: XCTestCase {
         let brief = app.textViews["task-brief"].exists ? app.textViews["task-brief"] : app.textFields["task-brief"]
         brief.tap()
         brief.typeText("Add a health check to the usage page, next to the totals.")
+        // Done above the keyboard puts it away, as Return in the brief starts a new line.
+        app.buttons["keyboard-done"].tap()
+        XCTAssert(wait { !self.app.keyboards.firstMatch.exists }, "the keyboard stayed up")
         shot("new-task")
         app.buttons["task-start"].tap()
         XCTAssert(

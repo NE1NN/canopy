@@ -186,16 +186,17 @@ struct BoxPhoneSourceTests {
     }
 
     /// A task from the phone: a row by the box's branch rules, and a pane typing the agent's line with the brief whole.
-    @Test func newRowOnTheBoxMakesARowAndAPane() async throws {
+    @Test(arguments: ["Fix it's $(touch pwned) and `touch pwned`", "tab\there", "\u{15}touch pwned\r", "\u{3}a\nb"])
+    func newRowOnTheBoxMakesARowAndAPane(_ brief: String) async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
         let source = BoxPhoneSource(daemon: daemon)
         let out = home.dir.sub("ran")
-        let brief = "Fix it's $(touch pwned) and `touch pwned`"
 
         let made = try await source.newRow(
             PhoneNewRowParams(repo: "demo", branch: "feat/task", brief: brief),
             line: PhoneAgentCommand.line("printf '%s|' > \(out)", brief: brief))
+        #expect(!FileManager.default.fileExists(atPath: home.dir.sub("pwned")))
 
         #expect(made.branch == "feat/task")
         let snapshot = await daemon.snapshot()

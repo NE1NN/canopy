@@ -59,7 +59,10 @@ public final class RowLifecycle {
     /// Opens the new row's first tab before returning, either Setup or the `run` command, so a caller that selects
     /// the row next does not also get a blank terminal. The task ends when setup has and `run` has been typed.
     /// A successful Setup tab closes, leaving the `run` pane or a plain terminal. A failed one stays open.
-    public func prepare(_ row: Row, repoName: String, setup: Bool, run: String?) -> Task<RowPreparation, Never> {
+    /// `environment` goes to the `run` pane's shell.
+    public func prepare(
+        _ row: Row, repoName: String, setup: Bool, run: String?, environment: [String: String] = [:]
+    ) -> Task<RowPreparation, Never> {
         let context = PaneContext(row: row, repoName: repoName)
         let commands: [String]
         do {
@@ -70,7 +73,7 @@ public final class RowLifecycle {
         }
 
         guard !commands.isEmpty else {
-            let pane = run.map { _ in terminals.openTab(for: context).pane }
+            let pane = run.map { _ in terminals.openTab(for: context, environment: environment).pane }
             let report = SetupReport(status: setup ? .none : .skipped)
             return Task {
                 if let pane, let run { await pane.run(run) }
@@ -93,7 +96,7 @@ public final class RowLifecycle {
             }
             var pane: Pane?
             if run != nil {
-                pane = terminals.openTab(for: context).pane
+                pane = terminals.openTab(for: context, environment: environment).pane
             } else if terminals.tabs(inRow: row.path).count == 1,
                 terminals.tab(containing: setupPane.id)?.1.paneList.count == 1
             {

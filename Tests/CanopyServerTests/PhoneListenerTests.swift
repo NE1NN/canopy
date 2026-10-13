@@ -83,7 +83,8 @@ struct PhoneListenerTests {
         #expect(
             greeting
                 == PhoneHelloResult(
-                    mac: "studio", version: "1.2.3", phone: "Hindie's iPhone", kind: PhoneServerKind.mac))
+                    mac: "studio", version: "1.2.3", phone: "Hindie's iPhone", kind: PhoneServerKind.mac,
+                    agentCommand: PhoneAgentCommand.standard))
 
         let rows = try await offPool { try client.call(PhoneMethod.rows) }
         #expect(rows.result == .object(["method": .string(PhoneMethod.rows)]))

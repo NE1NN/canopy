@@ -54,6 +54,10 @@ public struct PhoneProblem: Error, Equatable, Sendable {
         case "agent_not_running": title = "Claude Code isn't running in this pane, so a reply would reach the shell."
         case "no_transcript": title = "This pane has no conversation to show."
         case "pane_not_found": title = "This pane closed."
+        case "setup_failed":
+            return PhoneProblem(
+                title: "The row is made, and its setup failed, so the agent did not start.",
+                detail: "Its Setup tab on \(server) shows why.", code: error.code)
         case "too_many_streams": title = "Too many conversations are open. Close one and try again."
         default: title = error.message
         }

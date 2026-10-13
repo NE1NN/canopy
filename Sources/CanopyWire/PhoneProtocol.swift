@@ -149,11 +149,16 @@ public enum PhoneAgentCommand {
         return command
     }
 
-    /// The command with the brief as one argument, single-quoted for POSIX shells so nothing in it runs. An empty
-    /// brief adds nothing.
+    /// The variable the new pane's shell gets the brief in. The brief is never typed: a shell's line editor reads
+    /// control characters in typed text as keys, even inside quotes, so typing it could run anything.
+    public static let briefVariable = "CANOPY_TASK_BRIEF"
+    /// The longest brief, in UTF-8 bytes, well under Linux's 128 KiB for one environment entry.
+    public static let briefLimit = 32 * 1024
+
+    /// What the pane types: the command, and the brief from `briefVariable` as one argument. An empty brief adds
+    /// nothing.
     public static func line(_ command: String, brief: String) -> String {
-        guard !brief.isEmpty else { return command }
-        return command + " '" + brief.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+        brief.isEmpty ? command : command + " \"$\(briefVariable)\""
     }
 }
 

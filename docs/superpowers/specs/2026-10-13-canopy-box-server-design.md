@@ -250,10 +250,11 @@ The daemon reads its own instance id and region from the EC2 instance metadata s
 New task is a sheet with Where (each paired server, the last choice first), Repo, Branch, From, Brief, and the server's agent command shown read-only.
 A server that is not connected is greyed, except a box with a wake key, which Start wakes first.
 Start sends `phone.newRow` with the repo, branch, base, and brief.
-The server makes the row by `row new`'s branch rules, opens a pane running its agent command with the brief added as one shell-quoted argument, and answers with the row and pane, and the phone opens that conversation.
+The server makes the row by `row new`'s branch rules, opens a pane whose shell has the brief in `CANOPY_TASK_BRIEF` and types the agent command with `"$CANOPY_TASK_BRIEF"` as its last argument, and answers with the row and pane, and the phone opens that conversation.
+The brief is never typed, as a shell's line editor reads control characters in typed text as keys, even inside quotes.
 The Mac serves `phone.newRow` for Mac rows too.
 
-The agent command is set with `canopy host add <host> --agent "<command>"` for a box and `canopy phone agent "<command>"` for the Mac, saved in `config.json`.
+The agent command is set with `canopy host add <host> --agent "<command>"` or `canopy phone agent --on <host> "<command>"` for a box and `canopy phone agent "<command>"` for the Mac, saved in `config.json`.
 Without one it is `claude --model 'opus[1m]' --permission-mode bypassPermissions`.
 The phone cannot change it.
 
@@ -378,5 +379,8 @@ This design replaces these parts of `2026-10-12-canopy-iphone-design.md`:
 - The box's clone is the repo's main row on the box, and cannot be removed.
 - The daemon passes Mac-bound CLI commands to the Mac rather than refusing them outright, so agents on the box keep the whole CLI while the Mac is connected.
 - The daemon learns tailnet addresses by polling `getifaddrs` every 5 seconds.
+- A task's brief reaches its agent through the pane's environment, never typed, and is limited to 32 KB.
+- On the Mac a task's row runs its setup before the agent starts, as `row new` does, and a failed setup leaves the row with no agent.
+- An empty brief starts the agent with no prompt.
 - PR numbers on the phone for box rows are the Mac's last report, so they can trail while the Mac is off.
 - New box rows go in `~/.canopy/<home id>/worktrees/<repo>/`, not the folder every home shares, so two homes' daemons on one host never adopt each other's worktrees (found in milestone 3a's review).

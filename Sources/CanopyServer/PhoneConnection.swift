@@ -26,6 +26,10 @@ public struct PhoneGate: Sendable {
         PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe, PhoneMethod.newRow,
     ]
 
+    /// Calls that may take minutes, as a new row waits for its setup. They run beside the connection's later calls
+    /// rather than ahead of them, and answer when done; the phone matches answers by id.
+    public static let lengthyMethods: Set<String> = [PhoneMethod.newRow]
+
     public var registry: PhoneRegistry
     /// The server's name, asked each time, as it can change while the server runs.
     public var name: @Sendable () -> String
@@ -254,6 +258,16 @@ final class PhoneConnection: Sendable {
         }
         let session = PhoneSession(phone: phone, connection: self)
         let handler = gate.handler
+        if PhoneGate.lengthyMethods.contains(request.method) {
+            Task {
+                let reply = await handler(request, session)
+                await self.queueSend {
+                    if let data = try? ControlCodec.encodeLine(reply.response) { await self.write(data) }
+                    await reply.after?()
+                }.value
+            }
+            return
+        }
         let reply = await handler(request, session)
         await queueSend {
             if let data = try? ControlCodec.encodeLine(reply.response) { await self.write(data) }
