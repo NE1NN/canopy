@@ -81,7 +81,7 @@ def main(args):
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w") as file:
             file.write(result["token"])
-        print(json.dumps({"phone": result["phone"], "mac": result["mac"]}))
+        print(json.dumps({"phone": result["phone"], "mac": result["mac"], "kind": result.get("kind")}))
     elif command == "call":
         link, token_file, method = args[1:4]
         params = json.loads(args[4]) if len(args) > 4 else None
@@ -92,6 +92,9 @@ def main(args):
         link, token_file = args[1:3]
         response = Phone(link).hello(token_file)
         print(response["error"]["code"] if response.get("error") else "ok")
+    elif command == "hello-json":
+        link, token_file = args[1:3]
+        print(json.dumps(result_or_exit(Phone(link).hello(token_file)), sort_keys=True))
     elif command == "wait-inbox":
         link, token_file, expression = args[1:4]
         deadline = time.monotonic() + (float(args[4]) if len(args) > 4 else 30)

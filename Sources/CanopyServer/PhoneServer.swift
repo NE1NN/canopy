@@ -30,7 +30,8 @@ public final class PhoneServer: Sendable {
         listener = PhoneListener(
             port: settings.port, addresses: settings.addresses,
             gate: PhoneGate(
-                registry: registry, macName: settings.serverName, version: settings.version,
+                registry: registry, name: settings.serverName, kind: settings.kind, wake: settings.wake,
+                agentCommand: settings.agentCommand, version: settings.version,
                 helloTimeout: helloTimeout,
                 handler: { request, session in
                     guard let server = handle.server.withLock({ $0 }) else {
@@ -165,6 +166,31 @@ public final class PhoneServer: Sendable {
             }
             return try success(params)
 
+        case PhoneMethod.newRow:
+            var params = try request.decodeParams(PhoneNewRowParams.self)
+            params.repo = params.repo.trimmingCharacters(in: .whitespacesAndNewlines)
+            params.branch = params.branch.trimmingCharacters(in: .whitespacesAndNewlines)
+            params.base = params.base?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if params.base?.isEmpty == true { params.base = nil }
+            guard !params.repo.isEmpty, !params.branch.isEmpty else {
+                throw ControlError(code: "bad_params", message: "A new task needs a repo and a branch.")
+            }
+            guard params.brief.utf8.count <= PhoneAgentCommand.briefLimit else {
+                throw ControlError(
+                    code: "bad_params",
+                    message: "The brief is too long. Keep it under \(PhoneAgentCommand.briefLimit / 1024) KB.")
+            }
+            guard !params.brief.contains("\u{0}") else {
+                throw ControlError(
+                    code: "bad_params", message: "The brief holds a NUL character, which no shell can pass on.")
+            }
+            let line = PhoneAgentCommand.line(settings.agentCommand(), brief: params.brief)
+            let made = try await source.newRow(params, line: line)
+            var extra: [String: JSONValue] = ["repo": .string(params.repo), "branch": .string(made.branch)]
+            if settings.logsCommands() { extra["brief"] = .string(params.brief) }
+            record(request, session, pane: made.pane, extra: extra)
+            return try success(made)
+
         default:
             throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
         }
@@ -224,7 +250,8 @@ public final class PhoneServer: Sendable {
         let name = await settings.tailnetName()
         let code = await registry.newCode()
         let link = PairingLink(
-            host: name ?? endpoint.address, port: endpoint.port, code: code.code, address: endpoint.address)
+            host: name ?? endpoint.address, port: endpoint.port, code: code.code, address: endpoint.address,
+            kind: settings.kind)
         return PhonesPairResult(
             code: code.code, link: link.url.absoluteString, expires: code.expires.timeIntervalSince1970)
     }

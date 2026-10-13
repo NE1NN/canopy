@@ -6,6 +6,8 @@ import UIKit
 struct PairingView: View {
     @Environment(PhoneApp.self) private var app
     @State private var camera = CameraAccess.current
+    /// From Settings, with a server already paired, rather than the first launch.
+    var addsAnother = false
 
     private var model: PairingModel { app.pairing }
 
@@ -14,15 +16,19 @@ struct PairingView: View {
             VStack(spacing: 20) {
                 VStack(spacing: 10) {
                     AppGlyph(size: 56)
-                    Text("Pair with your Mac")
+                    Text(addsAnother ? "Pair another server" : "Pair with your Mac")
                         .font(.title2.weight(.bold))
-                    Text("On the Mac, run canopy phone pair, then scan the code it shows.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    Text(
+                        addsAnother
+                            ? "On the Mac, run canopy phone pair --on <host> for a host, then scan the code it shows."
+                            : "On the Mac, run canopy phone pair, then scan the code it shows."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 }
                 .padding(.top, 24)
-                if let notice = model.notice {
+                if !addsAnother, let notice = model.notice {
                     Banner(problem: PhoneProblem(title: notice), tint: Theme.yellow)
                         .padding(.horizontal, -16)
                 }

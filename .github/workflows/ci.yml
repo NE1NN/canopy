@@ -36,6 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: swift --version
+      # canopy-box's tests drive real tmux and git.
+      - run: apt-get update -q && apt-get install -qy --no-install-recommends tmux git
       - run: swift build -Xswiftc -warnings-as-errors
       # As make test runs it: one task that blocks a pool thread starves the rest.
       - run: LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test
