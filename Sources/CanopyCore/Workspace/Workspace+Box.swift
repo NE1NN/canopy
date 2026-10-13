@@ -31,11 +31,14 @@ extension Workspace {
     /// What the Mac tells the host's canopy-box on every connect: its name, its repos, and its wake key.
     /// A Keychain that will not say asks the box to keep its key, since sending none would take it from every phone.
     nonisolated func boxConfig(for alias: String) -> BoxConfig {
-        let repos = hosts.hosts[alias]?.repos ?? [:]
+        let entry = hosts.hosts[alias]
+        let repos = entry?.repos ?? [:]
         do {
-            return BoxConfig(host: alias, repos: repos, wake: try hostTooling.wakeKeys.read(alias, home: home))
+            return BoxConfig(
+                host: alias, repos: repos, agentCommand: entry?.agentCommand,
+                wake: try hostTooling.wakeKeys.read(alias, home: home))
         } catch {
-            return BoxConfig(host: alias, repos: repos, keepsWake: true)
+            return BoxConfig(host: alias, repos: repos, agentCommand: entry?.agentCommand, keepsWake: true)
         }
     }
 

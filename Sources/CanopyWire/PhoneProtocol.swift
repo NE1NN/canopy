@@ -24,6 +24,8 @@ public enum PhoneMethod {
     public static let seen = "phone.seen"
     /// Ends a stream another request started.
     public static let unsubscribe = "phone.unsubscribe"
+    /// Makes a row and opens a pane in it running the server's agent command with a brief.
+    public static let newRow = "phone.newRow"
 }
 
 /// Names a pane, for the methods that act on one.
@@ -97,6 +99,61 @@ public struct PhoneReplyParams: Codable, Sendable, Equatable {
     public init(pane: String, text: String) {
         self.pane = pane
         self.text = text
+    }
+}
+
+/// A task for the server's agent: a row made by `row new`'s branch rules, and the brief its agent starts with.
+public struct PhoneNewRowParams: Codable, Sendable, Equatable {
+    /// The repo's name, as the server's rows name it.
+    public var repo: String
+    public var branch: String
+    /// Where a new branch starts. Nil for a branch that exists, or else origin's default branch.
+    public var base: String?
+    public var brief: String
+
+    public init(repo: String, branch: String, base: String? = nil, brief: String) {
+        self.repo = repo
+        self.branch = branch
+        self.base = base
+        self.brief = brief
+    }
+}
+
+public struct PhoneNewRowResult: Codable, Sendable, Equatable {
+    /// The row's folder on the server.
+    public var path: String
+    /// Its branch, which can differ from the one asked for, as when the server picked a free name.
+    public var branch: String
+    /// The pane the agent runs in.
+    public var pane: String
+    /// What the server said about making it, such as a failed fetch.
+    public var warnings: [String]?
+
+    public init(path: String, branch: String, pane: String, warnings: [String]? = nil) {
+        self.path = path
+        self.branch = branch
+        self.pane = pane
+        self.warnings = warnings
+    }
+}
+
+/// What a task from the phone runs: the server's agent command, which the Mac sets and the phone cannot change.
+public enum PhoneAgentCommand {
+    public static let standard = "claude --model 'opus[1m]' --permission-mode bypassPermissions"
+
+    /// The command a server set, or the standard one when it set none or only blanks.
+    public static func chosen(_ command: String?) -> String {
+        guard let command = command?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else {
+            return standard
+        }
+        return command
+    }
+
+    /// The command with the brief as one argument, single-quoted for POSIX shells so nothing in it runs. An empty
+    /// brief adds nothing.
+    public static func line(_ command: String, brief: String) -> String {
+        guard !brief.isEmpty else { return command }
+        return command + " '" + brief.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 }
 
@@ -215,13 +272,19 @@ public struct PhoneHelloResult: Codable, Sendable, Equatable {
     public var kind: String?
     /// How the phone starts a box that powered itself off. Only a box with a wake key sends it.
     public var wake: PhoneWake?
+    /// What a task from the phone runs. Nil from a server older than New task.
+    public var agentCommand: String?
 
-    public init(mac: String, version: String, phone: String, kind: String? = nil, wake: PhoneWake? = nil) {
+    public init(
+        mac: String, version: String, phone: String, kind: String? = nil, wake: PhoneWake? = nil,
+        agentCommand: String? = nil
+    ) {
         self.mac = mac
         self.version = version
         self.phone = phone
         self.kind = kind
         self.wake = wake
+        self.agentCommand = agentCommand
     }
 }
 

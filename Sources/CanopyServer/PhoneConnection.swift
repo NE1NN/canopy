@@ -23,7 +23,7 @@ public struct PhoneGate: Sendable {
     /// What a phone may call after `phone.hello`. A lost phone must not remove rows, repos, or hooks.
     public static let allowedMethods: Set<String> = [
         PhoneMethod.subscribe, PhoneMethod.rows, PhoneMethod.transcript, PhoneMethod.reply, PhoneMethod.answer,
-        PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe,
+        PhoneMethod.screen, PhoneMethod.keys, PhoneMethod.seen, PhoneMethod.unsubscribe, PhoneMethod.newRow,
     ]
 
     public var registry: PhoneRegistry
@@ -33,6 +33,8 @@ public struct PhoneGate: Sendable {
     public var kind: String
     /// How a phone starts the server, asked at each hello.
     public var wake: @Sendable () -> PhoneWake?
+    /// What a task from a phone runs, asked at each hello.
+    public var agentCommand: @Sendable () -> String
     /// Canopy's version, which `phone.hello` answers with.
     public var version: String
     /// Waits out the time a new connection has to say hello, counted again after a pairing.
@@ -43,7 +45,8 @@ public struct PhoneGate: Sendable {
 
     public init(
         registry: PhoneRegistry, name: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
-        wake: @escaping @Sendable () -> PhoneWake? = { nil }, version: String,
+        wake: @escaping @Sendable () -> PhoneWake? = { nil },
+        agentCommand: @escaping @Sendable () -> String = { PhoneAgentCommand.standard }, version: String,
         helloTimeout: Duration = .seconds(10),
         helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
         onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
@@ -52,6 +55,7 @@ public struct PhoneGate: Sendable {
         self.name = name
         self.kind = kind
         self.wake = wake
+        self.agentCommand = agentCommand
         self.version = version
         self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
@@ -302,7 +306,9 @@ final class PhoneConnection: Sendable {
     }
 
     private func greeting(_ phone: PairedPhone) -> PhoneHelloResult {
-        PhoneHelloResult(mac: gate.name(), version: gate.version, phone: phone.name, kind: gate.kind, wake: gate.wake())
+        PhoneHelloResult(
+            mac: gate.name(), version: gate.version, phone: phone.name, kind: gate.kind, wake: gate.wake(),
+            agentCommand: gate.agentCommand())
     }
 
     private func refuse(id: String, _ error: ControlError, closing: Bool) {

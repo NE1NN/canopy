@@ -12,15 +12,18 @@ public struct HostEntry: Codable, Sendable, Equatable {
     public var idleDetachMinutes: Int
     /// canopy-box runs the host's rows, panes, and agents, since `canopy host upgrade`.
     public var box: Bool
+    /// What a task from the phone runs there, set by `host add --agent` or `phone agent --on`. Nil for the standard one.
+    public var agentCommand: String?
 
     public init(
         repos: [String: String] = [:], wake: String? = nil, idleDetachMinutes: Int = defaultIdleDetachMinutes,
-        box: Bool = false
+        box: Bool = false, agentCommand: String? = nil
     ) {
         self.repos = repos
         self.wake = wake
         self.idleDetachMinutes = idleDetachMinutes
         self.box = box
+        self.agentCommand = agentCommand
     }
 
     public init(from decoder: any Decoder) throws {
@@ -30,6 +33,7 @@ public struct HostEntry: Codable, Sendable, Equatable {
         let minutes = try container.decodeIfPresent(Int.self, forKey: .idleDetachMinutes)
         idleDetachMinutes = minutes.map { $0 < 0 ? Self.defaultIdleDetachMinutes : $0 } ?? Self.defaultIdleDetachMinutes
         box = try container.decodeIfPresent(Bool.self, forKey: .box) ?? false
+        agentCommand = try container.decodeIfPresent(String.self, forKey: .agentCommand)
     }
 
     /// The clone of a registered repo: the one saved under its name, or else under a name its path ends in, since
@@ -82,6 +86,7 @@ public struct HostsConfigFile: Sendable {
             if let wake = entry.wake { section["wake"] = .string(wake) }
             section["idleDetachMinutes"] = .number(String(entry.idleDetachMinutes))
             section["box"] = entry.box ? .bool(true) : nil
+            section["agentCommand"] = entry.agentCommand.map { .string($0) }
             hosts[alias] = section
         }
     }
@@ -91,13 +96,24 @@ public struct HostsConfigFile: Sendable {
     }
 
     private func change(_ edit: (inout OrderedJSON) -> Void) throws {
+        try ConfigFile(url: url).change { json in
+            var hosts = OrderedJSON.object([])
+            if let existing = json["hosts"], case .object = existing { hosts = existing }
+            edit(&hosts)
+            json["hosts"] = hosts
+        }
+    }
+}
+
+/// config.json, changed in place: only what `edit` touches changes, and an unreadable file stays as it is.
+struct ConfigFile: Sendable {
+    let url: URL
+
+    func change(_ edit: (inout OrderedJSON) -> Void) throws {
         do {
             try file.update { json in
                 var json = json
-                var hosts = OrderedJSON.object([])
-                if let existing = json["hosts"], case .object = existing { hosts = existing }
-                edit(&hosts)
-                json["hosts"] = hosts
+                edit(&json)
                 return json
             }
         } catch JSONFileError.unreadable(let reason) {

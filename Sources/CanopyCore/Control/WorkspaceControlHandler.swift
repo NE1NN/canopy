@@ -225,7 +225,7 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(HostAddParams.self)
             let info = try await workspace.addHost(
                 alias: params.alias, repos: params.repos, wake: params.wake,
-                idleDetachMinutes: params.idleDetachMinutes)
+                idleDetachMinutes: params.idleDetachMinutes, agentCommand: params.agentCommand)
             return try .from(await withPanes(info))
 
         case HostAttachMethod.attach:
@@ -428,6 +428,9 @@ public struct WorkspaceControlHandler: Sendable {
             let params = try request.decodeParams(PhonesRemoveParams.self)
             if let on = params.on { return try await boxPhones(on, BoxMethod.phonesRemove, params) }
             return try .from(try await phoneService().remove(name: params.name))
+
+        case PhonesMethod.agent:
+            return try .from(try await workspace.agentCommand(request.decodeParams(PhonesAgentParams.self)))
 
         case PhonesMethod.status:
             if let on = try onHost(request) {

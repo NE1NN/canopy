@@ -184,7 +184,8 @@ final class AppModel {
         let panes = PhonePanes(terminals: terminals)
         panes.start()
         let service = PhoneService(
-            home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: Self.macName)
+            home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: Self.macName,
+            newRow: { [rows] params, line in try await rows.phoneNewRow(params, line: line) })
         phoneHub = hub
         phonePanes = panes
         phones = service

@@ -10,8 +10,45 @@ struct PhoneCommand: AsyncParsableCommand {
             The phone reaches the Mac over Tailscale, which both must run, signed in to the same tailnet. Canopy \
             listens for phones only on this Mac's Tailscale addresses, and only paired phones get in.
             """,
-        subcommands: [Pair.self, List.self, Remove.self, Status.self]
+        subcommands: [Pair.self, List.self, Remove.self, Status.self, Agent.self]
     )
+
+    struct Agent: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show or set what a task from the phone runs.",
+            discussion: """
+                New task on the phone makes a row and runs this command in it, with the task's brief as its last \
+                argument. The phone cannot change it. Without a command, this shows the one set; --default goes \
+                back to \(PhoneAgentCommand.standard).
+                """)
+
+        @Argument(help: "The command, such as \"claude --model opus\".")
+        var command: String?
+        @Flag(name: .customLong("default"), help: "Go back to the standard command.")
+        var reset = false
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box runs the tasks, rather than this Mac.", valueName: "host"))
+        var on: String?
+        @OptionGroup var output: OutputOptions
+
+        func validate() throws {
+            if reset, command != nil { throw ValidationError("Pass a command or --default, not both.") }
+        }
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            let result = client.call(PhonesMethod.agent, PhonesAgentParams(command: command, reset: reset, on: on))
+            try client.print(result) { PhoneCommand.agentText(try result.decode(PhonesAgentResult.self)) }
+        }
+    }
+
+    static func agentText(_ agent: PhonesAgentResult) -> String {
+        let server = agent.on ?? "this Mac"
+        return agent.isDefault
+            ? "Tasks from the phone on \(server) run the standard command: \(agent.command)"
+            : "Tasks from the phone on \(server) run: \(agent.command)"
+    }
 
     struct Pair: AsyncParsableCommand {
         static let configuration = CommandConfiguration(

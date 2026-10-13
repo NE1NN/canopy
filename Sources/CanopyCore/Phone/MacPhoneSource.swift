@@ -5,6 +5,8 @@ import Foundation
 struct MacPhoneSource: PhoneSource {
     let hub: PhoneHub
     let panes: PhonePanes
+    /// Makes rows for tasks from the phone, as `RowLifecycle.phoneNewRow` does.
+    let makeRow: @Sendable (PhoneNewRowParams, String) async throws -> PhoneNewRowResult
 
     func inbox() async -> PhoneInbox {
         await hub.inbox
@@ -46,6 +48,10 @@ struct MacPhoneSource: PhoneSource {
 
     func screen(_ params: PhonePaneParams, scrollback: Int?) async throws -> PhoneScreen {
         try await phoneErrors { try await panes.screen(params, scrollback: scrollback) }
+    }
+
+    func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult {
+        try await phoneErrors { try await makeRow(params, line) }
     }
 
     /// The phone reads a `ControlError`'s code, so a workspace error crosses as one.
