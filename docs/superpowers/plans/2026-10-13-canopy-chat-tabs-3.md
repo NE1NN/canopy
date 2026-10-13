@@ -109,3 +109,6 @@ CodeRabbit's review found six more, all fixed:
 5. The title cache kept transcripts that were gone.
    Listing a folder forgets its missing ones.
 6. This plan had lines with more than one sentence.
+
+Also fixed: `aDialogOpeningDuringThePasteHoldsBackReturn` raced a two-second timer and failed under load.
+Return now waits on the test, which lets it go once the dialog's hook has landed.
