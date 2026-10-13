@@ -149,4 +149,22 @@ extension SubprocessTests {
         #expect(exited.status == 3)
         #expect(killed.status == 128 + SIGTERM)
     }
+
+    @Test func aHandleSignalsTheProcessAlone() async throws {
+        let handle = SubprocessHandle()
+        let running = Task {
+            try await offPool {
+                try Subprocess.run(
+                    "/bin/sh", ["-c", "trap 'exit 7' TERM; while :; do sleep 0.1; done"], environment: [:],
+                    directory: nil, timeout: .seconds(20), handle: handle)
+            }
+        }
+        #expect(await eventually { handle.isRunning })
+        try await Task.sleep(for: .milliseconds(300))
+        handle.signal(SIGTERM)
+        let result = try await running.value
+        #expect(result.status == 7)
+        #expect(!result.timedOut)
+        handle.signal(SIGTERM)
+    }
 }

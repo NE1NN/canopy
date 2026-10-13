@@ -103,9 +103,9 @@ struct TCPTests {
     /// A listener that closed while a connection was open leaves its port in TIME_WAIT, which must not keep the next
     /// listener off it, as when Tailscale's address comes back.
     @Test func bindsAgainAtOnceAfterClosing() async throws {
-        // A port below the ephemeral range, which starts at 49152 on macOS and 32768 on Linux, so no connection that
-        // another test opens meanwhile is given it as its own.
-        let first = try #require((0..<50).lazy.compactMap { _ in try? Server(port: .random(in: 20000..<32000)) }.first)
+        // A port below the ephemeral range, as phones' 6974 is: once closed, one the kernel handed out can go to any
+        // socket on the machine before the second bind.
+        let first = try Self.serverBelowEphemeralPorts()
         let port = first.listener.port
         let client = try TCPConnection.connect(to: "127.0.0.1", port: port)
         let accepted = try #require(await first.first())
@@ -120,6 +120,17 @@ struct TCPTests {
         let again = try Server(port: port)
         defer { again.listener.close() }
         #expect(again.listener.port == port)
+    }
+
+    private static func serverBelowEphemeralPorts() throws -> Server {
+        for _ in 0..<20 {
+            do {
+                return try Server(port: UInt16.random(in: 20000..<40000))
+            } catch TCPError.system("bind", errno: EADDRINUSE) {
+                continue
+            }
+        }
+        throw TCPError.system("bind", errno: EADDRINUSE)
     }
 
     @Test(arguments: ["localhost", "", "999.1.1.1", "fe80::1%nowhere"])

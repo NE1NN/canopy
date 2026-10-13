@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 public enum TermMethod {
@@ -28,6 +29,25 @@ public struct TermInfo: Codable, Sendable, Equatable {
     public var agent: AgentState?
     /// What a background agent waits on, left out when nothing runs.
     public var backgroundTasks: [String]?
+
+    public init(
+        pane: String, repo: String? = nil, plugin: String? = nil, row: String, rowPath: String, tab: String,
+        title: String, folder: String, foreground: String? = nil, exited: Int32? = nil, agent: AgentState? = nil,
+        backgroundTasks: [String]? = nil
+    ) {
+        self.pane = pane
+        self.repo = repo
+        self.plugin = plugin
+        self.row = row
+        self.rowPath = rowPath
+        self.tab = tab
+        self.title = title
+        self.folder = folder
+        self.foreground = foreground
+        self.exited = exited
+        self.agent = agent
+        self.backgroundTasks = backgroundTasks
+    }
 }
 
 public struct TermListParams: Codable, Sendable {
@@ -78,17 +98,25 @@ public struct TermNewParams: Codable, Sendable {
 public struct TermNewResult: Codable, Sendable, Equatable {
     public var pane: String
     public var tab: String
+
+    public init(pane: String, tab: String) {
+        self.pane = pane
+        self.tab = tab
+    }
 }
 
 public struct TermSendParams: Codable, Sendable {
     public var pane: String
     public var text: String
     public var enter: Bool
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, text: String, enter: Bool = false) {
+    public init(pane: String, text: String, enter: Bool = false, host: String? = nil) {
         self.pane = pane
         self.text = text
         self.enter = enter
+        self.host = host
     }
 
     public init(from decoder: any Decoder) throws {
@@ -96,6 +124,7 @@ public struct TermSendParams: Codable, Sendable {
         pane = try container.decode(String.self, forKey: .pane)
         text = try container.decode(String.self, forKey: .text)
         enter = try container.decodeIfPresent(Bool.self, forKey: .enter) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 
@@ -103,30 +132,41 @@ public struct TermReadParams: Codable, Sendable {
     public var pane: String
     /// The last this many lines, scrollback included. Nil reads the visible screen.
     public var lines: Int?
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, lines: Int? = nil) {
+    public init(pane: String, lines: Int? = nil, host: String? = nil) {
         self.pane = pane
         self.lines = lines
+        self.host = host
     }
 }
 
 public struct TermReadResult: Codable, Sendable, Equatable {
     public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
 }
 
 public struct TermCloseParams: Codable, Sendable {
     public var pane: String
     public var force: Bool
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
-    public init(pane: String, force: Bool = false) {
+    public init(pane: String, force: Bool = false, host: String? = nil) {
         self.pane = pane
         self.force = force
+        self.host = host
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         pane = try container.decode(String.self, forKey: .pane)
         force = try container.decodeIfPresent(Bool.self, forKey: .force) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
     }
 }
 
@@ -147,12 +187,15 @@ public struct TermStateParams: Codable, Sendable {
     public var backgroundTasks: [String]
     public var transcriptPath: String?
     public var prompt: AgentPrompt?
+    /// The host a relayed call came from, whose pane a session name like `b1` means. Nil from this Mac.
+    public var host: String?
 
     public init(
         pane: String, state: AgentState?, session: String? = nil, event: String? = nil, at: Double? = nil,
         question: Bool = false, takesOver: Bool = false, releases: Bool = false, backgroundTasks: [String] = [],
-        transcriptPath: String? = nil, prompt: AgentPrompt? = nil
+        transcriptPath: String? = nil, prompt: AgentPrompt? = nil, host: String? = nil
     ) {
+        self.host = host
         self.transcriptPath = transcriptPath
         self.prompt = prompt
         self.pane = pane
@@ -184,6 +227,7 @@ public struct TermStateParams: Codable, Sendable {
         question = try container.decodeIfPresent(Bool.self, forKey: .question) ?? false
         takesOver = try container.decodeIfPresent(Bool.self, forKey: .takesOver) ?? false
         releases = try container.decodeIfPresent(Bool.self, forKey: .releases) ?? false
+        host = try container.decodeIfPresent(String.self, forKey: .host)
         backgroundTasks = try container.decodeIfPresent([String].self, forKey: .backgroundTasks) ?? []
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         // A prompt this build cannot read is left out rather than losing the state.
@@ -192,6 +236,7 @@ public struct TermStateParams: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case pane, state, session, event, at, question, takesOver, releases, backgroundTasks, transcriptPath, prompt
+        case host
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -207,6 +252,7 @@ public struct TermStateParams: Codable, Sendable {
         if !backgroundTasks.isEmpty { try container.encode(backgroundTasks, forKey: .backgroundTasks) }
         try container.encodeIfPresent(transcriptPath, forKey: .transcriptPath)
         try container.encodeIfPresent(prompt, forKey: .prompt)
+        try container.encodeIfPresent(host, forKey: .host)
     }
 
     public var report: AgentReport {
@@ -221,6 +267,11 @@ public struct TermStateResult: Codable, Sendable, Equatable {
     public var pane: String
     /// The state after the report, which is the state the pane kept when the report was ignored.
     public var state: AgentState
+
+    public init(pane: String, state: AgentState) {
+        self.pane = pane
+        self.state = state
+    }
 }
 
 public struct TermWaitParams: Codable, Sendable {
@@ -254,4 +305,66 @@ public struct TermWaitParams: Codable, Sendable {
 public struct TermWaitResult: Codable, Sendable, Equatable {
     public var pane: String
     public var state: AgentState
+
+    public init(pane: String, state: AgentState) {
+        self.pane = pane
+        self.state = state
+    }
+}
+
+/// What the CLI knows about where it runs. The app resolves it against registered repos.
+public struct TargetHint: Codable, Sendable, Equatable {
+    /// `--repo`: a repo display name or path.
+    public var repo: String?
+    /// A row argument: a branch name or a path.
+    public var row: String?
+    /// CANOPY_REPO from the environment.
+    public var envRepo: String?
+    /// CANOPY_ROW_PATH from the environment.
+    public var envRowPath: String?
+    public var cwd: String?
+
+    public init(
+        repo: String? = nil,
+        row: String? = nil,
+        envRepo: String? = nil,
+        envRowPath: String? = nil,
+        cwd: String? = nil
+    ) {
+        self.repo = repo
+        self.row = row
+        self.envRepo = envRepo
+        self.envRowPath = envRowPath
+        self.cwd = cwd
+    }
+}
+
+/// Which states `canopy term wait` waits for.
+public enum AgentWaitTarget: String, Codable, Sendable, CaseIterable {
+    case done
+    case waiting
+    /// A turn that ended with background work still running.
+    case background
+    /// Done or waiting. Coordinators wait on a row to learn it finished, and a background row has not.
+    case any
+    /// Done, waiting, or background: the turn is over, whatever it left running.
+    case ended
+
+    public func matches(_ state: AgentState) -> Bool {
+        switch self {
+        case .done: state == .done
+        case .waiting: state == .waiting
+        case .background: state == .background
+        case .any: state == .done || state == .waiting
+        case .ended: state == .done || state == .waiting || state == .background
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .any: "done or waiting"
+        case .ended: "done, waiting, or background"
+        default: rawValue
+        }
+    }
 }

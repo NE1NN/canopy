@@ -10,8 +10,45 @@ struct PhoneCommand: AsyncParsableCommand {
             The phone reaches the Mac over Tailscale, which both must run, signed in to the same tailnet. Canopy \
             listens for phones only on this Mac's Tailscale addresses, and only paired phones get in.
             """,
-        subcommands: [Pair.self, List.self, Remove.self, Status.self]
+        subcommands: [Pair.self, List.self, Remove.self, Status.self, Agent.self]
     )
+
+    struct Agent: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show or set what a task from the phone runs.",
+            discussion: """
+                New task on the phone makes a row and runs this command in it, with the task's brief as its last \
+                argument. The phone cannot change it. Without a command, this shows the one set; --default goes \
+                back to \(PhoneAgentCommand.standard).
+                """)
+
+        @Argument(help: "The command, such as \"claude --model opus\".")
+        var command: String?
+        @Flag(name: .customLong("default"), help: "Go back to the standard command.")
+        var reset = false
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box runs the tasks, rather than this Mac.", valueName: "host"))
+        var on: String?
+        @OptionGroup var output: OutputOptions
+
+        func validate() throws {
+            if reset, command != nil { throw ValidationError("Pass a command or --default, not both.") }
+        }
+
+        func run() async throws {
+            let client = Client(json: output.json)
+            let result = client.call(PhonesMethod.agent, PhonesAgentParams(command: command, reset: reset, on: on))
+            try client.print(result) { PhoneCommand.agentText(try result.decode(PhonesAgentResult.self)) }
+        }
+    }
+
+    static func agentText(_ agent: PhonesAgentResult) -> String {
+        let server = agent.on ?? "this Mac"
+        return agent.isDefault
+            ? "Tasks from the phone on \(server) run the standard command: \(agent.command)"
+            : "Tasks from the phone on \(server) run: \(agent.command)"
+    }
 
     struct Pair: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
@@ -19,11 +56,15 @@ struct PhoneCommand: AsyncParsableCommand {
             discussion: "The code works once and expires after five minutes. The command waits until a phone uses it."
         )
 
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box serves phones, rather than this Mac.", valueName: "host"))
+        var on: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(PhonesMethod.pair, JSONValue.null)
+            let result = client.call(PhonesMethod.pair, PhonesOnParams(on: on))
             let pairing = try result.decode(PhonesPairResult.self)
             if output.json {
                 try client.print(result) { "" }
@@ -44,7 +85,7 @@ struct PhoneCommand: AsyncParsableCommand {
                 Waiting for the phone...
                 """)
             fflush(stdout)
-            let waited = client.call(PhonesMethod.paired, PhonesPairedParams(code: pairing.code))
+            let waited = client.call(PhonesMethod.paired, PhonesPairedParams(code: pairing.code, on: on))
             guard let phone = try waited.decode(PhonesPairedResult.self).phone else {
                 client.fail(
                     ControlError(
@@ -58,11 +99,15 @@ struct PhoneCommand: AsyncParsableCommand {
     struct List: AsyncParsableCommand {
         static let configuration = CommandConfiguration(abstract: "List paired phones.")
 
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box serves phones, rather than this Mac.", valueName: "host"))
+        var on: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(PhonesMethod.list, JSONValue.null)
+            let result = client.call(PhonesMethod.list, PhonesOnParams(on: on))
             try client.print(result) {
                 let phones = try result.decode([PhoneInfo].self)
                 return phones.isEmpty ? "No phones are paired." : PhoneCommand.table(phones)
@@ -77,11 +122,15 @@ struct PhoneCommand: AsyncParsableCommand {
 
         @Argument(help: "The phone's name, as canopy phone list shows it.")
         var name: String
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box serves phones, rather than this Mac.", valueName: "host"))
+        var on: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(PhonesMethod.remove, PhonesRemoveParams(name: name), launchIfNeeded: false)
+            let result = client.call(PhonesMethod.remove, PhonesRemoveParams(name: name, on: on), launchIfNeeded: false)
             try client.print(result) { "Removed \(name)." }
         }
     }
@@ -90,11 +139,15 @@ struct PhoneCommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             abstract: "Show whether Canopy listens for phones, and which are paired.")
 
+        @Option(
+            name: .customLong("on"),
+            help: ArgumentHelp("A host whose canopy-box serves phones, rather than this Mac.", valueName: "host"))
+        var on: String?
         @OptionGroup var output: OutputOptions
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(PhonesMethod.status, JSONValue.null)
+            let result = client.call(PhonesMethod.status, PhonesOnParams(on: on))
             try client.print(result) { PhoneCommand.statusText(try result.decode(PhonesStatusResult.self)) }
         }
     }

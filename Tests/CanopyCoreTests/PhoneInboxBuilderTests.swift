@@ -64,6 +64,23 @@ struct PhoneInboxBuilderTests {
         #expect(inbox.rows.first?.isMain == true)
     }
 
+    /// A phone paired with the box as well hides the Mac's copy of the box's rows by this.
+    @Test func aRemoteRowSaysItsHost() throws {
+        let dir = try TempDir()
+        let setup = try Setup(dir)
+        defer { setup.terminals.closeAll() }
+        var remote = Row(
+            repoPath: setup.main.repoPath, path: dir.sub("box-feat"), branch: "feat/box", head: nil, rowClass: .remote)
+        remote.host = "hindie-box"
+        var snapshot = setup.snapshot
+        snapshot.repos[0].rows.append(remote)
+
+        let rows = PhoneInboxBuilder.rows(snapshot, terminals: setup.terminals).sections[0].rows
+
+        #expect(rows.first { $0.name == "feat/box" }?.host == "hindie-box")
+        #expect(rows.first { $0.name == "feat/phone" }?.host == nil)
+    }
+
     @Test func aWaitingAgentCarriesItsPromptAndSaysWhatItWants() throws {
         let dir = try TempDir()
         let setup = try Setup(dir)

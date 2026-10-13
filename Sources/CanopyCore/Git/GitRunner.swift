@@ -1,24 +1,5 @@
 import Foundation
 
-public struct GitError: Error, Sendable, Equatable, CustomStringConvertible {
-    public var arguments: [String]
-    public var exitCode: Int32
-    public var stderr: String
-    public var timedOut = false
-    /// ssh could not reach the host git was to run on, so git never ran.
-    public var hostUnreachable = false
-
-    public var description: String {
-        if timedOut { return "git \(arguments.first ?? "") timed out" }
-        if hostUnreachable {
-            let reason = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            return reason.isEmpty ? "ssh could not reach the host" : reason
-        }
-        let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? "git \(arguments.joined(separator: " ")) exited with \(exitCode)" : message
-    }
-}
-
 public struct GitRunner: Sendable {
     public var executable: String
     private let baseEnvironment: [String: String]?

@@ -50,6 +50,11 @@ public struct SSHCommand: Sendable, Equatable {
         control("forward", ["-R", "\(remote):\(local)"])
     }
 
+    /// Asks the master to forward the Unix socket `local` here to `remote` on the host, for as long as it runs.
+    public func forwardSocket(local: String, remote: String) -> [String] {
+        control("forward", ["-L", "\(local):\(remote)"])
+    }
+
     /// Asks the master to forward `local` on this Mac's loopback to `target:port` as the host sees it.
     public func forwardLocal(local: UInt16, target: String, port: UInt16) -> [String] {
         control("forward", ["-L", "\(local):\(target):\(port)"])
