@@ -66,6 +66,8 @@ public actor Workspace {
     /// Each upgraded host's link to its canopy-box, and the connection generation its socket was forwarded for.
     var boxLinks: [String: BoxLink] = [:]
     var boxForwarded: [String: Int] = [:]
+    /// Hosts being upgraded, whose snapshots from before the box took their rows say nothing of them.
+    var upgradingHosts: Set<String> = []
     var boxWatchers: [String: Task<Void, Never>] = [:]
     /// Told of each upgraded host's snapshot after its rows are applied, with the stand-ins of rows it no longer has.
     var boxObservers: [UUID: AsyncStream<BoxUpdate>.Continuation] = [:]

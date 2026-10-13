@@ -71,7 +71,7 @@ extension Workspace {
     /// Makes the host's remote rows the box's rows other than its clones: stand-ins for new ones, branches and heads
     /// brought up to date, and rows the box no longer has forgotten. Tells `boxUpdates` after.
     func applyBoxSnapshot(_ snapshot: BoxSnapshot, host alias: String) async {
-        guard let entry = hosts.hosts[alias], entry.box else { return }
+        guard let entry = hosts.hosts[alias], entry.box, !upgradingHosts.contains(alias) else { return }
         var changed = false
         var gone: [String] = []
         var touched: Set<String> = []
@@ -194,6 +194,8 @@ extension Workspace {
         let saved = entry
         entry.box = true
         try HostsConfigFile(url: home.configFile).save(alias, entry)
+        upgradingHosts.insert(alias)
+        defer { upgradingHosts.remove(alias) }
         do {
             await ensureBoxLink(connection)
             guard let link = boxLinks[alias], await link.waitUntilConnected(within: .seconds(30)) else {
@@ -207,6 +209,19 @@ extension Workspace {
             }
             let adopted: BoxAdoptResult = try await link.call(
                 BoxMethod.adopt, BoxAdoptParams(rows: rows, panes: panes, nextPane: 1))
+            // The box names each row by its real path, which differs from the Mac's when the host reaches its home
+            // through a link, and its snapshots name them so from now on.
+            for (given, taken) in zip(rows, adopted.rows) where given.path != taken {
+                for index in state.repos.indices {
+                    for position in state.repos[index].remote.indices
+                    where state.repos[index].remote[position].host == alias
+                        && state.repos[index].remote[position].path == given.path
+                    {
+                        state.repos[index].remote[position].path = taken
+                    }
+                }
+            }
+            try? save()
             activity.record(ActivityType.hostUpgraded, data: ["host": .string(alias)])
             var warnings: [String] = []
             if !adopted.missing.isEmpty {
@@ -246,6 +261,9 @@ extension Workspace {
         guard let link = boxLinks[alias], await link.waitUntilConnected(within: .seconds(30)) else {
             throw WorkspaceError.hostUnreachable(alias, reason: "canopy-box on \(alias) did not answer.")
         }
+        // The box's snapshot after it lets go has no rows, which must not read as rows removed.
+        upgradingHosts.insert(alias)
+        defer { upgradingHosts.remove(alias) }
         let released: BoxReleaseResult = try await link.call(BoxMethod.release, JSONValue.object([:]))
         await stopBoxLink(alias)
         try await BoxInstall.stop(on: connection, homeID: homeID)
