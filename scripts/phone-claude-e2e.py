@@ -97,7 +97,9 @@ class Session:
                 return result
             self.pump(0.5)
         agent = self.agent()
-        fail(f"timed out waiting for {what}; agent: {json.dumps(agent)}")
+        # The screen says what Claude Code showed instead, such as a dialog this run did not expect.
+        screen = "\n".join((self.screen() or "").splitlines()[-25:])
+        fail(f"timed out waiting for {what}; agent: {json.dumps(agent)}\nscreen:\n{screen}")
 
     def screen(self):
         request_id = self.phone.send("phone.screen", {"pane": pane})
