@@ -303,7 +303,12 @@ public final class ChatSession {
             return
         }
         deny()
-        guard !needsTrust else { return }
+        guard !needsTrust else {
+            // Kept for when the folder is trusted, which sends the draft, as when an agent sends before the author has.
+            draft = draft.isEmpty ? text : draft + "\n\n" + text
+            draftImages += images
+            return
+        }
         if !isWorking {
             turnStarted = Date()
             showTokens(0)

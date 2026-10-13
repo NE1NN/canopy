@@ -33,6 +33,11 @@ extension ChatSession {
         }
         if let streaming, !streaming.text.isEmpty { lines.append(streaming.text) }
         lines += queued.map { "You (queued): " + $0.prompt.text }
+        if needsTrust {
+            lines.append(
+                "Waiting for you: trust this folder for Claude Code"
+                    + (draft.isEmpty ? "" : ", then it sends: " + draft))
+        }
         if let permission {
             switch permission.kind {
             case .permission: lines.append("Waiting for you: allow \(permission.subject)?")
