@@ -44,7 +44,9 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
 public enum ChatRows {
     @MainActor
     public static func rows(for chat: ChatSession) -> [ChatRow] {
-        var rows = chat.items.map(ChatRow.item)
+        // A question or plan waiting on the author shows as its card, not also as a line above it.
+        let waiting = Set(chat.pendingPermissions.compactMap { $0.kind == .permission ? nil : $0.toolUse })
+        var rows = chat.items.filter { !waiting.contains($0.id) }.map(ChatRow.item)
         // A saved conversation stays readable above the question.
         if chat.needsTrust { return rows + [.trust] }
         if let streaming = chat.streaming {

@@ -15,6 +15,7 @@ What it does with a message depends on how the message starts:
   hold           asks to run `make test` and never ends the turn on its own
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
+  plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
   anything else  answers "You said: <message>"
@@ -156,6 +157,7 @@ def finish(text, error=False):
 
 
 def turn(text):
+    global mode
     interrupted.clear()
     if text == "/clear":
         old = SESSION
@@ -218,6 +220,19 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "plan":
+        tool_id, answer = ask("ExitPlanMode", {"plan": "# Plan\n\n1. Add the case\n2. Save it"}, needs_author=True)
+        if answer and answer.get("behavior") == "allow":
+            for update in answer.get("updatedPermissions", []):
+                if update.get("type") == "setMode":
+                    mode = update.get("mode", mode)
+                    emit({"type": "system", "subtype": "status", "status": None, "permissionMode": mode})
+            emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "User has approved your plan."}]))
+            stream("Approved in " + mode + ".")
+            finish("Approved in " + mode + ".")
+        else:
+            emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "declined", "is_error": True}]))
+            finish("Kept planning.")
     elif text == "two":
         asked = []
         for command in ("ls a", "ls b"):

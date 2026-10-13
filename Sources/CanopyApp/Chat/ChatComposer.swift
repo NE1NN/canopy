@@ -26,7 +26,7 @@ struct ChatComposer: View {
                 }
                 ComposerTextView(
                     text: $chat.draft, height: $height, paneID: paneID, composers: composers,
-                    onReturn: submit, onEscape: escape
+                    onReturn: submit, onEscape: escape, onDigit: digit
                 )
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
@@ -81,6 +81,8 @@ struct ChatComposer: View {
     }
 
     private var placeholder: String {
+        if case .question? = chat.permission?.kind { return "Or answer in your own words" }
+        if case .plan? = chat.permission?.kind { return "Or tell Claude what to change" }
         if chat.permission != nil { return "Or tell Claude what to do instead" }
         if chat.isWorking { return "Reply to Claude. It reads this when the current step ends." }
         return "Reply to Claude"
@@ -103,9 +105,20 @@ struct ChatComposer: View {
             onTrust()
         } else if canSend {
             send()
-        } else if chat.permission != nil {
-            chat.allow()
+        } else if let permission = chat.permission {
+            switch permission.kind {
+            case .permission: chat.allow()
+            case .question: chat.submitSelection()
+            case .plan: chat.approvePlan(acceptingEdits: true)
+            }
         }
+    }
+
+    /// With nothing written, a digit picks an option of an open question.
+    private func digit(_ number: Int) -> Bool {
+        guard chat.draft.isEmpty, case .question? = chat.permission?.kind else { return false }
+        chat.pick(number - 1)
+        return true
     }
 
     /// Esc turns down trust, denies an open prompt, or stops Claude.
@@ -153,6 +166,18 @@ final class ChatComposers {
 /// The composer's text view, which says when it joins a window so it can take the keyboard then.
 final class ComposerNSTextView: NSTextView {
     var onWindow: () -> Void = {}
+    /// Takes a digit pressed with no modifiers before it is typed; true when it was used.
+    var onDigit: (Int) -> Bool = { _ in false }
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let characters = event.charactersIgnoringModifiers, characters.count == 1,
+            let number = Int(characters), (1...9).contains(number), onDigit(number)
+        {
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -168,6 +193,7 @@ private struct ComposerTextView: NSViewRepresentable {
     let composers: ChatComposers
     let onReturn: () -> Void
     let onEscape: () -> Void
+    let onDigit: (Int) -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -188,6 +214,7 @@ private struct ComposerTextView: NSViewRepresentable {
         scroll.documentView = view
         let (pane, composers) = (paneID, self.composers)
         view.onWindow = { composers.joinedWindow(pane) }
+        view.onDigit = { [weak coordinator = context.coordinator] in coordinator?.parent.onDigit($0) ?? false }
         view.delegate = context.coordinator
         view.drawsBackground = false
         view.isRichText = false

@@ -34,7 +34,11 @@ struct ChatRowView: View {
         case .queued(let queued):
             PromptBubble(prompt: queued.prompt, waitsForStep: queued.waitsForStep)
         case .permission(let permission):
-            PermissionCard(permission: permission, chat: chat)
+            switch permission.kind {
+            case .permission: PermissionCard(permission: permission, chat: chat)
+            case .question(let questions): QuestionCard(questions: questions, chat: chat)
+            case .plan(let plan): PlanCard(plan: plan, chat: chat)
+            }
         case .failure(let failure):
             FailureCard(failure: failure, chat: chat)
         case .status:
@@ -561,5 +565,138 @@ private struct DiffLine: View {
         if line.hasPrefix("+") { return ChatStyle.added.opacity(0.11) }
         if line.hasPrefix("-") { return ChatStyle.removed.opacity(0.1) }
         return .clear
+    }
+}
+
+/// Claude asks: the current question's options as rows, picked with a click or keys 1 to 9.
+private struct QuestionCard: View {
+    let questions: [PromptQuestion]
+    let chat: ChatSession
+
+    var body: some View {
+        let step = min(chat.questionStep, questions.count - 1)
+        let question = questions[step]
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "questionmark.bubble").foregroundStyle(Style.agentWaiting)
+                Text("Claude asks")
+                if questions.count > 1 {
+                    Text(verbatim: "\(step + 1) of \(questions.count)").foregroundStyle(ChatStyle.tertiaryText)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ChatStyle.strongText)
+            Text(question.question)
+                .font(ChatStyle.text)
+                .foregroundStyle(ChatStyle.strongText)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 6) {
+                ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                    OptionRow(
+                        number: index + 1, option: option, isMulti: question.multiSelect,
+                        isTicked: chat.questionSelection.contains(index)
+                    ) { chat.pick(index) }
+                }
+            }
+            HStack {
+                if question.multiSelect {
+                    ChatButton(title: "Submit", key: "⏎", isPrimary: true, action: chat.submitSelection)
+                }
+                Text("Or type your own answer")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChatStyle.tertiaryText)
+                Spacer()
+                ChatButton(title: "Decline", key: "esc", action: chat.deny)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(ChatStyle.askFill, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(ChatStyle.askBorder))
+    }
+}
+
+private struct OptionRow: View {
+    let number: Int
+    let option: PromptQuestion.Option
+    let isMulti: Bool
+    let isTicked: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    private var isRecommended: Bool { option.label.hasSuffix("(Recommended)") }
+    private var label: String {
+        isRecommended
+            ? String(option.label.dropLast("(Recommended)".count)).trimmingCharacters(in: .whitespaces)
+            : option.label
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(verbatim: "\(number)")
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .frame(width: 20, height: 20)
+                    .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 5))
+                if isMulti {
+                    Image(systemName: isTicked ? "checkmark.square.fill" : "square").padding(.top, 2)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(label).font(.system(size: 13, weight: .medium))
+                        if isRecommended { TagView(text: "Recommended") }
+                    }
+                    if let description = option.description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 12))
+                            .foregroundStyle(ChatStyle.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(ChatStyle.strongText)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovering ? ChatStyle.buttonFill.opacity(1.6) : ChatStyle.buttonFill,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// Claude's plan, to approve with edits accepted or asked about, or to keep planning.
+private struct PlanCard: View {
+    let plan: String
+    let chat: ChatSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.clipboard").foregroundStyle(Style.agentWaiting)
+                Text("Claude has a plan")
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ChatStyle.strongText)
+            MarkdownView(blocks: ChatMarkdown.parse(plan))
+                .padding(12)
+                .background(ChatStyle.codeFill, in: RoundedRectangle(cornerRadius: 7))
+            HStack(spacing: 8) {
+                ChatButton(title: "Approve and auto-accept edits", key: "⏎", isPrimary: true) {
+                    chat.approvePlan(acceptingEdits: true)
+                }
+                ChatButton(title: "Approve, ask before edits") { chat.approvePlan(acceptingEdits: false) }
+                Spacer()
+                ChatButton(title: "Keep planning", key: "esc", action: chat.deny)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(ChatStyle.askFill, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(ChatStyle.askBorder))
     }
 }

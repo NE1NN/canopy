@@ -136,19 +136,57 @@ struct ChatSessionTests {
         chat.close()
     }
 
-    /// Questions come with the next milestone; until then Claude is told to ask in plain text.
-    @Test func turnsDownQuestionsItCannotShowYet() async throws {
+    func answer(_ chat: ChatSession) -> String? {
+        chat.items.lazy.compactMap { item -> String? in
+            if case .question(let question) = item.content { question.answer } else { nil }
+        }.last
+    }
+
+    @Test func answersAQuestionByPickingAnOption() async throws {
         let chat = session()
 
         chat.send("ask")
-
-        #expect(await soon { !chat.isWorking })
-        #expect(chat.permission == nil)
-        guard case .question(let question)? = chat.items.last?.content else {
-            Issue.record("no question in \(chat.items)")
+        #expect(await soon { chat.permission != nil })
+        guard case .question(let questions)? = chat.permission?.kind else {
+            Issue.record("not a question: \(String(describing: chat.permission))")
             return
         }
-        #expect(question.answer == "Declined")
+        #expect(questions.first?.question == "Which color?")
+        chat.pick(1)
+
+        #expect(await soon { !chat.isWorking })
+        #expect(answer(chat) == "Red")
+        chat.close()
+    }
+
+    @Test func answersAQuestionInItsOwnWords() async throws {
+        let chat = session()
+
+        chat.send("ask")
+        #expect(await soon { chat.permission != nil })
+        chat.send("Green, please")
+
+        #expect(await soon { !chat.isWorking })
+        #expect(answer(chat) == "Green, please")
+        #expect(!texts(chat).contains("You: Green, please"))
+        chat.close()
+    }
+
+    @Test func approvesAPlanAndSwitchesToAcceptingEdits() async throws {
+        let chat = session()
+
+        chat.send("plan")
+        #expect(await soon { chat.permission != nil })
+        guard case .plan(let plan)? = chat.permission?.kind else {
+            Issue.record("not a plan")
+            return
+        }
+        #expect(plan.hasPrefix("# Plan"))
+        chat.approvePlan(acceptingEdits: true)
+
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.mode == "acceptEdits")
+        #expect(texts(chat).last == "Approved in acceptEdits.")
         chat.close()
     }
 

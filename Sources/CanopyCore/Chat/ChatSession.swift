@@ -34,9 +34,18 @@ public struct QueuedPrompt: Identifiable, Equatable, Sendable {
     public var waitsForStep: Bool
 }
 
-/// A tool call waiting for the author's permission.
+/// A tool call waiting for the author: a permission, Claude's questions, or a plan to approve.
 public struct ChatPermission: Identifiable, Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case permission
+        case question([PromptQuestion])
+        case plan(String)
+    }
+
     public var id: String
+    public var kind: Kind
+    /// The tool call it is about, whose item its card stands in for while it waits.
+    public var toolUse: String?
     public var tool: String
     public var input: [String: JSONValue]
     /// What it wants: a command, a file, a URL, or the tool's name.
@@ -50,7 +59,13 @@ public struct ChatPermission: Identifiable, Equatable, Sendable {
 
     init(_ request: ClaudeToolRequest, asked: Date = Date()) {
         id = request.id
+        toolUse = request.toolUse
         self.asked = asked
+        switch request.tool {
+        case "AskUserQuestion": kind = .question(TranscriptParser.Builder.questions(request.input))
+        case "ExitPlanMode": kind = .plan(request.input["plan"]?.text ?? "")
+        default: kind = .permission
+        }
         tool = request.tool
         input = request.input
         description = request.description.flatMap { $0.isEmpty ? nil : $0 }
@@ -102,6 +117,11 @@ public final class ChatSession {
     public var permission: ChatPermission? { pendingPermissions.first }
     /// Claude can ask several at once, as parallel subagents do. Each needs its own answer.
     public private(set) var pendingPermissions: [ChatPermission] = []
+    /// Which of the open question's questions is being answered, and what was answered so far.
+    public private(set) var questionStep = 0
+    public private(set) var questionAnswers: [String: String] = [:]
+    /// A multiple choice's ticked options, by index.
+    public private(set) var questionSelection: Set<Int> = []
     public private(set) var sessionID: String?
     /// Nil until Claude Code says, for a chat that leaves the choice to its settings.
     public private(set) var model: String?
@@ -199,6 +219,11 @@ public final class ChatSession {
         open()
         if failure == .transcriptMissing { startFresh() }
         if needsTrust { needsTrust = !trust.isTrusted() }
+        // Text typed at a question answers it in the author's own words.
+        if case .question? = permission?.kind, images.isEmpty {
+            record(answer: text)
+            return
+        }
         deny()
         guard !needsTrust else { return }
         if !isWorking {
@@ -238,6 +263,61 @@ public final class ChatSession {
         onInput(Self.returnKey)
     }
 
+    /// Picks an option of the open question by index: the answer for a single choice, a tick for a multiple choice.
+    public func pick(_ index: Int) {
+        guard let questions = openQuestions, questionStep < questions.count else { return }
+        let question = questions[questionStep]
+        guard question.options.indices.contains(index) else { return }
+        if question.multiSelect {
+            if questionSelection.remove(index) == nil { questionSelection.insert(index) }
+        } else {
+            record(answer: question.options[index].label)
+        }
+    }
+
+    /// Sends a multiple choice's ticked options.
+    public func submitSelection() {
+        guard let questions = openQuestions, questionStep < questions.count, !questionSelection.isEmpty else { return }
+        let options = questions[questionStep].options
+        record(answer: questionSelection.sorted().map { options[$0].label }.joined(separator: ", "))
+    }
+
+    /// Approves the open plan, switching to accepting edits or to asking before them.
+    public func approvePlan(acceptingEdits: Bool) {
+        guard let permission, case .plan = permission.kind else { return }
+        let mode: JSONValue = .object([
+            "type": "setMode", "mode": .string(acceptingEdits ? "acceptEdits" : "default"), "destination": "session",
+        ])
+        stream?.answer(ClaudeInput.allow(request: permission.id, input: permission.input, permissions: [mode]))
+        pendingPermissions.removeFirst()
+        onInput(Self.returnKey)
+    }
+
+    private var openQuestions: [PromptQuestion]? {
+        if case .question(let questions)? = permission?.kind { questions } else { nil }
+    }
+
+    /// Takes the answer to the current question, and sends them all once the last is answered.
+    private func record(answer: String) {
+        guard let permission, let questions = openQuestions, questionStep < questions.count else { return }
+        questionAnswers[questions[questionStep].question] = answer
+        questionStep += 1
+        questionSelection = []
+        guard questionStep >= questions.count else { return }
+        var input = permission.input
+        input["answers"] = .object(questionAnswers.mapValues(JSONValue.string))
+        stream?.answer(ClaudeInput.allow(request: permission.id, input: input))
+        pendingPermissions.removeFirst()
+        resetQuestion()
+        onInput(Self.returnKey)
+    }
+
+    private func resetQuestion() {
+        questionStep = 0
+        questionAnswers = [:]
+        questionSelection = []
+    }
+
     /// Denies every open prompt and stops the turn, as Esc does in the TUI.
     public func deny() {
         guard !pendingPermissions.isEmpty else { return }
@@ -248,6 +328,7 @@ public final class ChatSession {
                     interrupt: true))
         }
         pendingPermissions = []
+        resetQuestion()
         onInput(Self.escapeKey)
     }
 
@@ -463,21 +544,7 @@ public final class ChatSession {
                     interrupt: true))
             return
         }
-        switch request.tool {
-        case "AskUserQuestion":
-            stream?.answer(
-                ClaudeInput.deny(
-                    request: request.id,
-                    message: "This chat cannot show questions yet. Ask the question in plain text instead."))
-        case "ExitPlanMode":
-            stream?.answer(
-                ClaudeInput.deny(
-                    request: request.id,
-                    message: "This chat cannot show plans yet. Write the plan as text and ask the author to approve it."
-                ))
-        default:
-            pendingPermissions.append(ChatPermission(request))
-        }
+        pendingPermissions.append(ChatPermission(request))
     }
 
     private func exited(_ code: Int32, _ errors: [String]) {
