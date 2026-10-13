@@ -8,6 +8,8 @@ public struct ClaudeInit: Equatable, Sendable {
     public var cwd: String
     /// Claude Code's version, such as "2.1.296".
     public var version: String?
+    /// Commands that need Claude Code's full screen, which a chat opens in a terminal.
+    public var terminalCommands: [String] = []
 }
 
 /// A `status` line: what Claude is doing, a permission mode it switched to, or how compacting went.
@@ -118,7 +120,8 @@ public enum ClaudeEvent: Equatable, Sendable {
             self = .initialized(
                 ClaudeInit(
                     session: session, model: object["model"]?.text ?? "", mode: object["permissionMode"]?.text ?? "",
-                    cwd: object["cwd"]?.text ?? "", version: object["claude_code_version"]?.text))
+                    cwd: object["cwd"]?.text ?? "", version: object["claude_code_version"]?.text,
+                    terminalCommands: Self.texts(object["terminal_slash_commands"])))
         case "status":
             let compacted = object["compact_result"]?.text.map { $0 == "success" }
             self = .status(
@@ -135,6 +138,10 @@ public enum ClaudeEvent: Equatable, Sendable {
         default:
             return nil
         }
+    }
+
+    private static func texts(_ value: JSONValue?) -> [String] {
+        if case .array(let items)? = value { items.compactMap(\.text) } else { [] }
     }
 
     private init(message object: [String: JSONValue], role: String, line: Data) {

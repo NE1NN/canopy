@@ -252,6 +252,9 @@ public final class ChatSession {
 
     public var pid: pid_t? { stream?.pid }
 
+    /// Commands that need Claude Code's full screen, from `init`.
+    public private(set) var terminalCommands: [String] = []
+
     /// The commands Claude Code offers, once it has started.
     public var commands: [ClaudeCommand] { stream?.commands ?? [] }
 
@@ -592,6 +595,7 @@ public final class ChatSession {
             model = info.model
             mode = info.mode
             cwd = info.cwd
+            if !info.terminalCommands.isEmpty { terminalCommands = info.terminalCommands }
         case .status(let status):
             if let mode = status.mode { self.mode = mode }
             switch status.activity {
