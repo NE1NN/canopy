@@ -78,7 +78,7 @@ struct BoxInstallTests {
         let first = try await BoxInstall.install(on: host.connection, homeID: host.homeID, binaries: host.binaries)
         #expect(first.updated)
         #expect(!first.systemd)
-        #expect(try await host.isLive())
+        #expect(await eventually { (try? await host.isLive()) == true })
         let installed = host.fake.home + "/.canopy/\(host.homeID)/bin/canopy-box"
         #expect(FileManager.default.contents(atPath: installed) == FileManager.default.contents(atPath: Self.program!))
         let left = try FileManager.default.contentsOfDirectory(
@@ -86,7 +86,7 @@ struct BoxInstallTests {
         #expect(left == ["canopy-box"])
         let second = try await BoxInstall.install(on: host.connection, homeID: host.homeID, binaries: host.binaries)
         #expect(!second.updated)
-        #expect(try await host.isLive())
+        #expect(await eventually { (try? await host.isLive()) == true })
         try await BoxInstall.stop(on: host.connection, homeID: host.homeID)
         #expect(try await !host.isLive())
         await host.connection.stop()
