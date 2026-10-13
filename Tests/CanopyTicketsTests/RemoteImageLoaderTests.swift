@@ -70,6 +70,19 @@ actor CountingDownloader: ImageDownloading {
     }
 }
 
+/// Keeps every image, where NSCache may drop one whenever the machine runs short of memory, as during a full test run.
+final class KeepingImageCache: RemoteImageCache {
+    private let images = Mutex<[String: RemoteImage]>([:])
+
+    func image(_ key: String) -> RemoteImage? {
+        images.withLock { $0[key] }
+    }
+
+    func keep(_ image: RemoteImage, _ key: String) {
+        images.withLock { $0[key] = image }
+    }
+}
+
 enum TestImages {
     /// A PNG of `width` by `height` pixels at `dpi`.
     static func png(width: Int, height: Int, dpi: Double = 72) -> Data {
@@ -218,7 +231,7 @@ struct RemoteImageLoaderTests {
 
     @Test func viewsAskingAtOnceShareOneDownloadAndTheCacheKeepsIt() async {
         let downloader = CountingDownloader(.success(TestImages.png(width: 20, height: 20)))
-        let loader = RemoteImageLoader(downloader: downloader)
+        let loader = RemoteImageLoader(downloader: downloader, cache: KeepingImageCache())
         let url = URL(string: "https://cdn.test/a/shot.png?ex=1")!
         async let first = loader.load(url, fitting: Self.box)
         async let second = loader.load(url, fitting: Self.box)

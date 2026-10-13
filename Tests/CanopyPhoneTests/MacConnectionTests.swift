@@ -146,6 +146,21 @@ struct MacConnectionTests {
         #expect(await eventually { connection.status == .connected })
     }
 
+    @Test func comingToTheForegroundAbandonsAnAttemptAlreadyUnderWay() async throws {
+        try credentials.save(mac.paired())
+        let connection = connection(timeout: .seconds(3600))
+        connection.start()
+        #expect(await eventually { connection.status == .connected })
+        mac.state.withLock { $0.hanging = [FakeMac.host, FakeMac.address] }
+        mac.goAway()
+        #expect(await eventually { mac.connects.count == 2 })
+        mac.state.withLock { $0.hanging = [] }
+        mac.comeBack()
+        connection.foreground()
+        #expect(await eventually(timeout: .seconds(5)) { connection.status == .connected })
+        #expect(mac.connects == [FakeMac.host, FakeMac.host, FakeMac.host])
+    }
+
     @Test func goingToTheBackgroundClosesTheConnectionAndStopsTrying() async throws {
         try credentials.save(mac.paired())
         let connection = connection()

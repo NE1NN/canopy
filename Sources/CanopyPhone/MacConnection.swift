@@ -39,7 +39,6 @@ public final class MacConnection {
 
     private var client: PhoneClient?
     private var loop: Task<Void, Never>?
-    private var nap: Task<Void, Never>?
     private var failures = 0
     private var clientWaiters: [UUID: CheckedContinuation<(client: PhoneClient, generation: Int), any Error>] = [:]
 
@@ -70,13 +69,14 @@ public final class MacConnection {
         loop = Task { await self.run(opened: nil) }
     }
 
-    /// Back on screen: try at once rather than waiting out the backoff.
+    /// Back on screen: try at once, rather than wait out the backoff or an attempt begun before that may hang or fail.
     public func foreground() {
         failures = 0
         if loop == nil {
             start()
-        } else {
-            nap?.cancel()
+        } else if isUnreachable {
+            loop?.cancel()
+            loop = Task { await self.run(opened: nil) }
         }
     }
 
@@ -183,7 +183,6 @@ public final class MacConnection {
     private func stop() {
         loop?.cancel()
         loop = nil
-        nap?.cancel()
         let client = client
         self.client = nil
         Task { await client?.close() }
@@ -233,10 +232,7 @@ public final class MacConnection {
             }
             let wait = Self.backoff[min(failures, Self.backoff.count - 1)]
             failures += 1
-            let sleep = self.sleep
-            nap = Task { try? await sleep(wait) }
-            await nap?.value
-            nap = nil
+            try? await sleep(wait)
         }
     }
 
@@ -244,6 +240,7 @@ public final class MacConnection {
     private func open(_ paired: PairedMac) async throws -> PhoneClient {
         var lastError: any Error = PhoneTransportError.closed
         for host in paired.hosts {
+            try Task.checkCancellation()
             do {
                 let channel = try await within(timeout) { [transport] in
                     try await transport.connect(host: host, port: paired.port)
