@@ -31,6 +31,7 @@ struct ChatComposer: View {
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
             HStack(spacing: 6) {
+                ChatChips(chat: chat)
                 Spacer()
                 if chat.isWorking && chat.permission == nil {
                     Button(action: chat.interrupt) {
@@ -281,5 +282,81 @@ private struct ComposerTextView: NSViewRepresentable {
             let height = max(ChatComposer.lineHeight, ceil(used))
             if parent.height != height { parent.height = height }
         }
+    }
+}
+
+/// The mode and model chips, and how much of the context the conversation uses.
+private struct ChatChips: View {
+    let chat: ChatSession
+
+    private static let modes = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(Self.modes, id: \.self) { mode in
+                    Button {
+                        chat.setMode(mode)
+                    } label: {
+                        if mode == chat.mode {
+                            Label(ChatFormat.modeName(mode), systemImage: "checkmark")
+                        } else {
+                            Text(ChatFormat.modeName(mode))
+                        }
+                    }
+                }
+            } label: {
+                chip(ChatFormat.modeName(chat.mode), symbol: Self.symbol(chat.mode), tint: Self.tint(chat.mode))
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Permission mode")
+            Menu {
+                ForEach(chat.models, id: \.value) { model in
+                    Button(model.displayName) { chat.setModel(model.value) }
+                }
+            } label: {
+                chip(chat.model.map(ChatFormat.modelName) ?? "Default model", symbol: nil, tint: nil)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Model")
+            if let used = chat.contextTokens, let window = chat.contextWindow {
+                Text(ChatFormat.context(used: used, window: window))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(ChatStyle.tertiaryText)
+                    .padding(.leading, 4)
+            }
+        }
+    }
+
+    private func chip(_ title: String, symbol: String?, tint: Color?) -> some View {
+        HStack(spacing: 5) {
+            if let symbol { Image(systemName: symbol).foregroundStyle(tint ?? ChatStyle.chipText) }
+            Text(title)
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+        }
+        .font(.system(size: 11.5))
+        .foregroundStyle(ChatStyle.chipText)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
+    }
+
+    private static func symbol(_ mode: String) -> String {
+        switch mode {
+        case "acceptEdits": "pencil"
+        case "plan": "list.bullet.clipboard"
+        case "auto": "sparkles"
+        case "bypassPermissions": "chevron.forward.2"
+        default: "hand.raised"
+        }
+    }
+
+    private static func tint(_ mode: String) -> Color? {
+        mode == "bypassPermissions" ? ChatStyle.removed : nil
     }
 }

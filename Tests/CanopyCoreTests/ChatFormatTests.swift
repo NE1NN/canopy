@@ -27,6 +27,13 @@ struct ChatFormatTests {
         #expect(ChatFormat.tokens(1_250_000) == "1.2M")
     }
 
+    @Test func modelsAndModes() {
+        #expect(ChatFormat.modelName("claude-opus-5-5") == "Opus 5.5")
+        #expect(ChatFormat.modelName("claude-sonnet-5-5[1m]") == "Sonnet 5.5 (1M)")
+        #expect(ChatFormat.modelName("haiku") == "Haiku")
+        #expect(ChatFormat.modeName("acceptEdits") == "Accept edits")
+    }
+
     @Test func context() {
         #expect(ChatFormat.context(used: 140_000, window: 1_000_000) == "14% of context")
         #expect(ChatFormat.context(used: 5, window: 0) == "")

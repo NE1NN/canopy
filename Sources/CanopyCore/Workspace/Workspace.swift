@@ -286,21 +286,26 @@ public actor Workspace {
         state.webPlacement
     }
 
+    public var savedChatDefaults: ChatDefaults {
+        state.chatDefaults ?? .standard
+    }
+
     public func setSavedTerminals(
         _ terminals: [String: SavedRowTerminals], nextPane: Int? = nil, nextWebPage: Int? = nil,
-        webPlacement: WebPlacement? = nil
+        webPlacement: WebPlacement? = nil, chatDefaults: ChatDefaults? = nil
     ) throws {
         let nextPane = max(nextPane ?? state.nextPane, state.nextPane)
         let nextWebPage = max(nextWebPage ?? state.nextWebPage, state.nextWebPage)
         let webPlacement = webPlacement ?? state.webPlacement
         guard
             state.terminals != terminals || state.nextPane != nextPane || state.nextWebPage != nextWebPage
-                || state.webPlacement != webPlacement
+                || state.webPlacement != webPlacement || (chatDefaults != nil && state.chatDefaults != chatDefaults)
         else { return }
         state.terminals = terminals
         state.nextPane = nextPane
         state.nextWebPage = nextWebPage
         state.webPlacement = webPlacement
+        if let chatDefaults { state.chatDefaults = chatDefaults }
         try save()
     }
 

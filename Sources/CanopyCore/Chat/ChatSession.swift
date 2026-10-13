@@ -160,6 +160,8 @@ public final class ChatSession {
     /// stop, so the pane's agent state follows them as it follows a terminal's keys.
     @ObservationIgnored public var onInput: (Data) -> Void = { _ in }
     @ObservationIgnored public var onTitle: () -> Void = {}
+    /// Called with the model and mode when the author picks either, so new chats start with them.
+    @ObservationIgnored public var onPick: (String?, String) -> Void = { _, _ in }
     @ObservationIgnored private var lastStreamingPublish: ContinuousClock.Instant?
     /// How many times `streaming` changed, and the shortest time between two changes, for tests.
     @ObservationIgnored private(set) var streamingPublishCount = 0
@@ -261,6 +263,36 @@ public final class ChatSession {
             ClaudeInput.allow(request: permission.id, input: permission.input, permissions: permission.rules))
         pendingPermissions.removeFirst()
         onInput(Self.returnKey)
+    }
+
+    /// Switches the permission mode, at once if Claude Code runs, or for when it starts.
+    public func setMode(_ mode: String) {
+        self.mode = mode
+        onPick(model, mode)
+        onChange()
+        guard let stream, stream.isRunning else { return }
+        Task { try? await stream.request("set_permission_mode", ["mode": .string(mode)]) }
+    }
+
+    /// Switches the model. Claude Code 2.1.296 takes `set_model` only after the next turn has started on the old
+    /// model, so an idle chat ends its Claude Code instead and the next message resumes the session on the new one.
+    public func setModel(_ model: String) {
+        self.model = model
+        onPick(model, mode)
+        onChange()
+        guard let stream, stream.isRunning else { return }
+        if isWorking {
+            Task { try? await stream.request("set_model", ["model": .string(model)]) }
+        } else {
+            self.stream = nil
+            stream.stop()
+        }
+    }
+
+    /// The models Claude Code offers once it runs, or its aliases before.
+    public var models: [ClaudeModel] {
+        let offered = stream?.models ?? []
+        return offered.isEmpty ? ClaudeModel.aliases : offered
     }
 
     /// Picks an option of the open question by index: the answer for a single choice, a tick for a multiple choice.
@@ -524,8 +556,9 @@ public final class ChatSession {
             guard case .text(let text) = block else { return nil }
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        // An echo with no text of its own, such as a command's output, takes nothing.
-        guard !texts.isEmpty else { return }
+        // An echo with no text of its own, or a local command's output such as "Set model to …", takes nothing.
+        guard !texts.isEmpty, !texts.contains(where: { $0.hasPrefix("<local-command-") || $0.hasPrefix("<command-") })
+        else { return }
         var matched = false
         for text in texts + (texts.count > 1 ? [texts.joined(separator: "\n")] : []) {
             if let index = queued.firstIndex(where: { $0.prompt.text == text }) {

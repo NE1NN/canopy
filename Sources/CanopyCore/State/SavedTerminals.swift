@@ -32,6 +32,20 @@ public struct SavedWebPage: Codable, Hashable, Sendable {
     }
 }
 
+/// What a new chat starts with: the model and mode the author picked last. A nil model leaves it to Claude Code.
+public struct ChatDefaults: Codable, Equatable, Sendable {
+    public var model: String?
+    public var mode: String
+
+    public init(model: String?, mode: String) {
+        self.model = model
+        self.mode = mode
+    }
+
+    /// Before the author picks: Claude Code's own model, and Ask before edits.
+    public static let standard = ChatDefaults(model: nil, mode: "default")
+}
+
 /// A chat as saved: its Claude Code session, which restoring resumes once the author sends something.
 public struct SavedChat: Codable, Equatable, Sendable {
     /// Nil for a chat that never started.

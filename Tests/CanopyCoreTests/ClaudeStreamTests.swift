@@ -171,7 +171,8 @@ struct ClaudeStreamTests {
             ClaudeLaunch.arguments(model: "opus", mode: "acceptEdits", resume: "s-1") == [
                 "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--replay-user-messages", "--permission-prompt-tool", "stdio",
-                "--model", "opus", "--permission-mode", "acceptEdits", "--resume", "s-1",
+                "--allow-dangerously-skip-permissions", "--model", "opus", "--permission-mode", "acceptEdits",
+                "--resume", "s-1",
             ])
         #expect(
             ClaudeLaunch.script(arguments: ["-p", "--model", "it's"])

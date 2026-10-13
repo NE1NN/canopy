@@ -285,8 +285,12 @@ public final class TerminalStore {
 
     // MARK: Chats
 
-    /// The permission mode a new chat starts in, Claude Code's own "Ask before edits".
-    public static let defaultChatMode = "default"
+    /// The permission mode a chat saved without one starts in, Claude Code's own "Ask before edits".
+    public static let defaultChatMode = ChatDefaults.standard.mode
+    /// What a new chat starts with, which follows the author's last pick.
+    public var chatDefaults = ChatDefaults.standard {
+        didSet { if chatDefaults != oldValue { onChange() } }
+    }
 
     /// How a chat starts Claude Code. Tests swap in a stand-in.
     @ObservationIgnored public lazy var chatLauncher: ChatLauncher = { [settings] context, pane, model, mode, resume in
@@ -324,7 +328,8 @@ public final class TerminalStore {
     public func openChat(for context: PaneContext, session: String? = nil, title: String = "", select: Bool = true)
         -> (tab: TerminalTab, pane: Pane)
     {
-        let pane = makeChatPane(context, model: nil, mode: Self.defaultChatMode, session: session, title: title)
+        let pane = makeChatPane(
+            context, model: chatDefaults.model, mode: chatDefaults.mode, session: session, title: title)
         let tab = TerminalTab(id: TabID(nextTab), chat: pane)
         nextTab += 1
         tabsByRow[context.rowPath] = tabs(inRow: context.rowPath) + [tab]
@@ -351,6 +356,7 @@ public final class TerminalStore {
             trust: chatTrust(context))
         let pane = Pane(id: id, context: context, chat: chat, activity: activity)
         chat.onChange = { [weak self] in self?.onChange() }
+        chat.onPick = { [weak self] model, mode in self?.chatDefaults = ChatDefaults(model: model, mode: mode) }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
         pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
