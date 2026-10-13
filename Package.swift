@@ -37,7 +37,9 @@ let portableTargets: [Target] = [
         ]),
     .executableTarget(name: "CanopyBox", dependencies: ["CanopyBoxKit"]),
     // Helpers every test target shares.
-    .target(name: "CanopyTestSupport", dependencies: ["CanopyWire", "CanopySystem"], resources: [.copy("Fixtures")]),
+    .target(
+        name: "CanopyTestSupport", dependencies: ["CanopyWire", "CanopySystem", "CanopyGit"],
+        resources: [.copy("Fixtures")]),
     .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
     .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
     .testTarget(name: "CanopyAgentsTests", dependencies: ["CanopyAgents", "CanopyWire", "CanopyTestSupport"]),
