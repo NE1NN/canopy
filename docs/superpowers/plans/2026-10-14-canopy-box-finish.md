@@ -49,25 +49,33 @@ The rest are fixes in place, each with a test that fails before it.
 
 ### Task 2: the link and the daemon
 
-- [ ] `ensureBoxLink` keeps one start in flight per host, which other callers await.
-- [ ] Installing under systemd stops a daemon started as a plain process first.
+- [x] `ensureBoxLink` keeps one start in flight per host, which other callers await.
+- [x] Installing under systemd stops a daemon started as a plain process first.
 
 ### Task 3: listeners and logs
 
-- [ ] `TCPListener` suspends its accept source for 100 ms when out of descriptors, as `UnixListener` sleeps.
-- [ ] The box's activity log appends without trapping and keeps its last 5 MB.
+- [x] `TCPListener` suspends its accept source for 100 ms when out of descriptors, as `UnixListener` sleeps.
+- [x] The box's activity log appends without trapping and keeps its last 5 MB.
 
 ### Task 4: rows and panes across hosts
 
-- [ ] Hooks and pane lookups by session name match the host the relay names.
-- [ ] The box gets the host's own `repos` key, and its snapshots map back by it.
-- [ ] A stand-in leaf another entry holds gets a distinct name.
-- [ ] Rows of a repo taken out of the box's settings can be removed through the worktree's own git directory.
+- [x] Hooks and pane lookups by session name match the host the relay names.
+- [x] The box gets the host's own `repos` key, and its snapshots map back by it.
+- [x] A stand-in leaf another entry holds gets a distinct name.
+- [x] Rows of a repo taken out of the box's settings can be removed through the worktree's own git directory.
 
 ### Task 5: reply delivery on the box
 
-- [ ] Each reply's tracker ends at its deadline on its own, and only the oldest reply waiting in a pane is marked delivered per take.
+- [x] Each reply's tracker ends at its deadline on its own, and only the oldest reply waiting in a pane is marked delivered per take.
 
 ### Checks
 
 `make lint`, `make build` with no warnings, `make test` three times clean, `make e2e`, `make linux`, an opus review with its findings fixed below, and CI's `check`.
+
+## As built
+
+- The link race was a livelock in its first form: a finished start stayed in the table until its caller resumed, while waiters looped on its finished task without yielding the actor.
+  The start now leaves the table itself before it ends; `linkStartsAtOnceForwardOnce` fails without the fix (three forwards).
+- Relayed `term state`, `term send`, `term read`, and `term close`, and `canopy agent-hook`, send the `CANOPY_HOST` the relay sets, and the Mac looks the pane up on that host only.
+- `HostEntry.repoKey` is the name the host's settings give a repo, which the Mac sends canopy-box for new rows and adopted rows, and maps snapshots and released rows back by.
+- `host rm` returns its warnings, which the CLI prints on standard error.
