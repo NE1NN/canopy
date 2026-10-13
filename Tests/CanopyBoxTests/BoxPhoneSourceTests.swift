@@ -95,4 +95,18 @@ struct BoxPhoneSourceTests {
                     && (screen?.scrollback?.isEmpty == false)
             })
     }
+
+    @Test func aConnectedPhoneKeepsTheBoxOn() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        await daemon.tickBusy()
+        #expect(!FileManager.default.fileExists(atPath: home.paths.busyFile))
+        await daemon.setPhonesConnected(true)
+        await daemon.tickBusy()
+        #expect(FileManager.default.fileExists(atPath: home.paths.busyFile))
+        try FileManager.default.removeItem(atPath: home.paths.busyFile)
+        await daemon.setPhonesConnected(false)
+        await daemon.tickBusy()
+        #expect(!FileManager.default.fileExists(atPath: home.paths.busyFile))
+    }
 }

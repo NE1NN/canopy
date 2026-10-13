@@ -64,9 +64,14 @@ extension BoxDaemon {
         }
     }
 
-    /// Whether an agent is at work, so the box should stay on.
+    /// Whether an agent is at work or a phone is connected, so the box should stay on.
     var isBusy: Bool {
-        state.panes.contains { $0.agent.state == .working || $0.agent.state == .background }
+        phonesConnected || state.panes.contains { $0.agent.state == .working || $0.agent.state == .background }
+    }
+
+    /// Whether any phone is connected now, which keeps the box on as working agents do.
+    public func setPhonesConnected(_ connected: Bool) {
+        phonesConnected = connected
     }
 
     /// Touches the busy file while the box should stay on. A daemon that stops ticking stops holding the box on.

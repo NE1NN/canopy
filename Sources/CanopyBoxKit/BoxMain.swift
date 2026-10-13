@@ -1,4 +1,6 @@
+import CanopyAgents
 import CanopyGit
+import CanopyServer
 import CanopySystem
 import CanopyWire
 import Dispatch
@@ -19,6 +21,45 @@ public enum BoxMain {
     /// How often panes are read, the busy file is touched, and kept reports are looked for.
     static let pollEvery = Duration.seconds(2)
     static let replayEvery = Duration.seconds(30)
+    static let phoneEvery = Duration.seconds(5)
+
+    /// The phone server on the box's tailnet addresses, with the host's name and port from the Mac's settings.
+    static func phoneServer(daemon: BoxDaemon, paths: BoxPaths, environment: [String: String]) -> PhoneServer {
+        let config = BoxDaemon.load(BoxConfig.self, from: paths.configFile)
+        let log = paths.folder + "/activity.jsonl"
+        return PhoneServer(
+            source: BoxPhoneSource(daemon: daemon),
+            settings: PhoneServerSettings(
+                registryFile: URL(fileURLWithPath: paths.folder + "/phones.json"),
+                serverName: config?.host ?? ProcessInfo.processInfo.hostName, version: CanopyVersion.current,
+                port: config?.phonePort ?? PhonePort.standard,
+                addresses: { TailnetAddresses.current() },
+                tailnetName: { await TailnetAddresses.name(environment: environment) },
+                closedReason: { "Tailscale is not running on this host, so phones cannot reach it." },
+                record: { activity in appendActivity(activity, to: log) }))
+    }
+
+    /// One JSON line per phone event, with the Mac's types: `phone.paired`, `phone.removed`, and `phone.call`.
+    static func appendActivity(_ activity: PhoneActivity, to path: String) {
+        let (type, data): (String, [String: JSONValue]) =
+            switch activity {
+            case .paired(let phone): ("phone.paired", ["phone": .string(phone)])
+            case .removed(let phone): ("phone.removed", ["phone": .string(phone)])
+            case .call(let data): ("phone.call", data)
+            }
+        let entry: JSONValue = .object([
+            "at": .number(Date().timeIntervalSince1970), "type": .string(type), "data": .object(data),
+        ])
+        guard var line = try? JSONEncoder().encode(entry) else { return }
+        line.append(0x0A)
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(line)
+            try? handle.close()
+        } else {
+            try? BoxFiles.write(line, to: path)
+        }
+    }
 
     /// Runs a command, returning its exit status. `serve` returns only when it cannot start.
     public static func run(_ arguments: [String]) async -> Int32 {
@@ -108,7 +149,17 @@ public enum BoxMain {
             return source
         }
         await daemon.replayPending()
+        let phones = phoneServer(daemon: daemon, paths: paths, environment: environment)
+        await phones.refresh()
         await withDiscardingTaskGroup { group in
+            group.addTask {
+                // The tailnet's addresses can change, as when Tailscale comes up after the daemon.
+                while true {
+                    try? await Task.sleep(for: phoneEvery)
+                    await phones.refresh()
+                    await daemon.setPhonesConnected(await phones.status().phones.contains(where: \.connected))
+                }
+            }
             group.addTask {
                 while true {
                     await daemon.pollPanes()
