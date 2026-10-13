@@ -98,6 +98,29 @@ final class ScreenTour: XCTestCase {
             wait(timeout: 30) { self.app.staticTexts["connection"].label.contains("devbox connected") },
             "the box did not connect again")
 
+        // New task on the box: its agent starts on the brief, and the phone lands in its conversation.
+        app.buttons["new-task"].tap()
+        XCTAssert(app.navigationBars["New task"].waitForExistence(timeout: 5), "New task did not open")
+        app.buttons["where-devbox"].tap()
+        XCTAssert(wait { self.app.buttons["where-devbox"].isSelected }, "Where did not choose the box")
+        let branch = app.textFields["task-branch"]
+        branch.tap()
+        branch.typeText("feat/health-check")
+        let brief = app.textViews["task-brief"].exists ? app.textViews["task-brief"] : app.textFields["task-brief"]
+        brief.tap()
+        brief.typeText("Add a health check to the usage page, next to the totals.")
+        shot("new-task")
+        app.buttons["task-start"].tap()
+        XCTAssert(
+            text("Add a health check to the usage page").waitForExistence(timeout: 30),
+            "the task's conversation did not open with its brief")
+        XCTAssert(
+            text("The health check goes next to the totals.").waitForExistence(timeout: 20),
+            "the task's agent never answered")
+        XCTAssert(element("title").label.contains("devbox"), "the task's conversation does not name the box")
+        shot("conversation-new-task")
+        app.navigationBars.buttons["Inbox"].tap()
+
         // A question with options, answered with a chip.
         self.open("item-feat/ios-companion")
         XCTAssert(app.buttons["option-Tailscale"].waitForExistence(timeout: 10), "no option chips")

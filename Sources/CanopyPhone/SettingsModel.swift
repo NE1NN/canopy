@@ -41,6 +41,16 @@ public struct ServerSettings: Identifiable {
         connection.server.wake.map { "\($0.instanceID) in \($0.region)" }
     }
 
+    /// What New task runs there, or nil from a server older than New task.
+    public var agentCommand: String? { connection.server.agentCommand }
+
+    /// How the command changes, from the Mac, or why there is none.
+    public var agentHint: String {
+        guard agentCommand != nil else { return "Update Canopy on \(name) to start tasks on it from here." }
+        let command = isBox ? "canopy phone agent --on \(name) \"<command>\"" : "canopy phone agent \"<command>\""
+        return "New task runs this with the brief. Change it with \(command) on the Mac."
+    }
+
     public var statusText: String {
         switch connection.status {
         case .connected: "Connected"
