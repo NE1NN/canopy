@@ -1,0 +1,42 @@
+# Canopy on the box: the last deferred items
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** settle every item the milestone plans deferred that milestone 8 left: fix the ones that can hurt or that lack a test, and record why the rest stay as they are.
+
+**Architecture:** fixes in place, each with a test that fails without it where a test can reach it.
+
+**Spec:** `docs/superpowers/specs/2026-10-13-canopy-box-server-design.md`; the deferred lists in the After Review sections of the milestone 2, 3a, 3b, 4, and 5 plans, and the milestone 8 plan's Rulings.
+
+## Fixed
+
+- [x] The relay's framing is tested on the box: heartbeats during a long call, a relayed call stopping when its caller hangs up, and a hook landing after its caller hangs up.
+  The last found a bug: the acknowledgement went out before the hook started, so a hook whose process was already gone was dropped.
+  The work now starts first.
+- [x] canopy-box holds a lock on its home (`box/serve.lock`) from the start, so two daemons started at the same moment never both load and save its state; `InstanceLock` moved to `CanopySystem` to build on Linux.
+- [x] canopy-box reads the machine's name with gethostname(2), as tmux does, rather than `ProcessInfo.hostName`, which on Linux can wait on DNS on the actor's first poll.
+  A Linux run of `thePollFillsForegroundTitleAndBusy` timed out on that wait.
+- [x] `bundle.sh` without Docker leaves out a canopy-box older than either of its binaries' sources, as hosts would install it over a newer build.
+  Hosts keep the one they run, though such an app cannot start one that stopped or upgrade a host, as before when `build/box` was empty.
+
+## Left as they are
+
+- `nextPane` sent as 1 in `box.adopt`: the box takes the larger of it and its own count, and moves past every pane it has, so the value never decides a name.
+- The box's phone port read once at start: nothing sets `phonePort` yet; when the Mac grows a setting for it, applying a change belongs with that setting.
+- `StateStore.save`'s fsync and `DirectoryWatcher`'s FSEvents setup on the app's pool: they hold it for milliseconds on a save or a new watch, tests already keep their own work off the pool, and moving the save off the workspace actor would give up its ordering.
+- A tmux listing for each hook from a session outside every row: such hooks come only from sessions canopy-box does not track, and a listing takes milliseconds.
+- The Linux subprocess wait after a timeout's SIGKILL: it holds only that call's own thread, and box code shares no handle.
+- `pidfd_open` in place of the 5 ms poll: the box's children are short git and tmux runs, so the poll costs little, and `pidfd_open` would still need the poll on kernels before 5.3.
+
+## Checks
+
+`make lint`, `make build` with no warnings, `make test` three times clean, `make e2e`, `make linux`, an opus review with its findings fixed below, and CI's `check`.
+
+## After Review
+
+An opus review found one important issue and seven minor ones, and confirmed each reason under "Left as they are".
+
+- Important, fixed: a restart as a plain process could reach the lock a moment before the old daemon had gone, report that one already ran, and leave the host with none; the lock waits up to five seconds, on a thread of its own.
+- Minor, fixed: only a lock held elsewhere reads as "already runs", other failures say why; the home's folder is made private; `bundle.sh` checks both binaries and cannot stop on a missing path; the lock test fails rather than hangs without its fix; a stale doc comment.
+- Minor, not changed: `aHookLandsAfterItsCallerHangsUp` catches the bug when the caller's close beats the acknowledgement, which is very likely but not certain; with the fix in, it cannot fail.
