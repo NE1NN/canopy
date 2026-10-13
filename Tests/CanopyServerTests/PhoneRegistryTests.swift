@@ -128,7 +128,8 @@ struct PhoneRegistryTests {
         #expect(try String(contentsOfFile: dir.sub("home/phones.json"), encoding: .utf8) == "not json")
     }
 
-    @Test func aRemovalThatCannotSaveKeepsThePhone() async throws {
+    @Test(.enabled(if: geteuid() != 0, "root writes through the read-only folder this needs"))
+    func aRemovalThatCannotSaveKeepsThePhone() async throws {
         let dir = try TempDir()
         let registry = registry(dir)
         let paired = try await registry.redeem(code: await registry.newCode().code, name: "a")
