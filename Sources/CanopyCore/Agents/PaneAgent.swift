@@ -223,7 +223,6 @@ public struct PaneAgent: Sendable, Equatable {
         return change
     }
 
-    /// Escape and Control-C as a terminal sends them, plainly or in the kitty keyboard protocol's form.
     /// Whether `data` is something the terminal sends on its own rather than a key: a focus change, a mouse report,
     /// or a reply to a query about the terminal.
     public static func isTerminalReport(_ data: Data) -> Bool {
@@ -237,6 +236,7 @@ public struct PaneAgent: Sendable, Equatable {
             && text.dropFirst(2).dropLast().allSatisfy { "0123456789;?$>=".contains($0) }
     }
 
+    /// Escape and Control-C as a terminal sends them, plainly or in the kitty keyboard protocol's form.
     static let interruptKeys: Set<Data> = [
         Data([0x1B]), Data([0x03]), Data("\u{1b}[27u".utf8), Data("\u{1b}[99;5u".utf8),
     ]
