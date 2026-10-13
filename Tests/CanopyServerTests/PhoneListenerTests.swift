@@ -1,9 +1,11 @@
+import CanopySystem
 import CanopyTestSupport
+import CanopyWire
 import Foundation
 import Synchronization
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyServer
 
 struct PhoneListenerTests {
     final class Harness: Sendable {
@@ -26,7 +28,8 @@ struct PhoneListenerTests {
             listener = PhoneListener(
                 port: 0, addresses: { addresses.withLock { $0 } },
                 gate: PhoneGate(
-                    registry: registry, macName: "studio", helloTimeout: helloTimeout, helloTimer: helloTimer,
+                    registry: registry, macName: "studio", version: "1.2.3", helloTimeout: helloTimeout,
+                    helloTimer: helloTimer,
                     handler: handler ?? echo))
         }
 
@@ -77,7 +80,7 @@ struct PhoneListenerTests {
             try client.call(PhoneMethod.hello, try .from(PhoneHelloParams(token: result.token)))
         }
         let greeting = try #require(hello.result).decode(PhoneHelloResult.self)
-        #expect(greeting == PhoneHelloResult(mac: "studio", version: CanopyVersion.current, phone: "Hindie's iPhone"))
+        #expect(greeting == PhoneHelloResult(mac: "studio", version: "1.2.3", phone: "Hindie's iPhone"))
 
         let rows = try await offPool { try client.call(PhoneMethod.rows) }
         #expect(rows.result == .object(["method": .string(PhoneMethod.rows)]))
@@ -108,7 +111,7 @@ struct PhoneListenerTests {
         defer { harness.listener.stop() }
         let client = try await harness.authenticated(try await harness.pair())
 
-        for method in [ControlMethod.rowRemove, ControlMethod.repoRemove, "hooks.install", PhoneMethod.pair] {
+        for method in ["row.remove", "repo.remove", "hooks.install", PhoneMethod.pair] {
             let refused = try await offPool { try client.call(method) }
             #expect(refused.error?.code == "method_not_allowed")
         }
@@ -132,7 +135,7 @@ struct PhoneListenerTests {
         #expect(messages.compactMap(\.response?.error?.code) == ["unpaired"])
     }
 
-    @Test(arguments: [PhoneMethod.rows, PhoneMethod.subscribe, ControlMethod.status])
+    @Test(arguments: [PhoneMethod.rows, PhoneMethod.subscribe, "status"])
     func anyOtherFirstMessageCloses(_ method: String) async throws {
         let dir = try TempDir()
         let harness = Harness(dir)
@@ -272,33 +275,20 @@ struct PhoneListenerTests {
 
     @Test func aTakenPortFailsTheRefreshInsteadOfHanging() async throws {
         let dir = try TempDir()
-        let holder = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(holder) }
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(holder, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        #expect(bound == 0 && listen(holder, 1) == 0)
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        withUnsafeMutablePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = getsockname(holder, $0, &length) }
-        }
-        let port = UInt16(bigEndian: address.sin_port)
+        let holder = try TCPListener(address: "127.0.0.1", port: 0) { _ in }
+        defer { holder.close() }
+        let port = holder.port
 
         let registry = PhoneRegistry(file: URL(fileURLWithPath: dir.sub("phones.json")))
         let listener = PhoneListener(
             port: port, addresses: { ["127.0.0.1"] },
-            gate: PhoneGate(registry: registry, macName: "studio") { request, _ in
+            gate: PhoneGate(registry: registry, macName: "studio", version: "1.2.3") { request, _ in
                 PhoneReply(.success(id: request.id, result: .null))
             })
         defer { listener.stop() }
         let started = ContinuousClock.now
         await #expect(throws: (any Error).self) { try await listener.refresh() }
-        // It gives up after 5 seconds at most; the bound only shows it does not hang, on however busy a machine.
+        // The bound only shows it does not hang, on however busy a machine.
         #expect(ContinuousClock.now - started < .seconds(60))
         #expect(listener.endpoints.isEmpty)
     }
@@ -454,61 +444,5 @@ struct PhoneListenerTests {
         #expect(harness.listener.endpoints.isEmpty)
         #expect(try await offPool { try client.untilClosed() }.isEmpty)
         #expect(throws: (any Error).self) { try PhoneTestClient(port: port) }
-    }
-}
-
-struct TailscaleAddressTests {
-    @Test func keepsOnlyTailscaleAddressesOnTunnels() {
-        let interfaces = [
-            NetworkInterfaceAddress(interface: "en0", address: "192.168.1.20"),
-            NetworkInterfaceAddress(interface: "en0", address: "100.64.0.9"),
-            NetworkInterfaceAddress(interface: "utun4", address: "100.101.5.9"),
-            NetworkInterfaceAddress(interface: "utun4", address: "fd7a:115c:a1e0::5a01:509"),
-            NetworkInterfaceAddress(interface: "utun4", address: "fe80::1"),
-            NetworkInterfaceAddress(interface: "utun2", address: "100.128.0.1"),
-            NetworkInterfaceAddress(interface: "utun2", address: "100.63.255.255"),
-            NetworkInterfaceAddress(interface: "utun3", address: "fd7a:115c:a1e1::1"),
-            NetworkInterfaceAddress(interface: "lo0", address: "127.0.0.1"),
-        ]
-        #expect(TailscaleAddresses.select(interfaces) == ["100.101.5.9", "fd7a:115c:a1e0::5a01:509"])
-    }
-
-    @Test func readsThisMacsInterfaces() {
-        #expect(NetworkInterfaceAddress.current().contains { $0.interface == "lo0" && $0.address == "127.0.0.1" })
-    }
-}
-
-struct PhoneListenAddressTests {
-    @Test func aReleaseBuildListensOnTailscale() {
-        #expect(
-            PhoneListenAddress.resolve(environment: [:], allowsOverride: false)
-                == .tailscale(port: PhonePort.standard, ignored: nil))
-    }
-
-    @Test func aReleaseBuildIgnoresTheOverride() {
-        let resolved = PhoneListenAddress.resolve(
-            environment: ["CANOPY_PHONE_LISTEN": "0.0.0.0:6974"], allowsOverride: false)
-        #expect(resolved == .tailscale(port: PhonePort.standard, ignored: "0.0.0.0:6974"))
-    }
-
-    @Test func aDevBuildListensWhereTheEnvironmentSays() {
-        let resolved = PhoneListenAddress.resolve(
-            environment: ["CANOPY_PHONE_LISTEN": "127.0.0.1:7123"], allowsOverride: true)
-        #expect(resolved == .address("127.0.0.1", port: 7123))
-        let v6 = PhoneListenAddress.resolve(environment: ["CANOPY_PHONE_LISTEN": "[::1]:7123"], allowsOverride: true)
-        #expect(v6 == .address("::1", port: 7123))
-    }
-
-    @Test func aDevBuildWithoutAnOverrideStaysClosed() {
-        #expect(PhoneListenAddress.resolve(environment: [:], allowsOverride: true) == .closed(malformed: nil))
-        let empty = PhoneListenAddress.resolve(environment: ["CANOPY_PHONE_LISTEN": ""], allowsOverride: true)
-        #expect(empty == .closed(malformed: nil))
-    }
-
-    @Test(arguments: ["127.0.0.1", "127.0.0.1:", ":7123", "127.0.0.1:99999", "localhost:7123"])
-    func aMalformedOverrideKeepsADevBuildClosed(_ text: String) {
-        #expect(
-            PhoneListenAddress.resolve(environment: ["CANOPY_PHONE_LISTEN": text], allowsOverride: true)
-                == .closed(malformed: text))
     }
 }

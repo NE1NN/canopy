@@ -49,7 +49,7 @@ public final class PhoneService: Sendable {
                 }
             },
             gate: PhoneGate(
-                registry: registry, macName: macName,
+                registry: registry, macName: macName, version: CanopyVersion.current,
                 handler: { request, session in
                     guard let service = handle.service.withLock({ $0 }) else {
                         return PhoneReply(
@@ -210,7 +210,7 @@ public final class PhoneService: Sendable {
     private func subscribeToInbox(_ request: ControlRequest, _ session: PhoneSession, inbox: PhoneInbox) throws
         -> PhoneReply
     {
-        let connection = ObjectIdentifier(session.connection)
+        let connection = session.connectionID
         // Runs after the response, in the connection's order, so two subscribes never interleave here.
         return PhoneReply(.success(id: request.id, result: try .from(inbox))) { [self] in
             let previous = subscriptions.withLock { $0[connection]?.hub }
@@ -230,7 +230,7 @@ public final class PhoneService: Sendable {
 
     /// The hub's ID for the connection's inbox, when `id` names it, which it forgets.
     private func inboxSubscription(_ session: PhoneSession, id: String) -> UUID? {
-        let connection = ObjectIdentifier(session.connection)
+        let connection = session.connectionID
         return subscriptions.withLock { subscriptions in
             guard let current = subscriptions[connection], current.request == id else { return nil }
             subscriptions[connection] = nil

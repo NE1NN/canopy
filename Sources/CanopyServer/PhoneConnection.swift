@@ -1,5 +1,6 @@
+import CanopySystem
+import CanopyWire
 import Foundation
-import Network
 import Synchronization
 
 /// Answers a paired phone's call. It runs only for methods in `PhoneGate.allowedMethods`, after `phone.hello`.
@@ -27,6 +28,8 @@ public struct PhoneGate: Sendable {
 
     public var registry: PhoneRegistry
     public var macName: String
+    /// Canopy's version, which `phone.hello` answers with.
+    public var version: String
     /// Waits out the time a new connection has to say hello, counted again after a pairing.
     public var helloTimer: @Sendable () async -> Void
     public var handler: PhoneHandler
@@ -34,12 +37,13 @@ public struct PhoneGate: Sendable {
     public var onPaired: @Sendable (PairedPhone) -> Void
 
     public init(
-        registry: PhoneRegistry, macName: String, helloTimeout: Duration = .seconds(10),
+        registry: PhoneRegistry, macName: String, version: String, helloTimeout: Duration = .seconds(10),
         helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
         onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
     ) {
         self.registry = registry
         self.macName = macName
+        self.version = version
         self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
         self.onPaired = onPaired
@@ -50,6 +54,9 @@ public struct PhoneGate: Sendable {
 public struct PhoneSession: Sendable {
     public let phone: PairedPhone
     let connection: PhoneConnection
+
+    /// Tells this session's connection from others, for what a connection holds, such as its streams.
+    public var connectionID: ObjectIdentifier { ObjectIdentifier(connection) }
 
     /// Queues an event after everything already queued. It is dropped once the connection has closed. With
     /// `latestOnly`, for events that each carry the whole of something, such as the inbox or a screen, a newer one
@@ -69,9 +76,8 @@ public struct PhoneSession: Sendable {
 /// One phone's TCP connection: newline-delimited JSON, with `phone.hello` or `phone.pair` first.
 final class PhoneConnection: Sendable {
     let localAddress: String
-    private let connection: NWConnection
+    private let connection: TCPConnection
     private let gate: PhoneGate
-    private let queue: DispatchQueue
     private let buffer = Mutex(LineBuffer())
     private let state = Mutex(State())
     /// Lines are handled one at a time, in order, each answered before the next starts, so a hello sent with the next
@@ -92,11 +98,10 @@ final class PhoneConnection: Sendable {
         var helloTimer: Task<Void, Never>?
     }
 
-    init(connection: NWConnection, localAddress: String, gate: PhoneGate, queue: DispatchQueue) {
+    init(connection: TCPConnection, localAddress: String, gate: PhoneGate) {
         self.connection = connection
         self.localAddress = localAddress
         self.gate = gate
-        self.queue = queue
     }
 
     /// Set by the listener, which forgets the connection once it closes.
@@ -109,13 +114,6 @@ final class PhoneConnection: Sendable {
     var isClosed: Bool { state.withLock { $0.closed } }
 
     func start() {
-        connection.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .failed, .cancelled: self?.close()
-            default: break
-            }
-        }
-        connection.start(queue: queue)
         startHelloTimer()
         receive()
     }
@@ -130,7 +128,7 @@ final class PhoneConnection: Sendable {
             return state.closeActions
         }
         guard let actions else { return }
-        connection.cancel()
+        connection.close()
         for action in actions { action() }
         onClosed?()
     }
@@ -178,21 +176,19 @@ final class PhoneConnection: Sendable {
     }
 
     private func receive() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
-            if let data, !data.isEmpty {
+        connection.receive { data, _ in
+            if let data {
+                guard !self.state.withLock({ $0.closing }) else { return }
                 self.consume(data)
+                return
             }
-            if error != nil || isComplete {
-                // Answers what came in before the phone closed its side, then closes.
-                self.lastStep.withLock { last in
-                    let previous = last
-                    last = Task {
-                        await previous?.value
-                        self.closeWhenSent()
-                    }
+            // Answers what came in before the phone closed its side, or the connection failed, then closes.
+            self.lastStep.withLock { last in
+                let previous = last
+                last = Task {
+                    await previous?.value
+                    self.closeWhenSent()
                 }
-            } else if !self.state.withLock({ $0.closing }) {
-                self.receive()
             }
         }
     }
@@ -296,7 +292,7 @@ final class PhoneConnection: Sendable {
     }
 
     private func greeting(_ phone: PairedPhone) -> PhoneHelloResult {
-        PhoneHelloResult(mac: gate.macName, version: CanopyVersion.current, phone: phone.name)
+        PhoneHelloResult(mac: gate.macName, version: gate.version, phone: phone.name)
     }
 
     private func refuse(id: String, _ error: ControlError, closing: Bool) {
@@ -331,8 +327,6 @@ final class PhoneConnection: Sendable {
     /// Returns once the data has left, so closing afterwards cannot drop it.
     private func write(_ data: Data) async {
         guard !isClosed else { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            connection.send(content: data, completion: .contentProcessed { _ in continuation.resume() })
-        }
+        try? await connection.send(data)
     }
 }

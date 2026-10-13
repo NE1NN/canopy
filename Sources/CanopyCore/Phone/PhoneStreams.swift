@@ -11,7 +11,7 @@ final class PhoneStreams: Sendable {
 
     /// Refuses a new stream on a connection that has as many as it may.
     func reserve(on session: PhoneSession) throws {
-        let count = streams.withLock { $0[ObjectIdentifier(session.connection)]?.count ?? 0 }
+        let count = streams.withLock { $0[session.connectionID]?.count ?? 0 }
         guard count < Self.limit else {
             throw ControlError(
                 code: "too_many_streams", message: "Unsubscribe from a conversation or screen before opening another.")
@@ -19,7 +19,7 @@ final class PhoneStreams: Sendable {
     }
 
     func add(_ id: String, on session: PhoneSession, cancel: @escaping @Sendable () -> Void) {
-        let connection = ObjectIdentifier(session.connection)
+        let connection = session.connectionID
         let (first, replaced) = streams.withLock { streams in
             let first = streams[connection] == nil
             let replaced = streams[connection, default: [:]].updateValue(cancel, forKey: id)
@@ -34,7 +34,7 @@ final class PhoneStreams: Sendable {
     }
 
     func remove(_ id: String, on session: PhoneSession) {
-        let cancel = streams.withLock { $0[ObjectIdentifier(session.connection)]?.removeValue(forKey: id) }
+        let cancel = streams.withLock { $0[session.connectionID]?.removeValue(forKey: id) }
         cancel?()
     }
 }
