@@ -12,7 +12,7 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ChatHeader(pane: pane)
+            ChatHeader(pane: pane) { model.openInTerminal(pane) }
             ZStack(alignment: .bottom) {
                 ChatList(
                     chat: chat, rows: ChatRows.rows(for: chat), actions: actions, isAtBottom: $isAtBottom,
@@ -63,6 +63,7 @@ struct ChatView: View {
 /// The conversation's title, with the agent's state beside it.
 private struct ChatHeader: View {
     let pane: Pane
+    let openInTerminal: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -74,6 +75,16 @@ private struct ChatHeader: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
+            Button(action: openInTerminal) {
+                Label("Open in Terminal", systemImage: "terminal")
+                    .font(.system(size: 11.5))
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(ChatStyle.buttonFill, in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Go on with this conversation in a terminal")
         }
         .padding(.leading, 12)
         .padding(.trailing, 8)
@@ -82,5 +93,43 @@ private struct ChatHeader: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(.separator).frame(height: 1)
         }
+    }
+}
+
+/// Every Claude conversation of the selected row, with a search field, for Resume in a chat.
+struct ConversationsSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    var body: some View {
+        let all = model.conversations()
+        let shown = search.isEmpty ? all : all.filter { $0.title.localizedCaseInsensitiveContains(search) }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Resume in a chat").font(.headline)
+            TextField("Search", text: $search).textFieldStyle(.roundedBorder)
+            List(shown) { conversation in
+                Button {
+                    model.resume(conversation)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(conversation.title).lineLimit(1)
+                        Spacer()
+                        Text(conversation.modified.formatted(.relative(presentation: .named)))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(minHeight: 260)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 520, height: 420)
     }
 }

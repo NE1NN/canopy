@@ -50,6 +50,9 @@ struct RootView: View {
         }
         .animation(.snappy, value: model.toast)
         .fileImporter(isPresented: $model.isChoosingFolder, allowedContentTypes: [.folder]) { model.folderChosen($0) }
+        .sheet(isPresented: $model.showsConversations) {
+            ConversationsSheet()
+        }
         .sheet(isPresented: $model.isShowingCloneSheet) {
             CloneRepoSheet()
         }

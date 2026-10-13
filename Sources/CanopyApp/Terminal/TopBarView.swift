@@ -249,6 +249,21 @@ struct NewTabMenu: View {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
             .disabled(!model.canOpenChat)
+            let conversations = model.conversations()
+            if model.canOpenChat, !conversations.isEmpty {
+                Divider()
+                Section("Resume in a chat") {
+                    ForEach(conversations.prefix(5)) { conversation in
+                        Button {
+                            model.resume(conversation)
+                        } label: {
+                            Text(conversation.title)
+                            Text(conversation.modified.formatted(.relative(presentation: .named)))
+                        }
+                    }
+                    Button("More conversations…") { model.showsConversations = true }
+                }
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .medium))
