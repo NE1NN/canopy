@@ -297,10 +297,8 @@ struct ChatStatusLine: View {
 
     @ViewBuilder private var indicator: some View {
         if chat.isWorking && !isWaiting {
-            Image(systemName: "asterisk")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(ChatStyle.working)
-                .symbolEffect(.pulse, options: .repeating)
+            PulsingSymbol(name: "asterisk", color: NSColor(ChatStyle.working))
+                .frame(width: 13, height: 13)
         } else {
             Circle().fill(color).frame(width: 7, height: 7)
         }
@@ -872,5 +870,41 @@ struct ShellBlock: View {
         }
         .background(ChatStyle.codeFill, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
+    }
+}
+
+/// A symbol that pulses, as Working's asterisk does. Core Animation runs the pulse outside the app, where SwiftUI's
+/// symbol effect redrew the row on every frame for as long as Claude worked.
+struct PulsingSymbol: NSViewRepresentable {
+    let name: String
+    let color: NSColor
+
+    func makeNSView(context: Context) -> PulsingImageView {
+        let view = PulsingImageView()
+        view.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .bold))
+        view.contentTintColor = color
+        return view
+    }
+
+    func updateNSView(_ view: PulsingImageView, context: Context) {
+        view.contentTintColor = color
+    }
+}
+
+final class PulsingImageView: NSImageView {
+    /// A layer drops its animations when its view leaves a window, so the pulse starts each time the view joins one.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        wantsLayer = true
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1
+        pulse.toValue = 0.3
+        pulse.duration = 0.9
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(pulse, forKey: "pulse")
     }
 }

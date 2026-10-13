@@ -9,7 +9,8 @@ What it does with a message depends on how the message starts:
   say <text>     streams <text> a word at a time, then ends the turn
   run <command>  asks to run <command> with Bash, then says whether it ran
   ask            asks a question with AskUserQuestion
-  slow [<n>]     streams <n> words (default 200), stopping early if interrupted
+  slow [<n>]     streams <n> words (default 200) as one paragraph, stopping early if interrupted
+  prose [<n>]    streams <n> words (default 600) in paragraphs of 60, as a reply reads
   pause [<n>]    streams one word, then holds the turn open until <n> more messages (default 1) wait, or an
                  interrupt
   hold           asks to run `make test` and never ends the turn on its own
@@ -248,6 +249,11 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "prose" or text.startswith("prose "):
+        count = int(text[6:]) if text.startswith("prose ") else 600
+        words = ["word%d" % i for i in range(count)]
+        stream("\n\n".join(" ".join(words[i:i + 60]) for i in range(0, count, 60)))
+        finish("prose")
     elif text == "tail" or text == "tail hold":
         tool_id, task = "toolu_" + uuid.uuid4().hex[:20], "b" + uuid.uuid4().hex[:8]
         emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": "count"}}]))

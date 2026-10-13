@@ -880,15 +880,22 @@ public final class ChatSession {
         for toolUse in Array(tasks.keys) { endTail(toolUse) }
     }
 
-    /// Draws the new text now if the last draw was at least `streamingInterval` ago, or else once it is.
+    /// How long to leave between draws. Each one lays out the growing block again, so a long paragraph or code block
+    /// is drawn less often, which keeps the cost of streaming about the same however long the block gets.
+    static func streamingInterval(growing length: Int) -> Duration {
+        min(max(streamingInterval, .microseconds(length * 20)), .milliseconds(300))
+    }
+
+    /// Draws the new text now if the last draw was long enough ago, or else once it is.
     private func publishStreamingSoon() {
         let now = ContinuousClock.now
-        guard let last = lastStreamingPublish, now - last < Self.streamingInterval else {
+        let interval = Self.streamingInterval(growing: (streaming?.growingLength ?? 0) + pendingText.utf8.count)
+        guard let last = lastStreamingPublish, now - last < interval else {
             publishStreaming()
             return
         }
         guard flush == nil else { return }
-        let wait = Self.streamingInterval - (now - last)
+        let wait = interval - (now - last)
         flush = Task { [weak self] in
             try? await Task.sleep(for: wait)
             guard let self, !Task.isCancelled else { return }

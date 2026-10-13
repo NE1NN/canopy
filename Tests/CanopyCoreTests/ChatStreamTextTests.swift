@@ -49,4 +49,47 @@ struct ChatStreamTextTests {
 
         #expect(text.blocks == ChatMarkdown.parse(whole))
     }
+
+    /// Each draw looks for paragraph breaks only past the settled blocks, and must end where a whole parse would.
+    @Test func streamingInPiecesSettlesAsTheWholeTextWould() {
+        let text = """
+            First paragraph.
+
+            ```swift
+            let a = 1
+
+            let b = 2
+            ```
+
+            Second paragraph
+            with two lines.
+
+            ~~~~
+            ```
+            still code
+
+            ~~~~
+
+            Last one.
+            """
+        var whole = ChatStreamText()
+        whole.append(text)
+        for size in [1, 3, 7, 40] {
+            var pieces = ChatStreamText()
+            var rest = Substring(text)
+            while !rest.isEmpty {
+                pieces.append(String(rest.prefix(size)))
+                rest = rest.dropFirst(size)
+            }
+            #expect(pieces.blocks == whole.blocks)
+            #expect(pieces.settledCount == whole.settledCount)
+        }
+        #expect(whole.growingLength == "Last one.".utf8.count)
+    }
+
+    @MainActor @Test func aLongBlockIsDrawnLessOften() {
+        #expect(ChatSession.streamingInterval(growing: 200) == ChatSession.streamingInterval)
+        #expect(ChatSession.streamingInterval(growing: 5_000) == .milliseconds(100))
+        #expect(ChatSession.streamingInterval(growing: 100_000) == .milliseconds(300))
+    }
 }
