@@ -55,6 +55,13 @@ public enum HostPaths {
         return fitting(home.root.appending(path: "hosts/\(hash).sock").path, else: "\(homeID)-\(hash).sock", uid: uid)
     }
 
+    /// The app's end of the forward to a host's `box.sock`.
+    public static func boxSocket(home: CanopyHome, homeID: String, alias: String, uid: uid_t = getuid()) -> String {
+        let hash = HomeID.hash(alias)
+        return fitting(
+            home.root.appending(path: "hosts/\(hash)-box.sock").path, else: "\(homeID)-\(hash)-box.sock", uid: uid)
+    }
+
     /// The host's end of the forwarded relay socket, in the folder of this home's files under the host's `home`.
     public static func relaySocket(home: String, homeID: String) -> String {
         HostLayout.relaySocket(home: home, homeID: homeID)
