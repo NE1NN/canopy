@@ -83,7 +83,7 @@ struct PhoneServerTests {
             server = PhoneServer(
                 source: source,
                 settings: PhoneServerSettings(
-                    registryFile: URL(fileURLWithPath: dir.sub("phones.json")), serverName: "hindie-box",
+                    registryFile: URL(fileURLWithPath: dir.sub("phones.json")), serverName: { "hindie-box" },
                     kind: PhoneServerKind.box, version: "1.2.3", port: 0, addresses: { ["127.0.0.1"] },
                     tailnetName: { nil },
                     closedReason: { "No tailnet address." }, record: { event in recorded.withLock { $0.append(event) } }
@@ -206,7 +206,8 @@ struct PhoneServerTests {
         let server = PhoneServer(
             source: FakePhoneSource(),
             settings: PhoneServerSettings(
-                registryFile: URL(fileURLWithPath: dir.sub("phones.json")), serverName: "box", version: "1", port: 0,
+                registryFile: URL(fileURLWithPath: dir.sub("phones.json")), serverName: { "box" }, version: "1",
+                port: 0,
                 addresses: { [] }, tailnetName: { nil }, closedReason: { "No tailnet address." }, record: { _ in }))
         await server.refresh()
 

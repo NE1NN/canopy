@@ -35,6 +35,21 @@ struct BoxAgentsTests {
         #expect(await daemon.hook(pane: "b99", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
     }
 
+    /// The Mac opens a box row's pane itself, through tmux, and its agent can report before the box's next poll.
+    @Test func aHookFromASessionTheBoxHasNotPolledYetCounts() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        try await home.server.tmux.newSession("p7", folder: home.clone, environment: [:])
+
+        let state = await daemon.hook(pane: "p7", input: Self.hookInput("UserPromptSubmit"), startedAt: Date())
+
+        #expect(state == .working)
+        #expect(await daemon.snapshot().panes.map(\.id) == ["p7"])
+        // A session outside the box's rows is still no pane of the box's.
+        try await home.server.tmux.newSession("p8", folder: home.dir.path, environment: [:])
+        #expect(await daemon.hook(pane: "p8", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
+    }
+
     @Test func anOlderHookIsIgnored() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

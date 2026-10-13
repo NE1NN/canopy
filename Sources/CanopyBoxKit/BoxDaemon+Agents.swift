@@ -23,8 +23,8 @@ extension BoxDaemon {
     /// Applies what a Claude Code hook read on its standard input, dated by when the hook started. Nil for a pane the
     /// box does not have, or an event that says nothing about the pane.
     @discardableResult
-    public func hook(pane id: String, input: Data, startedAt: Date) -> AgentState? {
-        guard pane(id) != nil, let report = ClaudeHookMapping.report(from: input, startedAt: startedAt) else {
+    public func hook(pane id: String, input: Data, startedAt: Date) async -> AgentState? {
+        guard let report = ClaudeHookMapping.report(from: input, startedAt: startedAt), await takeSession(id) else {
             return nil
         }
         return self.report(pane: id, report)
@@ -60,7 +60,7 @@ extension BoxDaemon {
                 let input = kept.stdin.flatMap({ Data(base64Encoded: $0) })
             else { continue }
             let startedAt = Date(timeIntervalSince1970: (kept.kept ?? Date().timeIntervalSince1970) - (kept.age ?? 0))
-            hook(pane: pane, input: input, startedAt: startedAt)
+            await hook(pane: pane, input: input, startedAt: startedAt)
         }
     }
 

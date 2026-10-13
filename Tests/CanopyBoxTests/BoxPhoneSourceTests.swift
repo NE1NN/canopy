@@ -167,13 +167,35 @@ struct BoxPhoneSourceTests {
 
 /// The box's phone methods, which the Mac's `phone ... --on` reaches through the link.
 struct BoxPhonesMethodsTests {
+    /// `host upgrade` starts the daemon before it configures it, so the box's name for phones is its alias on the Mac
+    /// from then on, not the name it started with.
+    @Test func phonesSeeTheNameTheMacGaveTheBox() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon(configured: false)
+        try "127.0.0.1 0".write(toFile: home.paths.folder + "/phone-listen", atomically: true, encoding: .utf8)
+        let phones = BoxMain.phoneServer(daemon: daemon, paths: home.paths, environment: [:])
+        await phones.refresh()
+        defer { phones.stop() }
+        try BoxFiles.write(try JSONEncoder().encode(home.config), to: home.paths.configFile)
+        let port = try #require(await phones.status().endpoints.first?.port)
+        let code = await phones.registry.newCode().code
+
+        let client = try PhoneTestClient(port: port)
+        let paired = try await offPool {
+            try client.call(PhoneMethod.pair, try .from(PhonePairParams(code: code, name: "iPhone")))
+        }
+
+        let result = try #require(paired.result).decode(PhonePairResult.self)
+        #expect(result.mac == "box" && result.kind == PhoneServerKind.box)
+    }
+
     @Test func pairingGivesACodeAndListingShowsNoPhonesYet() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
         let phones = PhoneServer(
             source: BoxPhoneSource(daemon: daemon),
             settings: PhoneServerSettings(
-                registryFile: URL(fileURLWithPath: home.paths.folder + "/phones.json"), serverName: "box",
+                registryFile: URL(fileURLWithPath: home.paths.folder + "/phones.json"), serverName: { "box" },
                 version: "1", port: 0, addresses: { ["127.0.0.1"] }, tailnetName: { nil }, closedReason: { "off" },
                 record: { _ in }))
         await phones.refresh()

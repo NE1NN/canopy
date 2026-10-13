@@ -36,8 +36,9 @@ public enum PhoneActivity: Sendable, Equatable {
 /// What a phone server needs from where it runs.
 public struct PhoneServerSettings: Sendable {
     public var registryFile: URL
-    /// The name phones see, such as the Mac's or the host's.
-    public var serverName: String
+    /// The name phones see, such as the Mac's or the host's, asked at each pairing and hello, since a box learns its
+    /// name from the Mac after it starts.
+    public var serverName: @Sendable () -> String
     /// `PhoneServerKind`'s, which hello, pairing, and the pairing link say.
     public var kind: String
     public var version: String
@@ -54,7 +55,8 @@ public struct PhoneServerSettings: Sendable {
     public var record: @Sendable (PhoneActivity) -> Void
 
     public init(
-        registryFile: URL, serverName: String, kind: String = PhoneServerKind.mac, version: String, port: UInt16,
+        registryFile: URL, serverName: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
+        version: String, port: UInt16,
         addresses: @escaping @Sendable () -> [String], tailnetName: @escaping @Sendable () async -> String?,
         closedReason: @escaping @Sendable () -> String, statusNote: String? = nil,
         logsCommands: @escaping @Sendable () -> Bool = { false }, record: @escaping @Sendable (PhoneActivity) -> Void
