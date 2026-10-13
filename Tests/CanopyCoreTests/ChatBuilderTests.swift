@@ -273,6 +273,7 @@ struct ChatBuilderRecordedTests {
         case .plan: "plan"
         case .notice: "notice"
         case .shell: "shell"
+        case .artifact: "artifact"
         }
     }
 

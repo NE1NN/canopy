@@ -225,14 +225,30 @@ public final class ChatSession {
     /// An interrupt went out this turn, so a permission request still on its way is turned down.
     @ObservationIgnored private var interrupting = false
     @ObservationIgnored private var isOpen = false
+    @ObservationIgnored private let thumbnails: ArtifactThumbnails?
+
+    /// Called for each artifact Claude publishes while the chat watches, never for ones read from history.
+    @ObservationIgnored public var onArtifact: (ChatArtifact) -> Void = { _ in }
+    /// Counts snapshots saved, so cards redraw with theirs.
+    public private(set) var thumbnailsSaved = 0
+
+    /// The snapshot of an artifact's version, once one is saved.
+    public func thumbnail(for artifact: ChatArtifact) -> URL? {
+        thumbnails?.existing(for: artifact)
+    }
+
+    public func thumbnailSaved() {
+        thumbnailsSaved += 1
+    }
 
     public init(
         model: String?, mode: String, sessionID: String?, title: String, launcher: @escaping Launcher,
         transcript: @escaping (String) -> URL?, trust: ChatTrust,
         tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())"),
-        shell: ((String) -> TerminalLaunch)? = nil
+        shell: ((String) -> TerminalLaunch)? = nil, thumbnails: ArtifactThumbnails? = nil
     ) {
         self.shell = shell
+        self.thumbnails = thumbnails
         self.tasksRoot = tasksRoot
         self.model = model
         self.mode = mode
@@ -608,6 +624,7 @@ public final class ChatSession {
             // A /clear or a new session since then makes the page belong to another conversation.
             guard let (older, cursor) = loaded, olderCursor == before, transcriptURL == url else { return }
             builder.prepend(older)
+            _ = builder.takePublished()
             olderCursor = cursor
             hasOlder = cursor != nil
         }
@@ -624,6 +641,7 @@ public final class ChatSession {
         }
         transcriptURL = url
         for line in page.lines { builder.add(line: line) }
+        _ = builder.takePublished()
         olderCursor = page.older
         hasOlder = page.older != nil
     }
@@ -743,6 +761,7 @@ public final class ChatSession {
         }
         if message.isReplay { taken(message.line) }
         builder.add(line: message.line)
+        for artifact in builder.takePublished() { onArtifact(artifact) }
     }
 
     /// Puts messages Claude never took back in the composer, so nothing the author wrote is lost.

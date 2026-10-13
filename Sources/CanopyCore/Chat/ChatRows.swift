@@ -8,6 +8,8 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     /// Claude Code does not trust the folder yet.
     case trust
     case item(ChatItem, expanded: Bool = false)
+    /// A published artifact's card, with its snapshot once there is one.
+    case artifact(ChatItem, ChatArtifact, thumbnail: URL?)
     /// A block of the text Claude is writing. Settled blocks keep their key, so only the growing one redraws.
     case streaming(index: Int, block: ChatBlock, growth: Int)
     case queued(QueuedPrompt)
@@ -23,7 +25,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
         switch self {
         case .empty: "empty"
         case .trust: "trust"
-        case .item(let item, _): item.id
+        case .item(let item, _), .artifact(let item, _, _): item.id
         case .streaming(let index, _, _): "streaming-\(index)"
         case .queued(let prompt): "queued-" + prompt.id
         case .permission(let permission, _, _): "permission-" + permission.id
@@ -43,6 +45,7 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
             } else {
                 "\(item.id)#\(item.revision)#\(expanded)"
             }
+        case .artifact(let item, _, let thumbnail): "\(item.id)#\(item.revision)#\(thumbnail != nil)"
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
@@ -59,7 +62,12 @@ public enum ChatRows {
         // A question or plan waiting on the author shows as its card, not also as a line above it.
         let waiting = Set(chat.pendingPermissions.compactMap { $0.kind == .permission ? nil : $0.toolUse })
         var rows: [ChatRow] = []
+        _ = chat.thumbnailsSaved
         for item in chat.items where !waiting.contains(item.id) {
+            if case .artifact(let artifact) = item.content {
+                rows.append(.artifact(item, artifact, thumbnail: chat.thumbnail(for: artifact)))
+                continue
+            }
             rows.append(.item(item, expanded: chat.expanded.contains(item.id)))
             // A running command shows what it prints, under its line.
             guard case .tools(let group) = item.content else { continue }

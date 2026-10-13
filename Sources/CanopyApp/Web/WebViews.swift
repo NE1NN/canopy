@@ -19,6 +19,8 @@ final class WebViews {
     /// Whether a page is still in a row, so a view drawn a moment after it closed never brings its web view back.
     var isOpen: (WebPageID) -> Bool = { _ in false }
     var dismissPopUp: (WKWebView) -> Void = { _ in }
+    /// A page finished loading.
+    var onLoaded: (WebPageController) -> Void = { _ in }
 
     init() {
         configuration = WKWebViewConfiguration()
@@ -217,7 +219,9 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView === self.webView { restartedAfterCrash = false }
+        guard webView === self.webView else { return }
+        restartedAfterCrash = false
+        owner?.onLoaded(self)
     }
 
     /// Only a page the author can see opens the browser or a pop-up, so one in a background row cannot.

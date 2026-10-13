@@ -118,6 +118,11 @@ public final class TerminalStore {
     var selectedTabByRow: [String: TabID] = [:]
     /// Each row's panel page, keyed by row path.
     public internal(set) var panelsByRow: [String: WebPanel] = [:]
+    /// Pages a chat wants a snapshot of once they load, for an artifact's card.
+    @ObservationIgnored var thumbnailWishes: [WebPageID: ThumbnailWish] = [:]
+    /// Loads a page again, as for a new version of an artifact it shows. The app sets it.
+    @ObservationIgnored public var onReloadPage: (WebPageID) -> Void = { _ in }
+    @ObservationIgnored public lazy var artifactThumbnails = ArtifactThumbnails(folder: settings.home.thumbnailsFolder)
     /// Where a new page opens: where the author last moved one.
     public var webPlacement = WebPlacement.panel {
         didSet {
@@ -403,9 +408,13 @@ public final class TerminalStore {
             shell: { [settings] command in
                 let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
                 return settings.script(command, environment: environment, directory: context.rowPath)
-            })
+            }, thumbnails: artifactThumbnails)
         let pane = Pane(id: id, context: context, chat: chat, activity: activity)
         chat.onChange = { [weak self] in self?.onChange() }
+        chat.onArtifact = { [weak self, weak pane] artifact in
+            guard let self, let pane, let url = artifact.url else { return }
+            showArtifact(url, from: pane, thumbnail: artifact.thumbnailKey, reloading: true)
+        }
         chat.heldBy = { [weak self] session in self?.terminal(holdingSession: session)?.id.description }
         chat.showHolder = { [weak self, weak chat] in
             guard let self, let session = chat?.sessionID, let holder = terminal(holdingSession: session) else {

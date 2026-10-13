@@ -5,6 +5,9 @@ import SwiftUI
 struct ChatActions {
     var trust: () -> Void
     var declineTrust: () -> Void
+    /// Opens a published artifact in the row: beside the chat, or in a tab.
+    var openArtifact: (ChatArtifact, WebPlacement) -> Void
+    var openInBrowser: (URL) -> Void
 }
 
 /// One row of the conversation, laid out in the chat's centered column.
@@ -29,6 +32,8 @@ struct ChatRowView: View {
             TrustCard(onTrust: actions.trust, onDecline: actions.declineTrust)
         case .item(let item, let expanded):
             ChatItemView(item: item, expanded: expanded) { chat.toggle(item.id) }
+        case .artifact(_, let artifact, let thumbnail):
+            ArtifactCard(artifact: artifact, thumbnail: thumbnail, actions: actions)
         case .streaming(_, let block, _):
             MarkdownView(blocks: [block])
         case .queued(let queued):
@@ -76,6 +81,9 @@ private struct ChatItemView: View {
             NoticeLine(text: notice)
         case .shell(let shell):
             ShellBlock(shell: shell, expanded: expanded, toggle: toggle)
+        case .artifact:
+            // Drawn as a row of its own, with its snapshot.
+            EmptyView()
         }
     }
 }

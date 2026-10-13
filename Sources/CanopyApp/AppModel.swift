@@ -1089,6 +1089,44 @@ final class AppModel {
         webViews.isOpen = { [weak self] in self?.terminals.page($0) != nil }
         webViews.dismissPopUp = { [weak self] in self?.dismissPopUp($0) }
         terminals.onPageClosed = { [weak self] in self?.webViews.drop($0) }
+        terminals.onReloadPage = { [weak self] in self?.webViews.existing($0)?.reload() }
+        webViews.onLoaded = { [weak self] in self?.snapshotIfWanted($0) }
+    }
+
+    /// Keeps a snapshot of an artifact a chat published, for its card, once the page has drawn.
+    private func snapshotIfWanted(_ controller: WebPageController) {
+        guard let wish = terminals.takeThumbnailWish(for: controller.pageID, at: controller.webView.url) else { return }
+        Task { [weak self, weak controller] in
+            // An artifact draws its page in a frame after the outer page loads.
+            try? await Task.sleep(for: .seconds(2))
+            guard let controller, controller.webView.window != nil else { return }
+            let configuration = WKSnapshotConfiguration()
+            configuration.snapshotWidth = 256
+            guard let image = try? await controller.webView.takeSnapshot(configuration: configuration),
+                let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+                let png = bitmap.representation(using: .png, properties: [:])
+            else { return }
+            do {
+                try self?.terminals.saveThumbnail(png, for: wish)
+            } catch {
+                self?.show("Canopy could not save the artifact's snapshot: \(error)")
+            }
+        }
+    }
+
+    /// Shows an artifact from its card. Only its current version can give the card a snapshot.
+    func showArtifact(_ artifact: ChatArtifact, placement: WebPlacement, from pane: Pane) {
+        guard let url = artifact.url else { return }
+        let key = artifact.replacedBy == nil ? artifact.thumbnailKey : nil
+        terminals.showArtifact(url, from: pane, placement: placement, thumbnail: key)
+        if selectedRowPath != pane.context.rowPath { reveal(pane.context.rowPath) }
+    }
+
+    /// A link clicked in a chat: an artifact opens beside it, other web links in the browser.
+    func openLink(_ url: URL, from pane: Pane) -> OpenURLAction.Result {
+        guard ArtifactLink(url) != nil else { return open(url) }
+        terminals.showArtifact(url, from: pane)
+        return .handled
     }
 
     /// The page whose web view has the keyboard, if any.

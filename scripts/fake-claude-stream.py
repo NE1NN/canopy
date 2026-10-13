@@ -20,6 +20,7 @@ What it does with a message depends on how the message starts:
   plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
+  artifact [<t>] publishes an artifact titled <t> (default "Canopy Board"), one version higher each time
   anything else  answers "You said: <message>"
 FAKE_CLAUDE_DELAY sets the seconds between streamed words (default 0.01), and FAKE_CLAUDE_VERSION the version it
 reports (default 2.1.296).
@@ -158,6 +159,10 @@ def finish(text, error=False):
     hook("Stop", last_assistant_message=text)
 
 
+# Publishes per artifact URL in this process, for their versions.
+published = {}
+
+
 def turn(text):
     global mode
     interrupted.clear()
@@ -195,6 +200,27 @@ def turn(text):
                                   "is_error": True}]))
             stream("I did not run it.")
             finish("I did not run it.")
+    elif text == "artifact" or text.startswith("artifact "):
+        # As Claude Code 2.1.296 publishes: a tool call, then its result with the page's details.
+        title = text[9:] or "Canopy Board"
+        slug = "".join(c for c in title.title() if c.isalnum())
+        url = "https://claude.ai/artifact/Fake" + slug
+        published[url] = published.get(url, 0) + 1
+        version = published[url]
+        tool_id = "toolu_" + uuid.uuid4().hex[:20]
+        path = "/tmp/" + slug.lower() + "/index.html"
+        emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Artifact",
+                                   "input": {"file_path": path, "icon": "board"}}]))
+        details = {"url": url, "path": path, "artifact_id": "fake-" + slug.lower(), "title": title,
+                   "updated": version > 1, "icon": "board", "audience": "owner", "seq": version,
+                   "version": "%d-a" % version}
+        content = "Published %s at %s (Version %d, version id %d-a)" % (path, url, version, version)
+        message = record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": content}],
+                         toolUseResult=details)
+        message["tool_use_result"] = details
+        emit(message)
+        stream("It's open beside this chat.")
+        finish("It's open beside this chat.")
     elif text == "ask":
         questions = [{"question": "Which color?", "header": "Color", "multiSelect": False,
                       "options": [{"label": "Blue (Recommended)", "description": "Calm"},

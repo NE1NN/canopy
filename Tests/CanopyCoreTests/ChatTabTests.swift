@@ -157,6 +157,44 @@ struct ChatTabTests {
         #expect(store.selectedTab(inRow: dir.path)?.id == tabs[1].id)
     }
 
+    @Test func aRepublishReloadsThePanelInsteadOfOpeningAnother() async throws {
+        var reloads: [WebPageID] = []
+        terminals.onReloadPage = { reloads.append($0) }
+        terminals.openTab(for: context)
+        let (_, pane) = terminals.openChat(for: context)
+        defer { terminals.closeAll() }
+        let chat = try #require(pane.chat)
+
+        chat.send("artifact Board")
+        #expect(await eventually { !chat.isWorking })
+
+        let page = try #require(terminals.panelsByRow[dir.path]?.page)
+        #expect(page.url.absoluteString == "https://claude.ai/artifact/FakeBoard")
+        #expect(reloads.isEmpty)
+        let wish = try #require(terminals.takeThumbnailWish(for: page.id, at: page.url))
+        #expect(wish.key == "fake-board-v1")
+        #expect(wish.pane == pane.id)
+
+        chat.send("artifact Board")
+        #expect(await eventually { !chat.isWorking && reloads.count == 1 })
+
+        #expect(terminals.panelsByRow[dir.path]?.page === page)
+        #expect(reloads == [page.id])
+        #expect(terminals.pages(inRow: dir.path).count == 1)
+        // A page that went to sign in instead keeps the wish for when it comes back.
+        #expect(terminals.takeThumbnailWish(for: page.id, at: URL(string: "https://claude.ai/login")) == nil)
+        let second = try #require(terminals.takeThumbnailWish(for: page.id, at: page.url))
+        #expect(second.key == "fake-board-v2")
+
+        let cardKey = { ChatRows.rows(for: chat).last { if case .artifact = $0 { true } else { false } }?.key }
+        let before = cardKey()
+        try terminals.saveThumbnail(Data([1]), for: second)
+        #expect(chat.thumbnailsSaved == 1)
+        #expect(cardKey() != before)
+        let card = chat.items.compactMap { if case .artifact(let artifact) = $0.content { artifact } else { nil } }.last
+        #expect(chat.thumbnail(for: try #require(card)) != nil)
+    }
+
     @Test func aSavedChatTabRoundTripsThroughJSON() throws {
         let tab = SavedTab(name: "Plan", chat: SavedChat(session: "s-1", model: nil, mode: "plan", title: "Plan"))
 
