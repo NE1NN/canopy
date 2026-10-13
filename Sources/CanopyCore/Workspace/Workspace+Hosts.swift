@@ -218,12 +218,17 @@ extension Workspace {
     }
 
     /// Forgets a host without rows. Its files on the host stay.
-    public func removeHost(alias: String) async throws {
-        guard hosts.hosts[alias] != nil else {
+    /// Forgets a host without rows. An upgraded host's canopy-box stops first, as its service would otherwise run on
+    /// with no Mac; the host is not woken for it. Returns what could not be done.
+    @discardableResult
+    public func removeHost(alias: String) async throws -> [String] {
+        guard let entry = hosts.hosts[alias] else {
             throw WorkspaceError.hostNotFound(alias, known: hosts.hosts.keys.sorted())
         }
         let rows = state.repos.flatMap(\.remote).filter { $0.host == alias }.map(\.standIn)
         guard rows.isEmpty else { throw WorkspaceError.hostHasRows(alias, rows: rows) }
+        var warnings: [String] = []
+        if entry.box, let warning = await stopBox(alias, entry) { warnings.append(warning) }
         try HostsConfigFile(url: home.configFile).remove(alias)
         await hostConnections.removeValue(forKey: alias)?.stop()
         preparedHosts[alias] = nil
@@ -232,6 +237,7 @@ extension Workspace {
         // A host added again under the alias, maybe another machine, never gets this one's key.
         try? hostTooling.wakeKeys.delete(alias, home: home)
         activity.record(ActivityType.hostRemoved, data: ["host": .string(alias)])
+        return warnings
     }
 
     public func hostListing() async -> HostListing {

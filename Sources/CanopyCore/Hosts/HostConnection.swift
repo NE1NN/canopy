@@ -96,7 +96,8 @@ public actor HostConnection {
     }
 
     /// Returns once the master is up, starting it when it is not. Callers at the same time share one attempt.
-    public func connect() async throws {
+    /// Without `waking`, a host that does not answer fails at once rather than being woken, as for removing it.
+    public func connect(waking: Bool = true) async throws {
         guard !stopped else { throw Self.stoppedError(alias) }
         lastUse = clock.now
         // A dropped connection takes the socket at once, but its process a moment later. ssh sent through a master
@@ -114,7 +115,7 @@ public actor HostConnection {
             try await connecting.value
             return
         }
-        let attempt = Task { try await self.establish() }
+        let attempt = Task { try await self.establish(waking: waking) }
         connecting = attempt
         defer { connecting = nil }
         try await attempt.value
@@ -249,7 +250,7 @@ public actor HostConnection {
         observers.removeAll()
     }
 
-    private func establish() async throws {
+    private func establish(waking: Bool) async throws {
         let deadline = clock.now + Self.giveUpAfter
         set(.connecting)
         while true {
@@ -266,7 +267,7 @@ public actor HostConnection {
                 activity.record(ActivityType.hostConnected, data: ["host": .string(alias)])
                 return
             }
-            if noRetryCanFix(lastError ?? "") || clock.now >= deadline {
+            if noRetryCanFix(lastError ?? "") || clock.now >= deadline || !waking {
                 set(.unreachable)
                 activity.record(
                     ActivityType.hostUnreachable,

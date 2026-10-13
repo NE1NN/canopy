@@ -189,7 +189,8 @@ if ((box)); then
     git -C "$work/solis" -c user.email=fixture@example.com -c user.name=fixture commit -q --allow-empty -m init
     git clone -q "$work/solis" "$host_home/solis"
     "$cli" repo add "$work/solis" >/dev/null
-    "$cli" host add devbox --repo "solis=$host_home/solis" >/dev/null
+    # Upgraded below, once its test listener and metadata service are in place.
+    "$cli" host add devbox --repo "solis=$host_home/solis" --no-box >/dev/null
     box_id=$("$cli" host list --json | /usr/bin/python3 -c \
         'import json, sys; print([h["tmuxServer"] for h in json.load(sys.stdin) if h["alias"] == "devbox"][0])')
     box_id=${box_id#canopy-}

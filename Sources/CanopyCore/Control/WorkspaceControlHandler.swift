@@ -223,9 +223,24 @@ public struct WorkspaceControlHandler: Sendable {
 
         case HostMethod.add:
             let params = try request.decodeParams(HostAddParams.self)
-            let info = try await workspace.addHost(
+            let isNew = workspace.hosts.hosts[params.alias] == nil
+            var info = try await workspace.addHost(
                 alias: params.alias, repos: params.repos, wake: params.wake,
                 idleDetachMinutes: params.idleDetachMinutes, agentCommand: params.agentCommand)
+            // A new host runs canopy-box from the start. One that cannot stays on this Mac's relay, as it was added.
+            if isNew, params.box != false {
+                do {
+                    let upgraded = try await rows.upgradeHost(params.alias)
+                    info.box = true
+                    info.warnings += upgraded.warnings
+                } catch {
+                    let reason =
+                        (error as? WorkspaceError)?.message ?? (error as? ControlError)?.message ?? "\(error)"
+                    info.warnings.append(
+                        "canopy-box did not start on \(params.alias), so the host runs through this Mac: \(reason) "
+                            + "Run `canopy host upgrade \(params.alias)` to try again.")
+                }
+            }
             return try .from(await withPanes(info))
 
         case HostAttachMethod.attach:
@@ -267,8 +282,8 @@ public struct WorkspaceControlHandler: Sendable {
 
         case HostMethod.remove:
             let params = try request.decodeParams(HostRemoveParams.self)
-            try await workspace.removeHost(alias: params.alias)
-            return .object(["alias": .string(params.alias)])
+            let warnings = try await workspace.removeHost(alias: params.alias)
+            return .object(["alias": .string(params.alias), "warnings": .array(warnings.map(JSONValue.string))])
 
         case GroupMethod.list:
             let params = try request.decodeParams(GroupListParams.self)

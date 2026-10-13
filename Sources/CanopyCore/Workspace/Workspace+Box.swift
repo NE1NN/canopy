@@ -304,6 +304,22 @@ extension Workspace {
         }
     }
 
+    /// Stops an upgraded host's canopy-box and its service for good, as the host is removed. Returns why it could not.
+    func stopBox(_ alias: String, _ entry: HostEntry) async -> String? {
+        await stopBoxLink(alias)
+        let connection = await connection(alias, entry)
+        do {
+            try await connection.connect(waking: false)
+            _ = try? await output(of: markCommand(adopted: false), on: connection)
+            try await BoxInstall.stop(on: connection, homeID: homeID)
+            return nil
+        } catch {
+            let reason = (error as? WorkspaceError)?.message ?? "\(error)"
+            return "canopy-box may still run on \(alias), as Canopy could not reach it to stop it: \(reason) "
+                + "Run `systemctl --user disable --now canopy-box-\(homeID)` there."
+        }
+    }
+
     /// Switches a host back: the box hands back its rows and panes, stops, and the Mac tracks the host again. Returns
     /// what the box gave back.
     public func undoUpgrade(_ alias: String) async throws -> (HostUpgradeResult, BoxReleaseResult) {

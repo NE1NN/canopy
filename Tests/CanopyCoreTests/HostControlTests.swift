@@ -65,17 +65,32 @@ struct HostControlTests {
         let clone: String
 
         init(path: String = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin") async throws {
+            try await self.init(path: path, boxBinaries: nil)
+        }
+
+        /// `boxBinaries` is where canopy-box comes from for an upgrade; nil for the build's own.
+        init(path: String = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", boxBinaries: BoxBinaries?) async throws {
             dir = try TempDir()
             let host = try FakeHost(in: dir, path: path)
             self.host = host
             repo = try await Fixture.repo(in: dir, name: "demo", origin: true)
             clone = dir.sub("host-box/Projects/demo")
             try await Fixture.git.run(["clone", "--quiet", dir.sub("demo-origin.git"), clone])
-            workspace = Workspace(
-                home: CanopyHome(path: dir.sub("home")), git: Fixture.git,
-                hostTooling: HostTooling(sshExecutable: FakeHost.script, environment: { host.environment }))
+            var tooling = HostTooling(sshExecutable: FakeHost.script, environment: { host.environment })
+            if let boxBinaries { tooling.boxBinaries = boxBinaries }
+            workspace = Workspace(home: CanopyHome(path: dir.sub("home")), git: Fixture.git, hostTooling: tooling)
             try await workspace.start()
             try await workspace.addRepo(path: repo)
+        }
+
+        /// The control socket's handler over this workspace, as `canopy host` reaches it.
+        @MainActor func handler() -> WorkspaceControlHandler {
+            let terminals = Fixture.terminals(dir)
+            let plugins = PluginHost(
+                workspace: workspace, terminals: terminals, plugins: [], secrets: MemorySecretStore(), bundleID: "test",
+                trash: FolderMovingTrash(into: dir.sub("trash")))
+            return WorkspaceControlHandler(
+                rows: RowLifecycle(workspace: workspace, terminals: terminals), plugins: plugins, ui: RecordingUI())
         }
     }
 
@@ -316,6 +331,79 @@ struct HostControlTests {
         try HostsConfigFile(url: setup.workspace.home.configFile).save("box", HostEntry(repos: ["demo": setup.clone]))
 
         #expect(await setup.workspace.hostListing().hosts.map(\.state) == [.idle])
+        await setup.workspace.stop()
+    }
+}
+
+/// `host add` runs canopy-box on a new host from the start, and `host rm` stops it.
+struct HostBoxLifecycleTests {
+    func add(_ setup: HostControlTests.Setup, box: Bool? = nil) async throws -> HostInfo {
+        let response = await setup.handler().handle(
+            ControlRequest(
+                method: HostMethod.add,
+                params: try .from(HostAddParams(alias: "box", repos: ["demo": "~/Projects/demo"], box: box))))
+        return try #require(response.result).decode(HostInfo.self)
+    }
+
+    @Test func aNewHostWhoseBoxCannotStartStaysOnTheRelayAndSaysHowToRetry() async throws {
+        let setup = try await HostControlTests.Setup(boxBinaries: BoxBinaries(folder: "/nonexistent-canopy-box"))
+
+        let info = try await add(setup)
+
+        #expect(!info.box)
+        #expect(
+            info.warnings.contains { $0.contains("canopy-box did not start on box") && $0.contains("host upgrade box") }
+        )
+        #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts["box"]?.box == false)
+        await setup.workspace.stop()
+    }
+
+    @Test func noBoxTriesNoUpgrade() async throws {
+        let setup = try await HostControlTests.Setup(boxBinaries: BoxBinaries(folder: "/nonexistent-canopy-box"))
+
+        let info = try await add(setup, box: false)
+
+        #expect(!info.box)
+        #expect(!info.warnings.contains { $0.contains("canopy-box") })
+        await setup.workspace.stop()
+    }
+
+    @Test func addingAnExistingHostAgainUpgradesNothing() async throws {
+        let setup = try await HostControlTests.Setup(boxBinaries: BoxBinaries(folder: "/nonexistent-canopy-box"))
+        _ = try await add(setup, box: false)
+
+        let info = try await add(setup)
+
+        #expect(!info.warnings.contains { $0.contains("canopy-box") })
+        await setup.workspace.stop()
+    }
+
+    /// The box's service would otherwise run on with no Mac. A host that is off is not woken for it.
+    @Test func removingAnUpgradedHostThatIsOffWarnsWithoutWakingIt() async throws {
+        let setup = try await HostControlTests.Setup()
+        let woken = setup.dir.sub("woken")
+        try HostsConfigFile(url: setup.workspace.home.configFile).save(
+            "box", HostEntry(repos: ["demo": setup.clone], wake: "touch '\(woken)'", box: true))
+        FileManager.default.createFile(atPath: setup.host.home + "/.fake-ssh-down", contents: nil)
+
+        let warnings = try await setup.workspace.removeHost(alias: "box")
+
+        #expect(warnings.count == 1)
+        #expect(warnings.first?.contains("canopy-box may still run on box") == true)
+        #expect(!FileManager.default.fileExists(atPath: woken))
+        #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts.isEmpty)
+        await setup.workspace.stop()
+    }
+
+    @Test func removingAnUpgradedHostStopsItsBox() async throws {
+        let setup = try await HostControlTests.Setup()
+        try HostsConfigFile(url: setup.workspace.home.configFile).save(
+            "box", HostEntry(repos: ["demo": setup.clone], box: true))
+
+        let warnings = try await setup.workspace.removeHost(alias: "box")
+
+        #expect(warnings.isEmpty)
+        #expect(HostsConfig.load(from: setup.workspace.home.configFile).hosts.isEmpty)
         await setup.workspace.stop()
     }
 }
