@@ -60,13 +60,6 @@ struct ConversationView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("title")
             }
-            if let row = conversation.row {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu("More", systemImage: "ellipsis") {
-                        PinButton(row: row)
-                    }
-                }
-            }
         }
         .onAppear {
             conversation.start()
