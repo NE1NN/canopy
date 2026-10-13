@@ -27,13 +27,19 @@ public enum BoxMain {
     static func phoneServer(daemon: BoxDaemon, paths: BoxPaths, environment: [String: String]) -> PhoneServer {
         let config = BoxDaemon.load(BoxConfig.self, from: paths.configFile)
         let log = paths.folder + "/activity.jsonl"
+        // `phone-listen`, `<address> <port>`, puts the listener on an address of a test's choosing, as the hosts e2e
+        // does on loopback; the tailnet otherwise.
+        let listen = (try? String(contentsOfFile: paths.folder + "/phone-listen", encoding: .utf8))?
+            .split(whereSeparator: \.isWhitespace).map(String.init)
+        let address = listen?.first
+        let port = listen.flatMap { $0.count > 1 ? UInt16($0[1]) : nil }
         return PhoneServer(
             source: BoxPhoneSource(daemon: daemon),
             settings: PhoneServerSettings(
                 registryFile: URL(fileURLWithPath: paths.folder + "/phones.json"),
                 serverName: config?.host ?? ProcessInfo.processInfo.hostName, version: CanopyVersion.current,
-                port: config?.phonePort ?? PhonePort.standard,
-                addresses: { TailnetAddresses.current() },
+                port: port ?? config?.phonePort ?? PhonePort.standard,
+                addresses: { address.map { [$0] } ?? TailnetAddresses.current() },
                 tailnetName: { await TailnetAddresses.name(environment: environment) },
                 closedReason: { "Tailscale is not running on this host, so phones cannot reach it." },
                 record: { activity in appendActivity(activity, to: log) }))

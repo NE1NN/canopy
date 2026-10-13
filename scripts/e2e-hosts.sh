@@ -434,6 +434,8 @@ wait_for 60 screen_has back-8 || fail "the pane did not rejoin after Return"
 
 if ((with_box)); then
     step "host upgrade hands the host to canopy-box, which takes the session as it runs"
+    phone_port=$(/usr/bin/python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    [[ "$alias" == fake-box ]] && on_host "mkdir -p ~/.canopy/${server#canopy-}/box && echo '127.0.0.1 $phone_port' > ~/.canopy/${server#canopy-}/box/phone-listen"
     "$cli" host upgrade "$alias" > "$work/upgrade.out" 2> "$work/upgrade.err" \
         || fail "host upgrade failed: $(cat "$work/upgrade.err")"
     box_sock="~/.canopy/${server#canopy-}/box/box.sock"
@@ -447,6 +449,21 @@ if ((with_box)); then
     in_pane hook-box "$(hook_report 'Over to you?')"
     succeeded hook-box
     wait_for 20 eval '[[ "$(agent_state)" == waiting ]]' || fail "the box's agent is $(agent_state), not waiting"
+
+    if [[ "$alias" == fake-box ]]; then
+        step "a phone pairs with canopy-box through the Mac, and reads and answers the box's agent"
+        phone="/usr/bin/python3 -I $PWD/scripts/phone-client.py"
+        "$cli" phone pair --on "$alias" --json > "$work/pair.json" || fail "phone pair --on failed"
+        link=$(json 'd["link"]' < "$work/pair.json")
+        $phone pair "$link" e2e-phone "$work/box-token" >/dev/null || fail "the phone could not pair with canopy-box"
+        $phone wait-inbox "$link" "$work/box-token" "any(a['pane'] == '$session' and a['state'] == 'waiting' for r in inbox['rows'] for a in r['agents'])" 20 >/dev/null \
+            || fail "the box's inbox does not show the waiting pane"
+        $phone call "$link" "$work/box-token" phone.reply '{"pane": "'"$session"'", "text": "from-phone"}' >/dev/null \
+            || fail "the phone's reply to the box was refused"
+        wait_for 20 screen_has from-phone || fail "the phone's reply did not reach the box's pane"
+        "$cli" phone remove e2e-phone --on "$alias" >/dev/null || fail "phone remove --on failed"
+        [[ "$($phone hello "$link" "$work/box-token")" != ok ]] || fail "a removed phone still says hello to the box"
+    fi
 
     step "row new --run in the pane makes a row on the box, whose pane shows here as a tab"
     in_pane row-box "canopy row new e2e/boxed --run 'echo boxed-\$((6 * 7))'"
