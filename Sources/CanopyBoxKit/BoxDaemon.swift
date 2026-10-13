@@ -14,6 +14,7 @@ public actor BoxDaemon {
     var config: BoxConfig?
     /// The key the Mac set for phones to start the box with, kept in `wake.json`.
     public private(set) var wakeKey: BoxWakeKey?
+    var learningInstance = false
     var state = BoxState()
     /// Each repo's clone, its main row on the host, by repo name.
     var mainRows: [String: StoredRow] = [:]
@@ -68,6 +69,7 @@ public actor BoxDaemon {
         }
         config = settings
         wakeKey = next.wake
+        if next.wake != nil { Task { await learnInstance() } }
         state.released = false
         await reconcile()
         changed()

@@ -29,10 +29,7 @@ public enum BoxMain {
         let log = paths.folder + "/activity.jsonl"
         // `phone-listen`, `<address> <port>`, puts the listener on an address of a test's choosing, as the hosts e2e
         // does on loopback; the tailnet otherwise.
-        let listen = (try? String(contentsOfFile: paths.folder + "/phone-listen", encoding: .utf8))?
-            .split(whereSeparator: \.isWhitespace).map(String.init)
-        let address = listen?.first.flatMap { TailnetAddresses.loopback([$0]).first }
-        let port = listen.flatMap { $0.count > 1 ? UInt16($0[1]) : nil }
+        let (address, port) = loopbackOverride(paths.folder + "/phone-listen")
         return PhoneServer(
             source: BoxPhoneSource(daemon: daemon),
             settings: PhoneServerSettings(
@@ -41,6 +38,7 @@ public enum BoxMain {
                     BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.host ?? ProcessInfo.processInfo.hostName
                 },
                 kind: PhoneServerKind.box,
+                wake: { phoneWake(paths) },
                 version: CanopyVersion.current,
                 port: port ?? config?.phonePort ?? PhonePort.standard,
                 addresses: { address.map { [$0] } ?? TailnetAddresses.current() },
@@ -49,6 +47,27 @@ public enum BoxMain {
                 statusNote: address.map { "Listening on \($0) for tests, from box/phone-listen, not on the tailnet." },
                 record: { activity in appendActivity(activity, to: log) }))
     }
+
+    /// A test's `<address> <port>` in `file`, its address loopback only, so no file can move anything off the box.
+    static func loopbackOverride(_ file: String) -> (address: String?, port: UInt16?) {
+        let words = (try? String(contentsOfFile: file, encoding: .utf8))?
+            .split(whereSeparator: \.isWhitespace).map(String.init)
+        let address = words?.first.flatMap { TailnetAddresses.loopback([$0]).first }
+        let port = words.flatMap { $0.count > 1 ? UInt16($0[1]) : nil }
+        return (address, port)
+    }
+
+    /// What hello gives phones to start the box: the Mac's key and the instance it starts, or nil without either.
+    static func phoneWake(_ paths: BoxPaths) -> PhoneWake? {
+        guard let key = BoxDaemon.load(BoxWakeKey.self, from: paths.wakeFile),
+            let instance = BoxDaemon.load(InstanceIdentity.self, from: paths.instanceFile)
+        else { return nil }
+        return PhoneWake(
+            accessKeyID: key.accessKeyID, secretAccessKey: key.secretAccessKey, instanceID: instance.instanceID,
+            region: instance.region)
+    }
+
+    static let instanceEvery = Duration.seconds(60)
 
     /// One JSON line per phone event, with the Mac's types: `phone.paired`, `phone.removed`, and `phone.call`.
     static func appendActivity(_ activity: PhoneActivity, to path: String) {
@@ -187,6 +206,12 @@ public enum BoxMain {
                 while true {
                     try? await Task.sleep(for: replayEvery)
                     await daemon.replayPending()
+                }
+            }
+            group.addTask {
+                while true {
+                    await daemon.learnInstance()
+                    try? await Task.sleep(for: instanceEvery)
                 }
             }
         }

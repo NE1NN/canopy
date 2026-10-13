@@ -41,6 +41,8 @@ public struct PhoneServerSettings: Sendable {
     public var serverName: @Sendable () -> String
     /// `PhoneServerKind`'s, which hello, pairing, and the pairing link say.
     public var kind: String
+    /// What hello gives a phone to start the server with, asked each time. Only a box has one.
+    public var wake: @Sendable () -> PhoneWake?
     public var version: String
     public var port: UInt16
     /// The addresses to listen on now.
@@ -56,7 +58,7 @@ public struct PhoneServerSettings: Sendable {
 
     public init(
         registryFile: URL, serverName: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
-        version: String, port: UInt16,
+        wake: @escaping @Sendable () -> PhoneWake? = { nil }, version: String, port: UInt16,
         addresses: @escaping @Sendable () -> [String], tailnetName: @escaping @Sendable () async -> String?,
         closedReason: @escaping @Sendable () -> String, statusNote: String? = nil,
         logsCommands: @escaping @Sendable () -> Bool = { false }, record: @escaping @Sendable (PhoneActivity) -> Void
@@ -64,6 +66,7 @@ public struct PhoneServerSettings: Sendable {
         self.registryFile = registryFile
         self.serverName = serverName
         self.kind = kind
+        self.wake = wake
         self.version = version
         self.port = port
         self.addresses = addresses

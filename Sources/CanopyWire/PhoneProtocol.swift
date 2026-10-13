@@ -213,12 +213,31 @@ public struct PhoneHelloResult: Codable, Sendable, Equatable {
     public var phone: String
     /// `PhoneServerKind`'s; nil from a Mac older than several servers.
     public var kind: String?
+    /// How the phone starts a box that powered itself off. Only a box with a wake key sends it.
+    public var wake: PhoneWake?
 
-    public init(mac: String, version: String, phone: String, kind: String? = nil) {
+    public init(mac: String, version: String, phone: String, kind: String? = nil, wake: PhoneWake? = nil) {
         self.mac = mac
         self.version = version
         self.phone = phone
         self.kind = kind
+        self.wake = wake
+    }
+}
+
+/// What a phone needs to start a box's EC2 instance itself: a key whose only permission is to start it, and which
+/// instance it is.
+public struct PhoneWake: Codable, Sendable, Equatable {
+    public var accessKeyID: String
+    public var secretAccessKey: String
+    public var instanceID: String
+    public var region: String
+
+    public init(accessKeyID: String, secretAccessKey: String, instanceID: String, region: String) {
+        self.accessKeyID = accessKeyID
+        self.secretAccessKey = secretAccessKey
+        self.instanceID = instanceID
+        self.region = region
     }
 }
 

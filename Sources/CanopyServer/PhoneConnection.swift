@@ -31,6 +31,8 @@ public struct PhoneGate: Sendable {
     public var name: @Sendable () -> String
     /// `PhoneServerKind`'s.
     public var kind: String
+    /// How a phone starts the server, asked at each hello.
+    public var wake: @Sendable () -> PhoneWake?
     /// Canopy's version, which `phone.hello` answers with.
     public var version: String
     /// Waits out the time a new connection has to say hello, counted again after a pairing.
@@ -41,7 +43,7 @@ public struct PhoneGate: Sendable {
 
     public init(
         registry: PhoneRegistry, name: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
-        version: String,
+        wake: @escaping @Sendable () -> PhoneWake? = { nil }, version: String,
         helloTimeout: Duration = .seconds(10),
         helloTimer: (@Sendable () async -> Void)? = nil, handler: @escaping PhoneHandler,
         onPaired: @escaping @Sendable (PairedPhone) -> Void = { _ in }
@@ -49,6 +51,7 @@ public struct PhoneGate: Sendable {
         self.registry = registry
         self.name = name
         self.kind = kind
+        self.wake = wake
         self.version = version
         self.helloTimer = helloTimer ?? { try? await Task.sleep(for: helloTimeout) }
         self.handler = handler
@@ -299,7 +302,7 @@ final class PhoneConnection: Sendable {
     }
 
     private func greeting(_ phone: PairedPhone) -> PhoneHelloResult {
-        PhoneHelloResult(mac: gate.name(), version: gate.version, phone: phone.name, kind: gate.kind)
+        PhoneHelloResult(mac: gate.name(), version: gate.version, phone: phone.name, kind: gate.kind, wake: gate.wake())
     }
 
     private func refuse(id: String, _ error: ControlError, closing: Bool) {
