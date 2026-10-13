@@ -5,9 +5,13 @@ extension BoxDaemon {
     /// Learns which instance the box is, once a wake key needs it, from the instance metadata service, or the
     /// loopback stand-in a test names in `box/imds`. Does nothing once known, unless `again`, as at start, since the box's
     /// files may have moved to another instance; then a service that does not answer leaves what was known. A call
-    /// while another asks waits for it.
+    /// while another asks waits for it, then asks itself if it still needs to.
     public func learnInstance(again: Bool = false) async {
-        if let learning = instanceLearning { return await learning.value }
+        // Waits out a lookup under way, then asks itself when it still needs to, as a call `again` does.
+        while let learning = instanceLearning {
+            await learning.value
+            if instanceLearning == learning { instanceLearning = nil }
+        }
         guard wakeKey != nil, again || !FileManager.default.fileExists(atPath: paths.instanceFile) else { return }
         let paths = paths
         let learning = Task {
@@ -20,6 +24,6 @@ extension BoxDaemon {
         }
         instanceLearning = learning
         await learning.value
-        instanceLearning = nil
+        if instanceLearning == learning { instanceLearning = nil }
     }
 }
