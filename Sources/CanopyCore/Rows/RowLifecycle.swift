@@ -71,7 +71,7 @@ public final class RowLifecycle {
             let pane = run.map { _ in terminals.openTab(for: context).pane }
             let report = SetupReport(status: setup ? .none : .skipped)
             return Task {
-                if let pane, let run { await pane.run(run) }
+                if let pane, let run { await pane.terminal?.run(run) }
                 return RowPreparation(setup: report, pane: pane?.id)
             }
         }
@@ -99,7 +99,7 @@ public final class RowLifecycle {
             }
             // Closes the tab only if setup's pane was all it held.
             terminals.closePane(setupPane.id)
-            if let pane, let run { await pane.run(run) }
+            if let pane, let run { await pane.terminal?.run(run) }
             return RowPreparation(setup: SetupReport(status: .succeeded, exitCode: 0), pane: pane?.id)
         }
     }
@@ -191,14 +191,14 @@ public struct RemotePaneInfo: Sendable, Equatable {
 
 extension RowLifecycle: RemotePaneHooks {
     public func run(_ text: String, in pane: Pane) async {
-        guard let remote = pane.context.remote, let session = pane.remoteSession else { return }
+        guard let remote = pane.context.remote, let session = pane.terminal?.remoteSession else { return }
         await workspace.sendKeys(text, to: session, on: remote.host)
     }
 
     public func closed(_ panes: [Pane]) {
         var sessions: [String: [String]] = [:]
         for pane in panes {
-            guard let remote = pane.context.remote, let session = pane.remoteSession else { continue }
+            guard let remote = pane.context.remote, let session = pane.terminal?.remoteSession else { continue }
             sessions[remote.host, default: []].append(session)
         }
         for (host, names) in sessions {
@@ -208,11 +208,12 @@ extension RowLifecycle: RemotePaneHooks {
 
     public func remotePaneInfo(_ id: String) -> RemotePaneInfo? {
         guard let paneID = PaneID(id), let pane = terminals.pane(paneID), let remote = pane.context.remote,
-            let session = pane.remoteSession, let repoPath = pane.context.repoPath
+            let session = pane.terminal?.remoteSession, let repoPath = pane.context.repoPath
         else { return nil }
         return RemotePaneInfo(
             pane: id, host: remote.host, session: session,
-            folder: pane.remoteActivity?.folder ?? pane.remoteFolder ?? remote.path, repoPath: repoPath,
+            folder: pane.terminal?.remoteActivity?.folder ?? pane.terminal?.remoteFolder ?? remote.path,
+            repoPath: repoPath,
             rowPath: pane.context.rowPath, rowName: pane.context.rowName)
     }
 }

@@ -20,15 +20,18 @@ struct PaneView: View {
                     onDragStart()
                     return NSItemProvider(object: pane.id.description as NSString)
                 }
-            TerminalSurface(
-                pane: pane,
-                takesFocus: isFocusedPane,
-                onFocusChange: { focused in
-                    isFocused = focused
-                    if focused { onFocus() }
-                },
-                onSizeChange: onSizeChange
-            )
+            // A tab's grid holds only terminals; chats have tabs of their own.
+            if let terminal = pane.terminal {
+                TerminalSurface(
+                    terminal: terminal,
+                    takesFocus: isFocusedPane,
+                    onFocusChange: { focused in
+                        isFocused = focused
+                        if focused { onFocus() }
+                    },
+                    onSizeChange: onSizeChange
+                )
+            }
             if case .exited(let code) = pane.status {
                 ExitStrip(pane: pane, code: code)
             }
@@ -110,7 +113,7 @@ struct PaneStatusMark: View {
         case .running where pane.isRunningProgram:
             RunningDot()
         case .running:
-            Image(systemName: "terminal")
+            Image(systemName: pane.chat == nil ? "terminal" : "bubble.left")
                 .font(.system(size: size))
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)

@@ -34,7 +34,11 @@ let macTargets: [Target] = [
     // The iPhone app's models and its connection to the Mac, kept out of its views so they test on the Mac.
     .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
     .target(
-        name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer"]),
+        name: "CanopyCore",
+        dependencies: [
+            "CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer",
+            .product(name: "Markdown", package: "swift-markdown"),
+        ]),
     // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
     .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
     .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
@@ -84,6 +88,7 @@ let macTargets: [Target] = [
         dependencies: portableDependencies + [
             .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
             .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
+            .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.9.0"),
         ],
         targets: portableTargets + macTargets
     )

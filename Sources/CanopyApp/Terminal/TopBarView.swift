@@ -50,8 +50,7 @@ struct TopBarView: View {
                 action: model.splitPane
             )
             .disabled(!model.canSplit)
-            IconButton(
-                title: "New Tab", systemImage: "plus", shortcut: "⌘T", size: 26, imageSize: 13, action: model.newTab)
+            NewTabMenu()
         }
         .padding(.leading, windowControlsOverBar ? Style.windowControlsWidth : Style.topBarInset)
         .padding(.trailing, Style.topBarInset)
@@ -136,7 +135,7 @@ struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: tab.grid?.layout.shape.symbolName ?? "globe")
+            Image(systemName: Self.symbol(for: tab))
                 .font(.system(size: 12))
                 .frame(width: 14)
                 .help(agentTooltip)
@@ -188,7 +187,7 @@ struct TabItemView: View {
         .gesture(
             TapGesture(count: 2).onEnded {
                 // A web tab is named after its page.
-                guard tab.grid != nil else { return }
+                guard tab.page == nil else { return }
                 draft = tab.name
                 isRenaming = true
             }
@@ -196,6 +195,14 @@ struct TabItemView: View {
         .simultaneousGesture(TapGesture().onEnded(onSelect))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    static func symbol(for tab: TerminalTab) -> String {
+        switch tab.content {
+        case .terminals(let grid): grid.layout.shape.symbolName
+        case .web: "globe"
+        case .chat: "bubble.left"
+        }
     }
 
     private var fill: Color {
@@ -218,5 +225,43 @@ extension LayoutShape {
         case .rows: "rectangle.split.1x2"
         case .grid: "rectangle.split.2x2"
         }
+    }
+}
+
+/// The tab bar's `+`: a new terminal or a new chat.
+struct NewTabMenu: View {
+    @Environment(AppModel.self) private var model
+    @State private var isHovering = false
+
+    var body: some View {
+        Menu {
+            Button {
+                model.newTab()
+            } label: {
+                Label("New Terminal", systemImage: "terminal")
+            }
+            .keyboardShortcut("t")
+            .disabled(!model.canOpenTerminal)
+            Button {
+                model.newChat()
+            } label: {
+                Label("New Chat", systemImage: "bubble.left")
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(!model.canOpenChat)
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 26, height: 26)
+                .background(isHovering ? Style.hoverFill : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .foregroundStyle(isHovering ? .primary : .secondary)
+        .onHover { isHovering = $0 }
+        .help("New Tab")
+        .accessibilityLabel("New Tab")
     }
 }

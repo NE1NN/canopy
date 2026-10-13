@@ -88,7 +88,7 @@ struct ZshCommandLoggingTests {
     /// Types `command` at a prompt, then waits for its output to show `marker`, which must differ from the typed line
     /// zsh echoes.
     func run(_ pane: Pane, _ command: String, until marker: String) async -> Bool {
-        await pane.run(command, timeout: Self.promptWait)
+        await pane.terminal!.run(command, timeout: Self.promptWait)
         return await eventually { pane.screen.text.contains(marker) }
     }
 
@@ -108,7 +108,7 @@ struct ZshCommandLoggingTests {
 
     /// Runs a last command and waits until it is logged, so every command before it is too.
     func barrier(_ pane: Pane, _ terminals: TerminalStore) async -> Bool {
-        await pane.run(Self.barrier, timeout: Self.promptWait)
+        await pane.terminal!.run(Self.barrier, timeout: Self.promptWait)
         return await eventually { await commands(terminals).last?.data["cmd"] == .string(Self.barrier) }
     }
 
@@ -120,9 +120,9 @@ struct ZshCommandLoggingTests {
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         #expect(await run(pane, "hello", until: "hi-from-alias"))
-        await pane.run("(exit 3)")
-        await pane.run("cd sub && sleep 0.3")
-        await pane.run(#"echo 'a;b' "%d""#)
+        await pane.terminal!.run("(exit 3)")
+        await pane.terminal!.run("cd sub && sleep 0.3")
+        await pane.terminal!.run(#"echo 'a;b' "%d""#)
         #expect(await eventually { await commands(terminals).count == 4 })
 
         let events = await commands(terminals)
@@ -236,7 +236,7 @@ struct ZshCommandLoggingTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-        await pane.run("echo one")
+        await pane.terminal!.run("echo one")
         #expect(await barrier(pane, terminals))
 
         let runs = (try? String(contentsOfFile: dir.sub("user-home/hook.log"), encoding: .utf8)) ?? ""
@@ -251,7 +251,7 @@ struct ZshCommandLoggingTests {
             defer { terminals.closeAll() }
             let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-            await pane.run("echo one")
+            await pane.terminal!.run("echo one")
             #expect(await barrier(pane, terminals), "\(reset)")
             #expect(await commands(terminals).map(\.data["cmd"]) == ["echo one", .string(Self.barrier)], "\(reset)")
         }
@@ -276,9 +276,9 @@ struct ZshCommandLoggingTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-        await pane.run("echo my-secret-one")
-        await pane.run("ls")
-        await pane.run("echo public-two")
+        await pane.terminal!.run("echo my-secret-one")
+        await pane.terminal!.run("ls")
+        await pane.terminal!.run("echo public-two")
         #expect(await barrier(pane, terminals))
 
         #expect(await commands(terminals).map(\.data["cmd"]) == ["echo public-two", .string(Self.barrier)])
@@ -290,8 +290,8 @@ struct ZshCommandLoggingTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-        await pane.run(" echo secret-one")
-        await pane.run("echo public-two")
+        await pane.terminal!.run(" echo secret-one")
+        await pane.terminal!.run("echo public-two")
         #expect(await barrier(pane, terminals))
 
         #expect(await commands(terminals).map(\.data["cmd"]) == ["echo public-two", .string(Self.barrier)])
@@ -304,7 +304,7 @@ struct ZshCommandLoggingTests {
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
         let forge = #"printf '\e]6973;command;forged;0;1;fake;/\a'"#
-        await pane.run(forge)
+        await pane.terminal!.run(forge)
         #expect(await barrier(pane, terminals))
 
         #expect(await commands(terminals).map(\.data["cmd"]) == [.string(forge), .string(Self.barrier)])

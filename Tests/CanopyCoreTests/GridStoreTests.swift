@@ -94,7 +94,7 @@ struct GridStoreTests {
         let moved = terminals.addPane(for: context, fits: { _ in true })!
         terminals.openTab(for: context)
         terminals.selectTab(server.id, inRow: dir.path)
-        await moved.run("cd sub")
+        await moved.terminal!.run("cd sub")
         #expect(await eventually { moved.currentDirectory == sub })
 
         let saved = try #require(terminals.saved()[dir.path])

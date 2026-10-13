@@ -34,7 +34,7 @@ struct TermSendTests {
         let command = ReadRecorder.command(try ReadRecorder.install(in: dir), paste: paste)
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(command)).pane
         // A loaded machine can take seconds to schedule the recorder, and Return must still wait for it.
-        pane.returnPatience = .seconds(60)
+        pane.terminal!.returnPatience = .seconds(60)
         #expect(await eventually { pane.screen.text.contains("ready") })
         return Recording(terminals: terminals, rows: rows, pane: pane)
     }
@@ -63,7 +63,7 @@ struct TermSendTests {
 
         await recording.expectReads([Self.message, "<0d>"])
         let returned = try #require(ReadRecorder.timedReads(in: recording.pane.screen.text).last?.time)
-        #expect(returned.timeIntervalSince(start) >= Pane.returnPause / .seconds(1))
+        #expect(returned.timeIntervalSince(start) >= TerminalBody.returnPause / .seconds(1))
     }
 
     /// `term send --enter` returns once Return is in, so a `term read` right after sees what it did.
@@ -75,7 +75,7 @@ struct TermSendTests {
 
         try await recording.send(Self.message, enter: true)
 
-        #expect(Date().timeIntervalSince(start) >= Pane.returnPause / .seconds(1))
+        #expect(Date().timeIntervalSince(start) >= TerminalBody.returnPause / .seconds(1))
     }
 
     /// Text over the terminal's input queue goes in over several reads, and Return still comes after all of it.

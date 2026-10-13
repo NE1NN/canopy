@@ -69,19 +69,21 @@ Works headless:
   An edit's result carries a `structuredPatch` with its hunks.
 - **Permissions.** A `control_request` with subtype `can_use_tool` names the tool, its input, a description, `blocked_path` when there is one, and `permission_suggestions`.
   A `control_response` with `allow` (and `updatedPermissions` for Always allow, which writes `.claude/settings.local.json` as the TUI does) or `deny` with a message answers it.
-  The message reaches Claude as the tool's error, which is how "tell Claude what to do instead" works.
+  The message reaches Claude as the tool's output, and Haiku refused one as a possible prompt injection in a later run, so "tell Claude what to do instead" denies with `interrupt: true` and sends the author's text as the next message, as the TUI's "No, and tell Claude what to do differently" does.
 - **AskUserQuestion.** The same request with `requires_user_interaction: true` and the questions and options as input.
   `allow` with the input plus `answers`, a map from question text to the chosen label, answers it.
 - **Plan mode.** `set_permission_mode` with `plan` enters it.
   `ExitPlanMode` arrives as a request with `plan` and `planFilePath`; `allow` approves it, and `updatedPermissions` with `setMode: acceptEdits` approves it with edits accepted.
 - **Modes and models.** `set_permission_mode` switches live to `default`, `acceptEdits`, `auto`, `plan`, or `bypassPermissions`, and `/model` and `/effort` switch live.
-  A session starts in `default` unless told otherwise, so the chat always passes its mode.
+  A headless session starts in `default` unless told otherwise, while the TUI now starts in `auto`, so the chat always passes its mode.
 - **Slash commands.** `/model`, `/context`, `/compact` (with `compacting` status and a `compact_boundary`), `/clear`, `/cost`, `/usage`, `/effort`, `/mcp`, and user and project skills work and answer in markdown.
   `initialize` lists every command with its description and argument hint.
   `/resume`, `/rewind`, and `/hooks` answer "isn't available in this environment".
   `/clear` starts a new session ID, announced by `conversation_reset` and the next `init`.
 - **Interrupting.** A `control_request` with subtype `interrupt` stops the running tool and ends the turn; the process and session stay.
+  An interrupt is acknowledged but does not answer a permission request that is open or still on its way, and the turn then waits forever, so the chat denies such a request with `interrupt: true` instead.
 - **Messages sent mid-turn.** Claude reads them after the current tool, in the same turn, as in the TUI.
+  Several messages queued during one step come back as one echo with a text block each.
 - **Images.** An image content block in the user message works.
 - **Hooks.** Every hook Canopy installs fires as in a terminal: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, the `permission_prompt` `Notification`, `PostToolUse`, and `Stop`.
 - **Transcripts.** The session writes the same JSONL file in the same folder, with `entrypoint: sdk-cli`, which `TranscriptParser` does not look at.
@@ -173,7 +175,8 @@ New Chat opens a chat tab with an empty conversation and the composer focused.
 Its model and mode are what the author picked last for a chat, saved in `AppState`; the first time, the model from Claude Code's settings and Ask before edits.
 `claude` starts when the author sends the first message, so an unused chat costs nothing.
 
-Before the first start in a folder, Canopy checks `~/.claude.json` for the folder's trust (`projects[<path>].hasTrustDialogAccepted`, looked up as Claude Code does: the folder or a parent, but no further up than its git root).
+Before the first start in a folder, Canopy checks `~/.claude.json` for the folder's trust (`projects[<path>].hasTrustDialogAccepted`), looked up as Claude Code's TUI was seen to on 2026-10-13: for a row in a git repo, the row's folder or the repo's main checkout; outside git, the folder or any folder above it.
+Accepting trust in a worktree writes the main checkout, so Canopy writes that too.
 An untrusted folder shows a trust card with the folder, Claude Code's warning, and any permissions the folder's settings pre-approve.
 Trust sets the flag in `~/.claude.json`, keeping every other key as it was and writing atomically, then reads it back; if another Claude Code process wrote over it, Canopy writes again, three times at most, and otherwise says it could not.
 Not now closes the tab.
@@ -245,11 +248,11 @@ A prompt is a card at the end of the conversation, and the status line says Need
 
 - **Permission.** "Claude wants to run a command" (or edit a file, fetch a URL, use a tool), what it wants to run in a monospaced box, the request's description line, and Allow (⏎), Always allow with the rule Claude Code suggests, such as "canopy row new", and Deny (esc).
   A file write or edit shows its diff.
-  The composer's placeholder becomes "Or tell Claude what to do instead", and sending text denies with that text.
+  The composer's placeholder becomes "Or tell Claude what to do instead", and sending text denies the prompt, stopping the turn, then sends the text as the next message.
 - **Question.** "Claude asks", the question, and each option as a row with its number, label, and description; "(Recommended)" at the end of a label becomes a Recommended tag.
   Number keys 1 to 4 pick, and "Something else…" sends what the author types as the answer.
   Several questions are answered one after another and sent together; a multiple choice shows checkboxes and a Submit button.
-  The composer's placeholder becomes "Or chat about this instead", and sending text denies the question with that text.
+  The composer's placeholder becomes "Or chat about this instead", and sending text denies the question, then sends the text as the next message.
 - **Plan.** The plan as markdown, then Approve and auto-accept edits, Approve and ask before edits, and Keep planning, with the composer's text sent as what to change.
 
 Keys apply while the composer is empty: Return allows or approves, a digit picks, and esc denies, keeps planning, or stops.
@@ -305,7 +308,7 @@ The agent guide gains a short section: open a chat with `chat new`, send to it w
 - `phone.transcript` reads a chat's transcript as it reads a terminal agent's, since the hooks hand over its path.
 - Pane entries in the inbox and `phone.rows` gain an optional `kind`, `terminal` or `chat`, in CanopyWire.
 - `phone.reply` to a chat sends the message straight to the chat.
-  While a permission or question is open, the reply denies it with the reply's text, as the composer does, instead of answering `prompt_open`.
+  While a permission or question is open, the reply denies it and then goes in as the next message, as the composer does, instead of answering `prompt_open`.
   Delivered still comes from the `UserPromptSubmit` hook.
 - `phone.answer` to a chat answers its open prompt through the control response, with the structured answer, not keys.
 - `phone.screen` and `phone.keys` on a chat answer `not_a_terminal`.
@@ -398,7 +401,7 @@ Each PR clears the merge bar, then prints `READY: <PR URL>` with how to try it, 
 - A chat tab holds one chat, with no splits.
 - A new chat starts with the last model and mode the author picked, Ask before edits the first time.
 - `claude` starts on the first message, not when a chat opens or is restored.
-- A reply from the phone while a prompt is open denies it with the reply's text, where today a terminal's answers `prompt_open`.
+- A reply from the phone while a prompt is open denies it and goes in as the next message, where today a terminal's answers `prompt_open`.
 - `term send` without `--enter` drafts into the composer.
 - Full-screen commands open in a terminal instead of getting native versions.
 - No syntax colors in code blocks in the first version.

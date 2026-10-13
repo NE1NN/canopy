@@ -44,6 +44,11 @@ struct TerminalArea: View {
                         .id(tab.id)
                 case .web(let page):
                     WebTabView(tab: tab, page: page, path: path)
+                case .chat(let pane):
+                    if let chat = pane.chat {
+                        ChatView(pane: pane, chat: chat, path: path)
+                            .id(tab.id)
+                    }
                 }
             } else {
                 ContentUnavailableView {

@@ -29,34 +29,39 @@ public enum TranscriptParser {
         return Array(zip(builder.entries, builder.lines))
     }
 
-    struct ToolResult {
-        var text: String
-        var isError: Bool
+    public struct ToolResult: Sendable {
+        public var text: String
+        public var isError: Bool
+
+        public init(text: String, isError: Bool) {
+            self.text = text
+            self.isError = isError
+        }
 
         /// The author said no at a permission prompt.
-        var isDeclined: Bool {
+        public var isDeclined: Bool {
             isError && text.hasPrefix("The user doesn't want to proceed")
         }
     }
 
     /// One line of the transcript that may hold part of the conversation.
-    struct Record {
-        enum Block {
+    public struct Record: Sendable {
+        public enum Block: Sendable {
             case text(String)
             case image
             case tool(id: String, name: String, input: [String: JSONValue])
             case result(id: String, text: String, isError: Bool)
         }
 
-        var id: String
-        var role: String
-        var at: Double
-        var blocks: [Block]
+        public var id: String
+        public var role: String
+        public var at: Double
+        public var blocks: [Block]
         /// The author's own words, as a plain string.
-        var plainText: String?
-        var isCompactSummary: Bool
+        public var plainText: String?
+        public var isCompactSummary: Bool
 
-        init?(line: Data) {
+        public init?(line: Data) {
             guard let object = try? JSONDecoder().decode([String: JSONValue].self, from: line),
                 case .string(let type)? = object["type"], type == "user" || type == "assistant",
                 case .string(let id)? = object["uuid"], case .object(let message)? = object["message"]
@@ -127,7 +132,7 @@ public enum TranscriptParser {
     }
 
     /// Builds entries in order, folding consecutive tool calls of one kind into the entry before.
-    struct Builder {
+    public struct Builder {
         let results: [String: ToolResult]
         var entries: [TranscriptEntry] = []
         /// The line each entry starts at.
@@ -180,13 +185,13 @@ public enum TranscriptParser {
         }
 
         /// Claude Code keeps a paste in the prompt between `<pasted_content id="…">` and `</pasted_content id="…">`.
-        static func unwrappingPastes(_ text: String) -> String {
+        public static func unwrappingPastes(_ text: String) -> String {
             text.replacing(/<pasted_content id="[^"]*">\n?/, with: "")
                 .replacing(/\n?<\/pasted_content(?: id="[^"]*")?>/, with: "")
         }
 
         /// What a user line that is not the author's own words stands for, empty to leave it out, or nil for a prompt.
-        private static func notice(for text: String) -> String? {
+        public static func notice(for text: String) -> String? {
             if text.hasPrefix("[Request interrupted by user") { return "Interrupted" }
             if text.hasPrefix("<command-name>") {
                 return Self.tag("command-name", in: text) ?? ""
@@ -202,7 +207,7 @@ public enum TranscriptParser {
             return nil
         }
 
-        private static func tag(_ name: String, in text: String) -> String? {
+        static func tag(_ name: String, in text: String) -> String? {
             guard let open = text.range(of: "<\(name)>"),
                 let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)
             else { return nil }
@@ -288,14 +293,14 @@ public enum TranscriptParser {
             if entry.kind != .tools { group = nil }
         }
 
-        static func questions(_ input: [String: JSONValue]) -> [PromptQuestion] {
+        public static func questions(_ input: [String: JSONValue]) -> [PromptQuestion] {
             guard case .array(let items)? = input["questions"] else { return [] }
             return items.compactMap { try? $0.decode(PromptQuestion.self) }
         }
 
         /// The answers in a tool result such as `Your questions have been answered: "Q"="A", "Q2"="B".`, in the
         /// questions' order.
-        static func answers(in text: String, for questions: [PromptQuestion]) -> String {
+        public static func answers(in text: String, for questions: [PromptQuestion]) -> String {
             var found: [String: String] = [:]
             let pattern = /"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"/
             for match in text.matches(of: pattern) {
@@ -305,16 +310,16 @@ public enum TranscriptParser {
             return ordered.isEmpty ? "Answered" : ordered.joined(separator: "; ")
         }
 
-        static func string(_ value: JSONValue?) -> String? {
+        public static func string(_ value: JSONValue?) -> String? {
             if case .string(let text)? = value { text } else { nil }
         }
     }
 
     /// Tool calls that fold together, and how a run of them reads.
-    public enum ToolKind: Equatable {
+    public enum ToolKind: Equatable, Sendable {
         case run, read, edit, search, fetch, webSearch, agent, todo, other(String)
 
-        init(_ name: String) {
+        public init(_ name: String) {
             switch name {
             case "Bash", "BashOutput", "KillShell", "KillBash": self = .run
             case "Read", "NotebookRead": self = .read
@@ -328,7 +333,7 @@ public enum TranscriptParser {
             }
         }
 
-        func summary(_ calls: [(name: String, input: [String: JSONValue])]) -> String {
+        public func summary(_ calls: [(name: String, input: [String: JSONValue])]) -> String {
             let more = calls.count > 1 ? " and \(calls.count - 1) more" : ""
             let first = calls.first?.input ?? [:]
             switch self {

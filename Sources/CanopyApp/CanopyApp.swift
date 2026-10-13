@@ -81,9 +81,12 @@ struct TerminalCommands: Commands {
                 Button(plugin.setup.title) { model.showSetup(of: plugin.id) }
             }
             Divider()
-            Button("New Tab", action: model.newTab)
+            Button("New Terminal", action: model.newTab)
                 .keyboardShortcut("t")
                 .disabled(!model.canOpenTerminal)
+            Button("New Chat", action: model.newChat)
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(!model.canOpenChat)
             Button("Split Pane", action: model.splitPane)
                 .keyboardShortcut("d")
                 .disabled(!model.canSplit)

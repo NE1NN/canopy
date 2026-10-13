@@ -125,7 +125,7 @@ struct TerminalStoreTests {
         let idle = terminals.openTab(for: Fixture.context(dir.path)).pane
         let busy = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-        await busy.run("sleep 30")
+        await busy.terminal!.run("sleep 30")
 
         #expect(await eventually { terminals.busyPanes.map(\.id) == [busy.id] })
         #expect(terminals.busyPanes(inRow: dir.path).map(\.id) == [busy.id])
@@ -186,6 +186,6 @@ struct TerminalStoreTests {
 
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
 
-        #expect(pane.emulator.size == TerminalSize(columns: 150, rows: 45))
+        #expect(pane.terminal!.emulator.size == TerminalSize(columns: 150, rows: 45))
     }
 }

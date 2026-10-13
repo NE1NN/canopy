@@ -194,3 +194,65 @@ struct TranscriptReaderTests {
         #expect(page.entries.last?.id == "a1")
     }
 }
+
+struct TranscriptLinePageTests {
+    func file(lines count: Int, tail: String = "") throws -> (TempDir, URL) {
+        let dir = try TempDir()
+        let url = URL(fileURLWithPath: dir.sub("t.jsonl"))
+        let body = (0..<count).map { #"{"n":\#($0),"pad":"\#(String(repeating: "x", count: 200))"}"# }
+            .joined(separator: "\n")
+        try (body + "\n" + tail).write(to: url, atomically: true, encoding: .utf8)
+        return (dir, url)
+    }
+
+    func numbers(_ lines: [Data]) -> [Int] {
+        lines.compactMap { line -> Int? in
+            guard case .number(let n)? = (try? JSONDecoder().decode([String: JSONValue].self, from: line))?["n"]
+            else { return nil }
+            return Int(n)
+        }
+    }
+
+    @Test func readsTheNewestLinesUpToTheLastCompleteOne() throws {
+        let (dir, url) = try file(lines: 2000, tail: #"{"n":9999,"part"#)
+        defer { withExtendedLifetime(dir) {} }
+
+        let page = try TranscriptReader.linePage(of: url, before: nil, minimumLines: 100)
+
+        #expect(numbers(page.lines).last == 1999)
+        #expect(page.lines.count >= 100)
+        #expect(numbers(page.lines) == Array(numbers(page.lines).first!...1999))
+        #expect(page.older != nil)
+    }
+
+    @Test func olderPagesFollowOnWithoutGapsOrRepeats() throws {
+        let (dir, url) = try file(lines: 2000)
+        defer { withExtendedLifetime(dir) {} }
+
+        var seen: [Int] = []
+        var before: Int?
+        repeat {
+            let page = try TranscriptReader.linePage(of: url, before: before, minimumLines: 150)
+            seen = numbers(page.lines) + seen
+            before = page.older
+        } while before != nil
+
+        #expect(seen == Array(0..<2000))
+    }
+
+    @Test func aShortFileIsOnePage() throws {
+        let (dir, url) = try file(lines: 3)
+        defer { withExtendedLifetime(dir) {} }
+
+        let page = try TranscriptReader.linePage(of: url, before: nil, minimumLines: 100)
+
+        #expect(numbers(page.lines) == [0, 1, 2])
+        #expect(page.older == nil)
+    }
+
+    @Test func aMissingFileSaysSo() {
+        #expect(throws: TranscriptReader.Failure.missing) {
+            try TranscriptReader.linePage(of: URL(fileURLWithPath: "/no/such.jsonl"), before: nil, minimumLines: 10)
+        }
+    }
+}

@@ -48,7 +48,7 @@ struct PaneAgentStateTests {
         #expect(pane.agent.state == .none)
 
         _ = pane.report(AgentReport(state: .waiting, event: "PermissionRequest"))
-        await pane.type("", enter: true)
+        await pane.terminal!.type("", enter: true)
         #expect(pane.agent.state == .working)
 
         let events = await logged(terminals, "agent")
@@ -66,14 +66,14 @@ struct PaneAgentStateTests {
 
         // `canopy term send <pane> 1 --enter` picks an option: the text alone leaves the prompt, and Return answers it.
         pane.report(AgentReport(state: .waiting, event: "PermissionRequest"))
-        await pane.type("1", enter: true)
+        await pane.terminal!.type("1", enter: true)
         #expect(pane.agent.state == .working)
         let events = await logged(terminals, "agent")
         #expect(events.last?.data["via"] == "key")
 
         // An answer typed at the agent's own input line waits for the next prompt's hook instead.
         pane.report(AgentReport(state: .waiting, event: "Stop", question: true))
-        await pane.type("No, it is sunny.", enter: true)
+        await pane.terminal!.type("No, it is sunny.", enter: true)
         #expect(pane.agent.state == .waiting)
     }
 
@@ -85,7 +85,7 @@ struct PaneAgentStateTests {
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // cat runs until Control-D, so the test decides when the program exits.
-        await pane.run("cat")
+        await pane.terminal!.run("cat")
         #expect(
             await eventually {
                 pane.refreshActivity()
@@ -93,7 +93,7 @@ struct PaneAgentStateTests {
             })
         _ = pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))
         #expect(pane.agent.state == .done)
-        await pane.type("\u{4}")
+        await pane.terminal!.type("\u{4}")
 
         #expect(
             await eventually {
@@ -126,10 +126,10 @@ struct PaneAgentStateTests {
         #expect(await eventually { pane.foreground?.name == "bash" })
 
         // The window is hidden, so nothing refreshes while the program runs.
-        await pane.run("cat")
+        await pane.terminal!.run("cat")
         #expect(await eventually { pane.isBusy })
         pane.report(AgentReport(state: .done))
-        await pane.type("\u{4}")
+        await pane.terminal!.type("\u{4}")
         #expect(await eventually { !pane.isBusy })
 
         pane.refreshActivity()
@@ -154,7 +154,7 @@ struct PaneAgentStateTests {
         defer { terminals.closeAll() }
         let exiting = terminals.openTab(for: Fixture.context(dir.path)).pane
         _ = exiting.report(AgentReport(state: .done))
-        await exiting.run("exit 0")
+        await exiting.terminal!.run("exit 0")
         #expect(await eventually { exiting.agent.state == .none })
 
         let closing = terminals.addPane(for: Fixture.context(dir.path), fits: { _ in true })!
