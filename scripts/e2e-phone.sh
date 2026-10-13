@@ -87,6 +87,28 @@ $phone wait-inbox "$link" "$work/token" \
     "any(a['pane'] == '$pane' and a['state'] == 'done' and a['unseen'] for r in inbox['rows'] for a in r['agents'])" 20 \
     >/dev/null || fail "the inbox never showed $pane done and unseen"
 
+step "a task from the phone makes a row here running the Mac's agent command with the brief whole"
+"$cli" phone agent | grep -q "the standard command" || fail "phone agent does not say the standard command runs"
+"$cli" phone agent "printf '%s|' > '$work/task.out'" >/dev/null || fail "phone agent could not set the command"
+$phone hello-json "$link" "$work/token" | grep -q "task.out" || fail "the phone's hello does not carry the agent command"
+/usr/bin/python3 - "$work" <<'PY'
+import json, sys
+brief = "Fix it's \"login\" $(touch pwned) `touch pwned`\nand then $HOME"
+open(sys.argv[1] + "/brief.txt", "w").write(brief)
+json.dump({"repo": "demo", "branch": "e2e/phone-task", "brief": brief}, open(sys.argv[1] + "/task.json", "w"))
+PY
+$phone call "$link" "$work/token" phone.newRow "$(cat "$work/task.json")" > "$work/task-made.json" \
+    || fail "phone.newRow failed: $(cat "$work/task-made.json")"
+task_pane=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["pane"])' "$work/task-made.json")
+task_row=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["path"])' "$work/task-made.json")
+task_ran() { [[ -f "$work/task.out" ]] && [[ "$(cat "$work/task.out")" == "$(cat "$work/brief.txt")|" ]]; }
+for _ in $(seq 1 100); do task_ran && break; sleep 0.2; done
+task_ran || fail "the agent did not get the brief whole: $(cat "$work/task.out" 2>/dev/null)"
+[[ ! -e "$task_row/pwned" && ! -e "$work/home/pwned" ]] || fail "the brief ran in the shell"
+"$cli" term list --all --json | /usr/bin/python3 -c 'import json, sys; t = [p for p in json.load(sys.stdin) if p["pane"] == sys.argv[1]]; assert t and t[0]["row"] == "e2e/phone-task", t' "$task_pane" \
+    || fail "the task's pane is not in its row here"
+"$cli" log --type phone.call | grep -q "phone.newRow" || fail "the log has no phone.newRow call"
+
 step "removing the phone closes its connection at once and revokes its token"
 $phone hold "$link" "$work/token" "$work/held" &
 hold_pid=$!
