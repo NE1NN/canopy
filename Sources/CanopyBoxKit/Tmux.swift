@@ -93,14 +93,25 @@ public struct Tmux: Sendable {
 
     /// The pane's visible screen, or its last `lines` lines with scrollback, as plain text or with `escapes` for
     /// colours. Trailing blank lines are left out.
-    public func capture(_ name: String, lines: Int?, escapes: Bool = false) async throws -> String {
+    public func capture(_ name: String, lines: Int?, escapes: Bool = false, keepBlank: Bool = false) async throws
+        -> String
+    {
         var arguments = ["capture-pane", "-p", "-t", "=\(name):"]
         if escapes { arguments.append("-e") }
         if let lines { arguments += ["-S", "-\(max(lines, 1))"] }
         var rows = try await run(arguments).components(separatedBy: "\n")
-        while let last = rows.last, last.trimmingCharacters(in: .whitespaces).isEmpty { rows.removeLast() }
+        if rows.last == "" { rows.removeLast() }
+        while !keepBlank, let last = rows.last, last.trimmingCharacters(in: .whitespaces).isEmpty { rows.removeLast() }
         if let lines { rows = Array(rows.suffix(lines)) }
         return rows.joined(separator: "\n")
+    }
+
+    /// The pane's size in cells.
+    public func size(_ name: String) async throws -> (columns: Int, rows: Int) {
+        let printed = try await run(["display-message", "-p", "-t", "=\(name):", "#{pane_width} #{pane_height}"])
+        let parts = printed.split(separator: " ").compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard parts.count == 2 else { throw TmuxError(arguments: ["display-message"], message: printed) }
+        return (parts[0], parts[1])
     }
 
     /// Types text as it is, never reading words such as `Enter` as keys.
@@ -132,7 +143,7 @@ public struct Tmux: Sendable {
 
     /// Pastes text as one paste, bracketed when the program asked for that, with newlines as Return.
     public func paste(_ text: String, to name: String) async throws {
-        let buffer = "canopy-\(name)"
+        let buffer = "canopy-\(name)-\(UUID().uuidString.prefix(8))"
         try await run(["load-buffer", "-b", buffer, "-"], stdin: Data(text.utf8))
         try await run(["paste-buffer", "-p", "-d", "-b", buffer, "-t", "=\(name):"])
     }

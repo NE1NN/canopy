@@ -10,16 +10,16 @@ struct HostFilesTests {
     }
 
     /// Writes a home's files into a fake host's home with the install command, as `host add` does.
-    func install(_ host: FakeHost, homeID: String = "test") throws {
+    func install(_ host: FakeHost, homeID: String = "test") async throws {
         let argv = host.ssh.exec(HostFiles.installCommand(homeID: homeID))
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
     }
 
-    func installedVersion(_ host: FakeHost, homeID: String) throws -> String {
+    func installedVersion(_ host: FakeHost, homeID: String) async throws -> String {
         let argv = host.ssh.exec(HostFiles.versionCommand(homeID: homeID))
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
         return String(decoding: result.stdout, as: UTF8.self)
     }
@@ -28,22 +28,22 @@ struct HostFilesTests {
     /// scanner.
     func runShared(
         _ host: FakeHost, homeID: String?, _ arguments: [String], variables: [String: String] = [:]
-    ) throws -> SubprocessResult {
+    ) async throws -> SubprocessResult {
         // Only what the test gives, so a test run inside a remote pane passes none of that pane's variables on.
         let unset = ["-u", "CANOPY_HOST"] + (homeID == nil ? ["-u", "CANOPY_HOME_ID"] : [])
         let assignments =
             (homeID.map { ["CANOPY_HOME_ID=\($0)"] } ?? [])
             + variables.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         let argv = host.ssh.exec(["env"] + unset + assignments + ["sh", ".local/bin/canopy"] + arguments)
-        return try Subprocess.run(
+        return try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
     }
 
-    @Test func installingWritesTheScriptTheConfigAndTheVersionInTheHomesOwnFolder() throws {
+    @Test func installingWritesTheScriptTheConfigAndTheVersionInTheHomesOwnFolder() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
 
-        try install(host)
+        try await install(host)
 
         let own = host.home + "/.canopy/test/"
         let script = own + "bin/canopy-host"
@@ -51,16 +51,16 @@ struct HostFilesTests {
         #expect(FileManager.default.isExecutableFile(atPath: script))
         #expect(try String(contentsOfFile: own + "tmux.conf", encoding: .utf8) == HostFiles.tmuxConf)
         #expect(try String(contentsOfFile: own + "files-version", encoding: .utf8) == HostFiles.version)
-        #expect(try installedVersion(host, homeID: "test") == HostFiles.version)
-        #expect(try installedVersion(host, homeID: "other") == "")
+        await #expect(try installedVersion(host, homeID: "test") == HostFiles.version)
+        await #expect(try installedVersion(host, homeID: "other") == "")
     }
 
-    @Test func installingWritesCanopyAndXdgOpenAndLinksCanopyWhereLoginShellsLook() throws {
+    @Test func installingWritesCanopyAndXdgOpenAndLinksCanopyWhereLoginShellsLook() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
 
-        try install(host)
-        try install(host)
+        try await install(host)
+        try await install(host)
 
         let bin = host.home + "/.canopy/test/bin/"
         #expect(try String(contentsOfFile: bin + "canopy", encoding: .utf8) == HostFiles.canopyLauncher(homeID: "test"))
@@ -75,51 +75,51 @@ struct HostFilesTests {
         #expect(FileManager.default.isExecutableFile(atPath: shared))
         let link = host.home + "/.local/bin/canopy"
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link) == shared)
-        let result = try runShared(host, homeID: nil, ["row", "list"])
+        let result = try await runShared(host, homeID: nil, ["row", "list"])
         #expect(result.status == 1)
         #expect(String(decoding: result.stderr, as: UTF8.self) == "Run canopy in a Canopy terminal on this host.\n")
     }
 
     /// The release app and a dev build on one host, each with its own version, as when the author tests a build.
-    @Test func twoHomesOnOneHostKeepTheirOwnFilesAndVersions() throws {
+    @Test func twoHomesOnOneHostKeepTheirOwnFilesAndVersions() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
         let other = host.home + "/.canopy/aaaa1111/"
         try Data("0.0.1+old\n".utf8).write(to: URL(fileURLWithPath: other + "files-version"))
         try Data("old helper\n".utf8).write(to: URL(fileURLWithPath: other + "bin/canopy-host"))
 
-        try install(host, homeID: "bbbb2222")
+        try await install(host, homeID: "bbbb2222")
 
-        #expect(try installedVersion(host, homeID: "aaaa1111") == "0.0.1+old\n")
+        await #expect(try installedVersion(host, homeID: "aaaa1111") == "0.0.1+old\n")
         #expect(try String(contentsOfFile: other + "bin/canopy-host", encoding: .utf8) == "old helper\n")
-        #expect(try installedVersion(host, homeID: "bbbb2222") == HostFiles.version)
+        await #expect(try installedVersion(host, homeID: "bbbb2222") == HostFiles.version)
         let own = host.home + "/.canopy/bbbb2222/"
         #expect(try String(contentsOfFile: own + "bin/canopy-host", encoding: .utf8) == HostFiles.script)
 
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
 
-        #expect(try installedVersion(host, homeID: "aaaa1111") == HostFiles.version)
-        #expect(try installedVersion(host, homeID: "bbbb2222") == HostFiles.version)
+        await #expect(try installedVersion(host, homeID: "aaaa1111") == HostFiles.version)
+        await #expect(try installedVersion(host, homeID: "bbbb2222") == HostFiles.version)
         #expect(
             try String(contentsOfFile: own + "bin/canopy", encoding: .utf8)
                 == HostFiles.canopyLauncher(homeID: "bbbb2222"))
     }
 
     /// Login shells, and pane shells whose startup files put other folders first, reach the pane's own home.
-    @Test func theSharedCanopyRunsTheCanopyOfThePanesHome() throws {
+    @Test func theSharedCanopyRunsTheCanopyOfThePanesHome() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
         let launcher = host.home + "/.canopy/aaaa1111/bin/canopy"
         try FileManager.default.removeItem(atPath: launcher)
         // A program that was already there, so nothing new runs.
         try FileManager.default.createSymbolicLink(atPath: launcher, withDestinationPath: "/bin/echo")
 
-        let inAPane = try runShared(host, homeID: "aaaa1111", ["row", "list"])
-        let outsideAPane = try runShared(host, homeID: nil, ["row", "list"])
-        let unknownHome = try runShared(host, homeID: "cccc3333", ["row", "list"])
-        let emptyHome = try runShared(host, homeID: "", ["row", "list"])
+        let inAPane = try await runShared(host, homeID: "aaaa1111", ["row", "list"])
+        let outsideAPane = try await runShared(host, homeID: nil, ["row", "list"])
+        let unknownHome = try await runShared(host, homeID: "cccc3333", ["row", "list"])
+        let emptyHome = try await runShared(host, homeID: "", ["row", "list"])
 
         #expect(inAPane.status == 0, "\(String(decoding: inAPane.stderr, as: UTF8.self))")
         #expect(String(decoding: inAPane.stdout, as: UTF8.self) == "row list\n")
@@ -131,12 +131,12 @@ struct HostFilesTests {
 
     /// A remote pane's session started before its home had a `canopy` on the host has the pane's variables but no
     /// CANOPY_HOME_ID, as from before Canopy's CLI reached hosts.
-    @Test func theSharedCanopyInATerminalFromBeforeTheCLISaysANewTerminalHasIt() throws {
+    @Test func theSharedCanopyInATerminalFromBeforeTheCLISaysANewTerminalHasIt() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
 
-        let result = try runShared(
+        let result = try await runShared(
             host, homeID: nil, ["row", "list"], variables: ["CANOPY_HOST": "box", "CANOPY_PANE": "p3"])
 
         #expect(result.status == 1)
@@ -147,14 +147,14 @@ struct HostFilesTests {
 
     /// Every home and every build of one revision writes the same shared `canopy`, so none of them replaces it with
     /// something else, and it never makes a home install again.
-    @Test func theSharedCanopyIsTheSameForEveryHomeAndIsWrittenOnlyWhenItDiffers() throws {
+    @Test func theSharedCanopyIsTheSameForEveryHomeAndIsWrittenOnlyWhenItDiffers() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
         let shared = host.home + "/.canopy/bin/canopy"
 
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
         let first = try FileManager.default.attributesOfItem(atPath: shared)[.systemFileNumber] as? Int
-        try install(host, homeID: "bbbb2222")
+        try await install(host, homeID: "bbbb2222")
         let second = try FileManager.default.attributesOfItem(atPath: shared)[.systemFileNumber] as? Int
 
         #expect(first != nil && first == second)
@@ -164,32 +164,32 @@ struct HostFilesTests {
         }
         try Data("#!/bin/sh\nexec python3 \"$HOME/.canopy/bin/canopy-host\" relay \"$@\"\n".utf8)
             .write(to: URL(fileURLWithPath: shared))
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
         #expect(try String(contentsOfFile: shared, encoding: .utf8) == HostFiles.sharedCanopy)
     }
 
     /// A later build may change the shared `canopy`, as this one added what a terminal from before the CLI is told, and
     /// an older build connecting to the same host must not take that back.
-    @Test func anInstallReplacesAnEarlierSharedCanopyButNeverALaterOne() throws {
+    @Test func anInstallReplacesAnEarlierSharedCanopyButNeverALaterOne() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
-        try install(host, homeID: "aaaa1111")
+        try await install(host, homeID: "aaaa1111")
         let shared = host.home + "/.canopy/bin/canopy"
         let later = "#!/bin/sh\n# Written by Canopy (revision 999999). A later build's.\nexit 0\n"
         try Data(later.utf8).write(to: URL(fileURLWithPath: shared))
 
-        try install(host, homeID: "bbbb2222")
+        try await install(host, homeID: "bbbb2222")
 
         #expect(try String(contentsOfFile: shared, encoding: .utf8) == later)
         let earlier = HostFiles.sharedCanopy.replacingOccurrences(
             of: #"\(revision \d+\)"#, with: "(revision 0)", options: .regularExpression)
         #expect(earlier != HostFiles.sharedCanopy)
         try Data(earlier.utf8).write(to: URL(fileURLWithPath: shared))
-        try install(host, homeID: "bbbb2222")
+        try await install(host, homeID: "bbbb2222")
         #expect(try String(contentsOfFile: shared, encoding: .utf8) == HostFiles.sharedCanopy)
     }
 
-    @Test func installingLeavesAnotherCanopyOnThePathAlone() throws {
+    @Test func installingLeavesAnotherCanopyOnThePathAlone() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
         let bin = host.home + "/.local/bin"
@@ -197,35 +197,35 @@ struct HostFilesTests {
         try "mine".write(toFile: bin + "/canopy", atomically: true, encoding: .utf8)
         try FileManager.default.createSymbolicLink(atPath: bin + "/elsewhere", withDestinationPath: "/nowhere")
 
-        try install(host)
+        try await install(host)
 
         #expect(try String(contentsOfFile: bin + "/canopy", encoding: .utf8) == "mine")
         try FileManager.default.removeItem(atPath: bin + "/canopy")
         try FileManager.default.moveItem(atPath: bin + "/elsewhere", toPath: bin + "/canopy")
-        try install(host)
+        try await install(host)
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: bin + "/canopy") == "/nowhere")
     }
 
     /// tmux may be missing for a moment, as while the host's packages update, and the probe runs every 2 seconds.
-    @Test func withoutTmuxInstallingWorksAndTheProbeFindsNoSessions() throws {
+    @Test func withoutTmuxInstallingWorksAndTheProbeFindsNoSessions() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir, path: "/usr/bin:/bin")
-        try install(host)
+        try await install(host)
         let argv = host.ssh.exec(HostProbe.command(homeID: "test"))
 
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
         #expect(try HostProbe.decode(result.stdout) == HostProbe.Report(sessions: [:], pending: []))
     }
 
-    @Test func theScriptIsValidPython() throws {
+    @Test func theScriptIsValidPython() async throws {
         let dir = try TempDir()
         let file = dir.sub("canopy-host")
         try HostFiles.script.write(toFile: file, atomically: true, encoding: .utf8)
 
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             "/usr/bin/python3", ["-m", "py_compile", file], environment: Fixture.environment, directory: nil,
             timeout: .seconds(30))
 
@@ -237,12 +237,12 @@ struct HostFilesTests {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
         let homeID = "test-\(UUID().uuidString.prefix(6))"
-        try install(host, homeID: homeID)
+        try await install(host, homeID: homeID)
         let server = HostPaths.tmuxServer(homeID: homeID)
         let tmux = try #require(Self.tmux)
         let folder = dir.sub("work dir")
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        _ = try Subprocess.run(
+        _ = try await Subprocess.runOffPool(
             // A login shell, as tmux starts one, whose name starts with a dash.
             tmux,
             [
@@ -255,44 +255,44 @@ struct HostFilesTests {
                 tmux, ["-L", server, "kill-server"], environment: Fixture.environment, directory: nil,
                 timeout: .seconds(10))
         }
-        func probe() throws -> [String: SessionActivity] {
+        func probe() async throws -> [String: SessionActivity] {
             let argv = host.ssh.exec(HostProbe.command(homeID: homeID))
             var environment = host.environment
             environment["FAKE_SSH_PATH"] = "/opt/homebrew/bin:/usr/bin:/bin"
             // As the app runs it: git's environment says LC_ALL=C, and ssh passes LC_* on to the host.
             environment["LC_ALL"] = "C"
-            let result = try Subprocess.run(
+            let result = try await Subprocess.runOffPool(
                 argv[0], Array(argv.dropFirst()), environment: environment, directory: nil, timeout: .seconds(30))
             return try HostProbe.decode(result.stdout).sessions
         }
 
-        let idle = await eventually { (try? probe())?["p1"]?.busy == false }
+        let idle = await eventually { await (try? probe())?["p1"]?.busy == false }
         #expect(idle)
-        #expect(try probe()["p1"]?.folder == folder)
+        await #expect(try probe()["p1"]?.folder == folder)
         // tmux's title for a pane nothing titled is the machine's name, which says nothing.
-        #expect(try probe()["p1"]?.title == "")
-        #expect(try probe()["p1"]?.foreground == "bash")
-        _ = try Subprocess.run(
+        await #expect(try probe()["p1"]?.title == "")
+        await #expect(try probe()["p1"]?.foreground == "bash")
+        _ = try await Subprocess.runOffPool(
             tmux, ["-L", server, "send-keys", "-t", "p1", "sleep 30", "Enter"], environment: Fixture.environment,
             directory: nil, timeout: .seconds(10))
-        let busy = await eventually { (try? probe())?["p1"]?.busy == true }
+        let busy = await eventually { await (try? probe())?["p1"]?.busy == true }
 
         #expect(busy)
-        #expect(try probe()["p1"]?.foreground == "sleep")
+        await #expect(try probe()["p1"]?.foreground == "sleep")
     }
 
     /// Security scanners can hold the first run of a new file for seconds, longer than a probe may take, and every
     /// new version of the helper is a new file. Run through python3, the helper is only read.
-    @Test func theProbeReadsTheHelperInsteadOfRunningIt() throws {
+    @Test func theProbeReadsTheHelperInsteadOfRunningIt() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir)
         let homeID = "test-\(UUID().uuidString.prefix(6))"
-        try install(host, homeID: homeID)
+        try await install(host, homeID: homeID)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o644], ofItemAtPath: host.home + "/.canopy/\(homeID)/bin/canopy-host")
         let argv = host.ssh.exec(HostProbe.command(homeID: homeID))
 
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
@@ -314,11 +314,11 @@ struct HostFilesTests {
     }
 
     /// Kept reports are replayed from the probe, so one waits on the host no longer than a probe takes to see it.
-    @Test func probeListsThePanesWithAKeptReportAndNothingElseInTheirFolder() throws {
+    @Test func probeListsThePanesWithAKeptReportAndNothingElseInTheirFolder() async throws {
         let dir = try TempDir()
         let host = try FakeHost(in: dir, path: "/usr/bin:/bin")
         let homeID = "test-\(UUID().uuidString.prefix(6))"
-        try install(host, homeID: homeID)
+        try await install(host, homeID: homeID)
         let pending = host.home + "/.canopy/\(homeID)/pending"
         let other = host.home + "/.canopy/other-home/pending"
         for folder in [pending, other] {
@@ -334,7 +334,7 @@ struct HostFilesTests {
         try Data("{}".utf8).write(to: URL(fileURLWithPath: other + "/p7.json"))
         let argv = host.ssh.exec(HostProbe.command(homeID: homeID))
 
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             argv[0], Array(argv.dropFirst()), environment: host.environment, directory: nil, timeout: .seconds(30))
 
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")

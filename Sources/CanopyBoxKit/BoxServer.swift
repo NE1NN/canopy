@@ -1,4 +1,5 @@
 import CanopyAgents
+import CanopyServer
 import CanopySystem
 import CanopyWire
 import Dispatch
@@ -19,13 +20,17 @@ public final class BoxServer: Sendable {
     /// The connections being served, which closing the server ends.
     private let open = OpenConnections()
 
-    public init(daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait) throws {
+    /// `phones` is the box's phone server, which the Mac's `phone ... --on` reaches through these methods.
+    public init(
+        daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait, phones: PhoneServer? = nil
+    ) throws {
         self.daemon = daemon
         let open = open
         listener = try UnixListener(path: socketPath) { connection in
             open.all.withLock { $0[ObjectIdentifier(connection)] = connection }
             defer { _ = open.all.withLock { $0.removeValue(forKey: ObjectIdentifier(connection)) } }
-            Self.serve(connection, daemon: daemon, writer: ConnectionWriter(connection, wait: writeWait))
+            Self.serve(
+                connection, daemon: daemon, phones: phones, writer: ConnectionWriter(connection, wait: writeWait))
         }
     }
 
@@ -43,7 +48,9 @@ public final class BoxServer: Sendable {
     /// after its last request, as `printf ... | nc -U` does, so calls already under way still answer before the
     /// connection closes. A subscription ends with the client's sending, since its client keeps that open while it
     /// listens, and one that went away would otherwise hold this thread until the box next changed.
-    private static func serve(_ connection: UnixConnection, daemon: BoxDaemon, writer: ConnectionWriter) {
+    private static func serve(
+        _ connection: UnixConnection, daemon: BoxDaemon, phones: PhoneServer?, writer: ConnectionWriter
+    ) {
         let work = Mutex<[Task<Void, Never>]>([])
         let subscriptions = Mutex<[Task<Void, Never>]>([])
         defer {
@@ -80,7 +87,7 @@ public final class BoxServer: Sendable {
                 let task = Task { await subscribe(request, with: writer, daemon: daemon) }
                 subscriptions.withLock { $0.append(task) }
             } else {
-                let task = Task { send(await handle(request, daemon: daemon), with: writer) }
+                let task = Task { send(await handle(request, daemon: daemon, phones: phones), with: writer) }
                 work.withLock { $0.append(task) }
             }
         }
@@ -135,13 +142,35 @@ public final class BoxServer: Sendable {
     }
 
     /// The answer to one control request.
-    static func handle(_ request: ControlRequest, daemon: BoxDaemon) async -> ControlResponse {
+    static func handle(_ request: ControlRequest, daemon: BoxDaemon, phones: PhoneServer? = nil) async
+        -> ControlResponse
+    {
         do {
+            if request.method.hasPrefix("box.phones.") {
+                return .success(id: request.id, result: try await phonesResult(of: request, phones: phones))
+            }
             return .success(id: request.id, result: try await result(of: request, daemon: daemon))
         } catch let error as ControlError {
             return .failure(id: request.id, error: error)
         } catch {
             return .failure(id: request.id, error: ControlError(code: "internal", message: "\(error)"))
+        }
+    }
+
+    private static func phonesResult(of request: ControlRequest, phones: PhoneServer?) async throws -> JSONValue {
+        guard let phones else {
+            throw ControlError(code: "phones_off", message: "canopy-box on this host serves no phones.")
+        }
+        switch request.method {
+        case BoxMethod.phonesPair: return try .from(try await phones.pair())
+        case BoxMethod.phonesPaired:
+            let params = try request.decodeParams(PhonesPairedParams.self)
+            return try .from(PhonesPairedResult(phone: await phones.waitForPairing(code: params.code)))
+        case BoxMethod.phonesList: return try .from(await phones.list())
+        case BoxMethod.phonesRemove:
+            return try .from(try await phones.remove(name: try request.decodeParams(PhonesRemoveParams.self).name))
+        case BoxMethod.phonesStatus: return try .from(await phones.status())
+        default: throw ControlError(code: "unknown_method", message: "Unknown method \(request.method)")
         }
     }
 

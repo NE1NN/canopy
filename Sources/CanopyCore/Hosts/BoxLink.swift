@@ -89,7 +89,8 @@ public actor BoxLink {
                 let written = await onOwnThread { (try? connection.write(line, deadline: .now + .seconds(10))) != nil }
                 if !written { self.fail(id, with: self.notConnected()) }
             }
-            if method != BoxMethod.wait {
+            // A wait and a pairing take as long as they take: a pairing code lasts five minutes.
+            if method != BoxMethod.wait, method != BoxMethod.phonesPaired {
                 timers[id] = Task {
                     try? await Task.sleep(for: Self.callWait)
                     guard !Task.isCancelled else { return }

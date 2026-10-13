@@ -22,6 +22,7 @@ public actor BoxDaemon {
     var lastFetch: [String: (finishedAt: ContinuousClock.Instant, failure: String?)] = [:]
     /// Panes and rows being made, which a listing taken meanwhile neither takes in nor drops.
     var makingPanes: Set<String> = []
+    var phonesConnected = false
     var makingRows: Set<String> = []
     /// What `wait` calls are waiting on, woken on each agent change or pane end.
     var waiters: [UUID: @Sendable () -> Void] = [:]

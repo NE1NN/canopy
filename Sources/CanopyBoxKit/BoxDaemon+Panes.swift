@@ -238,3 +238,39 @@ extension BoxDaemon {
         return groups
     }
 }
+
+extension BoxDaemon {
+    /// Pastes text into a pane as one bracketed paste, with newlines as Return and no escape characters, so the text
+    /// cannot end its own paste.
+    public func paste(pane id: String, text: String) async throws {
+        guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
+        let clean = text.replacingOccurrences(of: "\r\n", with: "\n").filter { $0 != "\u{1b}" }
+        typed(Data(clean.utf8), into: id)
+        try await tmux.paste(clean, to: id)
+    }
+
+    /// Presses Return in the pane unless its agent left or shows a dialog, which Return would answer. Returns whether
+    /// it pressed.
+    func pressReturnUnlessDialog(pane id: String) async throws -> Bool {
+        guard let agent = pane(id)?.agent, agent.session != nil, !BoxPhoneSource.showsDialog(agent) else {
+            return false
+        }
+        try await tmux.sendBytes(Data([0x0D]), to: id)
+        typed(Data([0x0D]), into: id)
+        return true
+    }
+
+    /// The pane's screen with colours, and with `scrollback`, that many lines above it.
+    public func screen(pane id: String, scrollback: Int?) async throws -> PhoneScreen {
+        guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
+        let size = try await tmux.size(id)
+        let all = try await tmux.capture(id, lines: size.rows + (scrollback ?? 0), escapes: true, keepBlank: true)
+            .components(separatedBy: "\n")
+        // Exactly the screen's rows, blank ones included, so lines and the cursor line up as on the Mac.
+        var screen = Array(all.suffix(size.rows))
+        while screen.count < size.rows { screen.append("") }
+        return PhoneScreen(
+            pane: id, columns: size.columns, rows: size.rows,
+            scrollback: scrollback.map { _ in Array(all.dropLast(screen.count)) }, lines: screen)
+    }
+}

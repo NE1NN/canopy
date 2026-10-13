@@ -135,13 +135,13 @@ struct LocalPortChooserTests {
                 timeout: .seconds(10))
         }
         #expect(result.status == 0, "\(String(decoding: result.stderr, as: UTF8.self))")
-        #expect(try Self.timeWait(on: port))
+        await #expect(try Self.timeWait(on: port))
 
         #expect(LocalPortChooser.isFree(port))
     }
 
-    static func timeWait(on port: UInt16) throws -> Bool {
-        let listed = try Subprocess.run(
+    static func timeWait(on port: UInt16) async throws -> Bool {
+        let listed = try await Subprocess.runOffPool(
             "/usr/sbin/netstat", ["-an", "-p", "tcp"], environment: Fixture.environment, directory: nil,
             timeout: .seconds(10))
         return String(decoding: listed.stdout, as: UTF8.self).split(separator: "\n").contains {
@@ -149,12 +149,16 @@ struct LocalPortChooserTests {
         }
     }
 
+    /// Another test's socket can take a port the moment it is let go, so a few are tried.
     @Test func aPortNobodyHoldsIsFree() throws {
-        var listener: Listener? = try Listener(family: AF_INET)
-        let port = try #require(listener?.port)
-        listener = nil
+        let free = try (0..<5).contains { _ in
+            var listener: Listener? = try Listener(family: AF_INET)
+            let port = try #require(listener?.port)
+            listener = nil
+            return LocalPortChooser.isFree(port)
+        }
 
-        #expect(LocalPortChooser.isFree(port))
+        #expect(free)
     }
 }
 

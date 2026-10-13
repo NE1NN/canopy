@@ -23,3 +23,17 @@ public func eventually(
     }
     return await condition()
 }
+
+extension Subprocess {
+    /// `run` on a thread of its own. Waiting for a child on a Swift concurrency thread holds up every other test, and
+    /// under `make test`'s strict pool there is only one such thread.
+    public static func runOffPool(
+        _ executable: String, _ arguments: [String], environment: [String: String], directory: String?,
+        timeout: Duration?, stdin: Data? = nil
+    ) async throws -> SubprocessResult {
+        try await offPool {
+            try run(
+                executable, arguments, environment: environment, directory: directory, timeout: timeout, stdin: stdin)
+        }
+    }
+}

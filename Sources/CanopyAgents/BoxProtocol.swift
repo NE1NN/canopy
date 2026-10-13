@@ -37,6 +37,13 @@ public enum BoxMethod {
     public static let adopt = "box.adopt"
     /// Result: `BoxReleaseResult`.
     public static let release = "box.release"
+    /// The box's own phones, as `phones.pair`, `phones.paired`, `phones.list`, `phones.remove`, and `phones.status`
+    /// are on the Mac, with the same params and results.
+    public static let phonesPair = "box.phones.pair"
+    public static let phonesPaired = "box.phones.paired"
+    public static let phonesList = "box.phones.list"
+    public static let phonesRemove = "box.phones.remove"
+    public static let phonesStatus = "box.phones.status"
 }
 
 public enum BoxProtocol {

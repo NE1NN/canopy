@@ -27,9 +27,21 @@ public struct PhonesPairResult: Codable, Sendable, Equatable {
 
 public struct PhonesPairedParams: Codable, Sendable {
     public var code: String
+    /// A host whose canopy-box serves the phone, rather than this Mac.
+    public var on: String?
 
-    public init(code: String) {
+    public init(code: String, on: String? = nil) {
         self.code = code
+        self.on = on
+    }
+}
+
+/// Which server a phone command is about: this Mac, or a host's canopy-box.
+public struct PhonesOnParams: Codable, Sendable {
+    public var on: String?
+
+    public init(on: String? = nil) {
+        self.on = on
     }
 }
 
@@ -69,9 +81,11 @@ public struct PhoneInfo: Codable, Sendable, Equatable {
 
 public struct PhonesRemoveParams: Codable, Sendable {
     public var name: String
+    public var on: String?
 
-    public init(name: String) {
+    public init(name: String, on: String? = nil) {
         self.name = name
+        self.on = on
     }
 }
 

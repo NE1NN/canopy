@@ -64,9 +64,14 @@ extension BoxDaemon {
         }
     }
 
-    /// Whether an agent is at work, so the box should stay on.
+    /// Whether an agent is at work or a phone is connected, so the box should stay on.
     var isBusy: Bool {
-        state.panes.contains { $0.agent.state == .working || $0.agent.state == .background }
+        phonesConnected || state.panes.contains { $0.agent.state == .working || $0.agent.state == .background }
+    }
+
+    /// Whether any phone is connected now, which keeps the box on as working agents do.
+    public func setPhonesConnected(_ connected: Bool) {
+        phonesConnected = connected
     }
 
     /// Touches the busy file while the box should stay on. A daemon that stops ticking stops holding the box on.
@@ -93,4 +98,27 @@ private struct KeptReport: Decodable {
     var age: Double?
     /// When it was kept, in seconds since 1970.
     var kept: Double?
+}
+
+extension BoxDaemon {
+    /// Takes the answer to a pane's open prompt, if `promptID` still names it, so a second answer finds it gone.
+    func takeAnswer(pane id: String, promptID: String) -> OpenPrompt? {
+        guard let index = state.panes.firstIndex(where: { $0.id == id }),
+            let prompt = state.panes[index].agent.prompt, prompt.id == promptID,
+            state.panes[index].agent.answer(promptID: promptID)
+        else { return nil }
+        changed()
+        return prompt
+    }
+
+    /// Opens a taken prompt again when its keys never reached the pane.
+    func giveBack(_ prompt: OpenPrompt, pane id: String) {
+        guard let index = state.panes.firstIndex(where: { $0.id == id }), state.panes[index].agent.reopen(prompt)
+        else { return }
+        changed()
+    }
+
+    func agent(of id: String) -> PaneAgent? {
+        pane(id)?.agent
+    }
 }

@@ -403,20 +403,31 @@ public struct WorkspaceControlHandler: Sendable {
             return .object(["page": .string(params.page)])
 
         case PhonesMethod.pair:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesPair, JSONValue.object([:]))
+            }
             return try .from(try await phoneService().pair())
 
         case PhonesMethod.paired:
             let params = try request.decodeParams(PhonesPairedParams.self)
+            if let on = params.on { return try await boxPhones(on, BoxMethod.phonesPaired, params) }
             return try .from(PhonesPairedResult(phone: await phoneService().waitForPairing(code: params.code)))
 
         case PhonesMethod.list:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesList, JSONValue.object([:]))
+            }
             return try .from(await phoneService().list())
 
         case PhonesMethod.remove:
             let params = try request.decodeParams(PhonesRemoveParams.self)
+            if let on = params.on { return try await boxPhones(on, BoxMethod.phonesRemove, params) }
             return try .from(try await phoneService().remove(name: params.name))
 
         case PhonesMethod.status:
+            if let on = try onHost(request) {
+                return try await boxPhones(on, BoxMethod.phonesStatus, JSONValue.object([:]))
+            }
             return try .from(await phoneService().status())
 
         case PluginMethod.list:
@@ -589,5 +600,27 @@ private enum RowStart {
         if params.existing { throw refuse("--existing is for a branch name. --pr always uses the PR's branch.") }
         guard let reference = PRReference(text) else { throw WorkspaceError.invalidPullRequest(text) }
         self = .pullRequest(reference)
+    }
+}
+
+extension WorkspaceControlHandler {
+    /// The host a phone command names with `--on`, from params that may be null.
+    private func onHost(_ request: ControlRequest) throws -> String? {
+        guard let params = request.params, params != .null else { return nil }
+        return try request.decodeParams(PhonesOnParams.self).on
+    }
+
+    /// A phone command for a host's canopy-box, through its link.
+    private func boxPhones(_ alias: String, _ method: String, _ params: some Encodable) async throws -> JSONValue {
+        guard let link = await workspace.boxLink(for: alias) else {
+            throw ControlError(
+                code: "host_not_upgraded",
+                message: "\(alias) does not run canopy-box. Run `canopy host upgrade \(alias)` first.")
+        }
+        guard await link.waitUntilConnected(within: .seconds(30)) else {
+            throw ControlError(WorkspaceError.hostUnreachable(alias, reason: "canopy-box is not answering."))
+        }
+        let value = try JSONValue.from(params)
+        return try await link.call(method, value, as: JSONValue.self)
     }
 }
