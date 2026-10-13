@@ -208,6 +208,7 @@ extension Workspace {
         let saved = entry
         entry.box = true
         try HostsConfigFile(url: home.configFile).save(alias, entry)
+        await connection.update(entry)
         upgradingHosts.insert(alias)
         defer { upgradingHosts.remove(alias) }
         do {
@@ -260,6 +261,7 @@ extension Workspace {
         } catch {
             // As before the upgrade: the relay talks to the app, and no daemon waits on the host for panes it lacks.
             try? HostsConfigFile(url: home.configFile).save(alias, saved)
+            await connection.update(saved)
             await stopBoxLink(alias)
             _ = try? await output(of: markCommand(adopted: false), on: connection)
             try? await BoxInstall.stop(on: connection, homeID: homeID)
@@ -288,6 +290,7 @@ extension Workspace {
         let released: BoxReleaseResult = try await link.call(BoxMethod.release, JSONValue.object([:]))
         entry.box = false
         try HostsConfigFile(url: home.configFile).save(alias, entry)
+        await connection.update(entry)
         await stopBoxLink(alias)
         restoreReleasedRows(released.rows, host: alias)
         var warnings: [String] = []
