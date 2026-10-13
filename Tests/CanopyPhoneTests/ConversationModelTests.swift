@@ -280,6 +280,14 @@ struct ConversationModelTests {
         #expect(!model.paneGone)
     }
 
+    @Test func aChatHasNoTerminalTab() async throws {
+        mac.on(PhoneMethod.transcript) { _ in .error("no_transcript") }
+        let model = try await model(Rows.agent("p3", .working, transcript: false, kind: .chat))
+
+        #expect(model.isChat)
+        #expect(model.tab == .chat)
+    }
+
     @Test func noTranscriptOpensTerminalAndChatSaysWhy() async throws {
         mac.on(PhoneMethod.transcript) { _ in .error("no_transcript") }
         let model = try await model(Rows.agent("p3", .working, transcript: false))

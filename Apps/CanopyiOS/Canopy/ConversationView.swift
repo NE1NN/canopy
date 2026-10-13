@@ -15,15 +15,18 @@ struct ConversationView: View {
     var body: some View {
         @Bindable var conversation = conversation
         VStack(spacing: 0) {
-            Picker("View", selection: $conversation.tab) {
-                Text("Chat").tag(ConversationModel.Tab.chat)
-                Text("Terminal").tag(ConversationModel.Tab.terminal)
+            // A chat on the Mac has no terminal, so it shows its conversation alone.
+            if !conversation.isChat {
+                Picker("View", selection: $conversation.tab) {
+                    Text("Chat").tag(ConversationModel.Tab.chat)
+                    Text("Terminal").tag(ConversationModel.Tab.terminal)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .accessibilityIdentifier("tabs")
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            .accessibilityIdentifier("tabs")
             if conversation.paneGone {
                 Banner(
                     problem: PhoneProblem(title: "This pane closed.", detail: "What it showed stays here."),

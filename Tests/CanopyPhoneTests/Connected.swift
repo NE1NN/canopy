@@ -28,11 +28,11 @@ func freshDefaults() -> UserDefaults {
 enum Rows {
     static func agent(
         _ pane: String, _ state: AgentState, since: Double = 1_000, unseen: Bool = false, line: String? = nil,
-        prompt: OpenPrompt? = nil, transcript: Bool = true
+        prompt: OpenPrompt? = nil, transcript: Bool = true, kind: PaneKind = .terminal
     ) -> PhoneAgent {
         PhoneAgent(
             pane: pane, state: state, unseen: unseen, since: since, lastLine: line, prompt: prompt,
-            hasTranscript: transcript)
+            hasTranscript: transcript, kind: kind)
     }
 
     static let permission = OpenPrompt(id: "prompt-1", kind: .permission, tool: "Bash", detail: "npx convex deploy")
