@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// Turns lines of a Claude Code transcript (JSONL) into the conversation the phone shows: prompts, the agent's text,
@@ -310,7 +311,7 @@ public enum TranscriptParser {
     }
 
     /// Tool calls that fold together, and how a run of them reads.
-    enum ToolKind: Equatable {
+    public enum ToolKind: Equatable {
         case run, read, edit, search, fetch, webSearch, agent, todo, other(String)
 
         init(_ name: String) {
@@ -361,7 +362,7 @@ public enum TranscriptParser {
         }
 
         /// The first line, cut to a phone's width.
-        static func short(_ text: String) -> String {
+        public static func short(_ text: String) -> String {
             let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
             return line.count > 80 ? String(line.prefix(79)) + "…" : line
         }

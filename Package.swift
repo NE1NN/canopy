@@ -7,17 +7,20 @@ let portableTargets: [Target] = [
     .target(name: "CanopyWire"),
     // What the Mac app and canopy-box need from the operating system, on macOS and Linux alike.
     .target(name: "CanopySystem"),
+    // Agent states from Claude Code's hooks, transcripts, and the keys that answer prompts.
+    .target(name: "CanopyAgents", dependencies: ["CanopyWire"]),
     // Helpers every test target shares.
-    .target(name: "CanopyTestSupport", dependencies: ["CanopySystem"]),
+    .target(name: "CanopyTestSupport", dependencies: ["CanopySystem"], resources: [.copy("Fixtures")]),
     .testTarget(name: "CanopyWireTests", dependencies: ["CanopyWire"]),
     .testTarget(name: "CanopySystemTests", dependencies: ["CanopySystem", "CanopyTestSupport"]),
+    .testTarget(name: "CanopyAgentsTests", dependencies: ["CanopyAgents", "CanopyWire", "CanopyTestSupport"]),
 ]
 
 let macTargets: [Target] = [
     .target(name: "CPty"),
     // The iPhone app's models and its connection to the Mac, kept out of its views so they test on the Mac.
     .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
-    .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem"]),
+    .target(name: "CanopyCore", dependencies: ["CPty", "CanopyWire", "CanopySystem", "CanopyAgents"]),
     // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
     .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
     .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),
@@ -36,10 +39,7 @@ let macTargets: [Target] = [
         ]
     ),
     .testTarget(name: "CanopyPhoneTests", dependencies: ["CanopyPhone"]),
-    .testTarget(
-        name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport"],
-        resources: [.copy("Fixtures")]
-    ),
+    .testTarget(name: "CanopyCoreTests", dependencies: ["CanopyCore", "CanopyFixturePlugin", "CanopyTestSupport"]),
     .testTarget(
         name: "CanopyCLITests",
         dependencies: [

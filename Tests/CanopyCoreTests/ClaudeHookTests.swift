@@ -5,12 +5,9 @@ import Testing
 
 @testable import CanopyCore
 
-struct ClaudeHookTests {
+/// What `canopy agent-hook` sends to the app for a hook.
+struct AgentHookTests {
     let started = Date(timeIntervalSince1970: 2_000)
-
-    func report(_ json: String) -> AgentReport? {
-        ClaudeHookMapping.report(from: Data(json.utf8), startedAt: started)
-    }
 
     func expected(
         _ state: AgentState?, _ event: String, question: Bool = false, takesOver: Bool = false,
@@ -19,164 +16,6 @@ struct ClaudeHookTests {
         AgentReport(
             state: state, session: "abc123", event: event, at: started, question: question, takesOver: takesOver,
             releases: releases, backgroundTasks: backgroundTasks, prompt: prompt)
-    }
-
-    @Test func sessionsTakeAndLetGoOfThePane() {
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "SessionStart", "source": "startup"}"#)
-                == expected(nil, "SessionStart"))
-        for source in ["resume", "clear", "compact", "fork"] {
-            #expect(
-                report(#"{"session_id": "abc123", "hook_event_name": "SessionStart", "source": "\#(source)"}"#)
-                    == expected(nil, "SessionStart", takesOver: true))
-        }
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "SessionEnd", "reason": "clear"}"#)
-                == expected(AgentState.none, "SessionEnd", releases: true))
-    }
-
-    @Test func promptsAndToolCallsMeanWorking() {
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "UserPromptSubmit", "prompt": "Write a function"}"#)
-                == expected(.working, "UserPromptSubmit"))
-        for event in ["PostToolUse", "PostToolUseFailure"] {
-            #expect(
-                report(#"{"session_id": "abc123", "hook_event_name": "\#(event)", "tool_name": "Bash"}"#)
-                    == expected(.working, event))
-            // A background subagent keeps calling tools while the main agent waits on a question.
-            #expect(
-                report(
-                    #"{"session_id": "abc123", "hook_event_name": "\#(event)", "tool_name": "Bash", "agent_id": "def456"}"#
-                )
-                    == nil)
-        }
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "ElicitationResult"}"#)
-                == expected(.working, "ElicitationResult"))
-    }
-
-    @Test func questionsPermissionsAndDialogsMeanWaiting() {
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion"}"#)
-                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .question, questions: nil)))
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "ExitPlanMode"}"#)
-                == expected(.waiting, "PreToolUse", prompt: AgentPrompt(kind: .plan, tool: "ExitPlanMode")))
-        #expect(report(#"{"session_id": "abc123", "hook_event_name": "PreToolUse", "tool_name": "Bash"}"#) == nil)
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "rm -rf node_modules"}}"#
-            )
-                == expected(
-                    .waiting, "PermissionRequest",
-                    prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf node_modules")))
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "agent_id": "def456"}"#
-            )
-                == nil)
-        for type in ["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"] {
-            #expect(
-                report(#"{"session_id": "abc123", "hook_event_name": "Notification", "notification_type": "\#(type)"}"#)
-                    == expected(.waiting, "Notification"))
-        }
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "Elicitation"}"#) == expected(.waiting, "Elicitation"))
-    }
-
-    @Test func otherNotificationsAndEventsMapToNothing() {
-        // A background session finishing is not this pane's agent, which Stop reports.
-        for type in ["idle_prompt", "auth_success", "elicitation_complete", "agent_completed"] {
-            #expect(
-                report(#"{"session_id": "abc123", "hook_event_name": "Notification", "notification_type": "\#(type)"}"#)
-                    == nil)
-        }
-        #expect(report(#"{"session_id": "abc123", "hook_event_name": "SubagentStop", "agent_id": "def456"}"#) == nil)
-        #expect(report(#"{"session_id": "abc123", "hook_event_name": "SomeFutureEvent"}"#) == nil)
-        #expect(report("not json") == nil)
-        #expect(report("") == nil)
-        #expect(report(#"["SessionStart"]"#) == nil)
-    }
-
-    @Test func aTurnEndsDoneOnAQuestionOrStillWorking() {
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "I've completed the refactoring.", "background_tasks": []}"#
-            )
-                == expected(.done, "Stop"))
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Done.\n\nShould I push it?\n"}"#
-            )
-                == expected(
-                    .waiting, "Stop", question: true, prompt: AgentPrompt(kind: .reply, detail: "Should I push it?")))
-        #expect(report(#"{"session_id": "abc123", "hook_event_name": "Stop"}"#) == expected(.done, "Stop"))
-        for type in ["subagent", "workflow"] {
-            #expect(
-                report(
-                    #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Waiting on it.", "background_tasks": [{"id": "t1", "type": "\#(type)", "status": "running"}]}"#
-                )
-                    == expected(.working, "Stop"))
-        }
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "StopFailure", "error": "rate_limit", "last_assistant_message": "API Error: Rate limit reached?"}"#
-            )
-                == expected(.done, "StopFailure"))
-    }
-
-    @Test func aTurnThatEndsWithShellsRunningIsBackground() {
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "The 40-second sleep is running in the background. I'll wait for it to finish and report the output.", "background_tasks": [{"id": "bybwi8u6r", "type": "shell", "status": "running", "description": "Sleep 40 seconds then print finished", "command": "sleep 40 && echo finished"}]}"#
-            )
-                == expected(.background, "Stop", backgroundTasks: ["Sleep 40 seconds then print finished"]))
-        // A label falls back to the command, then the type.
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "The server runs.", "background_tasks": [{"id": "t1", "type": "monitor", "status": "running", "description": " ", "command": "bun dev"}, {"id": "t2", "type": "remote_job"}]}"#
-            )
-                == expected(.background, "Stop", backgroundTasks: ["bun dev", "remote_job"]))
-        // Finished tasks do not count.
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "All done.", "background_tasks": [{"id": "t1", "type": "shell", "status": "completed", "command": "npm test"}]}"#
-            )
-                == expected(.done, "Stop"))
-    }
-
-    @Test func oddTasksAreSkippedAndFinishedSubagentsDoNotCount() {
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "running"}, null, "x"]}"#
-            )
-                == expected(.working, "Stop"))
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [7, {"type": "shell", "status": 3, "command": ["npm"], "description": "Run the tests"}]}"#
-            )
-                == expected(.background, "Stop", backgroundTasks: ["Run the tests"]))
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "background_tasks": [{"type": "subagent", "status": "completed"}]}"#
-            )
-                == expected(.done, "Stop"))
-    }
-
-    @Test func aQuestionOrASubagentWinsOverShells() {
-        let shell = #"{"id": "t1", "type": "shell", "status": "running", "command": "npm test"}"#
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Tests run. Should I push?", "background_tasks": [\#(shell)]}"#
-            )
-                == expected(
-                    .waiting, "Stop", question: true,
-                    prompt: AgentPrompt(kind: .reply, detail: "Tests run. Should I push?")))
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Both run.", "background_tasks": [\#(shell), {"id": "t2", "type": "subagent", "status": "running"}]}"#
-            )
-                == expected(.working, "Stop"))
     }
 
     @Test func aBackgroundReportCarriesItsWorkToTheApp() throws {
@@ -193,32 +32,6 @@ struct ClaudeHookTests {
         let done = try JSONValue.from(TermStateParams(pane: "p3", state: .done))
         if case .object(let fields) = done { #expect(fields["backgroundTasks"] == nil) }
         #expect(try done.decode(TermStateParams.self).backgroundTasks.isEmpty)
-    }
-
-    @Test func aFieldThatChangedShapeReadsAsMissing() {
-        #expect(
-            report(
-                #"{"session_id": "abc123", "hook_event_name": "Stop", "last_assistant_message": "Done.", "background_tasks": {"count": 2}}"#
-            )
-                == expected(.done, "Stop"))
-        #expect(
-            report(#"{"session_id": "abc123", "hook_event_name": "SessionStart", "source": 7}"#)
-                == expected(nil, "SessionStart"))
-        #expect(report(#"{"session_id": 12, "hook_event_name": "UserPromptSubmit"}"#)?.state == .working)
-    }
-
-    @Test func theQuestionRuleReadsTheLastLine() {
-        for message in [
-            "Want me to go on?", "Should I proceed?**", "Is that right?\n\n", "(or should I skip it?)", "Push it? ",
-            "Which one: `a` or `b`?`", "“Ready?”", "続けますか？", "First line\r\nSecond?",
-        ] {
-            #expect(ClaudeHookMapping.endsOnQuestion(message), "\(message)")
-        }
-        for message in [
-            "Done.", "Should I? No, it is done.", "What next?\nNothing, it is merged.", "", "\n\n", "?\n```",
-        ] {
-            #expect(!ClaudeHookMapping.endsOnQuestion(message), "\(message)")
-        }
     }
 
     @Test func theHookBuildsItsRequestOnlyInsideCanopy() throws {
@@ -260,21 +73,6 @@ struct ClaudeHookTests {
         #expect(try at(nil) == started.timeIntervalSince1970)
     }
 
-    @Test func aProcessStartTimeOrdersProcesses() throws {
-        let own = try #require(ProcessTable.startTime(of: getpid()))
-        #expect(own <= Date())
-        #expect(own > Date().addingTimeInterval(-86_400))
-
-        let child = Process()
-        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        child.arguments = ["5"]
-        try child.run()
-        defer { child.terminate() }
-        let childStart = try #require(ProcessTable.startTime(of: child.processIdentifier))
-        #expect(childStart > own)
-        #expect(ProcessTable.startTime(of: 999_999) == nil)
-    }
-
     @Test func postingWaitsAtMostASecondForTheApp() async throws {
         let dir = try TempDir()
         let home = CanopyHome(path: dir.sub("home"))
@@ -303,6 +101,21 @@ struct ClaudeHookTests {
         }
         #expect(slow >= .milliseconds(900) && slow < .milliseconds(2900))
         #expect(await eventually { received.withLock { $0 } == ["term.state", "slow"] })
+    }
+
+    @Test func aProcessStartTimeOrdersProcesses() throws {
+        let own = try #require(ProcessTable.startTime(of: getpid()))
+        #expect(own <= Date())
+        #expect(own > Date().addingTimeInterval(-86_400))
+
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["5"]
+        try child.run()
+        defer { child.terminate() }
+        let childStart = try #require(ProcessTable.startTime(of: child.processIdentifier))
+        #expect(childStart > own)
+        #expect(ProcessTable.startTime(of: 999_999) == nil)
     }
 
     @Test func postingFailsFastWhenTheAppIsNotRunning() async throws {

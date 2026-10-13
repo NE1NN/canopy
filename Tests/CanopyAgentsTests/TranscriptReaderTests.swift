@@ -1,16 +1,11 @@
 import CanopyTestSupport
+import CanopyWire
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyAgents
 
-/// Transcripts recorded from Claude Code 2.1.296 with Haiku in a throwaway folder (`tools`, `prompts`), and lines
-/// written by hand for what those runs did not produce (`edges`). Paths and names are scrubbed.
-enum TranscriptFixture {
-    static func url(_ name: String) throws -> URL {
-        try #require(Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures/Transcripts"))
-    }
-
+extension TranscriptFixture {
     static func entries(_ name: String) throws -> [TranscriptEntry] {
         let lines = try Data(contentsOf: url(name)).split(separator: 0x0A).map { Data($0) }
         return TranscriptParser.entries(from: lines)

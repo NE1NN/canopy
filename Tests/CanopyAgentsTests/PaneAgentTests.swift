@@ -1,7 +1,8 @@
+import CanopyWire
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyAgents
 
 struct PaneAgentTests {
     let start = Date(timeIntervalSince1970: 1_000)
@@ -250,13 +251,5 @@ struct PaneAgentTests {
         #expect(agent.state == .background)
         #expect(agent.ended(at: time(3)) == AgentChange(from: .background, to: .none, via: "exit"))
         #expect(agent.backgroundTasks.isEmpty)
-    }
-
-    @Test func eachStateHasAnActivityType() {
-        #expect(ActivityType.agent(.working) == "agent.working")
-        #expect(ActivityType.agent(.waiting) == "agent.waiting")
-        #expect(ActivityType.agent(.done) == "agent.done")
-        #expect(ActivityType.agent(.background) == "agent.background")
-        #expect(ActivityType.agent(.none) == "agent.cleared")
     }
 }

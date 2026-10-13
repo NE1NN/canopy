@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// One report of an agent's state.

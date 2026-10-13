@@ -117,3 +117,13 @@ struct ActivityLogTests {
         #expect(GlobalConfig.load(from: url).minPaneColumns == 80)
     }
 }
+
+struct AgentActivityTypeTests {
+    @Test func eachStateHasAnActivityType() {
+        #expect(ActivityType.agent(.working) == "agent.working")
+        #expect(ActivityType.agent(.waiting) == "agent.waiting")
+        #expect(ActivityType.agent(.done) == "agent.done")
+        #expect(ActivityType.agent(.background) == "agent.background")
+        #expect(ActivityType.agent(.none) == "agent.cleared")
+    }
+}

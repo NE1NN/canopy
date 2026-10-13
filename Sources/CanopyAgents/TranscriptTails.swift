@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// The last entry of each transcript, read again only when the file's size changes, for the inbox's last lines.

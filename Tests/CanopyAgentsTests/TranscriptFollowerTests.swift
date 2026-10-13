@@ -1,8 +1,9 @@
 import CanopyTestSupport
+import CanopyWire
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyAgents
 
 struct TranscriptFollowerTests {
     static func line(_ uuid: String, _ role: String, _ content: String) -> String {

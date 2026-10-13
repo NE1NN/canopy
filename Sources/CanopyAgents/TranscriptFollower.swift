@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 import Synchronization
 

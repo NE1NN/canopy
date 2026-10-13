@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// The keys the author would press to answer a prompt in Claude Code, one write each.

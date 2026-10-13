@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// Reads a Claude Code transcript a page at a time from its end, so the first page of a long session costs one read of
@@ -14,6 +15,12 @@ public enum TranscriptReader {
         public var older: Int?
         /// How much of the file this page read, for tests.
         var bytesRead: Int
+
+        public init(entries: [TranscriptEntry], older: Int?, bytesRead: Int = 0) {
+            self.entries = entries
+            self.older = older
+            self.bytesRead = bytesRead
+        }
     }
 
     static let firstRead = 64 * 1024

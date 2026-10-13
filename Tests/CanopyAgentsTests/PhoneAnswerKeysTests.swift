@@ -1,7 +1,8 @@
+import CanopyWire
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyAgents
 
 /// The keys follow Claude Code 2.1.296's dialogs, checked by hand in a terminal: a digit picks an option, a picker with
 /// several questions or a multiple choice ends on a review where 1 submits, Return takes a permission or plan's first
