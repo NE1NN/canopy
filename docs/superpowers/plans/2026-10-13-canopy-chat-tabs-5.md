@@ -41,6 +41,8 @@ As milestone 1, and: `kind` is optional in CanopyWire, so an older phone app and
 - `chat new --resume` of a session a pane already holds fails with `session_open`, naming the pane.
 - A phone's "allow" on a chat's plan approves it with edits accepted, as Return on the terminal's first option does.
 - `term list` shows `claude` as a chat's process while its Claude Code runs, and nothing otherwise.
+- The composer under the trust card is dimmed only while empty: a message waiting on trust shows at full strength, since Return trusts the folder and sends it.
+- `chat new` with `--prompt` in a folder not yet trusted opens the chat and says in `waiting` that the message waits, rather than failing, so the agent still gets the pane.
 - The CLI hands `CANOPY_CLAUDE` to the app it launches, as it does `CLAUDE_CONFIG_DIR`, so e2e chats run the stand-in.
 
 ## After Review
