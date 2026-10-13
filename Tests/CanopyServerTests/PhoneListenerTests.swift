@@ -445,4 +445,20 @@ struct PhoneListenerTests {
         #expect(try await offPool { try client.untilClosed() }.isEmpty)
         #expect(throws: (any Error).self) { try PhoneTestClient(port: port) }
     }
+
+    /// A phone that closes its side after a request and half of another still gets the answer, then the close.
+    @Test func answersWhatCameBeforeThePhoneClosedItsSide() async throws {
+        let dir = try TempDir()
+        let harness = Harness(dir)
+        try await harness.listener.refresh()
+        defer { harness.listener.stop() }
+        let client = try await harness.authenticated(try await harness.pair())
+
+        try client.send(PhoneMethod.rows, id: "last")
+        try client.sendRaw(Data(#"{"v": 1, "method": "phone.ro"#.utf8))
+        client.finishSending()
+
+        let messages = try await offPool { try client.untilClosed() }
+        #expect(messages.compactMap(\.response?.id) == ["last"])
+    }
 }

@@ -327,6 +327,10 @@ final class PhoneConnection: Sendable {
     /// Returns once the data has left, so closing afterwards cannot drop it.
     private func write(_ data: Data) async {
         guard !isClosed else { return }
-        try? await connection.send(data)
+        do {
+            try await connection.send(data)
+        } catch {
+            close()
+        }
     }
 }

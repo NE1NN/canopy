@@ -10,7 +10,9 @@ let portableTargets: [Target] = [
     // What the Mac and the iPhone app both speak. It builds for iOS, so it has nothing platform-specific.
     .target(name: "CanopyWire"),
     // What the Mac app and canopy-box need from the operating system, on macOS and Linux alike.
-    .target(name: "CanopySystem"),
+    // The few libc calls Swift's Glibc import leaves out.
+    .target(name: "CSystemShims"),
+    .target(name: "CanopySystem", dependencies: ["CSystemShims"]),
     // Agent states from Claude Code's hooks, transcripts, and the keys that answer prompts.
     .target(name: "CanopyAgents", dependencies: ["CanopyWire"]),
     // The phone server, which reaches rows and panes through PhoneSource, so the Mac and canopy-box can each serve.

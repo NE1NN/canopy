@@ -78,6 +78,11 @@ public final class PhoneTestClient: Sendable {
         }
     }
 
+    /// Closes the sending side, as a phone does that has said all it will.
+    public func finishSending() {
+        _ = shutdown(fd, Int32(SHUT_WR))
+    }
+
     /// Sends a request and waits for its answer, skipping events.
     public func call(_ method: String, _ params: JSONValue? = nil) throws -> ControlResponse {
         let id = UUID().uuidString

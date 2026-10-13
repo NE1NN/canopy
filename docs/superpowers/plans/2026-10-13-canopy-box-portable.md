@@ -150,3 +150,23 @@ Steps:
 - `make lint`, `make build` (0 warnings), `make test` three times, `make e2e`, `make ios`, `scripts/ios-shots.sh both`, `make linux`.
 - An independent opus review of the branch, findings fixed under After Review.
 - CI `check` and `linux` green, then squash-merge.
+
+## After Review
+
+An independent opus review of `git diff origin/main...feat/box-portable` found one critical and two important problems, all fixed:
+
+1. Critical: a send that failed, as when a phone vanished and the connection reset, closed the TCP connection without telling its reader, so the phone's connection stayed open in the server, still counted as connected, and kept its screen and transcript streams polling.
+   Network.framework had reported this through the connection's state.
+   A failed send now tells the receive handler once, and the phone connection closes itself when a write throws.
+   Test: `aFailedSendTellsTheReader`.
+2. On Linux, sockets and temporary files were made close-on-exec only a moment after they were created, so a spawn on another thread could hand a listening socket to a child that outlived it, holding the port.
+   A small C target, `CSystemShims`, gives `accept4` and `mkostemp`, which Swift's Glibc import leaves out, and sockets are made with `SOCK_CLOEXEC`.
+3. No test showed a phone that closes its side mid-line still getting its answers.
+   Test: `answersWhatCameBeforeThePhoneClosedItsSide`.
+
+Also fixed from its minor list: an empty send returns rather than reading a nil buffer, a second close of a listener at the same moment returns, and the Linux CI job runs with `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1` as `make test` does.
+Tests: `sendingNothingReturns`, `closingAListenerTwiceAtOnceReturns`.
+Deferred: backing off when `accept` fails for want of descriptors, polling `WNOHANG` after a timeout's SIGKILL instead of a blocking wait under the handle's lock, and `pidfd_open` in place of the 5 ms poll.
+
+While running the bar, `scripts/e2e-hosts.sh` failed twice in different steps, and both were races in the script: it read the remote pane's background work in a second read after the host's probe could clear it, and gave a fresh `python3` 10 s to listen where this Mac's endpoint security scanner can hold it longer.
+Both are fixed, and the script passed three runs in a row.

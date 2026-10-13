@@ -1,3 +1,4 @@
+import CSystemShims
 import Foundation
 import Synchronization
 
@@ -270,7 +271,7 @@ public enum Subprocess {
 
     private static func temporaryFile(for executable: String) throws -> Int32 {
         var template = Array((NSTemporaryDirectory() + "canopy-output.XXXXXX").utf8CString)
-        let descriptor = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
+        let descriptor = template.withUnsafeMutableBufferPointer { canopy_mkstemp_closing_on_exec($0.baseAddress!) }
         guard descriptor >= 0 else { throw SubprocessError(executable: executable, code: errno) }
         template.withUnsafeBufferPointer { _ = unlink($0.baseAddress!) }
         return descriptor

@@ -1,3 +1,4 @@
+import CSystemShims
 import Dispatch
 import Foundation
 
@@ -73,7 +74,7 @@ public final class TCPListener: Sendable {
         accept: @escaping @Sendable (TCPConnection) -> Void
     ) throws {
         guard let endpoint = SocketAddress(address, port: port) else { throw TCPError.invalidAddress(address) }
-        let fd = socket(endpoint.family, streamSocket, 0)
+        let fd = socket(endpoint.family, streamSocket | closeOnExecSocket, 0)
         guard fd >= 0 else { throw TCPError.system("socket", errno: errno) }
         do {
             try setOption(fd, SOL_SOCKET, SO_REUSEADDR, 1)
@@ -95,7 +96,7 @@ public final class TCPListener: Sendable {
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler {
             while true {
-                let client = Foundation.accept(fd, nil, nil)
+                let client = canopy_accept_closing_on_exec(fd)
                 if client < 0 {
                     if errno == EINTR || errno == ECONNABORTED { continue }
                     return
@@ -116,7 +117,11 @@ public final class TCPListener: Sendable {
     public func close() {
         guard !source.isCancelled else { return }
         source.cancel()
-        if DispatchQueue.getSpecific(key: Self.queueKey) == nil { socketClosed.wait() }
+        if DispatchQueue.getSpecific(key: Self.queueKey) == nil {
+            socketClosed.wait()
+            // Lets another close that passed the check at the same moment return too.
+            socketClosed.signal()
+        }
     }
 }
 
@@ -129,6 +134,8 @@ public final class TCPConnection: @unchecked Sendable {
     private let queue = DispatchQueue(label: "canopy.tcp-connection")
     private var closed = false
     private var reading: DispatchSourceRead?
+    /// The receive handler while reading, told once if a failed send closes the connection.
+    private var reader: (@Sendable (Data?, (any Error)?) -> Void)?
     private var writing: DispatchSourceWrite?
     private var writingSuspended = true
     /// Sources not yet cancelled. The socket closes once none is left.
@@ -161,7 +168,7 @@ public final class TCPConnection: @unchecked Sendable {
         to address: String, port: UInt16, options: TCPOptions = TCPOptions()
     ) throws -> TCPConnection {
         guard let endpoint = SocketAddress(address, port: port) else { throw TCPError.invalidAddress(address) }
-        let fd = socket(endpoint.family, streamSocket, 0)
+        let fd = socket(endpoint.family, streamSocket | closeOnExecSocket, 0)
         guard fd >= 0 else { throw TCPError.system("socket", errno: errno) }
         var result: Int32
         repeat {
@@ -205,12 +212,14 @@ public final class TCPConnection: @unchecked Sendable {
             }
             adopt(source)
             reading = source
+            reader = handler
             source.resume()
         }
     }
 
     /// Returns once all of `data` has gone to the kernel, or throws `closed` if the connection closes first.
     public func send(_ data: Data) async throws {
+        guard !data.isEmpty else { return }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             queue.async { [self] in
                 guard !closed else { return continuation.resume(throwing: TCPError.closed) }
@@ -252,7 +261,9 @@ public final class TCPConnection: @unchecked Sendable {
                 waitForRoom()
                 return
             }
-            closeNow()
+            // The peer reset or vanished. Network.framework said so through the connection's state; here the reader
+            // hears it, so whoever holds the connection lets go of it.
+            closeNow(failure: TCPError.system("send", errno: errno))
             return
         }
         if let writing, !writingSuspended {
@@ -286,11 +297,16 @@ public final class TCPConnection: @unchecked Sendable {
     private func stopReading() {
         reading?.cancel()
         reading = nil
+        reader = nil
     }
 
-    private func closeNow() {
+    private func closeNow(failure: (any Error)? = nil) {
         guard !closed else { return }
         closed = true
+        if let failure, let reader {
+            self.reader = nil
+            reader(nil, failure)
+        }
         _ = shutdown(fd, Int32(SHUT_RDWR))
         stopReading()
         if let writing {
@@ -325,6 +341,16 @@ private struct SendableSource: @unchecked Sendable {
     private let streamSocket = Int32(SOCK_STREAM.rawValue)
 #else
     private let streamSocket = SOCK_STREAM
+#endif
+
+// Linux marks a descriptor close-on-exec as it is made, so a child spawned on another thread at that moment never
+// inherits it. Darwin's spawns close every descriptor anyway, with POSIX_SPAWN_CLOEXEC_DEFAULT.
+#if canImport(Glibc)
+    private let closeOnExecSocket = Int32(SOCK_CLOEXEC.rawValue)
+#elseif canImport(Musl)
+    private let closeOnExecSocket = SOCK_CLOEXEC
+#else
+    private let closeOnExecSocket: Int32 = 0
 #endif
 
 private func sendBytes(_ fd: Int32, _ bytes: UnsafeRawPointer, _ count: Int) -> Int {

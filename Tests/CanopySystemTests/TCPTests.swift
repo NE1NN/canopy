@@ -170,3 +170,39 @@ struct TCPTests {
         #expect(client.localAddress == "::1")
     }
 }
+
+extension TCPTests {
+    /// A send that fails, as when the peer reset or vanished, closes the connection, and whoever reads it must hear
+    /// so, or it would wait on a connection that is gone.
+    @Test func aFailedSendTellsTheReader() async throws {
+        let server = try Server()
+        defer { server.listener.close() }
+        let client = try TCPConnection.connect(to: "127.0.0.1", port: server.listener.port)
+        defer { client.close() }
+        let accepted = try #require(await server.first())
+        // Shutting down its own writing side makes the next send fail at once, while reads see nothing.
+        _ = shutdown(accepted.fd, Int32(SHUT_WR))
+
+        await #expect(throws: (any Error).self) { try await accepted.send(Data("lost".utf8)) }
+
+        #expect(await eventually { server.closed.withLock { $0.contains(0) } })
+    }
+
+    @Test func sendingNothingReturns() async throws {
+        let server = try Server()
+        defer { server.listener.close() }
+        let client = try TCPConnection.connect(to: "127.0.0.1", port: server.listener.port)
+        defer { client.close() }
+
+        try await client.send(Data())
+    }
+
+    @Test func closingAListenerTwiceAtOnceReturns() async throws {
+        let server = try Server()
+        let listener = server.listener
+
+        async let first: Void = offPool { listener.close() }
+        async let second: Void = offPool { listener.close() }
+        _ = try await (first, second)
+    }
+}
