@@ -144,43 +144,34 @@ public struct PhoneInbox: Codable, Sendable, Equatable {
     }
 
     public struct Sections: Sendable, Equatable {
-        /// Pinned rows in pin order, whatever their agents do.
-        public var pinned: [PhoneRow]
-        /// Waiting agents.
+        /// Waiting agents, the longest waiting first.
         public var needsYou: [Item]
-        /// Done agents not yet seen.
+        /// Done agents not yet seen, the newest first.
         public var done: [Item]
-        /// Working and background agents.
-        public var running: [Item]
+
+        public init(needsYou: [Item] = [], done: [Item] = []) {
+            self.needsYou = needsYou
+            self.done = done
+        }
+
+        /// What the tab's badge counts.
+        public var count: Int { needsYou.count + done.count }
+        public var isEmpty: Bool { count == 0 }
     }
 
-    /// The home screen. Agents in pinned rows show only with their row. Newest first in each section.
-    public func sections(pinned: [String]) -> Sections {
-        let byPath = Dictionary(rows.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let pinnedSet = Set(pinned)
-        let items = rows.filter { !pinnedSet.contains($0.path) }
-            .flatMap { row in row.agents.map { Item(row: row, agent: $0) } }
-            .sorted { $0.agent.since > $1.agent.since }
-        return Sections(
-            pinned: pinned.compactMap { byPath[$0] },
-            needsYou: items.filter { $0.agent.state == .waiting },
-            done: items.filter { $0.agent.state == .done && $0.agent.unseen },
-            running: items.filter { $0.agent.state == .working || $0.agent.state == .background })
+    /// The Inbox: what wants the author. Agents with the same time keep the Mac's order.
+    public var sections: Sections {
+        let items = rows.flatMap { row in row.agents.map { Item(row: row, agent: $0) } }.enumerated()
+        let waiting = items.filter { $0.element.agent.state == .waiting }
+            .sorted { ($0.element.agent.since, $0.offset) < ($1.element.agent.since, $1.offset) }
+        let done = items.filter { $0.element.agent.state == .done && $0.element.agent.unseen }
+            .sorted { ($1.element.agent.since, $0.offset) < ($0.element.agent.since, $1.offset) }
+        return Sections(needsYou: waiting.map(\.element), done: done.map(\.element))
     }
 
-    /// Agents waiting for the author, for the badge.
-    public var waitingCount: Int {
-        rows.flatMap(\.agents).filter { $0.state == .waiting }.count
-    }
-
-    /// Panes with an agent in any state.
-    public var agentCount: Int {
-        rows.flatMap(\.agents).filter { $0.state != .none }.count
-    }
-
-    /// What the first launch pins: each repo's own checkout, when an agent runs there.
-    public var defaultPins: [String] {
-        rows.filter { $0.isMain && $0.agents.contains { $0.state != .none } }.map(\.path)
+    /// Working and background agents, which the Inbox leaves to Rows.
+    public var runningCount: Int {
+        rows.flatMap(\.agents).filter { $0.state == .working || $0.state == .background }.count
     }
 }
 
@@ -199,6 +190,12 @@ public struct PhoneRowsResult: Codable, Sendable, Equatable {
         }
 
         public var id: String { (isPlugin ? "plugin:" : "repo:") + name }
+
+        /// The repo's own checkout, which Rows shows as a card above the others.
+        public var main: PhoneRow? { rows.first(where: \.isMain) }
+
+        /// Every row but the main one, in the server's order.
+        public var others: [PhoneRow] { rows.filter { !$0.isMain } }
     }
 
     public var sections: [Section]
