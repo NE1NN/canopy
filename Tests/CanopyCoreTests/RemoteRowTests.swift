@@ -379,15 +379,15 @@ struct RemoteSessionTests {
     static let tmux = HostFilesTests.tmux
 
     /// A session on the fake host's Canopy tmux server, running bash in `folder`.
-    func startSession(_ name: String, server: String, in folder: String) throws {
-        _ = try Subprocess.run(
+    func startSession(_ name: String, server: String, in folder: String) async throws {
+        _ = try await Subprocess.runOffPool(
             try #require(Self.tmux),
             ["-L", server, "-f", "/dev/null", "new-session", "-d", "-s", name, "-c", folder, "/bin/bash"],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
     }
 
-    func sessions(server: String) throws -> [String] {
-        let result = try Subprocess.run(
+    func sessions(server: String) async throws -> [String] {
+        let result = try await Subprocess.runOffPool(
             try #require(Self.tmux), ["-L", server, "list-sessions", "-F", "#{session_name}"],
             environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         return String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
@@ -406,12 +406,12 @@ struct RemoteSessionTests {
         })
         let server = HostPaths.tmuxServer(homeID: setup.workspace.homeID)
         defer { killServer(server) }
-        try startSession("p4", server: server, in: setup.dir.path)
-        try startSession("p5", server: server, in: setup.dir.path)
+        try await startSession("p4", server: server, in: setup.dir.path)
+        try await startSession("p5", server: server, in: setup.dir.path)
 
         try await setup.workspace.connection(for: "box").connect()
         await setup.workspace.killSessions(["p4"], on: "box")
-        #expect(try sessions(server: server) == ["p5"])
+        await #expect(try sessions(server: server) == ["p5"])
         #expect(await setup.workspace.pendingSessionKills.isEmpty)
         await setup.workspace.stop()
 
@@ -423,7 +423,7 @@ struct RemoteSessionTests {
         try await down.start()
         await down.killSessions(["p5"], on: "box")
         #expect(await down.pendingSessionKills == ["box": ["p5"]])
-        #expect(try sessions(server: server) == ["p5"])
+        await #expect(try sessions(server: server) == ["p5"])
         await down.stop()
 
         let up = Workspace(
@@ -432,7 +432,7 @@ struct RemoteSessionTests {
         try await up.start()
         try await up.prepareHost(try await up.connection(for: "box"))
 
-        #expect(try sessions(server: server).isEmpty)
+        await #expect(try sessions(server: server).isEmpty)
         #expect(await up.pendingSessionKills.isEmpty)
         await up.stop()
     }
@@ -467,13 +467,13 @@ struct RemoteSessionTests {
             try #require(
                 terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane.terminal!.remoteSession)
         }
-        try startSession(session, server: server, in: try #require(created.row.remotePath))
+        try await startSession(session, server: server, in: try #require(created.row.remotePath))
 
         await #expect {
             try await rows.remove(created.row, repoName: "demo", force: false, deleteBranch: false)
         } throws: { ($0 as? WorkspaceError)?.code == "host_unreachable" }
 
-        #expect(try sessions(server: server) == [session])
+        await #expect(try sessions(server: server) == [session])
         #expect(await workspace.pendingSessionKills.isEmpty)
         #expect(await MainActor.run { terminals.tabs(inRow: created.row.path).count } == 1)
         await MainActor.run { terminals.closeAll() }
@@ -505,7 +505,7 @@ struct RemoteSessionTests {
         let server = HostPaths.tmuxServer(homeID: setup.workspace.homeID)
         defer { killServer(server) }
         let marker = setup.dir.sub("typed")
-        try startSession("p9", server: server, in: setup.dir.path)
+        try await startSession("p9", server: server, in: setup.dir.path)
 
         await setup.workspace.sendKeys("echo hi > '\(marker)'", to: "p9", on: "box")
 
@@ -569,7 +569,8 @@ struct HostMonitorTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
         let folder = try #require(created.row.remotePath)
-        try RemoteSessionTests().startSession(try #require(pane.terminal!.remoteSession), server: server, in: folder)
+        try await RemoteSessionTests().startSession(
+            try #require(pane.terminal!.remoteSession), server: server, in: folder)
         let monitor = HostMonitor(workspace: setup.workspace, terminals: terminals)
 
         await monitor.probe()
@@ -948,7 +949,7 @@ struct RemotePortForwardingTests {
             try await remote.workspace.prepareHost(connection)
             terminals = Fixture.terminals(remote.dir)
             pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
-            try RemoteSessionTests().startSession(
+            try await RemoteSessionTests().startSession(
                 try #require(pane.terminal!.remoteSession), server: server, in: try #require(created.row.remotePath))
             monitor = HostMonitor(workspace: remote.workspace, terminals: terminals, portsEvery: .zero)
         }
@@ -963,16 +964,16 @@ struct RemotePortForwardingTests {
             await remote.workspace.stop()
         }
 
-        func keys(_ keys: [String]) throws {
-            _ = try Subprocess.run(
+        func keys(_ keys: [String]) async throws {
+            _ = try await Subprocess.runOffPool(
                 try #require(RemoteSessionTests.tmux),
                 ["-L", server, "send-keys", "-t", try #require(pane.terminal!.remoteSession)] + keys,
                 environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         }
 
         /// A Python HTTP server in the row's session.
-        func serve(_ port: UInt16) throws {
-            try keys(["python3 -m http.server \(port) --bind 127.0.0.1", "Enter"])
+        func serve(_ port: UInt16) async throws {
+            try await keys(["python3 -m http.server \(port) --bind 127.0.0.1", "Enter"])
         }
 
         /// The row's port once the monitor has forwarded it.
@@ -1017,7 +1018,7 @@ struct RemotePortForwardingTests {
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 2)
 
-        try setup.serve(port)
+        try await setup.serve(port)
 
         let found = await setup.forwarded(port)
         #expect(found?.remote?.host == "box")
@@ -1037,7 +1038,7 @@ struct RemotePortForwardingTests {
         let busy = try await FakeSSHForwardTests.listener("::1", port + 1)
         defer { busy.terminate() }
 
-        try setup.serve(port)
+        try await setup.serve(port)
 
         let found = await setup.forwarded(port)
         #expect(found?.remote?.local == port + 2)
@@ -1050,10 +1051,10 @@ struct RemotePortForwardingTests {
         let setup = try await Setup()
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 2)
-        try setup.serve(port)
+        try await setup.serve(port)
         let local = try #require(await setup.forwarded(port)?.remote?.local)
 
-        try setup.keys(["C-c"])
+        try await setup.keys(["C-c"])
 
         #expect(await setup.noPorts())
         #expect(await setup.connection.forwardedPorts.isEmpty)
@@ -1068,13 +1069,13 @@ struct RemotePortForwardingTests {
         let setup = try await Setup()
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 3)
-        try setup.serve(port)
+        try await setup.serve(port)
         let local = try #require(await setup.forwarded(port)?.remote?.local)
         #expect(try await Self.get(local) == "200")
-        try setup.keys(["C-c"])
+        try await setup.keys(["C-c"])
         #expect(await setup.noPorts())
 
-        try setup.serve(port)
+        try await setup.serve(port)
 
         let again = try #require(await setup.forwarded(port)?.remote?.local)
         #expect(again == local)
@@ -1088,7 +1089,7 @@ struct RemotePortForwardingTests {
         let setup = try await Setup()
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 2)
-        try setup.serve(port)
+        try await setup.serve(port)
         let found = try #require(await setup.forwarded(port))
         let local = try #require(found.remote?.local)
         let home = setup.remote.host.home
@@ -1116,7 +1117,7 @@ struct RemotePortForwardingTests {
         let setup = try await Setup()
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 2)
-        try setup.serve(port)
+        try await setup.serve(port)
         let local = try #require(await setup.forwarded(port)?.remote?.local)
 
         try FileManager.default.removeItem(atPath: setup.remote.dir.sub("ss-bin-box/ss"))
@@ -1132,7 +1133,7 @@ struct RemotePortForwardingTests {
         let setup = try await Setup()
         defer { setup.endSessions() }
         let port = FakeSSHForwardTests.freePort(count: 2)
-        try setup.serve(port)
+        try await setup.serve(port)
         let local = try #require(await setup.forwarded(port)?.remote?.local)
         let exit = setup.connection.ssh.control("exit")
         let environment = setup.remote.host.environment
@@ -1168,7 +1169,7 @@ struct RemotePortForwardingTests {
         defer { outside.terminate() }
         #expect(await eventually { !LocalPortChooser.isFree(ports + 2) })
 
-        try setup.serve(ports)
+        try await setup.serve(ports)
 
         #expect(await setup.forwarded(ports) != nil)
         let listed = setup.monitor.remotePorts["box"]?.flatMap(\.ports).map(\.port)

@@ -42,36 +42,11 @@ public enum ControlMethod {
         if [rowNew, rowRemove, repoClone, PluginMethod.new, HostMethod.add].contains(method) { return nil }
         if [prShow, prList, PluginMethod.items, PluginMethod.enable].contains(method) { return 90 }
         if method == TermMethod.wait { return nil }
+        // Removing an upgraded host stops its canopy-box, whose service can take a while to stop.
+        if method == HostMethod.remove { return 300 }
         // Waits for a pairing code, which lasts five minutes.
         if method == PhonesMethod.paired { return PhoneRegistry.codeLifetime + 30 }
         return [repoAdd, repoRemove, rowAdopt, branchList].contains(method) ? 900 : 30
-    }
-}
-
-/// What the CLI knows about where it runs. The app resolves it against registered repos.
-public struct TargetHint: Codable, Sendable, Equatable {
-    /// `--repo`: a repo display name or path.
-    public var repo: String?
-    /// A row argument: a branch name or a path.
-    public var row: String?
-    /// CANOPY_REPO from the environment.
-    public var envRepo: String?
-    /// CANOPY_ROW_PATH from the environment.
-    public var envRowPath: String?
-    public var cwd: String?
-
-    public init(
-        repo: String? = nil,
-        row: String? = nil,
-        envRepo: String? = nil,
-        envRowPath: String? = nil,
-        cwd: String? = nil
-    ) {
-        self.repo = repo
-        self.row = row
-        self.envRepo = envRepo
-        self.envRowPath = envRowPath
-        self.cwd = cwd
     }
 }
 

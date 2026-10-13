@@ -4,7 +4,7 @@ import Synchronization
 
 @testable import CanopyPhone
 
-/// A Mac a test scripts: it pairs, says hello, and serves the inbox and rows as Canopy does, and answers other
+/// A server a test scripts, a Mac unless it is made a box: it pairs, says hello, and serves the inbox and rows as Canopy does, and answers other
 /// methods with what the test sets in `on(_:)`. Every connection the phone opens is a `Link`.
 final class FakeMac: PhoneTransport, Sendable {
     enum Reply: Sendable {
@@ -19,38 +19,79 @@ final class FakeMac: PhoneTransport, Sendable {
     static let address = "100.101.5.9"
     static let code = "K7QX-M2PD"
 
+    let name: String
+    let host: String
+    let address: String
+    let code: String
+    let kind: String
+
+    init(
+        name: String = FakeMac.name, host: String = FakeMac.host, address: String = FakeMac.address,
+        code: String = FakeMac.code, kind: String = PhoneServerKind.mac
+    ) {
+        self.name = name
+        self.host = host
+        self.address = address
+        self.code = code
+        self.kind = kind
+        state = Mutex(State(reachable: [host, address], codes: [code]))
+    }
+
+    /// A box on the tailnet, as `canopy-box` on hindie-box.
+    static func box(name: String = "hindie-box") -> FakeMac {
+        FakeMac(
+            name: name, host: "\(name).tail1234.ts.net", address: "100.101.5.20", code: "B0XC-0DE1",
+            kind: PhoneServerKind.box)
+    }
+
     struct State {
-        var reachable: Set<String> = [FakeMac.host, FakeMac.address]
+        var reachable: Set<String>
         var refused: Set<String> = []
         var hanging: Set<String> = []
-        var codes: Set<String> = [FakeMac.code]
+        var codes: Set<String>
+        /// What hello hands the phone to start this box with.
+        var wake: PhoneWake?
+        /// What hello says a task from the phone runs.
+        var agentCommand: String?
         var tokens: [String: String] = [:]
         var inbox = PhoneInbox()
         var rows = PhoneRowsResult(sections: [])
         var handlers: [String: @Sendable (ControlRequest) -> Reply] = [:]
         var links: [Link] = []
         var connects: [String] = []
+        /// How many connects fail before they go through again.
+        var failingConnects = 0
     }
 
-    let state = Mutex(State())
+    let state: Mutex<State>
 
     var link: PairingLink {
-        PairingLink(host: Self.host, port: PhonePort.standard, code: Self.code, address: Self.address)
+        PairingLink(host: host, port: PhonePort.standard, code: code, address: address, kind: kind)
     }
 
-    /// A phone this Mac already paired, for tests that start paired.
-    func paired(phone: String = "iPhone") -> PairedMac {
+    /// A phone this server already paired, for tests that start paired. Servers paired earlier sort first.
+    func paired(phone: String = "iPhone", at pairedAt: Double = 0) -> PairedServer {
         let token = "token-\(phone)"
         state.withLock { $0.tokens[token] = phone }
-        return PairedMac(
-            host: Self.host, port: PhonePort.standard, address: Self.address, token: token, mac: Self.name,
-            phone: phone, version: "0.9")
+        return PairedServer(
+            id: "server-\(name)", kind: kind, name: name, host: host, port: PhonePort.standard, address: address,
+            token: token, phone: phone, version: "0.9", pairedAt: Date(timeIntervalSince1970: pairedAt))
+    }
+
+    /// A code for pairing again, as a new `canopy phone pair` makes.
+    func newCode(_ code: String) -> PairingLink {
+        state.withLock { _ = $0.codes.insert(code) }
+        return PairingLink(host: host, port: PhonePort.standard, code: code, address: address, kind: kind)
     }
 
     func connect(host: String, port: UInt16) async throws -> any PhoneChannel {
         let (reachable, refused, hanging) = state.withLock { state in
             state.connects.append(host)
-            return (state.reachable.contains(host), state.refused.contains(host), state.hanging.contains(host))
+            let failing = state.failingConnects > 0
+            if failing { state.failingConnects -= 1 }
+            return (
+                state.reachable.contains(host) && !failing, state.refused.contains(host), state.hanging.contains(host)
+            )
         }
         if hanging {
             try await Task.sleep(for: .seconds(3600))
@@ -99,7 +140,7 @@ final class FakeMac: PhoneTransport, Sendable {
     }
 
     func comeBack() {
-        state.withLock { $0.reachable = [Self.host, Self.address] }
+        state.withLock { [host, address] in $0.reachable = [host, address] }
     }
 
     func forget(phone: String) {
@@ -137,14 +178,19 @@ final class FakeMac: PhoneTransport, Sendable {
                 let token = "token-\(state.tokens.count + 1)"
                 state.tokens[token] = params.name
                 return .result(
-                    (try? .from(PhonePairResult(token: token, phone: params.name, mac: Self.name))) ?? .null)
+                    (try? .from(PhonePairResult(token: token, phone: params.name, mac: name, kind: kind))) ?? .null)
             }
         case PhoneMethod.hello:
             guard let params = try? request.decodeParams(PhoneHelloParams.self),
                 let phone = state.withLock({ $0.tokens[params.token] })
             else { return .error("unpaired") }
             link.authenticated()
-            return .result((try? .from(PhoneHelloResult(mac: Self.name, version: "0.9", phone: phone))) ?? .null)
+            return .result(
+                (try? .from(
+                    PhoneHelloResult(
+                        mac: name, version: "0.9", phone: phone, kind: kind, wake: state.withLock { $0.wake },
+                        agentCommand: state.withLock { $0.agentCommand })))
+                    ?? .null)
         case PhoneMethod.subscribe:
             link.inboxSubscription = request.id
             return .result((try? .from(state.withLock { $0.inbox })) ?? .null)
@@ -223,6 +269,26 @@ final class FakeMac: PhoneTransport, Sendable {
             lock.withLock { $0.isClosed = true }
             incoming.finish()
         }
+    }
+}
+
+/// Several servers on one tailnet: each connection goes to the server listening on its host.
+final class FakeNetwork: PhoneTransport, Sendable {
+    let servers: [FakeMac]
+
+    init(_ servers: [FakeMac]) {
+        self.servers = servers
+    }
+
+    convenience init(_ servers: FakeMac...) {
+        self.init(servers)
+    }
+
+    func connect(host: String, port: UInt16) async throws -> any PhoneChannel {
+        guard let server = servers.first(where: { $0.host == host || $0.address == host }) else {
+            throw PhoneTransportError.unreachable("no route to \(host)")
+        }
+        return try await server.connect(host: host, port: port)
     }
 }
 

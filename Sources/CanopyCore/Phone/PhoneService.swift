@@ -13,11 +13,16 @@ public final class PhoneService: Sendable {
     public init(
         home: CanopyHome, hub: PhoneHub, panes: PhonePanes, activity: ActivityLog, listen: PhoneListenAddress,
         macName: String,
+        newRow: @escaping @Sendable (PhoneNewRowParams, String) async throws -> PhoneNewRowResult = { _, _ in
+            throw ControlError(code: "unavailable", message: "This Canopy cannot start tasks from the phone.")
+        },
         tailscaleAddresses: @escaping @Sendable () -> [String] = TailscaleAddresses.current,
         dnsName: @escaping @Sendable () async -> String? = TailscaleStatus.dnsName
     ) {
         let settings = PhoneServerSettings(
-            registryFile: home.phonesFile, serverName: macName, version: CanopyVersion.current, port: listen.port,
+            registryFile: home.phonesFile, serverName: { macName },
+            agentCommand: { PhoneAgentCommand.chosen(GlobalConfig.load(from: home.configFile).agentCommand) },
+            version: CanopyVersion.current, port: listen.port,
             addresses: {
                 switch listen {
                 case .tailscale: tailscaleAddresses()
@@ -41,7 +46,7 @@ public final class PhoneService: Sendable {
                     activity.record(ActivityType.phoneCall, source: .phone, data: data)
                 }
             })
-        server = PhoneServer(source: MacPhoneSource(hub: hub, panes: panes), settings: settings)
+        server = PhoneServer(source: MacPhoneSource(hub: hub, panes: panes, makeRow: newRow), settings: settings)
     }
 
     /// Listens, and follows network changes so the listener opens when Tailscale comes up and closes when it goes.

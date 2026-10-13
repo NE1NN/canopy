@@ -92,7 +92,8 @@ struct TermCommand: AsyncParsableCommand {
         func run() async throws {
             let client = Client(json: output.json)
             let result = client.call(
-                TermMethod.send, TermSendParams(pane: id, text: text, enter: enter), launchIfNeeded: false)
+                TermMethod.send, TermSendParams(pane: id, text: text, enter: enter, host: relayHost),
+                launchIfNeeded: false)
             try client.print(result) { "Sent to \(id)." }
         }
     }
@@ -113,7 +114,8 @@ struct TermCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(TermMethod.read, TermReadParams(pane: id, lines: lines), launchIfNeeded: false)
+            let result = client.call(
+                TermMethod.read, TermReadParams(pane: id, lines: lines, host: relayHost), launchIfNeeded: false)
             try client.print(result) { try result.decode(TermReadResult.self).text }
         }
     }
@@ -129,7 +131,8 @@ struct TermCommand: AsyncParsableCommand {
 
         func run() async throws {
             let client = Client(json: output.json)
-            let result = client.call(TermMethod.close, TermCloseParams(pane: id, force: force), launchIfNeeded: false)
+            let result = client.call(
+                TermMethod.close, TermCloseParams(pane: id, force: force, host: relayHost), launchIfNeeded: false)
             try client.print(result) { "Closed \(id)." }
         }
     }
@@ -166,7 +169,8 @@ struct TermCommand: AsyncParsableCommand {
                 client.fail(ControlError(WorkspaceError.missingTarget(flag: "a terminal ID")))
             }
             let result = client.call(
-                TermMethod.state, TermStateParams(pane: pane, state: AgentState(rawValue: values.last!)),
+                TermMethod.state,
+                TermStateParams(pane: pane, state: AgentState(rawValue: values.last!), host: relayHost),
                 launchIfNeeded: false)
             try client.print(result) {
                 let reported = try result.decode(TermStateResult.self)
@@ -215,3 +219,6 @@ struct TermCommand: AsyncParsableCommand {
 }
 
 extension AgentWaitTarget: ExpressibleByArgument {}
+
+/// The host a relayed run came from, whose panes a session name like `b1` means.
+private var relayHost: String? { RelayRun.host(in: ProcessInfo.processInfo.environment) }

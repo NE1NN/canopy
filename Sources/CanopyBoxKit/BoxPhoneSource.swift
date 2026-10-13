@@ -1,0 +1,241 @@
+import CanopyAgents
+import CanopyServer
+import CanopyWire
+import Foundation
+
+/// The phone server's view of canopy-box: its rows and agents from the snapshot, and its panes through tmux, with the
+/// rules the Mac's phone server follows for replies and answers.
+public final class BoxPhoneSource: PhoneSource {
+    let daemon: BoxDaemon
+    private let subscriptions = Subscriptions()
+    /// Each pane's conversation's last entry, which words its agent's line as on the Mac.
+    let tails = TranscriptTails()
+
+    /// Each pane's replies waiting to be taken, in the order sent.
+    private let deliveries = Deliveries()
+    private let deliveryWindow: Duration
+
+    public init(daemon: BoxDaemon, deliveryWindow: Duration = BoxPhoneSource.deliveryWindow) {
+        self.daemon = daemon
+        self.deliveryWindow = deliveryWindow
+    }
+
+    static let promptGone = ControlError(
+        code: "prompt_gone", message: "That prompt is no longer open: it was answered, or the agent moved on.")
+    static let promptOpen = ControlError(
+        code: "prompt_open",
+        message: "The agent is showing a dialog, which a reply's Return would answer. Answer the dialog first.")
+    static let agentNotRunning = ControlError(
+        code: "agent_not_running",
+        message: "Claude Code is not running in this pane, so a reply would go to whatever is. Use the Terminal tab.")
+    static let noTranscript = ControlError(
+        code: "no_transcript", message: "This pane has no Claude Code conversation. Its terminal shows what it does.")
+    /// How long a reply waits to be taken before it no longer counts as delivered.
+    public static let deliveryWindow = Duration.seconds(10 * 60)
+
+    static func inbox(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> PhoneInbox {
+        PhoneInbox(rows: phoneRows(snapshot, tails: tails))
+    }
+
+    static func phoneRows(_ snapshot: BoxSnapshot, tails: TranscriptTails? = nil) -> [PhoneRow] {
+        tails?.keep(only: Set(snapshot.panes.compactMap(\.transcriptPath)))
+        return snapshot.rows.map { row in
+            PhoneRow(
+                path: row.path, name: row.branch ?? (row.path as NSString).lastPathComponent, repo: row.repo,
+                isMain: row.isMain,
+                agents: snapshot.panes.filter {
+                    // As on the Mac: a plain shell with no agent and no conversation is no agent.
+                    $0.rowPath == row.path && ($0.agent != .none || $0.transcriptPath != nil)
+                }.map { pane in
+                    PhoneAgent(
+                        pane: pane.id, state: pane.agent, unseen: pane.unseen, since: pane.since,
+                        lastLine: lastLine(pane, tail: pane.transcriptPath.flatMap { tails?.last(in: $0) }),
+                        backgroundTasks: pane.backgroundTasks.isEmpty ? nil : pane.backgroundTasks,
+                        prompt: pane.prompt, hasTranscript: pane.transcriptPath != nil)
+                })
+        }
+    }
+
+    /// What the agent waits on or last said, as the Mac words it, or else the screen's last line.
+    static func lastLine(_ pane: BoxPane, tail: TranscriptEntry?) -> String? {
+        AgentLine.line(prompt: pane.prompt, state: pane.agent, backgroundTasks: pane.backgroundTasks, tail: tail)
+            ?? pane.lastLine.map(AgentLine.short)
+    }
+
+    public func inbox() async -> PhoneInbox {
+        Self.inbox(await daemon.snapshot(), tails: tails)
+    }
+
+    public func rows() async -> PhoneRowsResult {
+        let rows = Self.phoneRows(await daemon.snapshot(), tails: tails)
+        var names: [String] = []
+        for row in rows where !names.contains(row.repo ?? "") { names.append(row.repo ?? "") }
+        return PhoneRowsResult(
+            sections: names.map { name in
+                PhoneRowsResult.Section(
+                    name: name, isPlugin: false,
+                    rows: rows.filter { $0.repo == name }.sorted { $0.isMain && !$1.isMain })
+            })
+    }
+
+    public func subscribe(
+        after lastSent: PhoneInbox, replacing previous: UUID?, _ send: @escaping @Sendable (PhoneInbox) -> Void
+    ) async -> UUID {
+        if let previous { await subscriptions.cancel(previous) }
+        let id = UUID()
+        let daemon = daemon
+        let tails = tails
+        let task = Task {
+            var last = lastSent
+            for await snapshot in await daemon.changes() {
+                let inbox = Self.inbox(snapshot, tails: tails)
+                if inbox != last {
+                    last = inbox
+                    send(inbox)
+                }
+            }
+        }
+        await subscriptions.add(id, task)
+        return id
+    }
+
+    public func unsubscribe(_ id: UUID) async {
+        await subscriptions.cancel(id)
+    }
+
+    public func transcriptURL(_ pane: String) async throws -> URL {
+        guard let agent = await daemon.agent(of: pane) else { throw BoxErrors.paneNotFound(pane) }
+        guard let path = agent.transcriptPath else { throw Self.noTranscript }
+        return URL(fileURLWithPath: path)
+    }
+
+    /// Pastes the reply, then Return once the paste is read, unless a dialog opened meanwhile, which Return would
+    /// answer. `delivered` runs once the agent takes it as its next prompt.
+    public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void) async throws {
+        guard let agent = await daemon.agent(of: params.pane) else { throw BoxErrors.paneNotFound(params.pane) }
+        guard agent.session != nil else { throw Self.agentNotRunning }
+        guard !Self.showsDialog(agent) else { throw Self.promptOpen }
+        let sent = Date()
+        try await daemon.paste(pane: params.pane, text: params.text)
+        try await Task.sleep(for: BoxDaemon.returnPause)
+        // Checked and pressed together, so a dialog that opened during the pause never takes the Return.
+        guard try await daemon.pressReturnUnlessDialog(pane: params.pane) else { throw Self.promptOpen }
+        let daemon = daemon
+        let deliveries = deliveries
+        let pane = params.pane
+        let id = UUID()
+        await deliveries.wait(id, pane: pane)
+        let window = deliveryWindow
+        Task {
+            // Whichever ends first: the reply taken, the agent gone, or the window over on a box that stays quiet.
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await snapshot in await daemon.changes() {
+                        guard let shown = snapshot.panes.first(where: { $0.id == pane }), shown.agent != .none
+                        else { return }
+                        if shown.agent == .working,
+                            await deliveries.take(id, pane: pane, since: shown.since, sent: sent.timeIntervalSince1970)
+                        {
+                            delivered()
+                            return
+                        }
+                    }
+                }
+                group.addTask { try? await Task.sleep(for: window) }
+                await group.next()
+                group.cancelAll()
+            }
+            await deliveries.drop(id, pane: pane)
+        }
+    }
+
+    /// Replies waiting in each pane. A working state takes one, the oldest, as the agent takes one prompt at a time.
+    private actor Deliveries {
+        private var waiting: [String: [UUID]] = [:]
+        /// The `since` of the working state that took each pane's last reply, which takes no other.
+        private var takenSince: [String: Double] = [:]
+
+        func wait(_ id: UUID, pane: String) {
+            waiting[pane, default: []].append(id)
+        }
+
+        func take(_ id: UUID, pane: String, since: Double, sent: Double) -> Bool {
+            guard waiting[pane]?.first == id, since >= sent, since > takenSince[pane] ?? -.infinity else {
+                return false
+            }
+            waiting[pane]?.removeFirst()
+            takenSince[pane] = since
+            return true
+        }
+
+        func drop(_ id: UUID, pane: String) {
+            waiting[pane]?.removeAll { $0 == id }
+            // A later reply is sent after any state that took one, so none of them can take it.
+            if waiting[pane]?.isEmpty == true {
+                waiting[pane] = nil
+                takenSince[pane] = nil
+            }
+        }
+    }
+
+    static func showsDialog(_ agent: PaneAgent) -> Bool {
+        agent.state == .waiting && !agent.waitsOnQuestion
+    }
+
+    public func answer(_ params: PhoneAnswerParams) async throws {
+        guard let agent = await daemon.agent(of: params.pane) else { throw BoxErrors.paneNotFound(params.pane) }
+        guard let prompt = agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
+        let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+        guard let taken = await daemon.takeAnswer(pane: params.pane, promptID: prompt.id) else { throw Self.promptGone }
+        do {
+            try await daemon.keys(BoxKeysParams(pane: params.pane, keys: keys))
+        } catch {
+            await daemon.giveBack(taken, pane: params.pane)
+            throw error
+        }
+    }
+
+    public func keys(_ params: PhoneKeysParams) async throws {
+        try await daemon.keys(BoxKeysParams(pane: params.pane, keys: [params.text]))
+    }
+
+    public func seen(_ params: PhonePaneParams) async throws {
+        try await daemon.seen(pane: params.pane)
+    }
+
+    public func screen(_ params: PhonePaneParams, scrollback: Int?) async throws -> PhoneScreen {
+        try await daemon.screen(pane: params.pane, scrollback: scrollback)
+    }
+
+    /// Rows on the box run no setup, as `row new` there does not, so the agent starts at once.
+    public func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult {
+        let made = try await daemon.rowNew(BoxRowNewParams(repo: params.repo, branch: params.branch, base: params.base))
+        let pane: String
+        do {
+            pane = try await daemon.paneNew(
+                BoxPaneNewParams(
+                    rowPath: made.row.path, command: line,
+                    environment: params.brief.isEmpty ? nil : [PhoneAgentCommand.briefVariable: params.brief]))
+        } catch {
+            throw ControlError(
+                code: "pane_failed",
+                message: "Made the row \(made.row.branch ?? params.branch), but its pane did not start: "
+                    + ((error as? ControlError)?.message ?? "\(error)"))
+        }
+        return PhoneNewRowResult(
+            path: made.row.path, branch: made.row.branch ?? params.branch, pane: pane,
+            warnings: made.warnings.isEmpty ? nil : made.warnings)
+    }
+
+    private actor Subscriptions {
+        var tasks: [UUID: Task<Void, Never>] = [:]
+
+        func add(_ id: UUID, _ task: Task<Void, Never>) {
+            tasks[id] = task
+        }
+
+        func cancel(_ id: UUID) {
+            tasks.removeValue(forKey: id)?.cancel()
+        }
+    }
+}

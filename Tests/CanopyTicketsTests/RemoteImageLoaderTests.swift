@@ -176,7 +176,7 @@ struct RemoteImageLoaderTests {
 
     @Test func fourDownloadsRunAtOnceAndTheRestWait() async {
         let downloader = CountingDownloader(.success(TestImages.png(width: 8, height: 8)))
-        let loader = RemoteImageLoader(downloader: downloader)
+        let loader = RemoteImageLoader(downloader: downloader, images: KeptImages())
         await withTaskGroup(of: Void.self) { group in
             for index in 0..<9 {
                 group.addTask {
@@ -190,7 +190,7 @@ struct RemoteImageLoaderTests {
 
     @Test func aFileFoundTooBigIsRememberedAndNeverDownloadedAgain() async {
         let downloader = CountingDownloader(.failure(.tooBig))
-        let loader = RemoteImageLoader(downloader: downloader)
+        let loader = RemoteImageLoader(downloader: downloader, images: KeptImages())
         let url = URL(string: "https://cdn.test/a/recording.gif?ex=1&hm=2")!
         guard case .tooBig = await loader.load(url, fitting: Self.box) else {
             Issue.record("not too big")
@@ -208,7 +208,7 @@ struct RemoteImageLoaderTests {
 
     @Test func otherFailuresAreAskedAgain() async {
         let downloader = CountingDownloader(.failure(.failed))
-        let loader = RemoteImageLoader(downloader: downloader)
+        let loader = RemoteImageLoader(downloader: downloader, images: KeptImages())
         let url = URL(string: "https://cdn.test/a/offline.png")!
         _ = await loader.load(url, fitting: Self.box)
         #expect(loader.known(url, fitting: Self.box) == nil)
@@ -218,7 +218,7 @@ struct RemoteImageLoaderTests {
 
     @Test func viewsAskingAtOnceShareOneDownloadAndTheCacheKeepsIt() async {
         let downloader = CountingDownloader(.success(TestImages.png(width: 20, height: 20)))
-        let loader = RemoteImageLoader(downloader: downloader)
+        let loader = RemoteImageLoader(downloader: downloader, images: KeptImages())
         let url = URL(string: "https://cdn.test/a/shot.png?ex=1")!
         async let first = loader.load(url, fitting: Self.box)
         async let second = loader.load(url, fitting: Self.box)
@@ -260,4 +260,12 @@ struct AttachmentDisplayTests {
         #expect(
             MessageAttachment(filename: "x", url: "", size: 1, contentType: nil).display(now: now) == .expired)
     }
+}
+
+/// Loaded images that stay, unlike the app's cache, which gives way under memory pressure whenever it likes.
+final class KeptImages: LoadedImages {
+    private let images = Mutex<[String: RemoteImage]>([:])
+
+    func image(for key: String) -> RemoteImage? { images.withLock { $0[key] } }
+    func keep(_ image: RemoteImage, for key: String) { images.withLock { $0[key] = image } }
 }

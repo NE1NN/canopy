@@ -147,10 +147,10 @@ struct SSHCommandTests {
             ])
     }
 
-    @Test func quotedWordsReachTheRemoteShellUnchanged() throws {
+    @Test func quotedWordsReachTheRemoteShellUnchanged() async throws {
         let words = ["plain", "with space", "it's", "$HOME", "a\nb", "", "*", "`date`"]
 
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             "/bin/sh", ["-c", "printf '%s\\0' " + SSHCommand.shellQuoted(words)], environment: [:], directory: nil,
             timeout: .seconds(10))
 

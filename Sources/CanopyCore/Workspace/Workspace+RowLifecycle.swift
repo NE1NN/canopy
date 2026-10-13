@@ -1,15 +1,5 @@
 import Foundation
 
-/// Where a new row's branch came from.
-public enum BranchSource: String, Codable, Sendable {
-    /// A local branch was checked out.
-    case local
-    /// A branch on origin was checked out as a new local branch tracking it.
-    case origin
-    /// Nothing matched, so a new branch was created.
-    case new
-}
-
 public struct CreatedRow: Sendable, Equatable {
     public var row: Row
     public var source: BranchSource
@@ -109,7 +99,6 @@ extension Workspace {
             }
         }
 
-        var notes: [String] = []
         var warnings: [String] = []
         let hasOrigin = await git.succeeds(["remote", "get-url", "origin"], in: repoPath)
         var fetchFailure: String?
@@ -118,85 +107,31 @@ extension Workspace {
             if let fetchFailure { warnings.append("\(fetchFailure), so the row starts from local refs.") }
         }
 
-        let branch: String
-        let source: BranchSource
-        var start: String?
-        if let local = await existingBranch(requested, under: "refs/heads/", repoPath: repoPath) {
-            (branch, source) = (local, .local)
-        } else if hasOrigin,
-            let remote = await existingBranch(requested, under: "refs/remotes/origin/", repoPath: repoPath)
-        {
-            (branch, source) = (remote, .origin)
-        } else {
-            guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
-            (branch, source) = (requested, .new)
-            start = try await startPoint(base, in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)
+        let choice = try await branchErrors {
+            try await branchRules(repoPath).choose(
+                requested, base: base, existing: existing, hasOrigin: hasOrigin, fetchFailure: fetchFailure)
         }
-        if source != .local {
+        let branch = choice.branch
+        if choice.source != .local {
             // A PR bound to an old branch of this name is not the new branch's.
             try forgetPullRequest(of: branch, repoPath: repoPath)
         }
-        if branch != requested {
-            notes.append("Using \(branch), the branch's own spelling.")
-        }
         try await claim(branch: branch, repoPath: repoPath)
 
-        var fastForward: FastForward?
-        if source == .local, hasOrigin {
-            let remote = "refs/remotes/origin/\(branch)"
-            if await git.succeeds(["show-ref", "--verify", "--quiet", remote], in: repoPath) {
-                let report = await compare(
-                    branch, with: remote, named: "origin/\(branch)", resetTo: "origin/\(branch)", repoPath: repoPath)
-                notes += report.notes
-                warnings += report.warnings
-                fastForward = report.fastForward
-            } else if fetchFailure == nil, let warning = await goneUpstreamWarning(branch, repoPath: repoPath) {
-                warnings.append(warning)
-            }
-        }
-
         let added = try await addRow(
-            repoPath: repoPath, branch: branch, joining: joining, link: link, fastForward: fastForward
-        ) { folder in
-            switch source {
-            case .local: [folder, branch]
-            case .origin: ["--track", "-b", branch, folder, "origin/\(branch)"]
-            case .new: ["--no-track", "-b", branch, folder, start ?? "HEAD"]
-            }
-        }
+            repoPath: repoPath, branch: branch, joining: joining, link: link, fastForward: choice.fastForward
+        ) { choice.worktreeArguments(folder: $0) }
         return CreatedRow(
-            row: added.row, source: source, base: start, pullRequest: nil, notes: notes + added.report.notes,
-            warnings: warnings + added.report.warnings)
+            row: added.row, source: choice.source, base: choice.start, pullRequest: nil,
+            notes: choice.notes + added.report.notes, warnings: warnings + choice.warnings + added.report.warnings)
     }
 
     func requireValidBranchName(_ branch: String, repoPath: String) async throws {
-        try await requireValidBranchName(branch, in: RepoGit(git: git, path: repoPath))
-    }
-
-    /// A host that cannot be reached fails as such, not as a bad name.
-    func requireValidBranchName(_ branch: String, in clone: RepoGit) async throws {
-        guard !branch.hasPrefix("-"), branch != "HEAD",
-            try await clone.succeedsOnHost(["check-ref-format", "refs/heads/\(branch)"])
-        else { throw WorkspaceError.invalidBranch(branch) }
+        try await branchErrors { try await branchRules(repoPath).requireValidName(branch) }
     }
 
     func isValidBranchName(_ branch: String, repoPath: String) async -> Bool {
-        await isValidBranchName(branch, in: RepoGit(git: git, path: repoPath))
-    }
-
-    /// `--branch` would expand "@{-1}" to the previous branch, and a leading "-" would read as an option.
-    func isValidBranchName(_ branch: String, in clone: RepoGit) async -> Bool {
-        guard !branch.hasPrefix("-"), branch != "HEAD" else { return false }
-        return await clone.succeeds(["check-ref-format", "refs/heads/\(branch)"])
-    }
-
-    func startPoint(_ base: String?, in clone: RepoGit, hasOrigin: Bool) async throws -> String {
-        guard let base else { return try await defaultBase(in: clone, hasOrigin: hasOrigin) }
-        guard !base.hasPrefix("-"), await clone.succeeds(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"])
-        else {
-            throw WorkspaceError.invalidBase(base)
-        }
-        return base
+        await branchRules(repoPath).isValidName(branch)
     }
 
     /// Runs `git worktree add` into a new folder under the repo's Canopy folder, then `fastForward` in it, and lists
@@ -320,11 +255,11 @@ extension Workspace {
     /// already covers it. Its outcome, including a failure, is reused rather than waiting on the network again.
     /// Returns why the fetch failed, or nil. Pruning drops branches deleted on origin, which are no longer on it.
     func fetchUnlessFresh(repoPath: String, since requestedAt: ContinuousClock.Instant) async -> String? {
-        await fetchUnlessFresh(RepoGit(git: git, path: repoPath), key: repoPath, since: requestedAt)
+        await fetchUnlessFresh(localClone(repoPath), key: repoPath, since: requestedAt)
     }
 
     /// `key` names the clone among every clone Canopy fetches, here and on hosts.
-    func fetchUnlessFresh(_ clone: RepoGit, key: String, since requestedAt: ContinuousClock.Instant) async -> String? {
+    func fetchUnlessFresh(_ clone: GitClone, key: String, since requestedAt: ContinuousClock.Instant) async -> String? {
         if let attempt = lastFetch[key], attempt.finishedAt > requestedAt {
             return attempt.failure
         }
@@ -362,31 +297,11 @@ extension Workspace {
     }
 
     func defaultBase(repoPath: String, hasOrigin: Bool) async -> String {
-        (try? await defaultBase(in: RepoGit(git: git, path: repoPath), hasOrigin: hasOrigin)) ?? "HEAD"
-    }
-
-    func defaultBase(in clone: RepoGit, hasOrigin: Bool) async throws -> String {
-        guard hasOrigin, let branch = try await defaultBranch(in: clone) else { return "HEAD" }
-        return "origin/" + branch
+        (try? await branchRules(repoPath).defaultBase(hasOrigin: hasOrigin)) ?? "HEAD"
     }
 
     /// The branch `origin/HEAD` points at, such as `main`, or nil when the repo has none.
     public nonisolated func defaultBranch(repoPath: String) async -> String? {
-        try? await defaultBranch(in: RepoGit(git: git, path: repoPath))
-    }
-
-    /// Fails only when the clone is on a host that did not answer, which says nothing about the default branch.
-    nonisolated func defaultBranch(in clone: RepoGit) async throws -> String? {
-        let head: String
-        do {
-            head = try await clone.run(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
-        } catch let error as GitError where error.hostUnreachable {
-            throw error
-        } catch {
-            return nil
-        }
-        let name = head.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard name.hasPrefix("origin/"), name.count > "origin/".count else { return nil }
-        return String(name.dropFirst("origin/".count))
+        try? await branchRules(repoPath).defaultBranch()
     }
 }

@@ -6,7 +6,7 @@ extension RowLifecycle {
         guard params.state != nil || params.session != nil else {
             throw ControlError(code: "bad_params", message: "Pass a state: working, waiting, done, or none.")
         }
-        let pane = try terminal(params.pane)
+        let pane = try terminal(params.pane, host: params.host)
         pane.report(params.report)
         return TermStateResult(pane: params.pane, state: pane.agent.state)
     }

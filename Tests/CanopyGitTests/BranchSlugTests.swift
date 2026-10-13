@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import CanopyCore
+@testable import CanopyGit
 
 struct BranchSlugTests {
     @Test func replacesSlashes() {

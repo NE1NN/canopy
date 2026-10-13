@@ -4,6 +4,7 @@
 # -O check and -O exit act on that pid. Anything else runs the remote command with bash in $FAKE_SSH_HOME.
 # -O forward -R remote:local links the remote socket path to the local one, which connect() follows like a forward.
 # As sshd does, it refuses a path that exists, and the forward ends with the master, leaving a file at its path.
+# -O forward -L /local:/remote links a socket path here to one on the host, as -R does the other way.
 # -O forward -L local:target:port starts scripts/fake-ssh-forward.py, which listens on both loopbacks as ssh does and
 # ends with the master; -O cancel -L stops it.
 # FAKE_SSH_DOWN=1, or a file .fake-ssh-down in the host's home, makes every call fail as an unreachable host does,
@@ -165,6 +166,13 @@ if [[ -n "$operation" ]]; then
                 echo "$remote" >> "$control.links"
             done
             for spec in "${locals[@]+"${locals[@]}"}"; do
+                if [[ "$spec" == /* ]]; then
+                    # A Unix socket here to one on the host, which is this Mac: a link, as for -R.
+                    rm -f "${spec%%:*}"
+                    ln -s "${spec#*:}" "${spec%%:*}" || forwarding_failed
+                    echo "${spec%%:*}" >> "$control.links"
+                    continue
+                fi
                 forward_local "$pid" "$spec"
             done
             exit 0

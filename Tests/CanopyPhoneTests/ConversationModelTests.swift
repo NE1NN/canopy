@@ -307,7 +307,7 @@ struct ConversationModelTests {
         #expect(await eventually { model.entries.count == 1 })
         mac.forget(phone: "iPhone")
         mac.dropAll()
-        #expect(await eventually { model.connection.paired == nil })
+        #expect(await eventually { !model.connection.isPaired })
         #expect(await eventually { !model.isFollowing })
         #expect(model.entries.map(\.id) == ["a"])
     }
