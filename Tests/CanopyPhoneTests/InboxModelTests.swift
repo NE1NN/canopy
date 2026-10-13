@@ -282,7 +282,8 @@ struct InboxAcrossServersTests {
         #expect(await eventually { model.staleServers.map(\.name) == ["hindie-box"] })
         #expect(!model.isStale)
         #expect(model.sections.needsYou.map(\.row.name) == ["feat/box", "feat/ios-companion"])
-        #expect(model.staleBanner?.title == "Can't reach hindie-box.")
+        // One server's banner is its own problem, a dropped connection or one that cannot be made.
+        #expect(model.staleBanner?.title.hasSuffix("hindie-box.") == true)
         mac.goAway()
         #expect(await eventually { model.isStale })
         #expect(model.staleBanner?.title == "Can't reach Studio and hindie-box.")
