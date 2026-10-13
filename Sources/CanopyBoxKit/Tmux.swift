@@ -53,12 +53,15 @@ public struct Tmux: Sendable {
     }
 
     /// Starts a detached session in `folder`, with `environment` for its first shell. `command` runs in place of the
-    /// shell, through `sh -c`, which only tests need.
+    /// shell, through `sh -c`, which only tests need. tmux gives a new session's first shell the PATH of the client
+    /// that made it, over `-e PATH`, so the client runs with it too.
     public func newSession(
         _ name: String, folder: String, environment variables: [String: String], command: String? = nil
     ) async throws {
-        let variables = variables.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
-        try await run(["new-session", "-d", "-s", name, "-c", folder] + variables + (command.map { [$0] } ?? []))
+        let arguments = variables.sorted { $0.key < $1.key }.flatMap { ["-e", "\($0.key)=\($0.value)"] }
+        try await run(
+            ["new-session", "-d", "-s", name, "-c", folder] + arguments + (command.map { [$0] } ?? []),
+            path: variables["PATH"])
     }
 
     public func hasSession(_ name: String) async -> Bool {
@@ -130,10 +133,12 @@ public struct Tmux: Sendable {
     }
 
     @discardableResult
-    func run(_ arguments: [String], stdin: Data? = nil) async throws -> String {
+    func run(_ arguments: [String], stdin: Data? = nil, path: String? = nil) async throws -> String {
         let executable = executable
         let all = baseArguments + arguments
-        let environment = environment
+        var variables = environment
+        if let path { variables["PATH"] = path }
+        let environment = variables
         let result = await onOwnThread {
             Result {
                 try Subprocess.run(

@@ -107,11 +107,6 @@ public final class UnixListener: Sendable {
         }
     }
 
-    /// Stops listening and leaves the file, as a process that was killed does.
-    func abandon() {
-        _ = stopListening()
-    }
-
     private func stopListening() -> Bool {
         guard !source.isCancelled else { return false }
         source.cancel()

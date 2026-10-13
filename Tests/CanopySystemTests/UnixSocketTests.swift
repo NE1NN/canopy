@@ -36,6 +36,24 @@ struct UnixSocketTests {
         connection.close()
     }
 
+    static func bindWithoutListening(_ path: String) throws {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: Array(path.utf8)) }
+        #if canImport(Glibc)
+            let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+        #else
+            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        #endif
+        defer { close(fd) }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if bound != 0 { throw UnixSocketError.system("bind", errno: errno) }
+    }
+
     @Test func echoesLinesBothWays() async throws {
         let folder = try SocketFolder()
         let listener = try UnixListener(path: folder.socket(), accept: Self.reverser)
@@ -95,9 +113,10 @@ struct UnixSocketTests {
 
     @Test func aStaleSocketFileIsReplaced() async throws {
         let folder = try SocketFolder()
-        // A socket file nothing listens on, as a daemon that was killed leaves.
-        let stale = try UnixListener(path: folder.socket()) { $0.close() }
-        stale.abandon()
+        // A socket file nothing listens on, as a daemon that was killed leaves. Bound and never listening, so no
+        // child another test spawns meanwhile can hold a listening copy of it.
+        try Self.bindWithoutListening(folder.socket())
+        #expect(FileManager.default.fileExists(atPath: folder.socket()))
         let listener = try UnixListener(path: folder.socket(), accept: Self.reverser)
         defer { listener.close() }
         let reply = try await offPool {
