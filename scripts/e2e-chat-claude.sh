@@ -10,4 +10,6 @@ if ! command -v claude >/dev/null 2>&1; then
     exit 0
 fi
 unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST CLAUDE_CONFIG_DIR
+# The flags are separate words on purpose, as the Makefile uses them.
+# shellcheck disable=SC2046
 CANOPY_REAL_CLAUDE=1 LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test $(scripts/test-flags.sh) --filter ChatRealClaudeTests

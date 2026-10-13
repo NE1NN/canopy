@@ -101,6 +101,19 @@ struct ChatMarkdownTests {
         #expect(blocks.last == .code(language: "sh", text: "make te"))
     }
 
+    @Test func onlyWebAndMailLinksAreClickable() {
+        guard
+            case .paragraph(let text) = ChatMarkdown.parse(
+                "[a](file:///Applications/X.app) [b](myapp://do) [c](https://x.dev) [d](mailto:a@b.c)"
+            ).first
+        else {
+            Issue.record("not a paragraph")
+            return
+        }
+        let links = text.runs.compactMap(\.link)
+        #expect(links == [URL(string: "https://x.dev")!, URL(string: "mailto:a@b.c")!])
+    }
+
     @Test func htmlStaysAsText() {
         let blocks = ChatMarkdown.parse("<b>hi</b> there")
 

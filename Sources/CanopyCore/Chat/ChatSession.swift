@@ -343,7 +343,7 @@ public final class ChatSession {
             self.stream = stream
         } catch {
             failure = .couldNotStart("\(error)")
-            queued = []
+            returnQueuedToDraft()
             isWorking = false
         }
     }
@@ -446,7 +446,7 @@ public final class ChatSession {
         // An echo with no text of its own, such as a command's output, takes nothing.
         guard !texts.isEmpty else { return }
         var matched = false
-        for text in texts + [texts.joined(separator: "\n")] {
+        for text in texts + (texts.count > 1 ? [texts.joined(separator: "\n")] : []) {
             if let index = queued.firstIndex(where: { $0.prompt.text == text }) {
                 queued.remove(at: index)
                 matched = true

@@ -26,6 +26,7 @@ import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -45,7 +46,7 @@ VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.296")
 REPLAY = "--replay-user-messages" in args
 DELAY = float(os.environ.get("FAKE_CLAUDE_DELAY", "0.01"))
 CWD = os.getcwd()
-PROJECTS = os.path.join(os.environ.get("HOME", "/tmp"), ".claude", "projects",
+PROJECTS = os.path.join(os.environ.get("HOME") or tempfile.gettempdir(), ".claude", "projects",
                         "".join(c if c.isalnum() else "-" for c in CWD))
 TRANSCRIPT = os.path.join(PROJECTS, SESSION + ".jsonl")
 

@@ -98,7 +98,10 @@ class Session:
             self.pump(0.5)
         agent = self.agent()
         # The screen says what Claude Code showed instead, such as a dialog this run did not expect.
-        screen = "\n".join((self.screen() or "").splitlines()[-25:])
+        try:
+            screen = "\n".join((self.screen() or "").splitlines()[-25:])
+        except (SystemExit, Exception) as error:  # The screen is only a clue; the timeout is the failure.
+            screen = f"(could not read the screen: {error})"
         fail(f"timed out waiting for {what}; agent: {json.dumps(agent)}\nscreen:\n{screen}")
 
     def screen(self):

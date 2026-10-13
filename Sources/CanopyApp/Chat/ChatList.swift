@@ -14,6 +14,10 @@ struct ChatList: NSViewRepresentable {
     /// Changes when the author asks to see the newest row.
     let scrollToBottomRequest: Int
 
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(chat: chat, actions: actions, isAtBottom: $isAtBottom)
     }
@@ -83,6 +87,11 @@ struct ChatList: NSViewRepresentable {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scrolled() }
             }
+        }
+
+        func detach() {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
         }
 
         func update(_ newRows: [ChatRow], scrollRequest request: Int) {

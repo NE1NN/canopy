@@ -33,6 +33,15 @@ struct ChatStreamTextTests {
         #expect(text.blocks.count == 2)
     }
 
+    @Test func tildeFencesAndLongerFencesKeepTheirBlankLines() {
+        var text = ChatStreamText()
+        text.append("~~~\na\n\nb\n")
+        #expect(text.settledCount == 0)
+        text.append("~~~\n\n````\n```\n\n````\n\nEnd.")
+        #expect(text.blocks.count == 3)
+        #expect(text.blocks[1] == .code(language: nil, text: "```\n"))
+    }
+
     @Test func readsAsTheWholeTextWouldForPlainParagraphs() {
         var text = ChatStreamText()
         let whole = "# Title\n\nOne **two**.\n\n- a\n- b\n\nEnd `x`."

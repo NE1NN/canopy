@@ -64,6 +64,15 @@ public enum ChatMarkdown {
         }
     }
 
+    /// Only web and mail links are clickable: Claude's text can carry what a fetched page or file said, and a click
+    /// on a `file:` or an app's own scheme would open things the author never meant to.
+    static func safeLink(_ destination: String) -> URL? {
+        guard let url = URL(string: destination), let scheme = url.scheme?.lowercased(),
+            ["http", "https", "mailto"].contains(scheme)
+        else { return nil }
+        return url
+    }
+
     private static func items(_ item: ListItem) -> [ChatBlock] {
         item.children.compactMap(block)
     }
@@ -93,7 +102,7 @@ public enum ChatMarkdown {
         case is Strong: return nested(intent.union(.stronglyEmphasized), link: link)
         case is Strikethrough: return nested(intent.union(.strikethrough), link: link)
         case let anchor as Markdown.Link:
-            return nested(intent, link: anchor.destination.flatMap(URL.init(string:)) ?? link)
+            return nested(intent, link: anchor.destination.flatMap(safeLink) ?? link)
         case is SoftBreak: return styled(" ", intent)
         case is LineBreak: return styled("\n", intent)
         case let html as InlineHTML: return styled(html.rawHTML, intent)
