@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 
 /// What the `canopy phone` commands call on the control socket. Phones themselves call `PhoneMethod`s.
@@ -86,4 +87,16 @@ public struct PhonesStatusResult: Codable, Sendable, Equatable {
     public var phones: [PhoneInfo]
     /// Whether phones get push notifications, and if not, why.
     public var notifications: String
+
+    public init(
+        listening: Bool, endpoints: [PhoneEndpoint], host: String?, problem: String?, phones: [PhoneInfo],
+        notifications: String
+    ) {
+        self.listening = listening
+        self.endpoints = endpoints
+        self.host = host
+        self.problem = problem
+        self.phones = phones
+        self.notifications = notifications
+    }
 }

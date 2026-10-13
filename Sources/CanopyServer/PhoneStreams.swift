@@ -1,3 +1,4 @@
+import CanopyWire
 import Foundation
 import Synchronization
 
@@ -40,16 +41,16 @@ final class PhoneStreams: Sendable {
 }
 
 /// Sends a pane's screen whenever it changes, four times a second at most, while a phone shows it.
-@MainActor
-final class ScreenWatcher {
-    private let panes: PhonePanes
+actor ScreenWatcher {
+    private let source: any PhoneSource
     private let pane: String
     private var last: [String]
     private let send: @Sendable (PhoneScreen) -> Void
     private var task: Task<Void, Never>?
 
-    init(panes: PhonePanes, pane: String, after lines: [String], send: @escaping @Sendable (PhoneScreen) -> Void) {
-        self.panes = panes
+    init(source: any PhoneSource, pane: String, after lines: [String], send: @escaping @Sendable (PhoneScreen) -> Void)
+    {
+        self.source = source
         self.pane = pane
         last = lines
         self.send = send
@@ -59,7 +60,7 @@ final class ScreenWatcher {
         task = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
-                guard let self, self.check() else { return }
+                guard let self, await self.check() else { return }
             }
         }
     }
@@ -70,8 +71,8 @@ final class ScreenWatcher {
     }
 
     /// Returns false once the pane is gone.
-    private func check() -> Bool {
-        guard let screen = try? panes.screen(PhonePaneParams(pane: pane), scrollback: nil) else { return false }
+    private func check() async -> Bool {
+        guard let screen = try? await source.screen(PhonePaneParams(pane: pane), scrollback: nil) else { return false }
         guard screen.lines != last else { return true }
         last = screen.lines
         send(screen)
