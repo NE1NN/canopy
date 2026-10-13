@@ -34,6 +34,8 @@ public final class TerminalBody {
 
     @ObservationIgnored private weak var pane: Pane?
     @ObservationIgnored private let settings: ShellSettings
+    /// Variables beside Canopy's own, such as a task's brief, which is never typed.
+    @ObservationIgnored private let extraEnvironment: [String: String]
     @ObservationIgnored private var process: PtyProcess?
     @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var isScript = false
@@ -42,9 +44,10 @@ public final class TerminalBody {
 
     init(
         emulator: any TerminalEmulator, command: PaneCommand, isRemote: Bool, settings: ShellSettings,
-        directory: String?, session: String?, paneID: PaneID, rowPath: String
+        directory: String?, session: String?, paneID: PaneID, rowPath: String, environment: [String: String] = [:]
     ) {
         self.emulator = emulator
+        extraEnvironment = environment
         self.command = command
         self.settings = settings
         remoteSession = isRemote ? session ?? paneID.description : nil
@@ -197,7 +200,9 @@ public final class TerminalBody {
         guard let pane else { return }
         self.command = command
         if case .script = command { isScript = true } else { isScript = false }
+        // Canopy's own variables win, so a caller cannot pass the pane off as another.
         let environment = PaneEnvironment.build(settings: settings, context: pane.context, pane: pane.id)
+            .merging(extraEnvironment) { own, _ in own }
         // A new secret for each shell, so only reports this shell prints count.
         let token = settings.reportsCommands ? UUID().uuidString : nil
         let launch =

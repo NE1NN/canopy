@@ -147,14 +147,6 @@ public final class RemoteImageLoader: Sendable {
     /// About an 8K screen's worth. Files with more pixels are never decoded.
     static let mostPixels = 50_000_000
 
-    private final class Entry {
-        let image: RemoteImage
-
-        init(_ image: RemoteImage) {
-            self.image = image
-        }
-    }
-
     private struct State {
         var tooBig: Set<String> = []
         var loading: [String: Task<RemoteImageOutcome, Never>] = [:]
@@ -169,14 +161,15 @@ public final class RemoteImageLoader: Sendable {
     private let limit: Int
     private let slots = DownloadSlots(4)
     private let state = Mutex(State())
-    // NSCache is thread-safe.
-    nonisolated(unsafe) private let images: NSCache<NSString, Entry>
+    private let images: any LoadedImages
 
-    public init(downloader: any ImageDownloading = URLSessionImageDownloader(), limit: Int = largestDownload) {
+    public init(
+        downloader: any ImageDownloading = URLSessionImageDownloader(), limit: Int = largestDownload,
+        images: any LoadedImages = CachedImages()
+    ) {
         self.downloader = downloader
         self.limit = limit
-        images = NSCache()
-        images.totalCostLimit = 128 * 1024 * 1024
+        self.images = images
     }
 
     /// What is known without asking the network: the image cached for this box, or a file found too big.
@@ -194,7 +187,7 @@ public final class RemoteImageLoader: Sendable {
             let task = Task.detached { [self] in
                 let outcome = await fetch(url, fitting: box)
                 if case .loaded(let image) = outcome {
-                    images.setObject(Entry(image), forKey: key as NSString, cost: image.cost)
+                    images.keep(image, for: key)
                 }
                 state.withLock { current in
                     current.loading[key] = nil
@@ -214,7 +207,7 @@ public final class RemoteImageLoader: Sendable {
     private func known(_ url: URL, fitting box: CGSize, in state: State) -> RemoteImageOutcome? {
         let file = Self.key(url)
         let key = file + " \(Int(box.width))x\(Int(box.height))"
-        if let entry = images.object(forKey: key as NSString) { return .loaded(entry.image) }
+        if let image = images.image(for: key) { return .loaded(image) }
         return state.tooBig.contains(file) ? .tooBig : nil
     }
 
@@ -270,5 +263,38 @@ public final class RemoteImageLoader: Sendable {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         components?.query = nil
         return components?.string ?? url.absoluteString
+    }
+}
+
+/// Where loaded images stay, by file and box.
+public protocol LoadedImages: Sendable {
+    func image(for key: String) -> RemoteImage?
+    func keep(_ image: RemoteImage, for key: String)
+}
+
+/// The app's: a cache that counts decoded bytes and gives way under memory pressure and past 128 MB.
+public final class CachedImages: LoadedImages {
+    private final class Entry {
+        let image: RemoteImage
+
+        init(_ image: RemoteImage) {
+            self.image = image
+        }
+    }
+
+    // NSCache is thread-safe.
+    nonisolated(unsafe) private let cache: NSCache<NSString, Entry>
+
+    public init() {
+        cache = NSCache()
+        cache.totalCostLimit = 128 * 1024 * 1024
+    }
+
+    public func image(for key: String) -> RemoteImage? {
+        cache.object(forKey: key as NSString)?.image
+    }
+
+    public func keep(_ image: RemoteImage, for key: String) {
+        cache.setObject(Entry(image), forKey: key as NSString, cost: image.cost)
     }
 }

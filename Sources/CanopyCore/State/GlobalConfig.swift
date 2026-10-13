@@ -11,17 +11,20 @@ public struct GlobalConfig: Codable, Sendable, Equatable {
     /// A system sound's name, such as Glass, or a sound file's path. Empty for silence.
     public var agentDoneSound: String
     public var agentWaitingSound: String
+    /// What a task from the phone runs on this Mac, set by `canopy phone agent`. Nil for the standard one.
+    public var agentCommand: String?
 
     public init(
         minPaneColumns: Int = 80, logCommands: Bool = true, agentSounds: Bool = true,
         agentDoneSound: String = AgentSound.fallback(for: .done),
-        agentWaitingSound: String = AgentSound.fallback(for: .waiting)
+        agentWaitingSound: String = AgentSound.fallback(for: .waiting), agentCommand: String? = nil
     ) {
         self.minPaneColumns = minPaneColumns
         self.logCommands = logCommands
         self.agentSounds = agentSounds
         self.agentDoneSound = agentDoneSound
         self.agentWaitingSound = agentWaitingSound
+        self.agentCommand = agentCommand
     }
 
     public init(from decoder: any Decoder) throws {
@@ -34,6 +37,7 @@ public struct GlobalConfig: Codable, Sendable, Equatable {
         agentWaitingSound =
             try container.decodeIfPresent(String.self, forKey: .agentWaitingSound)
             ?? AgentSound.fallback(for: .waiting)
+        agentCommand = try container.decodeIfPresent(String.self, forKey: .agentCommand)
     }
 
     public static func load(from url: URL) -> GlobalConfig {

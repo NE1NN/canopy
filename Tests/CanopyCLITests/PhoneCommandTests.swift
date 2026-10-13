@@ -109,4 +109,18 @@ struct PhoneCommandTextTests {
             PhoneCommand.endpointText(PhoneEndpoint(address: "fd7a:115c:a1e0::1", port: 6974))
                 == "[fd7a:115c:a1e0::1]:6974")
     }
+
+    @Test func agentSaysWhichServerAndWhetherItIsTheStandardCommand() {
+        #expect(
+            PhoneCommand.agentText(PhonesAgentResult(command: PhoneAgentCommand.standard, isDefault: true))
+                == "Tasks from the phone on this Mac run the standard command: \(PhoneAgentCommand.standard)")
+        #expect(
+            PhoneCommand.agentText(PhonesAgentResult(command: "codex", isDefault: false, on: "hindie-box"))
+                == "Tasks from the phone on hindie-box run: codex")
+    }
+
+    @Test func agentTakesACommandOrDefaultNotBoth() throws {
+        #expect(throws: (any Error).self) { try PhoneCommand.Agent.parse(["codex", "--default"]) }
+        #expect(try PhoneCommand.Agent.parse(["--on", "box", "codex --yolo"]).command == "codex --yolo")
+    }
 }

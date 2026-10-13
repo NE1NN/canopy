@@ -8,6 +8,36 @@ public enum PhonesMethod {
     public static let list = "phones.list"
     public static let remove = "phones.remove"
     public static let status = "phones.status"
+    /// Shows or sets what a task from the phone runs.
+    public static let agent = "phones.agent"
+}
+
+public struct PhonesAgentParams: Codable, Sendable {
+    /// The new command. Nil, without `reset`, only shows the one there is.
+    public var command: String?
+    /// Goes back to `PhoneAgentCommand.standard`.
+    public var reset: Bool
+    /// A host whose canopy-box runs the tasks, rather than this Mac.
+    public var on: String?
+
+    public init(command: String? = nil, reset: Bool = false, on: String? = nil) {
+        self.command = command
+        self.reset = reset
+        self.on = on
+    }
+}
+
+public struct PhonesAgentResult: Codable, Sendable, Equatable {
+    public var command: String
+    /// No command is set, so the standard one runs.
+    public var isDefault: Bool
+    public var on: String?
+
+    public init(command: String, isDefault: Bool, on: String? = nil) {
+        self.command = command
+        self.isDefault = isDefault
+        self.on = on
+    }
 }
 
 /// A new pairing code and the link its QR code holds.
@@ -27,9 +57,21 @@ public struct PhonesPairResult: Codable, Sendable, Equatable {
 
 public struct PhonesPairedParams: Codable, Sendable {
     public var code: String
+    /// A host whose canopy-box serves the phone, rather than this Mac.
+    public var on: String?
 
-    public init(code: String) {
+    public init(code: String, on: String? = nil) {
         self.code = code
+        self.on = on
+    }
+}
+
+/// Which server a phone command is about: this Mac, or a host's canopy-box.
+public struct PhonesOnParams: Codable, Sendable {
+    public var on: String?
+
+    public init(on: String? = nil) {
+        self.on = on
     }
 }
 
@@ -69,9 +111,11 @@ public struct PhoneInfo: Codable, Sendable, Equatable {
 
 public struct PhonesRemoveParams: Codable, Sendable {
     public var name: String
+    public var on: String?
 
-    public init(name: String) {
+    public init(name: String, on: String? = nil) {
         self.name = name
+        self.on = on
     }
 }
 

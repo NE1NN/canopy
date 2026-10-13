@@ -48,7 +48,10 @@ final class AppModel {
         let activity = ActivityLog(folder: home.activityFolder, logsCommands: config.logCommands)
         let workspace = Workspace(
             home: home, activity: activity,
-            hostTooling: HostTooling(relayCLI: Self.bundledCLIDirectory().map { $0 + "/canopy" }))
+            hostTooling: HostTooling(
+                relayCLI: Self.bundledCLIDirectory().map { $0 + "/canopy" },
+                wakeKeys: HostWakeKeys(
+                    store: KeychainSecretStore(), bundleID: Bundle.main.bundleIdentifier ?? "com.ne1nn.Canopy")))
         let terminals = TerminalStore(
             engine: SwiftTermEngine(),
             settings: .current(
@@ -61,6 +64,9 @@ final class AppModel {
         let hostMonitor = HostMonitor(workspace: workspace, terminals: terminals)
         self.hostMonitor = hostMonitor
         self.rows = RowLifecycle(workspace: workspace, terminals: terminals, hostMonitor: hostMonitor)
+        let boxMirror = BoxMirror(workspace: workspace, terminals: terminals)
+        self.rows.boxMirror = boxMirror
+        boxMirror.start()
         let environment = ProcessInfo.processInfo.environment
         let builtInPlugins = BuiltInPlugins.make(environment: environment)
         self.builtInPlugins = builtInPlugins
@@ -179,7 +185,8 @@ final class AppModel {
         let panes = PhonePanes(terminals: terminals)
         panes.start()
         let service = PhoneService(
-            home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: Self.macName)
+            home: home, hub: hub, panes: panes, activity: activity, listen: listen, macName: Self.macName,
+            newRow: { [rows] params, line in try await rows.phoneNewRow(params, line: line) })
         phoneHub = hub
         phonePanes = panes
         phones = service

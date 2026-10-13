@@ -23,6 +23,9 @@ public protocol PhoneSource: Sendable {
     func seen(_ params: PhonePaneParams) async throws
     /// The pane's visible screen, with up to `scrollback` lines above it.
     func screen(_ params: PhonePaneParams, scrollback: Int?) async throws -> PhoneScreen
+    /// Makes a row by `row new`'s branch rules and opens a pane in it that types `line`, the agent command, with the
+    /// brief in the pane's `PhoneAgentCommand.briefVariable`.
+    func newRow(_ params: PhoneNewRowParams, line: String) async throws -> PhoneNewRowResult
 }
 
 /// What a phone server records in its activity log.
@@ -36,8 +39,15 @@ public enum PhoneActivity: Sendable, Equatable {
 /// What a phone server needs from where it runs.
 public struct PhoneServerSettings: Sendable {
     public var registryFile: URL
-    /// The name phones see, such as the Mac's or the host's.
-    public var serverName: String
+    /// The name phones see, such as the Mac's or the host's, asked at each pairing and hello, since a box learns its
+    /// name from the Mac after it starts.
+    public var serverName: @Sendable () -> String
+    /// `PhoneServerKind`'s, which hello, pairing, and the pairing link say.
+    public var kind: String
+    /// What hello gives a phone to start the server with, asked each time. Only a box has one.
+    public var wake: @Sendable () -> PhoneWake?
+    /// What a task from a phone runs, asked each time, as the Mac can change it while the server runs.
+    public var agentCommand: @Sendable () -> String
     public var version: String
     public var port: UInt16
     /// The addresses to listen on now.
@@ -52,13 +62,18 @@ public struct PhoneServerSettings: Sendable {
     public var record: @Sendable (PhoneActivity) -> Void
 
     public init(
-        registryFile: URL, serverName: String, version: String, port: UInt16,
+        registryFile: URL, serverName: @escaping @Sendable () -> String, kind: String = PhoneServerKind.mac,
+        wake: @escaping @Sendable () -> PhoneWake? = { nil },
+        agentCommand: @escaping @Sendable () -> String = { PhoneAgentCommand.standard }, version: String, port: UInt16,
         addresses: @escaping @Sendable () -> [String], tailnetName: @escaping @Sendable () async -> String?,
         closedReason: @escaping @Sendable () -> String, statusNote: String? = nil,
         logsCommands: @escaping @Sendable () -> Bool = { false }, record: @escaping @Sendable (PhoneActivity) -> Void
     ) {
         self.registryFile = registryFile
         self.serverName = serverName
+        self.kind = kind
+        self.wake = wake
+        self.agentCommand = agentCommand
         self.version = version
         self.port = port
         self.addresses = addresses

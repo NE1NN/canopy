@@ -47,14 +47,15 @@ public final class Pane: Identifiable {
     /// A terminal pane, whose process starts at once.
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
-        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil
+        emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil,
+        environment: [String: String] = [:]
     ) {
         self.id = id
         self.context = context
         self.activity = activity
         let terminal = TerminalBody(
             emulator: emulator, command: command, isRemote: context.remote != nil, settings: settings,
-            directory: directory, session: session, paneID: id, rowPath: context.rowPath)
+            directory: directory, session: session, paneID: id, rowPath: context.rowPath, environment: environment)
         body = .terminal(terminal)
         terminal.attach(to: self)
     }
@@ -155,7 +156,20 @@ public final class Pane: Identifiable {
     /// The author saw the pane. Returns whether a green dot went away.
     @discardableResult
     public func markSeen() -> Bool {
-        agent.seen()
+        guard agent.seen() else { return false }
+        onSeen?(self)
+        return true
+    }
+
+    /// Called when the author sees a finish, so a host's canopy-box hears of it.
+    @ObservationIgnored public var onSeen: ((Pane) -> Void)?
+
+    /// Takes the agent canopy-box reports for this pane's session, reporting a change of state as any other.
+    public func mirror(_ next: PaneAgent) {
+        guard next != agent else { return }
+        let from = agent.state
+        agent = next
+        agentChanged(from == next.state ? nil : AgentChange(from: from, to: next.state, via: "box"))
     }
 
     /// Takes the answer to the agent's open prompt, if `id` still names it.

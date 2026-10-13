@@ -1,59 +1,27 @@
 import Foundation
 
-/// How an existing branch compares with what it is brought up to date with, and what may need the user.
-struct BranchReport: Sendable, Equatable {
-    var notes: [String] = []
-    var warnings: [String] = []
-    /// Set when the branch is only behind, so it can be fast-forwarded once its row has it checked out.
-    var fastForward: FastForward?
-}
-
-/// A clone git runs in: this Mac's, or one on a host, through the host's master.
-struct RepoGit: Sendable {
-    var git: GitRunner
-    var path: String
-
-    @discardableResult
-    func run(_ arguments: [String], timeout: Duration? = nil) async throws -> String {
-        try await git.run(arguments, in: path, timeout: timeout)
+extension GitClone {
+    /// A clone git runs in through `git`: this Mac's, or one on a host, through the host's master.
+    init(git: GitRunner, path: String) {
+        self.init(path: path) { arguments, folder, timeout in
+            try await git.run(arguments, in: folder, timeout: timeout)
+        }
     }
-
-    func succeeds(_ arguments: [String]) async -> Bool {
-        await git.succeeds(arguments, in: path)
-    }
-}
-
-struct FastForward: Sendable, Equatable {
-    var branch: String
-    var commit: String
-    /// How messages show where `commit` came from, such as origin/feat/x.
-    var name: String
-    var count: Int
 }
 
 extension Workspace {
-    /// The branch `name` finds under `prefix`, such as "refs/heads/", in its own spelling, or nil. Names that differ
-    /// only in case share one ref file on a case-insensitive file system, where a branch made with the other spelling
-    /// would hide a packed one, so any case finds the branch.
-    func existingBranch(_ name: String, under prefix: String, repoPath: String) async -> String? {
-        try? await existingBranch(name, under: prefix, in: RepoGit(git: git, path: repoPath))
+    /// The clone of a repo on this Mac.
+    nonisolated func localClone(_ repoPath: String) -> GitClone {
+        GitClone(git: git, path: repoPath)
     }
 
-    /// Fails only when the clone is on a host that did not answer, which says nothing about the branch.
-    func existingBranch(_ name: String, under prefix: String, in clone: RepoGit) async throws -> String? {
-        let listed: String
-        do {
-            listed = try await clone.run(["for-each-ref", "--format=%(refname)", prefix])
-        } catch let error as GitError where error.hostUnreachable {
-            throw error
-        } catch {
-            return nil
-        }
-        let refs = listed.split(separator: "\n").map(String.init)
-        let ref =
-            refs.first { $0 == prefix + name }
-            ?? refs.first { $0.caseInsensitiveCompare(prefix + name) == .orderedSame }
-        return ref.map { String($0.dropFirst(prefix.count)) }
+    nonisolated func branchRules(_ repoPath: String) -> BranchRules {
+        BranchRules(clone: localClone(repoPath))
+    }
+
+    /// The branch `name` finds under `prefix`, such as "refs/heads/", in its own spelling, or nil.
+    func existingBranch(_ name: String, under prefix: String, repoPath: String) async -> String? {
+        try? await branchRules(repoPath).existingBranch(name, under: prefix)
     }
 
     /// The worktree on this Mac, or on `host`, that has `branch` checked out, as of the last refresh. Each machine's
@@ -80,47 +48,11 @@ extension Workspace {
         await refresh(repoPath: repoPath)
     }
 
-    /// How the local `branch` compares with `target`, from one read of each. A branch that is only behind gets a
-    /// fast-forward to run once its row has it checked out, where git knows no other worktree holds it. A branch with
-    /// commits of its own is never moved. `name` is how messages show `target`, and `resetTo` is what the fix commands
-    /// name.
+    /// How the local `branch` compares with `target`, as `BranchRules.compare` says.
     func compare(
         _ branch: String, with target: String, named name: String, resetTo: String, repoPath: String
     ) async -> BranchReport {
-        await compare(branch, with: target, named: name, resetTo: resetTo, in: RepoGit(git: git, path: repoPath))
-    }
-
-    func compare(
-        _ branch: String, with target: String, named name: String, resetTo: String, in clone: RepoGit
-    ) async -> BranchReport {
-        func commit(_ ref: String) async -> String? {
-            try? await clone.run(["rev-parse", "--verify", "--quiet", "\(ref)^{commit}"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        guard let local = await commit("refs/heads/\(branch)"), let other = await commit(target),
-            let counts = try? await clone.run(["rev-list", "--left-right", "--count", "\(local)...\(other)"]),
-            case let parts = counts.split(whereSeparator: \.isWhitespace).compactMap({ Int($0) }), parts.count == 2
-        else { return BranchReport() }
-        let (ahead, behind) = (parts[0], parts[1])
-        switch (ahead, behind) {
-        case (0, 0):
-            return BranchReport()
-        case (0, _):
-            return BranchReport(
-                fastForward: FastForward(branch: branch, commit: other, name: name, count: behind))
-        case (_, 0):
-            let verb = ahead == 1 ? "is" : "are"
-            return BranchReport(notes: ["\(branch) has \(Self.commits(ahead)) that \(verb) not on \(name) yet."])
-        default:
-            let here = ahead == 1 ? "is" : "are"
-            let there = behind == 1 ? "is" : "are"
-            return BranchReport(warnings: [
-                "\(branch) and \(name) have diverged: \(Self.commits(ahead)) here \(here) not on \(name), and "
-                    + "\(Self.commits(behind)) on \(name) \(there) not here. Canopy left \(branch) as it was. "
-                    + "To keep the local commits, run `git rebase \(resetTo)` in the row. "
-                    + "To drop them, run `git reset --hard \(resetTo)`."
-            ])
-        }
+        await branchRules(repoPath).compare(branch, with: target, named: name, resetTo: resetTo)
     }
 
     /// Runs a fast-forward `compare` asked for, in the row that now has the branch checked out.
@@ -136,22 +68,21 @@ extension Workspace {
         }
     }
 
-    /// A warning when `branch` tracks a remote branch that no longer exists, which usually means it was merged.
-    func goneUpstreamWarning(_ branch: String, repoPath: String) async -> String? {
-        await goneUpstreamWarning(branch, in: RepoGit(git: git, path: repoPath))
-    }
-
-    func goneUpstreamWarning(_ branch: String, in clone: RepoGit) async -> String? {
-        guard
-            let line = try? await clone.run(
-                ["for-each-ref", "--format=%(upstream:short)%00%(upstream:track)", "refs/heads/\(branch)"])
-        else { return nil }
-        let fields = line.trimmingCharacters(in: .newlines).split(separator: "\0", omittingEmptySubsequences: false)
-        guard fields.count == 2, fields[1] == "[gone]" else { return nil }
-        return "\(branch) tracked \(fields[0]), which is gone, so it was probably merged and deleted."
-    }
-
     static func commits(_ count: Int) -> String {
-        count == 1 ? "1 commit" : "\(count) commits"
+        BranchRules.commits(count)
+    }
+
+    /// Runs `body`, turning `row new`'s branch rules refusing a branch into the workspace's errors.
+    func branchErrors<T>(_ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch let error as BranchError {
+            switch error {
+            case .invalidBranch(let name): throw WorkspaceError.invalidBranch(name)
+            case .invalidBase(let base): throw WorkspaceError.invalidBase(base)
+            case .branchNotFound(let name, let failure):
+                throw WorkspaceError.branchNotFound(name, fetchFailure: failure)
+            }
+        }
     }
 }

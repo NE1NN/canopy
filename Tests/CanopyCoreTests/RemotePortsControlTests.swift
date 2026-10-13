@@ -185,8 +185,8 @@ extension RemotePortForwardingTests {
     }
 
     /// The command line of a pid this Mac runs, which the fake host's processes are.
-    static func command(of pid: Int32) throws -> String {
-        let result = try Subprocess.run(
+    static func command(of pid: Int32) async throws -> String {
+        let result = try await Subprocess.runOffPool(
             "/bin/ps", ["-o", "command=", "-p", "\(pid)"], environment: Fixture.environment, directory: nil,
             timeout: .seconds(10))
         return String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -199,7 +199,7 @@ extension RemotePortForwardingTests {
         let port = FakeSSHForwardTests.freePort(count: 2)
         let localPorts = RecordingLocalPorts()
         let (handler, rows) = handler(setup, localPorts: localPorts)
-        try setup.serve(port)
+        try await setup.serve(port)
         #expect(await setup.forwarded(port) != nil)
 
         let listed = try await call(
@@ -226,10 +226,10 @@ extension RemotePortForwardingTests {
         let port = FakeSSHForwardTests.freePort(count: 2)
         let localPorts = RecordingLocalPorts()
         let (handler, _) = handler(setup, localPorts: localPorts)
-        try setup.serve(port)
+        try await setup.serve(port)
         let found = try #require(await setup.forwarded(port))
         let pid = try #require(found.processes.first?.pid)
-        #expect(try Self.command(of: pid).contains("http.server \(port)"))
+        await #expect(try Self.command(of: pid).contains("http.server \(port)"))
 
         let stopped = try await call(
             handler, PortMethod.stop, PortsStopParams(port: Int(port), target: TargetHint(envRowPath: setup.row.path)),
@@ -253,15 +253,15 @@ extension RemotePortForwardingTests {
         let port = FakeSSHForwardTests.freePort(count: 2)
         let localPorts = RecordingLocalPorts()
         let (handler, _) = handler(setup, localPorts: localPorts)
-        try setup.serve(port)
+        try await setup.serve(port)
         #expect(await setup.forwarded(port) != nil)
         // No ports probe may be under way, which could find the port gone and leave the stop nothing to match.
         await setup.monitor.settle()
-        try setup.keys(["C-c"])
+        try await setup.keys(["C-c"])
         // The fake host's processes are this Mac's, so the old server is gone once the port is free here, and the
         // one listening after it is the new one.
         #expect(await eventually { LocalPortChooser.isFree(port) })
-        try setup.serve(port)
+        try await setup.serve(port)
         #expect(await eventually { !LocalPortChooser.isFree(port) })
 
         let stopped = try await call(
@@ -282,11 +282,11 @@ extension RemotePortForwardingTests {
         let port = FakeSSHForwardTests.freePort(count: 2)
         let localPorts = RecordingLocalPorts()
         let (handler, rows) = handler(setup, localPorts: localPorts)
-        try setup.serve(port)
+        try await setup.serve(port)
         let found = try #require(await setup.forwarded(port))
         let mac = try #require(found.remote?.local)
         let pid = try #require(found.processes.first?.pid)
-        #expect(try Self.command(of: pid).contains("http.server \(port)"))
+        await #expect(try Self.command(of: pid).contains("http.server \(port)"))
 
         let stopped = try await call(
             handler, PortMethod.stop, PortsStopParams(port: Int(mac), target: TargetHint(envRowPath: setup.row.path)),
@@ -297,7 +297,7 @@ extension RemotePortForwardingTests {
         #expect(await eventually { LocalPortChooser.isFree(port) })
         #expect(localPorts.calls.isEmpty)
         // The panel's stop goes the same way.
-        try setup.serve(port)
+        try await setup.serve(port)
         #expect(await setup.forwarded(port) != nil)
         await rows.stopPorts([port], inRow: setup.row.path)
         #expect(await eventually { LocalPortChooser.isFree(port) })

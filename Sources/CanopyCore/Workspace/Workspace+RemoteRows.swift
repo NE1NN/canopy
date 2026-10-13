@@ -35,6 +35,12 @@ extension Workspace {
         repoPath: String, host alias: String, branch requested: String, base: String? = nil, existing: Bool = false,
         group: String? = nil, link: PluginLink? = nil
     ) async throws -> CreatedRow {
+        if hosts.hosts[alias]?.box == true {
+            var created = try await createBoxRow(
+                repoPath: repoPath, host: alias, branch: requested, base: base, existing: existing, group: group)
+            created.row = snapshot.row(path: created.row.path) ?? created.row
+            return created
+        }
         let requestedAt = ContinuousClock.now
         let target = try await remoteTarget(repoPath: repoPath, host: alias)
         if let group { _ = try joiningGroup(group, repoPath: repoPath) }
@@ -52,6 +58,8 @@ extension Workspace {
         var connection: HostConnection
         var clone: String
         var repoName: String
+        /// The repo's name in the host's settings, which canopy-box knows it by.
+        var hostRepo: String
         var dirName: String
     }
 
@@ -60,13 +68,15 @@ extension Workspace {
         let name = snapshot.repo(path: repoPath)?.name ?? state.repos[index].dirName
         let hosts = self.hosts.hosts
         guard let entry = hosts[alias] else { throw WorkspaceError.hostNotFound(alias, known: hosts.keys.sorted()) }
-        guard let clone = entry.clonePath(repoName: name, repoPath: repoPath) else {
+        guard let clone = entry.clonePath(repoName: name, repoPath: repoPath),
+            let hostRepo = entry.repoKey(repoName: name, repoPath: repoPath)
+        else {
             let others = hosts.filter { $0.value.clonePath(repoName: name, repoPath: repoPath) != nil }.keys.sorted()
             throw WorkspaceError.hostHasNoRepo(alias, repo: name, hosts: others)
         }
         return RemoteTarget(
             alias: alias, connection: await connection(alias, entry), clone: clone, repoName: name,
-            dirName: state.repos[index].dirName)
+            hostRepo: hostRepo, dirName: state.repos[index].dirName)
     }
 
     private func createRemoteRowNow(
@@ -76,9 +86,10 @@ extension Workspace {
         let joining = try group.map { try joiningGroup($0, repoPath: repoPath) }
         let alias = target.alias
         try await target.connection.connect()
-        let clone = RepoGit(git: remoteGit(alias), path: target.clone)
+        let clone = GitClone(git: remoteGit(alias), path: target.clone)
+        let rules = BranchRules(clone: clone)
         return try await hostErrors(alias) {
-            try await requireValidBranchName(requested, in: clone)
+            try await branchErrors { try await rules.requireValidName(requested) }
             if holder(of: requested, repoPath: repoPath, host: alias) != nil {
                 // Already in the clone's queue.
                 await refreshRemoteNow(repoPath: repoPath, host: alias, clone: target.clone)
@@ -86,7 +97,6 @@ extension Workspace {
                     throw WorkspaceError.branchCheckedOut(requested, row: holder)
                 }
             }
-            var notes: [String] = []
             var warnings: [String] = []
             let hasOrigin = try await clone.succeedsOnHost(["remote", "get-url", "origin"])
             var fetchFailure: String?
@@ -94,32 +104,13 @@ extension Workspace {
                 fetchFailure = await fetchUnlessFresh(clone, key: "\(alias):\(target.clone)", since: requestedAt)
                 if let fetchFailure { warnings.append("\(fetchFailure), so the row starts from the host's refs.") }
             }
-
-            let branch: String
-            let source: BranchSource
-            var start: String?
-            if let local = try await existingBranch(requested, under: "refs/heads/", in: clone) {
-                (branch, source) = (local, .local)
-            } else if hasOrigin,
-                let remote = try await existingBranch(requested, under: "refs/remotes/origin/", in: clone)
-            {
-                (branch, source) = (remote, .origin)
-            } else {
-                guard !existing else { throw WorkspaceError.branchNotFound(requested, fetchFailure: fetchFailure) }
-                (branch, source) = (requested, .new)
-                start = try await startPoint(base, in: clone, hasOrigin: hasOrigin)
+            let choice = try await branchErrors {
+                try await rules.choose(
+                    requested, base: base, existing: existing, hasOrigin: hasOrigin, fetchFailure: fetchFailure)
             }
-            if branch != requested { notes.append("Using \(branch), the branch's own spelling.") }
-
-            var fastForward: FastForward?
-            if source == .local, hasOrigin {
-                let report = await compare(
-                    branch, with: "refs/remotes/origin/\(branch)", named: "origin/\(branch)",
-                    resetTo: "origin/\(branch)", in: clone)
-                notes += report.notes
-                warnings += report.warnings
-                fastForward = report.fastForward
-            }
+            let branch = choice.branch
+            var notes = choice.notes
+            warnings += choice.warnings
 
             let home = try await target.connection.home()
             // git lists worktrees by their real path, which differs from one made under a home reached through a link.
@@ -138,24 +129,18 @@ extension Workspace {
             let folder = BranchSlug.folder(for: branch, in: URL(fileURLWithPath: parent)) {
                 taken.contains($0.lastPathComponent) || registered.contains($0.path)
             }.path
-            let arguments: [String] =
-                switch source {
-                case .local: [folder, branch]
-                case .origin: ["--track", "-b", branch, folder, "origin/\(branch)"]
-                case .new: ["--no-track", "-b", branch, folder, start ?? "HEAD"]
-                }
             do {
-                try await clone.run(["worktree", "add", "--quiet"] + arguments)
+                try await clone.run(["worktree", "add", "--quiet"] + choice.worktreeArguments(folder: folder))
             } catch let error as GitError
                 where error.stderr.contains("already checked out") || error.stderr.contains("already used by worktree")
             {
                 throw WorkspaceError.branchCheckedOut(branch, row: nil)
             }
             // The worktree is there from now on, so the row is saved even when the host drops before it is filled in.
-            let worktree = RepoGit(git: clone.git, path: folder)
+            let worktree = clone.at(folder)
             var head: String?
             do {
-                if let fastForward {
+                if let fastForward = choice.fastForward {
                     do {
                         try await worktree.run(["merge", "--ff-only", "--quiet", fastForward.commit])
                         notes.append(
@@ -178,11 +163,11 @@ extension Workspace {
                 warnings.append(
                     "Lost \(alias) after making the worktree, so the row fills in once the host is back: \(error)")
             }
-            let leaf = (folder as NSString).lastPathComponent
             let entry = RemoteRowEntry(
                 host: alias, path: worktree.path,
-                standIn: standInPath(alias: alias, dirName: target.dirName, leaf: leaf), branch: branch, head: head)
-            if source != .local { try? forgetPullRequest(of: branch, repoPath: repoPath) }
+                standIn: freeStandIn(alias: alias, dirName: target.dirName, path: worktree.path), branch: branch,
+                head: head)
+            if choice.source != .local { try? forgetPullRequest(of: branch, repoPath: repoPath) }
             if let link {
                 state.plugins[link.plugin, default: PluginEntry()].links[entry.standIn] = link.item
             }
@@ -195,13 +180,29 @@ extension Workspace {
                 record(ActivityType.rowMoved, row, data: remoteData(row, ["from": .null, "to": .string(joined)]))
             }
             return CreatedRow(
-                row: row, source: source, base: start, pullRequest: nil, notes: notes, warnings: warnings)
+                row: row, source: choice.source, base: choice.start, pullRequest: nil, notes: notes,
+                warnings: warnings)
         }
+    }
+
+    /// A stand-in for the host's row at `path`, at its leaf unless another of the host's rows stands there, as a
+    /// shared folder's row and a box row can share a leaf; then the leaf gets `-2`, `-3`, and so on.
+    func freeStandIn(alias: String, dirName: String, path: String) -> String {
+        let leaf = (path as NSString).lastPathComponent
+        let taken = Set(
+            state.repos.flatMap(\.remote).filter { $0.host != alias || $0.path != path }.map(\.standIn))
+        var standIn = standInPath(alias: alias, dirName: dirName, leaf: leaf)
+        var number = 2
+        while taken.contains(standIn) {
+            standIn = standInPath(alias: alias, dirName: dirName, leaf: "\(leaf)-\(number)")
+            number += 1
+        }
+        return standIn
     }
 
     /// A stand-in's path, at remote/<host>/<repo>/<leaf>.
     /// Canonical, like every row path, so a home reached through a link still finds its rows.
-    private nonisolated func standInPath(alias: String, dirName: String, leaf: String) -> String {
+    nonisolated func standInPath(alias: String, dirName: String, leaf: String) -> String {
         Paths.canonical(home.remoteRoot.appending(path: alias).appending(path: dirName).appending(path: leaf).path)
     }
 
@@ -227,7 +228,7 @@ extension Workspace {
     /// Reads the host's worktrees of the repo and brings its remote rows up to date: each row's branch and head, and
     /// whether the host still has it. Does nothing while the host is not connected, so listing never wakes a host.
     public func refreshRemote(repoPath: String, host alias: String) async {
-        guard let entry = hosts.hosts[alias], let index = try? entryIndex(repoPath: repoPath),
+        guard let entry = hosts.hosts[alias], !entry.box, let index = try? entryIndex(repoPath: repoPath),
             state.repos[index].remote.contains(where: { $0.host == alias }),
             let clone = entry.clonePath(repoName: snapshot.repo(path: repoPath)?.name ?? "", repoPath: repoPath)
         else { return }
@@ -282,6 +283,8 @@ extension Workspace {
     /// Whether the remote row's worktree has changes `git worktree remove` would refuse to drop.
     public func remoteHasUncommittedChanges(standIn: String) async throws -> Bool {
         guard let entry = remoteRow(standIn: standIn), !entry.missing else { return false }
+        // The box refuses a dirty worktree itself, as it removes the row.
+        if hosts.hosts[entry.host]?.box == true { return false }
         let connection = try await connection(for: entry.host)
         try await connection.connect()
         return try await hostErrors(entry.host) {
@@ -299,22 +302,32 @@ extension Workspace {
         else { throw WorkspaceError.rowNotFound(standIn) }
         let row = Row(remote: entry, repoPath: repoPath)
         var warnings: [String] = []
-        do {
-            let target = try await remoteTarget(repoPath: repoPath, host: entry.host)
-            warnings += try await gitQueues.enqueue("\(entry.host):\(target.clone)") {
-                try await self.removeRemoteWorktree(
-                    entry, target: target, repoPath: repoPath, force: force, deleteBranch: deleteBranch)
-            }.value
-        } catch let error as WorkspaceError where force && error.code == "host_unreachable" {
-            warnings.append(
-                "\(entry.host) could not be reached, so its worktree at \(entry.path) stays there. "
-                    + "Remove it on the host with `git worktree remove`.")
-        } catch let error as WorkspaceError
-            where force && (error.code == "host_not_found" || error.code == "host_has_no_repo")
-        {
-            warnings.append(
-                "config.json no longer names \(entry.host) for this repo, so its worktree at \(entry.path) stays there. "
-                    + "Remove it on the host with `git worktree remove`.")
+        if hosts.hosts[entry.host]?.box == true {
+            do {
+                warnings += try await removeBoxRow(entry, force: force, deleteBranch: deleteBranch)
+            } catch let error as WorkspaceError where force && error.code == "host_unreachable" {
+                warnings.append(
+                    "\(entry.host) could not be reached, so its worktree at \(entry.path) stays there. "
+                        + "Remove it on the host with `canopy row rm`.")
+            }
+        } else {
+            do {
+                let target = try await remoteTarget(repoPath: repoPath, host: entry.host)
+                warnings += try await gitQueues.enqueue("\(entry.host):\(target.clone)") {
+                    try await self.removeRemoteWorktree(
+                        entry, target: target, repoPath: repoPath, force: force, deleteBranch: deleteBranch)
+                }.value
+            } catch let error as WorkspaceError where force && error.code == "host_unreachable" {
+                warnings.append(
+                    "\(entry.host) could not be reached, so its worktree at \(entry.path) stays there. "
+                        + "Remove it on the host with `git worktree remove`.")
+            } catch let error as WorkspaceError
+                where force && (error.code == "host_not_found" || error.code == "host_has_no_repo")
+            {
+                warnings.append(
+                    "config.json no longer names \(entry.host) for this repo, so its worktree at \(entry.path) stays there. "
+                        + "Remove it on the host with `git worktree remove`.")
+            }
         }
         if let index = state.repos.firstIndex(where: { $0.path == repoPath }) {
             state.repos[index].remote.removeAll { $0.standIn == standIn }
@@ -334,7 +347,7 @@ extension Workspace {
         _ entry: RemoteRowEntry, target: RemoteTarget, repoPath: String, force: Bool, deleteBranch: Bool
     ) async throws -> [String] {
         try await target.connection.connect()
-        let clone = RepoGit(git: remoteGit(entry.host), path: target.clone)
+        let clone = GitClone(git: remoteGit(entry.host), path: target.clone)
         try await hostErrors(entry.host) {
             if entry.missing {
                 try await clone.run(["worktree", "prune"])
@@ -355,19 +368,5 @@ extension Workspace {
         }
         try? forgetPullRequest(of: branch, repoPath: repoPath)
         return []
-    }
-}
-
-extension RepoGit {
-    /// Like `succeeds`, but a host that cannot be reached fails rather than reading as "no".
-    func succeedsOnHost(_ arguments: [String]) async throws -> Bool {
-        do {
-            try await run(arguments)
-            return true
-        } catch let error as GitError where error.hostUnreachable {
-            throw error
-        } catch {
-            return false
-        }
     }
 }

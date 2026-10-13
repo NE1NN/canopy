@@ -197,7 +197,7 @@ struct RemotePaneTests {
 }
 
 struct RemoteAttachTests {
-    @Test func tmuxStartsOrJoinsTheSessionInItsFolderWithThePanesVariablesAndPATH() throws {
+    @Test func tmuxStartsOrJoinsTheSessionInItsFolderWithThePanesVariablesAndPATH() async throws {
         let command = RemoteAttach.tmuxCommand(
             homeID: "abcd1234", session: "p7", folder: "/home/u/my work",
             environment: ["CANOPY_PANE": "p7", "CANOPY_ROW_PATH": "/home/u/my work"])
@@ -207,7 +207,7 @@ struct RemoteAttachTests {
         try "#!/bin/sh\necho \"client PATH=$PATH\"\nprintf '%s\\n' \"$@\"\n".write(
             toFile: dir.sub("tmux"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.sub("tmux"))
-        let result = try Subprocess.run(
+        let result = try await Subprocess.runOffPool(
             "/bin/sh", ["-c", SSHCommand.shellQuoted(command)],
             environment: ["HOME": "/home/u", "PATH": dir.path + ":/usr/bin:/bin"], directory: nil, timeout: .seconds(10)
         )
