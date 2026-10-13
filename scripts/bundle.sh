@@ -31,12 +31,25 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin"
 cp "$bin/CanopyApp" "$app/Contents/MacOS/Canopy"
 cp "$bin/canopy" "$app/Contents/Resources/bin/canopy"
 # canopy-box for hosts, built in Docker. Without Docker the app still builds, and hosts cannot be upgraded.
+rebuilt=0
 if docker info >/dev/null 2>&1; then
     make box
+    rebuilt=1
 else
     echo "warning: Docker is not running, so canopy-box is not rebuilt for hosts." >&2
 fi
-if [[ -x build/box/x86_64/canopy-box && -x build/box/aarch64/canopy-box ]]; then
+# Hosts install the bundled canopy-box whenever its hash differs, so one older than its sources would replace a newer
+# build there. Left out, hosts keep the one they have.
+stale=""
+if ((!rebuilt)) && [[ -x build/box/x86_64/canopy-box ]]; then
+    stale=$(find Sources/CanopyBox Sources/CanopyBoxKit Sources/CanopyAgents Sources/CanopyServer Sources/CanopyWire \
+        Sources/CanopySystem Sources/CanopyGit Sources/CSystemShims Package.swift Package.resolved \
+        -newer build/box/x86_64/canopy-box -type f -print -quit 2>/dev/null)
+fi
+if [[ -n "$stale" ]]; then
+    echo "warning: build/box is older than canopy-box's sources ($stale), so this app leaves it out rather than" \
+        "install it over newer builds on hosts. Start Docker, or run make box." >&2
+elif [[ -x build/box/x86_64/canopy-box && -x build/box/aarch64/canopy-box ]]; then
     for arch in x86_64 aarch64; do
         mkdir -p "$app/Contents/Resources/box/$arch"
         cp "build/box/$arch/canopy-box" "$app/Contents/Resources/box/$arch/canopy-box"
