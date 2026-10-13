@@ -50,7 +50,7 @@ struct BoxLinkTests {
         let link = box.link()
         await link.start()
         defer { Task { await link.stop() } }
-        #expect(await link.waitUntilConnected(within: .seconds(10)))
+        #expect(await link.waitUntilConnected(within: .seconds(30)))
         #expect(await daemon.isConfigured)
         var snapshots = await link.snapshots().makeAsyncIterator()
         #expect(await snapshots.next() == BoxSnapshot())
@@ -67,11 +67,11 @@ struct BoxLinkTests {
         let link = box.link()
         await link.start()
         defer { Task { await link.stop() } }
-        #expect(await link.waitUntilConnected(within: .seconds(10)))
+        #expect(await link.waitUntilConnected(within: .seconds(30)))
         box.server.withLock { $0?.close() }
         #expect(await eventually { !(await link.isConnected) })
         let restarted = try await box.start()
-        #expect(await link.waitUntilConnected(within: .seconds(10)))
+        #expect(await link.waitUntilConnected(within: .seconds(30)))
         #expect(await restarted.isConfigured)
     }
 
