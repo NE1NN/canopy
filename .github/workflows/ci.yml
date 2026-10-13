@@ -27,3 +27,14 @@ jobs:
       - run: make build
       - run: make ios
       - run: scripts/ci-test.sh
+
+  # What canopy-box shares with the Mac, built and tested on Linux, where Package.swift declares only those modules.
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.4
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: swift --version
+      - run: swift build -Xswiftc -warnings-as-errors
+      - run: swift test
