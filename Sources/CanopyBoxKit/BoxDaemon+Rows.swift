@@ -35,10 +35,40 @@ extension BoxDaemon {
                 throw BoxErrors.rowBusy(row.branch ?? (row.path as NSString).lastPathComponent, programs: programs)
             }
         }
-        let clone = try clonePath(of: row.repo)
+        guard config != nil else { throw BoxErrors.notConfigured() }
+        // A repo taken out of the settings still has its rows, removed through the worktree's own clone.
+        let known = try? clonePath(of: row.repo)
+        let found: String? =
+            if let known { known } else { await cloneHolding(row.path) }
+        guard let clone = found else {
+            await forgetRow(row)
+            return [
+                "\(row.repo) is no longer in this host's settings and the row's folder is gone, so it was forgotten."
+            ]
+        }
         return try await inQueue(clone) {
             try await self.rowRemoveNow(row, clone: clone, force: params.force, deleteBranch: params.deleteBranch)
         }
+    }
+
+    /// The clone a worktree belongs to, from its git directory, or nil when the folder is gone or not one.
+    private func cloneHolding(_ worktree: String) async -> String? {
+        guard FileManager.default.fileExists(atPath: worktree),
+            let common = try? await git(worktree).run(["rev-parse", "--git-common-dir"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !common.isEmpty
+        else { return nil }
+        let gitDirectory = common.hasPrefix("/") ? common : worktree + "/" + common
+        return Paths.canonical((gitDirectory as NSString).deletingLastPathComponent)
+    }
+
+    private func forgetRow(_ row: StoredRow) async {
+        for pane in state.panes where pane.rowPath == row.path { await tmux.killSession(pane.id) }
+        state.panes.removeAll { $0.rowPath == row.path }
+        state.rows.removeAll { $0.path == row.path }
+        state.prs[row.path] = nil
+        changed()
+        wakeWaiters()
     }
 
     /// The repo's name as config.json spells it, matching any case.

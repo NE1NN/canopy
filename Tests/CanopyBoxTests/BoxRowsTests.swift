@@ -43,6 +43,23 @@ struct BoxRowsTests {
         ) { try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/twice")) }
     }
 
+    /// A repo taken out of the host's settings keeps its rows on the box until they are removed, through the
+    /// worktree's own clone.
+    @Test func aRowOfARepoNoLongerInTheSettingsCanBeRemoved() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/orphan"))
+        var config = home.config
+        config.repos = [:]
+        try await daemon.configure(config)
+
+        let warnings = try await daemon.rowRemove(BoxRowRemoveParams(path: made.row.path, force: true))
+
+        #expect(warnings.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: made.row.path))
+        #expect(await daemon.snapshot().rows.contains { $0.path == made.row.path } == false)
+    }
+
     @Test func twoRowsAtOnceBothLand() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
