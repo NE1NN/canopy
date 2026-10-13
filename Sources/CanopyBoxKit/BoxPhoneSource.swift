@@ -35,14 +35,36 @@ public final class BoxPhoneSource: PhoneSource {
             PhoneRow(
                 path: row.path, name: row.branch ?? (row.path as NSString).lastPathComponent, repo: row.repo,
                 isMain: row.isMain,
-                agents: snapshot.panes.filter { $0.rowPath == row.path }.map { pane in
+                agents: snapshot.panes.filter {
+                    // As on the Mac: a plain shell with no agent and no conversation is no agent.
+                    $0.rowPath == row.path && ($0.agent != .none || $0.transcriptPath != nil)
+                }.map { pane in
                     PhoneAgent(
                         pane: pane.id, state: pane.agent, unseen: pane.unseen, since: pane.since,
-                        lastLine: pane.lastLine,
+                        lastLine: lastLine(pane),
                         backgroundTasks: pane.backgroundTasks.isEmpty ? nil : pane.backgroundTasks,
                         prompt: pane.prompt, hasTranscript: pane.transcriptPath != nil)
                 })
         }
+    }
+
+    /// What the agent waits on, as the Mac words it, or else the screen's last line.
+    static func lastLine(_ pane: BoxPane) -> String? {
+        func short(_ text: String) -> String { text.count > 120 ? String(text.prefix(119)) + "…" : text }
+        if let prompt = pane.prompt {
+            switch prompt.kind {
+            case .permission where prompt.tool == "Bash": return "Wants to run \(short(prompt.detail ?? "a command"))"
+            case .permission:
+                return "Wants to use \(prompt.tool ?? "a tool")" + (prompt.detail.map { ": \(short($0))" } ?? "")
+            case .question: return "Asks: \(short(prompt.questions?.first?.question ?? "a question"))"
+            case .plan: return "Has a plan ready"
+            case .reply: return "Asks: \(short(prompt.detail ?? "a question"))"
+            }
+        }
+        if pane.agent == .background, !pane.backgroundTasks.isEmpty {
+            return "Waiting on \(pane.backgroundTasks.joined(separator: ", ")) in the background"
+        }
+        return pane.lastLine.map(short)
     }
 
     public func inbox() async -> PhoneInbox {
@@ -100,10 +122,8 @@ public final class BoxPhoneSource: PhoneSource {
         let sent = Date()
         try await daemon.paste(pane: params.pane, text: params.text)
         try await Task.sleep(for: BoxDaemon.returnPause)
-        guard let now = await daemon.agent(of: params.pane), now.session != nil, !Self.showsDialog(now) else {
-            throw Self.promptOpen
-        }
-        try await daemon.send(pane: params.pane, text: "", enter: true)
+        // Checked and pressed together, so a dialog that opened during the pause never takes the Return.
+        guard try await daemon.pressReturnUnlessDialog(pane: params.pane) else { throw Self.promptOpen }
         let daemon = daemon
         let pane = params.pane
         Task {

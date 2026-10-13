@@ -61,3 +61,17 @@ The daemon answers `box.pair`, `box.phones`, and `box.phoneRemove`, which the Ma
 ## Verification
 
 - `make lint`, `make build`, `make test` three times, `make linux`, `make box`, `make e2e`, an opus review with After Review, CI.
+
+## After Review
+
+An opus review found no critical issues and seven important ones:
+
+- A reply checked for a dialog 200 ms before pressing Return; the check and Return now go together (`aReplyWaitsOutADialog`).
+- `phone pair --on` gave up after the link's two-minute call wait while the code lasts five; pairing now waits as long as the code.
+- The phone's screen dropped blank rows, pulling scrollback into it; it now has exactly the screen's rows (`aMostlyEmptyScreenKeepsItsRows`).
+- The test override could put the listener on any address in any build; it now takes loopback only, and status says when it is on (`anOverrideWinsForTests` checks the filter).
+- The box's inbox listed plain shells and the screen's footer as the last line; it now skips panes with no agent and words prompts and background work as the Mac does (`aPlainShellIsNoAgentInTheInbox`).
+- Ruling: `kind=box` in the pairing link and `phone.hello` waits for milestone 5, where the phone first tells servers apart; older phones ignore it either way.
+- Tests the plan named but did not write (delivery, a stand-in `tailscale`, a phone over loopback in unit tests, a dropping phone) are covered by the hosts e2e or deferred; the e2e pairs, reads, replies, and removes a phone.
+
+Deferred minors: the delivery tracker outlives its window on a quiet box and marks several replies at once; the activity log uses the legacy `FileHandle.write`, which traps on I/O errors on Linux, and is never pruned; the phone listener starts before the socket check; the Mac's transcript-based last line is not used on the box.

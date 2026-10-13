@@ -23,12 +23,15 @@ public enum TailnetAddresses {
         return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
     }
 
-    /// The tailnet addresses now, or `override`'s, a comma-separated list only tests set.
-    public static func current(override: String? = ProcessInfo.processInfo.environment["CANOPY_BOX_PHONE_ADDRESS"])
-        -> [String]
-    {
-        if let override, !override.isEmpty { return override.split(separator: ",").map(String.init) }
+    /// The tailnet addresses now, or `override`'s loopback addresses, which only tests set.
+    public static func current(override: String? = nil) -> [String] {
+        if let override, !override.isEmpty { return loopback(override.split(separator: ",").map(String.init)) }
         return tailnet(interfaces())
+    }
+
+    /// Only loopback addresses, so an override can never put the phone listener off the tailnet.
+    public static func loopback(_ addresses: [String]) -> [String] {
+        addresses.filter { $0 == "127.0.0.1" || $0 == "::1" }
     }
 
     /// Every interface's numeric addresses, from getifaddrs(3).

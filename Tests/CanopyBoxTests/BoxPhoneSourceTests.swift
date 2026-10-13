@@ -97,6 +97,43 @@ struct BoxPhoneSourceTests {
             })
     }
 
+    @Test func aReplyWaitsOutADialog() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        await daemon.report(pane: pane, AgentReport(state: .done, session: "s"))
+        let source = BoxPhoneSource(daemon: daemon)
+        let replying = Task { try await source.reply(PhoneReplyParams(pane: pane, text: "go on"), delivered: {}) }
+        // A dialog opens during the pause before Return, which must not answer it.
+        try await Task.sleep(for: .milliseconds(50))
+        await daemon.report(pane: pane, AgentReport(state: .waiting, session: "s", prompt: Self.permission))
+        await #expect(throws: BoxPhoneSource.promptOpen) { try await replying.value }
+    }
+
+    @Test func aMostlyEmptyScreenKeepsItsRows() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        try await daemon.send(pane: pane, text: "clear; echo top-line", enter: true)
+        let source = BoxPhoneSource(daemon: daemon)
+        #expect(
+            await eventually {
+                guard let screen = try? await source.screen(PhonePaneParams(pane: pane), scrollback: nil) else {
+                    return false
+                }
+                return screen.lines.count == screen.rows && screen.lines.contains { $0.contains("top-line") }
+                    && screen.lines.firstIndex { $0.contains("top-line") }! < 3
+            })
+    }
+
+    @Test func aPlainShellIsNoAgentInTheInbox() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        _ = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let rows = await BoxPhoneSource(daemon: daemon).inbox().rows
+        #expect(rows.allSatisfy { $0.agents.isEmpty })
+    }
+
     @Test func aConnectedPhoneKeepsTheBoxOn() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

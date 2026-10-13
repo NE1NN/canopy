@@ -31,7 +31,7 @@ public enum BoxMain {
         // does on loopback; the tailnet otherwise.
         let listen = (try? String(contentsOfFile: paths.folder + "/phone-listen", encoding: .utf8))?
             .split(whereSeparator: \.isWhitespace).map(String.init)
-        let address = listen?.first
+        let address = listen?.first.flatMap { TailnetAddresses.loopback([$0]).first }
         let port = listen.flatMap { $0.count > 1 ? UInt16($0[1]) : nil }
         return PhoneServer(
             source: BoxPhoneSource(daemon: daemon),
@@ -42,6 +42,7 @@ public enum BoxMain {
                 addresses: { address.map { [$0] } ?? TailnetAddresses.current() },
                 tailnetName: { await TailnetAddresses.name(environment: environment) },
                 closedReason: { "Tailscale is not running on this host, so phones cannot reach it." },
+                statusNote: address.map { "Listening on \($0) for tests, from box/phone-listen, not on the tailnet." },
                 record: { activity in appendActivity(activity, to: log) }))
     }
 

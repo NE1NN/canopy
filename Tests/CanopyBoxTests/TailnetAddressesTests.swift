@@ -13,7 +13,7 @@ struct TailnetAddressesTests {
     }
 
     @Test func anOverrideWinsForTests() {
-        #expect(TailnetAddresses.current(override: "127.0.0.1,::1") == ["127.0.0.1", "::1"])
+        #expect(TailnetAddresses.current(override: "127.0.0.1,::1,0.0.0.0,10.0.0.5") == ["127.0.0.1", "::1"])
     }
 
     @Test func theNameComesFromTailscaleStatus() {
