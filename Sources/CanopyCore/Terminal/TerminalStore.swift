@@ -341,6 +341,36 @@ public final class TerminalStore {
         return (tab, pane)
     }
 
+    /// The pane holding a Claude Code session, in a terminal by its hooks or in a chat, so one session never has two.
+    public func pane(holdingSession id: String) -> Pane? {
+        panes.first { $0.chat?.sessionID == id || ($0.terminal != nil && $0.agent.session == id) }
+    }
+
+    /// Moves a chat's conversation to a terminal: ends the chat's Claude Code and puts a terminal tab in its place,
+    /// which resumes the same session with the same model and mode.
+    @discardableResult
+    public func openInTerminal(_ chatPane: Pane) -> Pane? {
+        guard let chat = chatPane.chat, let (path, tab) = tab(containing: chatPane.id),
+            let index = tabs(inRow: path).firstIndex(where: { $0.id == tab.id })
+        else { return nil }
+        // UI fixtures, e2e runs, and tests set CANOPY_CLAUDE to a stand-in.
+        var words = [settings.baseEnvironment["CANOPY_CLAUDE"] ?? "claude"]
+        if let session = chat.sessionID { words += ["--resume", session] }
+        if let model = chat.model { words += ["--model", model] }
+        words += ["--permission-mode", chat.mode]
+        let command = ([words[0]] + words.dropFirst().map(SetupScript.quoted)).joined(separator: " ")
+        chatPane.close()
+        let pane = makePane(chatPane.context, command: .shell, directory: nil)
+        let terminalTab = TerminalTab(id: TabID(nextTab), name: tab.name, grid: TerminalGrid(pane: pane))
+        nextTab += 1
+        tabsByRow[path]?[index] = terminalTab
+        if selectedTabByRow[path] == tab.id { selectedTabByRow[path] = terminalTab.id }
+        markSeenOnScreen()
+        onChange()
+        Task { await pane.terminal?.run(command) }
+        return pane
+    }
+
     private func makeChatPane(
         _ context: PaneContext, model: String?, mode: String, session: String?, title: String
     ) -> Pane {

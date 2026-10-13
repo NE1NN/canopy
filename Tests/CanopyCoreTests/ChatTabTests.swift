@@ -117,6 +117,33 @@ struct ChatTabTests {
         #expect(restoredChat.items.contains { $0.plainText == "remembered" })
     }
 
+    @Test func openInTerminalPutsATerminalResumingTheSessionInTheChatsPlace() async throws {
+        // `echo` stands in for claude, so the terminal prints what it would run instead of starting Claude Code.
+        var settings = Fixture.shellSettings(dir)
+        settings.baseEnvironment["CANOPY_CLAUDE"] = "echo"
+        let store = TerminalStore(engine: FakeEngine(), settings: settings)
+        store.chatLauncher = terminals.chatLauncher
+        store.chatTrust = terminals.chatTrust
+        store.openTab(for: context)
+        let (tab, pane) = store.openChat(for: context)
+        defer { store.closeAll() }
+        let chat = try #require(pane.chat)
+        chat.send("say moving")
+        #expect(await eventually { !chat.isWorking })
+        let session = try #require(chat.sessionID)
+        #expect(store.pane(holdingSession: session) === pane)
+
+        let terminal = try #require(store.openInTerminal(pane))
+
+        #expect(!chat.isRunning)
+        let tabs = store.tabs(inRow: dir.path)
+        #expect(tabs.count == 2)
+        #expect(tabs[1].grid?.paneList.first === terminal)
+        #expect(tabs[1].name == tab.name)
+        #expect(store.selectedTab(inRow: dir.path)?.id == tabs[1].id)
+        #expect(await eventually { terminal.screen.text.contains("--resume \(session)") })
+    }
+
     @Test func aSavedChatTabRoundTripsThroughJSON() throws {
         let tab = SavedTab(name: "Plan", chat: SavedChat(session: "s-1", model: nil, mode: "plan", title: "Plan"))
 
