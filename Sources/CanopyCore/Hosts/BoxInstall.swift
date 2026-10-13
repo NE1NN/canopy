@@ -137,6 +137,18 @@ public enum BoxInstall {
             h=$0 restart=$1 systemd=$2 unit=$3
             b="$HOME/.canopy/$h/bin/canopy-box" pid="$HOME/.canopy/$h/box/pid"
             if [ "$systemd" = 1 ]; then
+                # A daemon started as a plain process before the user's manager answered holds the socket, which
+                # would leave the unit restarting for good. Only one that is canopy-box, as pids are reused.
+                if [ -f "$pid" ]; then
+                    p=$(cat "$pid")
+                    case "$(ps -p "$p" -o args= 2>/dev/null)" in
+                        *canopy-box*serve*)
+                            kill "$p" 2>/dev/null
+                            i=0; while [ $i -lt 30 ] && kill -0 "$p" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+                            kill -9 "$p" 2>/dev/null ;;
+                    esac
+                    rm -f "$pid"
+                fi
                 d="$HOME/.config/systemd/user"; mkdir -p "$d"
                 printf %s "$unit" | base64 -d > "$d/canopy-box-$h.service.new" \
                     && mv -f "$d/canopy-box-$h.service.new" "$d/canopy-box-$h.service" || exit 1
