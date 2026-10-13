@@ -23,7 +23,8 @@ struct BoxInstallTests {
         let dir: TempDir
         let fake: FakeHost
         let connection: HostConnection
-        let homeID = "b0b0b0b0"
+        /// Each test's own, since the fake systemctl's restart stops every daemon of its home id on this Mac.
+        let homeID = String(UUID().uuidString.lowercased().filter(\.isHexDigit).prefix(8))
 
         /// With `systemd`, the host has a `systemctl` that answers for the user's manager and runs the unit's
         /// ExecStart in the background, logging what it was asked.
