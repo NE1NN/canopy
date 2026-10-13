@@ -163,10 +163,10 @@ extension Workspace {
                 warnings.append(
                     "Lost \(alias) after making the worktree, so the row fills in once the host is back: \(error)")
             }
-            let leaf = (folder as NSString).lastPathComponent
             let entry = RemoteRowEntry(
                 host: alias, path: worktree.path,
-                standIn: standInPath(alias: alias, dirName: target.dirName, leaf: leaf), branch: branch, head: head)
+                standIn: freeStandIn(alias: alias, dirName: target.dirName, path: worktree.path), branch: branch,
+                head: head)
             if choice.source != .local { try? forgetPullRequest(of: branch, repoPath: repoPath) }
             if let link {
                 state.plugins[link.plugin, default: PluginEntry()].links[entry.standIn] = link.item
@@ -183,6 +183,21 @@ extension Workspace {
                 row: row, source: choice.source, base: choice.start, pullRequest: nil, notes: notes,
                 warnings: warnings)
         }
+    }
+
+    /// A stand-in for the host's row at `path`, at its leaf unless another of the host's rows stands there, as a
+    /// shared folder's row and a box row can share a leaf; then the leaf gets `-2`, `-3`, and so on.
+    func freeStandIn(alias: String, dirName: String, path: String) -> String {
+        let leaf = (path as NSString).lastPathComponent
+        let taken = Set(
+            state.repos.flatMap(\.remote).filter { $0.host != alias || $0.path != path }.map(\.standIn))
+        var standIn = standInPath(alias: alias, dirName: dirName, leaf: leaf)
+        var number = 2
+        while taken.contains(standIn) {
+            standIn = standInPath(alias: alias, dirName: dirName, leaf: "\(leaf)-\(number)")
+            number += 1
+        }
+        return standIn
     }
 
     /// A stand-in's path, at remote/<host>/<repo>/<leaf>.

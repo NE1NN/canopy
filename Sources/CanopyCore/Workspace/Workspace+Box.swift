@@ -162,9 +162,7 @@ extension Workspace {
                 } else {
                     let entry = RemoteRowEntry(
                         host: alias, path: row.path,
-                        standIn: standInPath(
-                            alias: alias, dirName: state.repos[index].dirName,
-                            leaf: (row.path as NSString).lastPathComponent),
+                        standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: row.path),
                         branch: row.branch, head: row.head, missing: row.missing)
                     try? entry.makeStandIn()
                     state.repos[index].remote.removeAll { $0.standIn == entry.standIn }
@@ -212,8 +210,7 @@ extension Workspace {
         let index = try entryIndex(repoPath: repoPath)
         let entry = RemoteRowEntry(
             host: alias, path: made.row.path,
-            standIn: standInPath(
-                alias: alias, dirName: state.repos[index].dirName, leaf: (made.row.path as NSString).lastPathComponent),
+            standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: made.row.path),
             branch: made.row.branch, head: made.row.head)
         if state.repos[index].remote.contains(where: { $0.host == alias && $0.path == entry.path }) {
             state.repos[index].remote.removeAll { $0.host == alias && $0.path == entry.path }
@@ -395,15 +392,17 @@ extension Workspace {
 
     /// Rows the box gave back that the Mac has no entry for, as one made on the box while no snapshot reached the Mac.
     func restoreReleasedRows(_ rows: [BoxAdoptedRow], host alias: String) {
+        let host = hosts.hosts[alias]
         var touched = Set<String>()
         for row in rows {
             guard remoteRow(host: alias, path: row.path) == nil,
-                let index = state.repos.firstIndex(where: { repoName($0.path) == row.repo })
+                let index = state.repos.firstIndex(where: {
+                    (host?.repoKey(repoName: repoName($0.path), repoPath: $0.path) ?? repoName($0.path)) == row.repo
+                })
             else { continue }
             let entry = RemoteRowEntry(
                 host: alias, path: row.path,
-                standIn: standInPath(
-                    alias: alias, dirName: state.repos[index].dirName, leaf: (row.path as NSString).lastPathComponent),
+                standIn: freeStandIn(alias: alias, dirName: state.repos[index].dirName, path: row.path),
                 branch: row.branch, head: nil)
             try? entry.makeStandIn()
             state.repos[index].remote.append(entry)

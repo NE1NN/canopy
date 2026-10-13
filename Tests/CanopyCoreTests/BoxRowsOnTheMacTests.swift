@@ -59,6 +59,26 @@ struct BoxRowsOnTheMacTests {
         #expect(await workspace.snapshot.repo(path: first)?.rows.map(\.rowClass) == [.main, .remote])
     }
 
+    /// A row in a shared folder and one in canopy-box's worktrees can share a leaf; each keeps a stand-in of its own.
+    @Test func rowsSharingALeafStandApart() async throws {
+        let dir = try TempDir()
+        let (workspace, repo) = try await setUp(dir)
+        let snapshot = BoxSnapshot(rows: [
+            BoxRow(path: "/home/u/demo", repo: "demo", branch: "main", isMain: true),
+            BoxRow(path: "/home/u/.canopy/0/worktrees/demo/feat-a", repo: "demo", branch: "feat/a"),
+            BoxRow(path: "/home/u/shared/feat-a", repo: "demo", branch: "feat/shared"),
+        ])
+
+        await workspace.applyBoxSnapshot(snapshot, host: "box")
+        let first = try #require(await workspace.snapshot.repo(path: repo)?.rows.filter { $0.rowClass == .remote })
+        await workspace.applyBoxSnapshot(snapshot, host: "box")
+        let second = try #require(await workspace.snapshot.repo(path: repo)?.rows.filter { $0.rowClass == .remote })
+
+        #expect(Set(first.map(\.path)).count == 2)
+        #expect(Set(first.map(\.remotePath)) == ["/home/u/.canopy/0/worktrees/demo/feat-a", "/home/u/shared/feat-a"])
+        #expect(Set(second.map(\.path)) == Set(first.map(\.path)))
+    }
+
     @Test func aRowGoneFromTheBoxIsForgotten() async throws {
         let dir = try TempDir()
         let (workspace, repo) = try await setUp(dir)
