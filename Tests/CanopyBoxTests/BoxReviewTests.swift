@@ -101,10 +101,12 @@ struct BoxReviewTests {
         let daemon = try await home.daemon()
         let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/busy"))
         let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: made.row.path, command: "sleep 60"))
+        // The shell that starts `sleep` is busy too, for a moment, before it becomes `sleep`.
         #expect(
             await eventually {
                 await daemon.pollPanes()
-                return await daemon.snapshot().panes.first { $0.id == pane }?.busy == true
+                let info = await daemon.snapshot().panes.first { $0.id == pane }
+                return info?.busy == true && info?.foreground == "sleep"
             })
         await #expect(
             throws: ControlError(
