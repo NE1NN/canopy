@@ -101,10 +101,12 @@ struct BoxReviewTests {
         let daemon = try await home.daemon()
         let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/busy"))
         let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: made.row.path, command: "sleep 60"))
+        // The shell that starts `sleep` is busy too, for a moment, before it becomes `sleep`.
         #expect(
             await eventually {
                 await daemon.pollPanes()
-                return await daemon.snapshot().panes.first { $0.id == pane }?.busy == true
+                let info = await daemon.snapshot().panes.first { $0.id == pane }
+                return info?.busy == true && info?.foreground == "sleep"
             })
         await #expect(
             throws: ControlError(
@@ -135,11 +137,12 @@ struct BoxReviewTests {
         defer { client.close() }
         #expect(await eventually { accepted.withLock { $0 } != nil })
         let server = try #require(accepted.withLock { $0 })
-        let writer = ConnectionWriter(server, wait: .milliseconds(300))
+        // A send that waited on the peer would take the whole wait, well past the limit even on a slow machine.
+        let writer = ConnectionWriter(server, wait: .seconds(3))
         let started = ContinuousClock.now
         for _ in 0..<200 { writer.send(Data(repeating: 0x61, count: 64 * 1024)) }
-        #expect(ContinuousClock.now - started < .milliseconds(200))
-        #expect(await eventually(timeout: .seconds(5)) { writer.failed })
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(await eventually(timeout: .seconds(10)) { writer.failed })
     }
 }
 

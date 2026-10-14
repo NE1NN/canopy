@@ -74,7 +74,7 @@ public final class TCPListener: Sendable {
         accept: @escaping @Sendable (TCPConnection) -> Void
     ) throws {
         guard let endpoint = SocketAddress(address, port: port) else { throw TCPError.invalidAddress(address) }
-        let fd = socket(endpoint.family, streamSocket | closeOnExecSocket, 0)
+        let fd = newStreamSocket(endpoint.family)
         guard fd >= 0 else { throw TCPError.system("socket", errno: errno) }
         do {
             try setOption(fd, SOL_SOCKET, SO_REUSEADDR, 1)
@@ -170,7 +170,7 @@ public final class TCPConnection: @unchecked Sendable {
         to address: String, port: UInt16, options: TCPOptions = TCPOptions()
     ) throws -> TCPConnection {
         guard let endpoint = SocketAddress(address, port: port) else { throw TCPError.invalidAddress(address) }
-        let fd = socket(endpoint.family, streamSocket | closeOnExecSocket, 0)
+        let fd = newStreamSocket(endpoint.family)
         guard fd >= 0 else { throw TCPError.system("socket", errno: errno) }
         var result: Int32
         repeat {

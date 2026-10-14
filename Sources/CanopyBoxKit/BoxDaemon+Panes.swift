@@ -3,6 +3,14 @@ import CanopySystem
 import CanopyWire
 import Foundation
 
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(Musl)
+    import Musl
+#endif
+
 extension BoxDaemon {
     /// How long Return waits after text, so a program such as Claude Code reads it as a keystroke of its own rather
     /// than as part of a paste, as on the Mac.
@@ -11,9 +19,17 @@ extension BoxDaemon {
     static let keyPause = Duration.milliseconds(150)
     /// tmux titles a pane nothing has titled with the machine's name, which says nothing.
     static let machineNames: Set<String> = {
-        let name = ProcessInfo.processInfo.hostName
+        let name = machineName
         return [name, String(name.split(separator: ".").first ?? "")]
     }()
+
+    /// The machine's name as tmux reads it, from gethostname(2), which never waits on DNS as
+    /// `ProcessInfo.hostName` can on Linux.
+    static var machineName: String {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard gethostname(&buffer, buffer.count) == 0 else { return "localhost" }
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
 
     /// Opens a pane in a row: a session of the home's tmux server named `b<N>`, in the row's folder, with the variables
     /// a remote pane gets, typing `command` once its shell is up.
