@@ -117,7 +117,17 @@ struct TCPTests {
         await #expect(throws: TCPError.closed) { try await accepted.send(Data("after close".utf8)) }
         first.listener.close()
 
-        let again = try Server(port: port)
+        // The connections close on their own queues a moment later. Until then the port is in use, but TIME_WAIT would
+        // keep it so for a minute.
+        var bound: Server?
+        for _ in 0..<40 where bound == nil {
+            do {
+                bound = try Server(port: port)
+            } catch TCPError.system("bind", errno: EADDRINUSE) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        let again = try #require(bound)
         defer { again.listener.close() }
         #expect(again.listener.port == port)
     }

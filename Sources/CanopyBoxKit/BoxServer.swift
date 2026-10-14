@@ -13,7 +13,7 @@ import Synchronization
 public final class BoxServer: Sendable {
     let daemon: BoxDaemon
     private let listener: UnixListener
-    static let heartbeatEvery = Duration.seconds(15)
+    public static let heartbeatEvery = Duration.seconds(15)
     /// How long a write may wait for a peer to read, before the connection is given up.
     public static let writeWait = Duration.seconds(60)
 
@@ -22,7 +22,8 @@ public final class BoxServer: Sendable {
 
     /// `phones` is the box's phone server, which the Mac's `phone ... --on` reaches through these methods.
     public init(
-        daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait, phones: PhoneServer? = nil
+        daemon: BoxDaemon, socketPath: String, writeWait: Duration = writeWait, phones: PhoneServer? = nil,
+        heartbeat: Duration = heartbeatEvery
     ) throws {
         self.daemon = daemon
         let open = open
@@ -30,7 +31,8 @@ public final class BoxServer: Sendable {
             open.all.withLock { $0[ObjectIdentifier(connection)] = connection }
             defer { _ = open.all.withLock { $0.removeValue(forKey: ObjectIdentifier(connection)) } }
             Self.serve(
-                connection, daemon: daemon, phones: phones, writer: ConnectionWriter(connection, wait: writeWait))
+                connection, daemon: daemon, phones: phones, writer: ConnectionWriter(connection, wait: writeWait),
+                heartbeat: heartbeat)
         }
     }
 
@@ -49,7 +51,8 @@ public final class BoxServer: Sendable {
     /// connection closes. A subscription ends with the client's sending, since its client keeps that open while it
     /// listens, and one that went away would otherwise hold this thread until the box next changed.
     private static func serve(
-        _ connection: UnixConnection, daemon: BoxDaemon, phones: PhoneServer?, writer: ConnectionWriter
+        _ connection: UnixConnection, daemon: BoxDaemon, phones: PhoneServer?, writer: ConnectionWriter,
+        heartbeat: Duration
     ) {
         let work = Mutex<[Task<Void, Never>]>([])
         let subscriptions = Mutex<[Task<Void, Never>]>([])
@@ -73,7 +76,7 @@ public final class BoxServer: Sendable {
             guard !line.isEmpty else { continue }
             let keys = try? JSONDecoder().decode([String: JSONValue].self, from: line)
             if keys?["args"] != nil, let request = try? JSONDecoder().decode(RelayRequest.self, from: line) {
-                relay(request, on: connection, daemon: daemon)
+                relay(request, on: connection, daemon: daemon, heartbeat: heartbeat)
                 return
             }
             guard let request = try? ControlCodec.decode(ControlRequest.self, from: line) else {
@@ -94,9 +97,10 @@ public final class BoxServer: Sendable {
     }
 
     /// Runs a relayed CLI call to its end, beating while it runs, and cancels it once the relay hangs up, except a
-    /// hook's report, which is the box's from its acknowledgement on.
-    private static func relay(_ request: RelayRequest, on connection: UnixConnection, daemon: BoxDaemon) {
-        guard (try? connection.write(Data("{\"ack\": true}\n".utf8), deadline: .now + writeWait)) != nil else { return }
+    /// hook's report, which is the box's once received.
+    private static func relay(
+        _ request: RelayRequest, on connection: UnixConnection, daemon: BoxDaemon, heartbeat: Duration
+    ) {
         let reply = Mutex<RelayReply?>(nil)
         let finished = Atomic(false)
         let task = Task {
@@ -104,8 +108,13 @@ public final class BoxServer: Sendable {
             reply.withLock { $0 = answered }
             finished.store(true, ordering: .releasing)
         }
-        var nextBeat = ContinuousClock.now + heartbeatEvery
         let isHook = RelayInput.reading(request.args) == .hookReport
+        // Started before the acknowledgement, so a hook whose process is already gone still lands.
+        guard (try? connection.write(Data("{\"ack\": true}\n".utf8), deadline: .now + writeWait)) != nil else {
+            if !isHook { task.cancel() }
+            return
+        }
+        var nextBeat = ContinuousClock.now + heartbeat
         while !finished.load(ordering: .acquiring) {
             if connection.hungUp(within: .milliseconds(100)) {
                 if !isHook { task.cancel() }
@@ -117,7 +126,7 @@ public final class BoxServer: Sendable {
                     if !isHook { task.cancel() }
                     return
                 }
-                nextBeat = .now + heartbeatEvery
+                nextBeat = .now + heartbeat
             }
         }
         guard let answered = reply.withLock({ $0 }), var data = try? JSONEncoder().encode(answered) else { return }
