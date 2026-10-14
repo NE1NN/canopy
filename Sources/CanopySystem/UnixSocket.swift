@@ -55,7 +55,7 @@ public final class UnixListener: Sendable {
             }
             unlink(path)
         }
-        let fd = socket(AF_UNIX, streamSocket | closeOnExecSocket, 0)
+        let fd = newStreamSocket(AF_UNIX)
         guard fd >= 0 else { throw UnixSocketError.system("socket", errno: errno) }
         var info = stat()
         do {
@@ -155,7 +155,7 @@ public final class UnixConnection: Sendable {
 
     public static func connect(path: String) throws -> UnixConnection {
         let address = try UnixAddress(path)
-        let fd = socket(AF_UNIX, streamSocket | closeOnExecSocket, 0)
+        let fd = newStreamSocket(AF_UNIX)
         guard fd >= 0 else { throw UnixSocketError.system("socket", errno: errno) }
         guard address.withSockaddr({ Foundation.connect(fd, $0, $1) }) == 0 else {
             let code = errno
