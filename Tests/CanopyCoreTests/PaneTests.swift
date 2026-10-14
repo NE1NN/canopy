@@ -14,7 +14,7 @@ struct PaneTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: Fixture.context(row)).pane
-        await pane.run(#"printf 'ready:%s:%s:%s\n' "$CANOPY_PANE" "$CANOPY_ROW" "$(pwd -P)""#)
+        await pane.terminal!.run(#"printf 'ready:%s:%s:%s\n' "$CANOPY_PANE" "$CANOPY_ROW" "$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("ready:p1:feat/x:\(row)") })
     }
@@ -25,7 +25,7 @@ struct PaneTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
-        await pane.run(#"printf '%s|%s\n' "it's" "héllo ✓ $CANOPY_ROW""#)
+        await pane.terminal!.run(#"printf '%s|%s\n' "it's" "héllo ✓ $CANOPY_ROW""#)
 
         #expect(await eventually { pane.screen.text.contains("it's|héllo ✓ feat/x") })
     }
@@ -39,7 +39,7 @@ struct PaneTests {
 
         #expect(await eventually { pane.foreground?.name == "bash" })
         pane.refreshTitle()
-        await pane.run("exit 3")
+        await pane.terminal!.run("exit 3")
         #expect(await eventually { pane.status == .exited(3) })
         pane.refreshTitle()
         #expect(pane.title == "bash")
@@ -50,7 +50,7 @@ struct PaneTests {
 
         #expect(pane.status == .running)
         #expect(pane.pid != nil && pane.pid != firstShell)
-        await pane.run("echo second-life")
+        await pane.terminal!.run("echo second-life")
         #expect(await eventually { pane.screen.text.contains("second-life\r\n") })
     }
 
@@ -60,13 +60,13 @@ struct PaneTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
         // Ready for typing, which a loaded machine can take longer to be than `run` waits.
-        #expect(await eventually { pane.foreground?.name == "bash" && pane.isAtPrompt })
+        #expect(await eventually { pane.foreground?.name == "bash" && pane.terminal!.isAtPrompt })
 
         pane.screen.onTitle?("my title")
         #expect(pane.title == "my title")
         #expect(!pane.isBusy)
 
-        await pane.run("sleep 30")
+        await pane.terminal!.run("sleep 30")
         #expect(
             await eventually {
                 pane.refreshTitle()
@@ -85,14 +85,14 @@ struct PaneTests {
         terminals.refreshActivity()
         #expect(!pane.isRunningProgram)
 
-        await pane.run("sleep 30")
+        await pane.terminal!.run("sleep 30")
         #expect(
             await eventually {
                 terminals.refreshActivity()
                 return pane.isRunningProgram
             })
 
-        await pane.type("\u{3}")
+        await pane.terminal!.type("\u{3}")
         #expect(
             await eventually {
                 terminals.refreshActivity()
@@ -145,7 +145,7 @@ struct PaneTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: Fixture.context(dir.sub("gone"))).pane
-        await pane.run(#"echo "at:$(pwd -P)""#)
+        await pane.terminal!.run(#"echo "at:$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("at:\(dir.sub("user-home"))") })
     }

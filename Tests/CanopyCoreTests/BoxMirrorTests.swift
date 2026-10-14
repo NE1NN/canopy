@@ -42,7 +42,7 @@ struct BoxMirrorTests {
         defer { terminals.closeAll() }
         await mirror.apply(await update([Self.pane("b1")]))
         let pane = try #require(terminals.panes.first)
-        #expect(pane.remoteSession == "b1")
+        #expect(pane.terminal?.remoteSession == "b1")
         #expect(pane.context.remote?.host == "box")
         #expect(pane.context.remote?.path == Self.rowPath)
         // A second snapshot opens no second tab.

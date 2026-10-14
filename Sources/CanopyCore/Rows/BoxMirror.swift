@@ -52,7 +52,7 @@ public final class BoxMirror {
         closed = closed.filter { now.timeIntervalSince($0.value) < Self.closedFor }
         let panes = terminals.panes.filter { $0.context.remote?.host == update.host }
         for boxPane in update.snapshot.panes {
-            if let pane = panes.first(where: { $0.remoteSession == boxPane.id }) {
+            if let pane = panes.first(where: { $0.terminal?.remoteSession == boxPane.id }) {
                 pane.mirror(PaneAgent(mirroring: boxPane))
                 continue
             }
@@ -64,7 +64,7 @@ public final class BoxMirror {
             else { continue }
             // Another apply may have opened it while this one waited on the workspace.
             if terminals.panes.contains(where: {
-                $0.context.remote?.host == update.host && $0.remoteSession == boxPane.id
+                $0.context.remote?.host == update.host && $0.terminal?.remoteSession == boxPane.id
             }) {
                 continue
             }
@@ -77,7 +77,7 @@ public final class BoxMirror {
 
     /// Escape or Control-C that cleared an agent, or Return that answered it, at the Mac.
     private func typed(_ change: AgentChange, in pane: Pane) {
-        guard let host = pane.context.remote?.host, let session = pane.remoteSession else { return }
+        guard let host = pane.context.remote?.host, let session = pane.terminal?.remoteSession else { return }
         let key: String? =
             switch change.to {
             case .none: "\u{1b}"

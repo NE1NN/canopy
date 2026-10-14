@@ -104,7 +104,7 @@ extension Fixture {
 }
 
 extension Pane {
-    var screen: FakeEmulator { emulator as! FakeEmulator }
+    var screen: FakeEmulator { terminal!.emulator as! FakeEmulator }
 }
 
 /// True once no process is left in the group.

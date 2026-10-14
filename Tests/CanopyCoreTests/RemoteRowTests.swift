@@ -464,7 +464,8 @@ struct RemoteSessionTests {
             return (terminals, RowLifecycle(workspace: workspace, terminals: terminals))
         }
         let session = try await MainActor.run {
-            try #require(terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane.remoteSession)
+            try #require(
+                terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane.terminal!.remoteSession)
         }
         try await startSession(session, server: server, in: try #require(created.row.remotePath))
 
@@ -568,13 +569,14 @@ struct HostMonitorTests {
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
         let folder = try #require(created.row.remotePath)
-        try await RemoteSessionTests().startSession(try #require(pane.remoteSession), server: server, in: folder)
+        try await RemoteSessionTests().startSession(
+            try #require(pane.terminal!.remoteSession), server: server, in: folder)
         let monitor = HostMonitor(workspace: setup.workspace, terminals: terminals)
 
         await monitor.probe()
 
-        #expect(pane.remoteActivity?.folder == folder)
-        #expect(pane.remoteActivity?.busy == false)
+        #expect(pane.terminal!.remoteActivity?.folder == folder)
+        #expect(pane.terminal!.remoteActivity?.busy == false)
         await setup.workspace.stop()
     }
 }
@@ -948,7 +950,7 @@ struct RemotePortForwardingTests {
             terminals = Fixture.terminals(remote.dir)
             pane = terminals.openTab(for: PaneContext(row: created.row, repoName: "demo")).pane
             try await RemoteSessionTests().startSession(
-                try #require(pane.remoteSession), server: server, in: try #require(created.row.remotePath))
+                try #require(pane.terminal!.remoteSession), server: server, in: try #require(created.row.remotePath))
             monitor = HostMonitor(workspace: remote.workspace, terminals: terminals, portsEvery: .zero)
         }
 
@@ -965,7 +967,7 @@ struct RemotePortForwardingTests {
         func keys(_ keys: [String]) async throws {
             _ = try await Subprocess.runOffPool(
                 try #require(RemoteSessionTests.tmux),
-                ["-L", server, "send-keys", "-t", try #require(pane.remoteSession)] + keys,
+                ["-L", server, "send-keys", "-t", try #require(pane.terminal!.remoteSession)] + keys,
                 environment: Fixture.environment, directory: nil, timeout: .seconds(10))
         }
 

@@ -1,7 +1,8 @@
 import Foundation
 import Observation
 
-/// One terminal: a process in a pseudo-terminal, shown by an emulator.
+/// One pane in a row: a terminal, or a chat with Claude Code. Either way it has an ID that agents see as CANOPY_PANE,
+/// the agent state its hooks report, and a title.
 @MainActor
 @Observable
 public final class Pane: Identifiable {
@@ -10,30 +11,27 @@ public final class Pane: Identifiable {
         case exited(Int32)
     }
 
+    public enum Body {
+        case terminal(TerminalBody)
+        case chat(ChatSession)
+    }
+
     /// What `waitForExit` reports for a pane closed while its process ran, as for SIGHUP.
     public static let closedExitCode: Int32 = 129
 
     public let id: PaneID
     /// The row it belongs to. Updated if the repo moves.
     public internal(set) var context: PaneContext
-    public let emulator: any TerminalEmulator
+    public let body: Body
     public private(set) var status = Status.running
     public private(set) var title = ""
     /// A title given with `canopy term new --title`. It wins over what the program sets.
     public var fixedTitle: String? {
         didSet { refreshTitle() }
     }
-    @ObservationIgnored private let settings: ShellSettings
     @ObservationIgnored private let activity: ActivityLog
-    /// Variables beside Canopy's own, such as a task's brief, which is never typed.
-    @ObservationIgnored private let extraEnvironment: [String: String]
-    @ObservationIgnored private var process: PtyProcess?
-    @ObservationIgnored private var programTitle: ProgramTitle?
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
-    @ObservationIgnored private var isClosed = false
-    @ObservationIgnored private var isScript = false
-    /// Reads the shell's command reports, while commands are logged.
-    @ObservationIgnored private var commandMarks: CommandMarkScanner?
+    @ObservationIgnored private(set) var isClosed = false
 
     /// What the agent in it is doing, as its hooks or `canopy term state` report it.
     public private(set) var agent = PaneAgent()
@@ -43,77 +41,82 @@ public final class Pane: Identifiable {
     @ObservationIgnored public var onClose: ((Pane) -> Void)?
     /// Called when the pane's agent takes a prompt, as its `UserPromptSubmit` hook says.
     @ObservationIgnored public var onPrompted: ((Pane) -> Void)?
-    /// Called with a link the author ⌘-clicked in the terminal.
-    @ObservationIgnored public var onOpenLink: ((Pane, String) -> Void)?
     /// When a key was last typed or text sent. Kept out of observation, so typing redraws no dot.
     @ObservationIgnored public private(set) var lastInput = Date.distantPast
 
-    /// Whether the agent reached its state after the last input, so a done from before a new prompt does not count.
-    public var agentIsFresh: Bool {
-        agent.isFresh(after: lastInput)
-    }
-
-    /// The folder the shell starts in, when restored into one other than the row's.
-    public let startDirectory: String?
-    /// What the pane started with.
-    public private(set) var command: PaneCommand
-    /// A remote pane's tmux session on its host, named after the pane that first made it.
-    public let remoteSession: String?
-    /// Where a remote pane's session starts when the host has none: the folder it was last in, or the row's.
-    public let remoteFolder: String?
-    /// What the host last said the session is doing. Nil until it has, and while it has no such session.
-    public var remoteActivity: SessionActivity? {
-        didSet { if remoteActivity != oldValue { refreshTitle() } }
-    }
-    /// Types a command into a remote pane's session through its host.
-    @ObservationIgnored var runRemotely: ((Pane, String) async -> Void)?
-
+    /// A terminal pane, whose process starts at once.
     init(
         id: PaneID, context: PaneContext, command: PaneCommand, settings: ShellSettings,
         emulator: any TerminalEmulator, activity: ActivityLog, directory: String? = nil, session: String? = nil,
         environment: [String: String] = [:]
     ) {
         self.id = id
-        self.extraEnvironment = environment
         self.context = context
-        self.command = command
-        let isRemote = context.remote != nil
-        self.remoteSession = isRemote ? session ?? id.description : nil
-        self.remoteFolder = isRemote ? directory ?? context.remote?.path : nil
-        self.startDirectory = isRemote ? nil : directory
-        self.settings = settings
         self.activity = activity
-        self.emulator = emulator
-        emulator.onInput = { [weak self] in self?.input($0) }
-        emulator.onResize = { [weak self] in self?.process?.resize($0) }
-        emulator.onTitle = { [weak self] in self?.setProgramTitle($0) }
-        emulator.onOpenLink = { [weak self] link in
-            guard let self else { return }
-            self.onOpenLink?(self, link)
-        }
-        start(command)
+        let terminal = TerminalBody(
+            emulator: emulator, command: command, isRemote: context.remote != nil, settings: settings,
+            directory: directory, session: session, paneID: id, rowPath: context.rowPath, environment: environment)
+        body = .terminal(terminal)
+        terminal.attach(to: self)
     }
 
-    /// The shell's pid while it runs.
-    public var pid: pid_t? { process?.pid }
+    /// A chat pane. Its Claude Code starts when the author first sends something.
+    init(id: PaneID, context: PaneContext, chat: ChatSession, activity: ActivityLog) {
+        self.id = id
+        self.context = context
+        self.activity = activity
+        body = .chat(chat)
+        chat.onInput = { [weak self] in self?.typed($0) }
+        chat.onEnded = { [weak self] in self?.refreshActivity() }
+        chat.onTitle = { [weak self] in self?.refreshTitle() }
+        record(ActivityType.termOpened)
+        refreshTitle()
+    }
+
+    public var terminal: TerminalBody? {
+        if case .terminal(let terminal) = body { terminal } else { nil }
+    }
+
+    public var chat: ChatSession? {
+        if case .chat(let chat) = body { chat } else { nil }
+    }
+
+    /// Whether the agent reached its state after the last input, so a done from before a new prompt does not count.
+    public var agentIsFresh: Bool {
+        agent.isFresh(after: lastInput)
+    }
+
+    /// The process the pane runs: a terminal's shell, or a chat's Claude Code while it runs.
+    public var pid: pid_t? {
+        switch body {
+        case .terminal(let terminal): terminal.pid
+        case .chat(let chat): chat.pid
+        }
+    }
 
     public var foreground: ForegroundProcess? {
-        guard context.remote == nil else {
-            return remoteActivity.flatMap { $0.busy ? ForegroundProcess(pid: 0, name: $0.foreground ?? "") : nil }
+        switch body {
+        case .terminal(let terminal): terminal.foreground
+        case .chat(let chat): chat.pid.map { ForegroundProcess(pid: $0, name: "claude") }
         }
-        return process?.foreground
     }
 
-    /// True while something other than the shell holds the terminal, such as `claude` or `bun dev`.
+    /// True while a program other than the shell runs, such as `claude` or `bun dev`, or while a chat's Claude Code
+    /// runs.
     public var isBusy: Bool {
-        if context.remote != nil {
-            guard case .running = status else { return false }
-            return remoteActivity?.busy ?? false
+        switch body {
+        case .terminal(let terminal): terminal.isBusy
+        case .chat(let chat): status == .running && chat.isRunning
         }
-        // A setup or teardown script is busy until it ends, even though zsh runs its last command in its own place.
-        if isScript, case .running = status { return true }
-        guard let process, let foreground = process.foreground else { return false }
-        return foreground.pid != process.pid
+    }
+
+    /// Whether closing it would stop work in progress: a program running in a terminal, or a turn Claude is working
+    /// on in a chat. A chat whose Claude Code waits for the next message loses nothing by closing.
+    public var hasRunningWork: Bool {
+        switch body {
+        case .terminal: isBusy
+        case .chat(let chat): chat.isWorking
+        }
     }
 
     /// Resolves to the exit code once the process exits. A pane closed first reports `closedExitCode`.
@@ -169,90 +172,9 @@ public final class Pane: Identifiable {
         agentChanged(from == next.state ? nil : AgentChange(from: from, to: next.state, via: "box"))
     }
 
-    /// Types `command` and Return once the shell's line editor is ready, so the shell does not echo it twice.
-    /// Shells without a line editor never report ready, so it types anyway after `timeout`.
-    /// The shell waits for a line, ready for typing.
-    var isAtPrompt: Bool { process?.isAtPrompt ?? false }
-
-    public func run(_ command: String, timeout: Duration = .seconds(10)) async {
-        if context.remote != nil {
-            await runRemotely?(self, command)
-            return
-        }
-        let deadline = ContinuousClock.now + timeout
-        while process != nil, !isAtPrompt, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        process?.write(command + "\r")
-    }
-
-    /// How long Return waits after the program has read the text. Codex takes an Enter that comes within 120 ms of a
-    /// burst of typed characters for part of a paste.
-    static let returnPause = Duration.milliseconds(200)
-    /// How long Return waits for a program that is not reading, before it goes in behind the text anyway.
-    @ObservationIgnored var returnPatience = Duration.seconds(2)
-    /// How long Return waits after a reply's paste has been read.
-    @ObservationIgnored var replyPause = Pane.returnPause
-
-    /// Sends text as if typed, for `canopy term send`. An exited pane ignores it.
-    /// With `enter`, Return follows as a keystroke of its own, in a later read than the text and `returnPause` after
-    /// it, and this returns once Return is in. Programs such as Claude Code and Codex take text and a Return that
-    /// arrive together for a paste, where Return adds a new line instead of submitting.
-    public func type(_ text: String, enter: Bool = false) async {
-        guard case .running = status, let process else { return }
-        typed(Data(text.utf8))
-        guard enter else {
-            process.write(text)
-            return
-        }
-        await process.write(Data(text.utf8), then: Data("\r".utf8), pause: Self.returnPause, patience: returnPatience)
-        // Return reaches the key rules as the key of its own that the program gets.
-        typed(Data("\r".utf8))
-    }
-
-    /// Pastes text as one bracketed paste, then presses Return as a keystroke of its own, as `type(_:enter:)` does, so
-    /// a long reply reaches a busy Claude Code whole. Newlines go in as Return, as a terminal pastes them, and escape
-    /// characters are left out, so the text cannot end its own paste.
-    /// Return goes only if `returnIf` still holds once the paste is read, checked in the same turn of the main actor
-    /// that writes it, so a dialog that opened meanwhile is never answered by it. Returns whether Return went.
-    public func paste(_ text: String, returnIf: () -> Bool) async -> Bool {
-        guard case .running = status, let process else { return false }
-        let clean = Self.pasteable(text)
-        await process.write(
-            Data("\u{1b}[200~\(clean)\u{1b}[201~".utf8), then: Data(), pause: replyPause, patience: returnPatience)
-        guard case .running = status, returnIf() else { return false }
-        process.write(Data("\r".utf8))
-        typed(Data("\r".utf8))
-        return true
-    }
-
-    static func pasteable(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r")
-            .filter { $0 != "\u{1b}" }
-    }
-
-    /// Presses keys one at a time, each in a read of its own, as the author would.
-    public func press(_ keys: [String], pause: Duration = .milliseconds(150)) async {
-        for (index, key) in keys.enumerated() {
-            if index > 0 { try? await Task.sleep(for: pause) }
-            guard case .running = status, let process else { return }
-            process.write(key)
-            typed(Data(key.utf8))
-        }
-    }
-
     /// Takes the answer to the agent's open prompt, if `id` still names it.
     public func answerPrompt(id: String) -> Bool {
         agent.answer(promptID: id)
-    }
-
-    /// Starts a new shell in the same folder after the last one exited.
-    public func restart() {
-        guard case .exited = status, !isClosed else { return }
-        programTitle = nil
-        // DECSTR undoes modes the last program left on, such as a hidden cursor, then start on a fresh line.
-        emulator.feed(Data("\u{1b}[!p\r\n".utf8))
-        start(context.remote == nil ? .shell : .remoteAttach)
     }
 
     /// Ends the process for good.
@@ -260,113 +182,47 @@ public final class Pane: Identifiable {
         guard !isClosed else { return }
         isClosed = true
         onClose?(self)
-        process?.terminate()
+        switch body {
+        case .terminal(let terminal): terminal.terminate()
+        case .chat(let chat): chat.close()
+        }
         if case .running = status {
-            processExited(Self.closedExitCode)
+            exited(Self.closedExitCode)
         }
     }
 
-    /// Reads the foreground process again. The app calls it while the pane is on screen.
+    /// Reads the title again: the one given, a terminal's program's, or a chat's conversation's.
     /// A pane whose process exited keeps its last title.
     public func refreshTitle() {
         if let fixedTitle {
             title = fixedTitle
             return
         }
-        if let remote = context.remote {
-            // The host says what the session's program titled it, or else which program runs. Until it has, the title
-            // tmux passed on stands in.
-            let candidates = [remoteActivity?.title, remoteActivity?.foreground, programTitle?.text, remote.host]
-            title = candidates.lazy.compactMap { $0 }.first { !$0.isEmpty } ?? remote.host
-            return
-        }
-        guard let process else { return }
-        let resolved = PaneTitle.resolve(programTitle, foreground: process.foreground)
-        if !resolved.isEmpty {
-            title = resolved
+        switch body {
+        case .terminal(let terminal):
+            if let resolved = terminal.resolvedTitle() { title = resolved }
+        case .chat(let chat):
+            title = chat.title.isEmpty ? "Chat" : chat.title
         }
     }
 
     /// The shell's working folder now, so a `cd` is remembered across relaunches. A remote pane's is on its host.
     public var currentDirectory: String? {
-        if context.remote != nil { return remoteActivity?.folder }
-        return process.flatMap { ProcessTable.folder(of: $0.pid) }
+        terminal?.currentDirectory
     }
 
-    /// The folder it was restored into, or the row's folder, or the home folder if both are gone.
-    private var directory: String {
-        let exists = { FileManager.default.fileExists(atPath: $0) }
-        if let startDirectory, exists(startDirectory) { return startDirectory }
-        return exists(context.rowPath) ? context.rowPath : settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
-    }
+    // MARK: From the body
 
-    private func start(_ command: PaneCommand) {
-        self.command = command
-        if case .script = command { isScript = true } else { isScript = false }
-        // Canopy's own variables win, so a caller cannot pass the pane off as another.
-        let environment = PaneEnvironment.build(settings: settings, context: context, pane: id)
-            .merging(extraEnvironment) { own, _ in own }
-        // A new secret for each shell, so only reports this shell prints count.
-        let token = settings.reportsCommands ? UUID().uuidString : nil
-        let launch =
-            switch command {
-            case .shell:
-                settings.interactiveShell(environment: environment, directory: directory, commandToken: token)
-            case .script(let script): settings.script(script, environment: environment, directory: directory)
-            case .remoteAttach: settings.remoteAttach(environment: environment, directory: directory)
-            }
-        commandMarks = launch.environment["CANOPY_COMMAND_TOKEN"].map(CommandMarkScanner.init(token:))
-        do {
-            process = try PtyProcess(
-                launch, size: emulator.size,
-                onOutput: { [weak self] in self?.output($0) },
-                onExit: { [weak self] in self?.processExited($0) }
-            )
-            status = .running
-            record(ActivityType.termOpened)
-            // Name the pane after what was launched. Reading the foreground now could catch the child
-            // between fork and exec, still named after Canopy.
-            title = (launch.executable as NSString).lastPathComponent
-        } catch {
-            emulator.feed(Data("\(error)\r\n".utf8))
-            processExited(127)
-        }
-    }
-
-    private func output(_ data: Data) {
-        // A closed pane already logged its exit, and output still on its way from before then comes after it.
-        let marks = isClosed ? [] : commandMarks?.scan(data) ?? []
-        for mark in marks {
-            var report: [String: JSONValue] = [
-                "cmd": .string(mark.command), "cwd": .string(mark.directory), "exit": .number(Double(mark.exitCode)),
-            ]
-            if let duration = mark.durationMs {
-                report["durationMs"] = .number(Double(duration))
-            }
-            record(ActivityType.termCommand, report, source: .ui)
-        }
-        emulator.feed(data)
-    }
-
-    private func input(_ data: Data) {
-        switch status {
-        case .running:
-            process?.write(data)
-            if !PaneAgent.isTerminalReport(data) {
-                typed(data)
-            }
-        case .exited:
-            if data == Data("\r".utf8) { restart() }
-        }
-    }
-
-    private func setProgramTitle(_ text: String) {
-        programTitle = ProgramTitle(text: text, group: process?.foreground?.pid)
-        refreshTitle()
+    func started(title: String) {
+        status = .running
+        record(ActivityType.termOpened)
+        // Name the pane after what was launched. Reading the foreground now could catch the child
+        // between fork and exec, still named after Canopy.
+        self.title = title
     }
 
     /// Events about a plugin row leave the repo out and name the plugin and item instead.
-    private func record(_ type: String, _ data: [String: JSONValue] = [:], source: ActivitySource = .current) {
+    func record(_ type: String, _ data: [String: JSONValue] = [:], source: ActivitySource = .current) {
         var data = data.merging(["pane": .string(id.description)]) { value, _ in value }
         if case .plugin(let plugin, let item) = context.owner {
             data["plugin"] = .string(plugin)
@@ -376,10 +232,23 @@ public final class Pane: Identifiable {
             type, repo: context.repoName, row: context.rowName, path: context.rowPath, source: source, data: data)
     }
 
-    private func typed(_ data: Data) {
+    /// Keys typed or text sent, which can answer or end what the agent waits on.
+    func typed(_ data: Data) {
         let now = Date()
         lastInput = now
         agentChanged(agent.typed(data, at: now))
+    }
+
+    func exited(_ code: Int32) {
+        status = .exited(code)
+        isRunningProgram = false
+        record(ActivityType.termExited, ["code": .number(Double(code))])
+        agentChanged(agent.ended(at: Date()))
+        let waiters = exitWaiters
+        exitWaiters = []
+        for waiter in waiters {
+            waiter.resume(returning: code)
+        }
     }
 
     private func agentChanged(_ change: AgentChange?) {
@@ -395,22 +264,5 @@ public final class Pane: Identifiable {
         }
         record(ActivityType.agent(change.to), data)
         onAgentChange?(self, change)
-    }
-
-    private func processExited(_ code: Int32) {
-        // A closed pane already reported its exit. An exit status that was on its way when it closed changes nothing.
-        if isClosed, case .exited = status { return }
-        process = nil
-        status = .exited(code)
-        isRunningProgram = false
-        record(ActivityType.termExited, ["code": .number(Double(code))])
-        agentChanged(agent.ended(at: Date()))
-        // Nothing reads input now, so hide the cursor. The soft reset in `restart` shows it again.
-        emulator.feed(Data("\u{1b}[?25l".utf8))
-        let waiters = exitWaiters
-        exitWaiters = []
-        for waiter in waiters {
-            waiter.resume(returning: code)
-        }
     }
 }

@@ -64,9 +64,10 @@ public final class PhonePanes {
     /// prompt. A reply is refused while a dialog is open, and Return is held back if one opens during the paste.
     public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
+        let terminal = try Self.terminal(of: pane)
         guard pane.agent.session != nil else { throw Self.agentNotRunning }
         guard !Self.showsDialog(pane) else { throw Self.promptOpen }
-        let returned = await pane.paste(params.text) { pane.agent.session != nil && !Self.showsDialog(pane) }
+        let returned = await terminal.paste(params.text) { pane.agent.session != nil && !Self.showsDialog(pane) }
         guard returned else { throw Self.promptOpen }
         waitingReplies[pane.id, default: []].append((Date(), delivered))
     }
@@ -78,15 +79,16 @@ public final class PhonePanes {
 
     public func answer(_ params: PhoneAnswerParams) async throws {
         let pane = try running(params.pane)
+        let terminal = try Self.terminal(of: pane)
         guard let prompt = pane.agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
         let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
         guard pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
-        await pane.press(keys)
+        await terminal.press(keys)
     }
 
     public func keys(_ params: PhoneKeysParams) throws {
-        let pane = try running(params.pane)
-        Task { await pane.press([params.text]) }
+        let terminal = try Self.terminal(of: running(params.pane))
+        Task { await terminal.press([params.text]) }
     }
 
     public func seen(_ params: PhonePaneParams) throws {
@@ -95,9 +97,9 @@ public final class PhonePanes {
 
     /// The visible screen, with up to `scrollback` lines above it.
     public func screen(_ params: PhonePaneParams, scrollback: Int?) throws -> PhoneScreen {
-        let pane = try pane(params.pane)
-        let size = pane.emulator.size
-        let lines = pane.emulator.styledLines(size.rows + (scrollback ?? 0))
+        let emulator = try Self.terminal(of: pane(params.pane)).emulator
+        let size = emulator.size
+        let lines = emulator.styledLines(size.rows + (scrollback ?? 0))
         let screen = Array(lines.suffix(size.rows))
         return PhoneScreen(
             pane: params.pane, columns: size.columns, rows: size.rows,
@@ -114,6 +116,12 @@ public final class PhonePanes {
     func pane(_ id: String) throws -> Pane {
         guard let paneID = PaneID(id), let pane = terminals.pane(paneID) else { throw WorkspaceError.paneNotFound(id) }
         return pane
+    }
+
+    /// Chats take replies and answers through their own session, which comes with a later milestone.
+    private static func terminal(of pane: Pane) throws -> TerminalBody {
+        guard let terminal = pane.terminal else { throw WorkspaceError.notATerminal(pane.id.description) }
+        return terminal
     }
 
     private func running(_ id: String) throws -> Pane {

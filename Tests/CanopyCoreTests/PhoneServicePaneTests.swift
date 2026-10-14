@@ -16,7 +16,7 @@ struct PhoneServicePaneTests {
         let pane: Pane
 
         var id: String { pane.id.description }
-        var reads: [String] { ReadRecorder.reads(in: (pane.emulator as? FakeEmulator)?.text ?? "") }
+        var reads: [String] { ReadRecorder.reads(in: (pane.terminal!.emulator as? FakeEmulator)?.text ?? "") }
 
         func call(_ method: String, _ params: some Encodable) async throws -> ControlResponse {
             let value = try JSONValue.from(params)
@@ -38,8 +38,8 @@ struct PhoneServicePaneTests {
             for: PaneContext(row: harness.row, repoName: "r"), command: .script(command)
         )
         .pane
-        pane.returnPatience = .seconds(60)
-        #expect(await eventually { (pane.emulator as? FakeEmulator)?.text.contains("ready") == true })
+        pane.terminal!.returnPatience = .seconds(60)
+        #expect(await eventually { (pane.terminal!.emulator as? FakeEmulator)?.text.contains("ready") == true })
         // Replies go only where a Claude Code session holds the pane.
         pane.report(AgentReport(state: .working, session: "s1", event: "UserPromptSubmit"))
         pane.report(AgentReport(state: .done, session: "s1", event: "Stop"))

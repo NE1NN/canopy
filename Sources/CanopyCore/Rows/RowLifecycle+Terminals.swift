@@ -17,7 +17,7 @@ extension RowLifecycle {
                         pane: pane.id.description,
                         repo: pane.context.repoPath.flatMap { repoNames[$0] } ?? pane.context.repoName, plugin: plugin,
                         row: pane.context.rowName, rowPath: path, tab: tab.name, title: pane.title,
-                        folder: pane.currentDirectory ?? pane.startDirectory ?? path,
+                        folder: pane.currentDirectory ?? pane.terminal?.startDirectory ?? path,
                         foreground: pane.foreground?.name, exited: exited,
                         agent: pane.agent.state == .none ? nil : pane.agent.state,
                         backgroundTasks: pane.agent.backgroundTasks.isEmpty ? nil : pane.agent.backgroundTasks)
@@ -35,14 +35,15 @@ extension RowLifecycle {
         let name = params.tab.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         let (tab, pane) = terminals.openTerminal(for: context, tabNamed: name, newTab: params.newTab)
         if let title = params.title { pane.fixedTitle = title }
-        if let run = params.run { await pane.run(run) }
+        if let run = params.run { await pane.terminal?.run(run) }
         return TermNewResult(pane: pane.id.description, tab: tab.name)
     }
 
     public func sendToTerminal(_ params: TermSendParams) async throws {
         let pane = try terminal(params.pane, host: params.host)
         guard case .running = pane.status else { throw WorkspaceError.paneExited(params.pane) }
-        await pane.type(params.text, enter: params.enter)
+        guard let terminal = pane.terminal else { throw WorkspaceError.notATerminal(params.pane) }
+        await terminal.type(params.text, enter: params.enter)
     }
 
     public func readTerminal(_ params: TermReadParams) throws -> TermReadResult {
@@ -50,13 +51,14 @@ extension RowLifecycle {
         if let lines = params.lines, lines < 1 {
             throw ControlError(code: "bad_params", message: "--lines must be at least 1.")
         }
-        let text = params.lines.map { pane.emulator.recentText(lines: $0) } ?? pane.emulator.screenText()
+        guard let emulator = pane.terminal?.emulator else { throw WorkspaceError.notATerminal(params.pane) }
+        let text = params.lines.map { emulator.recentText(lines: $0) } ?? emulator.screenText()
         return TermReadResult(text: text)
     }
 
     public func closeTerminal(_ params: TermCloseParams) throws {
         let pane = try terminal(params.pane, host: params.host)
-        if pane.isBusy, !params.force {
+        if pane.hasRunningWork, !params.force {
             throw WorkspaceError.paneBusy(params.pane, program: pane.foreground?.name ?? "A program")
         }
         terminals.closePane(pane.id)
@@ -68,7 +70,7 @@ extension RowLifecycle {
         if let paneID = PaneID(id), let pane = terminals.pane(paneID) { return pane }
         if !id.isEmpty,
             let pane = terminals.panes.first(where: {
-                guard $0.remoteSession == id, let remote = $0.context.remote else { return false }
+                guard $0.terminal?.remoteSession == id, let remote = $0.context.remote else { return false }
                 return host == nil || remote.host == host
             })
         {

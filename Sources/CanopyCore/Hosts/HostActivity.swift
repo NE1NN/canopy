@@ -156,8 +156,8 @@ public final class HostMonitor {
         let panes = terminals.panes.filter { $0.context.remote?.host == alias }
         var samples: [HostPaneSample] = []
         for pane in panes {
-            guard let session = pane.remoteSession else { continue }
-            pane.remoteActivity = sessions[session]
+            guard let terminal = pane.terminal, let session = terminal.remoteSession else { continue }
+            terminal.remoteActivity = sessions[session]
             var running = false
             if case .running = pane.status { running = true }
             samples.append(HostPaneSample(session: session, isRunning: running, lastInput: pane.lastInput))
@@ -237,7 +237,7 @@ public final class HostMonitor {
         let rows = await workspace.remoteRows(on: alias)
         var sessions: [String: String] = [:]
         for pane in terminals.panes where pane.context.remote?.host == alias {
-            if let session = pane.remoteSession { sessions[session] = pane.context.rowPath }
+            if let session = pane.terminal?.remoteSession { sessions[session] = pane.context.rowPath }
         }
         let byRow = RemotePortAttribution.assign(ports, rows: rows, sessions: sessions, shells: shells)
         let forwards = await workspace.forwardPorts(byRow.values.flatMap { $0 }, on: connection)

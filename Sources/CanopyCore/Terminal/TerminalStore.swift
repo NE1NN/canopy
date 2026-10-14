@@ -31,13 +31,15 @@ public final class TerminalGrid {
     }
 }
 
-/// A tab in a row's tab bar: terminals, or one web page.
+/// A tab in a row's tab bar: terminals, one web page, or one chat.
 @MainActor
 @Observable
 public final class TerminalTab: Identifiable {
     public enum Content {
         case terminals(TerminalGrid)
         case web(WebPage)
+        /// A pane whose body is a chat.
+        case chat(Pane)
     }
 
     public let id: TabID
@@ -57,8 +59,17 @@ public final class TerminalTab: Identifiable {
         self.content = .web(page)
     }
 
+    init(id: TabID, chat: Pane) {
+        self.id = id
+        self.terminalName = ""
+        self.content = .chat(chat)
+    }
+
+    /// A terminal tab's name, or a web tab's page's, or a chat's conversation's.
     public var name: String {
-        page?.displayTitle ?? terminalName
+        if let page { return page.displayTitle }
+        if let chat { return chat.title }
+        return terminalName
     }
 
     public var grid: TerminalGrid? {
@@ -69,13 +80,18 @@ public final class TerminalTab: Identifiable {
         if case .web(let page) = content { page } else { nil }
     }
 
-    /// Panes in layout order, none for a web tab.
+    /// A chat tab's pane.
+    public var chat: Pane? {
+        if case .chat(let pane) = content { pane } else { nil }
+    }
+
+    /// Panes in layout order, a chat tab's one pane, none for a web tab.
     public var paneList: [Pane] {
-        grid?.paneList ?? []
+        chat.map { [$0] } ?? grid?.paneList ?? []
     }
 
     public var focused: Pane? {
-        grid?.focused
+        chat ?? grid?.focused
     }
 
     /// Nil for a plugin row's tab.
@@ -175,12 +191,13 @@ public final class TerminalStore {
         panes.first { $0.id == id }
     }
 
+    /// Panes that closing would stop in the middle of work.
     public var busyPanes: [Pane] {
-        panes.filter(\.isBusy)
+        panes.filter(\.hasRunningWork)
     }
 
     public func busyPanes(inRow path: String) -> [Pane] {
-        tabs(inRow: path).flatMap(\.paneList).filter(\.isBusy)
+        tabs(inRow: path).flatMap(\.paneList).filter(\.hasRunningWork)
     }
 
     /// Updates every pane's `isRunningProgram`.
@@ -237,12 +254,17 @@ public final class TerminalStore {
         selectTab(tabs[((index + offset) % count + count) % count].id, inRow: path)
     }
 
+    /// Renames a terminal tab, or a chat tab's conversation. A web tab is named after its page.
     public func renameTab(_ id: TabID, inRow path: String, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let tab = tabs(inRow: path).first(where: { $0.id == id }), tab.grid != nil else {
+        guard !trimmed.isEmpty, let tab = tabs(inRow: path).first(where: { $0.id == id }), tab.page == nil else {
             return
         }
-        tab.terminalName = trimmed
+        if let chat = tab.chat?.chat {
+            chat.title = trimmed
+        } else {
+            tab.terminalName = trimmed
+        }
         onChange()
     }
 
@@ -265,6 +287,80 @@ public final class TerminalStore {
         }
         markSeenOnScreen()
         onChange()
+    }
+
+    // MARK: Chats
+
+    /// The permission mode a new chat starts in, Claude Code's own "Ask before edits".
+    public static let defaultChatMode = "default"
+
+    /// How a chat starts Claude Code. Tests swap in a stand-in.
+    @ObservationIgnored public lazy var chatLauncher: ChatLauncher = { [settings] context, pane, model, mode, resume in
+        ClaudeLaunch.terminalLaunch(
+            settings: settings, context: context, pane: pane, model: model, mode: mode, resume: resume)
+    }
+    public typealias ChatLauncher = (
+        _ context: PaneContext, _ pane: PaneID, _ model: String?, _ mode: String, _ resume: String?
+    ) -> TerminalLaunch
+
+    /// Whether Claude Code trusts a chat's folder, and how to trust it. Tests swap in their own.
+    @ObservationIgnored public lazy var chatTrust: (PaneContext) -> ChatTrust = { [claudeHome] context in
+        let place = Self.trustPlace(for: context)
+        let config = ClaudeTrust.config(home: claudeHome)
+        return ChatTrust(
+            isTrusted: { ClaudeTrust.isTrusted(place, config: config) },
+            grant: { try await Task.detached { try ClaudeTrust.trust(place, config: config) }.value })
+    }
+
+    /// The home folder Claude Code keeps its settings and conversations in.
+    var claudeHome: String {
+        settings.baseEnvironment["HOME"] ?? NSHomeDirectory()
+    }
+
+    /// What Claude Code's trust covers for a row: its repo's main checkout, or a plugin row's folder.
+    static func trustPlace(for context: PaneContext) -> ClaudeTrust.Place {
+        switch context.owner {
+        case .repo(_, let repo): .row(path: context.rowPath, repo: repo)
+        case .plugin: .folder(context.rowPath)
+        }
+    }
+
+    /// Opens a chat tab at the end of the row's tab bar. Claude Code starts when the author first sends something.
+    @discardableResult
+    public func openChat(for context: PaneContext, session: String? = nil, title: String = "", select: Bool = true)
+        -> (tab: TerminalTab, pane: Pane)
+    {
+        let pane = makeChatPane(context, model: nil, mode: Self.defaultChatMode, session: session, title: title)
+        let tab = TerminalTab(id: TabID(nextTab), chat: pane)
+        nextTab += 1
+        tabsByRow[context.rowPath] = tabs(inRow: context.rowPath) + [tab]
+        if select || selectedTabByRow[context.rowPath] == nil {
+            selectedTabByRow[context.rowPath] = tab.id
+        }
+        markSeenOnScreen()
+        onChange()
+        return (tab, pane)
+    }
+
+    private func makeChatPane(
+        _ context: PaneContext, model: String?, mode: String, session: String?, title: String
+    ) -> Pane {
+        let id = PaneID(nextPane)
+        nextPane += 1
+        let launcher = chatLauncher
+        let home = claudeHome
+        let folder = Paths.canonical(context.rowPath)
+        let chat = ChatSession(
+            model: model, mode: mode, sessionID: session, title: title,
+            launcher: { model, mode, resume in launcher(context, id, model, mode, resume) },
+            transcript: { ClaudeProjects.transcript(session: $0, folder: folder, home: home) },
+            trust: chatTrust(context))
+        let pane = Pane(id: id, context: context, chat: chat, activity: activity)
+        chat.onChange = { [weak self] in self?.onChange() }
+        pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
+        pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
+        pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
+        return pane
     }
 
     // MARK: Panes
@@ -304,9 +400,14 @@ public final class TerminalStore {
         return pane
     }
 
-    /// Closes a pane and hands its space to its neighbors. Closing a tab's last pane closes the tab.
+    /// Closes a pane and hands its space to its neighbors. Closing a tab's last pane closes the tab, as closing a chat
+    /// does.
     public func closePane(_ id: PaneID) {
-        guard let (path, tab) = tab(containing: id), let grid = tab.grid else { return }
+        guard let (path, tab) = tab(containing: id) else { return }
+        guard let grid = tab.grid else {
+            if tab.chat != nil { closeTab(tab.id, inRow: path) }
+            return
+        }
         guard let layout = grid.layout.removing(id) else {
             closeTab(tab.id, inRow: path)
             return
@@ -363,7 +464,7 @@ public final class TerminalStore {
 
     public func tab(containing id: PaneID) -> (String, TerminalTab)? {
         for (path, tabs) in tabsByRow {
-            if let tab = tabs.first(where: { $0.grid?.panes[id] != nil }) {
+            if let tab = tabs.first(where: { $0.grid?.panes[id] != nil || $0.chat?.id == id }) {
                 return (path, tab)
             }
         }
@@ -488,7 +589,7 @@ public final class TerminalStore {
     }
 
     private func endSessions(of panes: [Pane]) {
-        let remote = panes.filter { $0.remoteSession != nil }
+        let remote = panes.filter { $0.terminal?.remoteSession != nil }
         if !remote.isEmpty { remoteHooks?.closed(remote) }
     }
 
@@ -512,16 +613,24 @@ public final class TerminalStore {
         switch tab.content {
         case .web(let page):
             return SavedTab(name: tab.name, web: savedPage(page))
+        case .chat(let pane):
+            let chat = pane.chat
+            return SavedTab(
+                name: tab.name,
+                chat: SavedChat(
+                    session: chat?.sessionID, model: chat?.model, mode: chat?.mode ?? Self.defaultChatMode,
+                    title: chat?.title ?? ""))
         case .terminals(let grid):
             return SavedTab(
                 name: tab.name,
                 layout: grid.layout.map { id in
                     let pane = grid.panes[id]
-                    if let session = pane?.remoteSession {
+                    let terminal = pane?.terminal
+                    if let session = terminal?.remoteSession {
                         return SavedPane(
-                            folder: pane?.currentDirectory ?? pane?.remoteFolder ?? path, session: session)
+                            folder: terminal?.currentDirectory ?? terminal?.remoteFolder ?? path, session: session)
                     }
-                    return SavedPane(folder: pane?.currentDirectory ?? pane?.startDirectory ?? path)
+                    return SavedPane(folder: terminal?.currentDirectory ?? terminal?.startDirectory ?? path)
                 },
                 focused: grid.layout.leaves.firstIndex(of: grid.focusedPaneID))
         }
@@ -553,6 +662,12 @@ public final class TerminalStore {
     }
 
     private func restoredTab(_ saved: SavedTab, for context: PaneContext) -> TerminalTab? {
+        if let chat = saved.chat {
+            let pane = makeChatPane(
+                context, model: chat.model, mode: chat.mode, session: chat.session, title: chat.title)
+            defer { nextTab += 1 }
+            return TerminalTab(id: TabID(nextTab), chat: pane)
+        }
         if let web = saved.web {
             guard let page = restoredPage(web, for: context) else { return nil }
             defer { nextTab += 1 }
@@ -599,12 +714,12 @@ public final class TerminalStore {
             id: id, context: context, command: command, settings: settings,
             emulator: engine.makeEmulator(size: preferredSize), activity: activity, directory: directory,
             session: session, environment: environment)
-        pane.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }
+        pane.terminal?.runRemotely = { [weak self] pane, text in await self?.remoteHooks?.run(text, in: pane) }
         pane.onAgentChange = { [weak self] in self?.agentChanged($0, $1) }
         pane.onClose = { [weak self] in self?.notifyAgentObservers(.closed($0)) }
         pane.onPrompted = { [weak self] in self?.notifyAgentObservers(.prompted($0)) }
         pane.onSeen = { [weak self] in self?.remoteHooks?.seen($0) }
-        pane.onOpenLink = { [weak self] pane, link in
+        pane.terminal?.onOpenLink = { [weak self] pane, link in
             guard let self else { return }
             self.onFollowLink(pane, self.followLink(link, from: pane))
         }

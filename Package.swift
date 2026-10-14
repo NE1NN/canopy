@@ -7,6 +7,7 @@ let dependencies: [Package.Dependency] = [
     .package(url: "https://github.com/apple/swift-crypto", from: "3.0.0"),
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
+    .package(url: "https://github.com/swiftlang/swift-markdown", exact: "0.9.0"),
 ]
 
 // What builds on Linux too: the wire format, what canopy-box shares with the Mac, canopy-box, and their tests.
@@ -59,7 +60,10 @@ let macTargets: [Target] = [
     .target(name: "CanopyPhone", dependencies: ["CanopyWire"]),
     .target(
         name: "CanopyCore",
-        dependencies: ["CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer", "CanopyGit"]),
+        dependencies: [
+            "CPty", "CanopyWire", "CanopySystem", "CanopyAgents", "CanopyServer", "CanopyGit",
+            .product(name: "Markdown", package: "swift-markdown"),
+        ]),
     // Plugins are built in, each in a module of its own that only the app, the CLI, and tests import.
     .target(name: "CanopyFixturePlugin", dependencies: ["CanopyCore"]),
     .target(name: "CanopyTickets", dependencies: ["CanopyCore"]),

@@ -20,7 +20,7 @@ struct PluginTerminalTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: PaneContext(pluginRow: row)).pane
-        await pane.run(
+        await pane.terminal!.run(
             #"printf 'ready:%s:%s:%s:%s\n' "$CANOPY_PLUGIN" "$CANOPY_ITEM" "${CANOPY_REPO-unset}" "$(pwd -P)""#)
 
         #expect(await eventually { pane.screen.text.contains("ready:p:i1:unset:\(row.path)") })

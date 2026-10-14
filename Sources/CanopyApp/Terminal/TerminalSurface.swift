@@ -3,16 +3,16 @@ import CanopyCore
 import SwiftUI
 
 /// Shows a pane's terminal with inner padding, since the terminal draws right up to its edges.
-/// The terminal view belongs to the pane, so it keeps its screen while its tab or row is out of view.
+/// The terminal view belongs to the pane's body, so it keeps its screen while its tab or row is out of view.
 struct TerminalSurface: NSViewRepresentable {
-    let pane: Pane
+    let terminal: TerminalBody
     var takesFocus = true
     var onFocusChange: (Bool) -> Void = { _ in }
     var onSizeChange: (TerminalSize) -> Void = { _ in }
 
     func makeNSView(context: Context) -> TerminalContainerView {
         // Only SwiftTermEngine makes the app's panes.
-        TerminalContainerView(emulator: pane.emulator as! SwiftTermEmulator)
+        TerminalContainerView(emulator: terminal.emulator as! SwiftTermEmulator)
     }
 
     func updateNSView(_ container: TerminalContainerView, context: Context) {

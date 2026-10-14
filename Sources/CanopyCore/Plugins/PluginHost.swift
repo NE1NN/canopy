@@ -326,7 +326,7 @@ public final class PluginHost {
             await self.select(row.path)
         }
         if let pane, let run {
-            await pane.run(run)
+            await pane.terminal?.run(run)
         }
         return PluginRowCreated(row: row, pane: pane?.id.description, fillError: fillError)
     }

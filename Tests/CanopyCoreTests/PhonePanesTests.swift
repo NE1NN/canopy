@@ -12,7 +12,7 @@ struct PhonePanesTests {
         let panes: PhonePanes
         let pane: Pane
 
-        var reads: [String] { ReadRecorder.reads(in: (pane.emulator as? FakeEmulator)?.text ?? "") }
+        var reads: [String] { ReadRecorder.reads(in: (pane.terminal!.emulator as? FakeEmulator)?.text ?? "") }
         var id: String { pane.id.description }
 
         func close() {
@@ -33,8 +33,8 @@ struct PhonePanesTests {
         let terminals = Fixture.terminals(dir)
         let command = ReadRecorder.command(try ReadRecorder.install(in: dir), paste: true)
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script(command)).pane
-        pane.returnPatience = .seconds(60)
-        #expect(await eventually { (pane.emulator as? FakeEmulator)?.text.contains("ready") == true })
+        pane.terminal!.returnPatience = .seconds(60)
+        #expect(await eventually { (pane.terminal!.emulator as? FakeEmulator)?.text.contains("ready") == true })
         let panes = PhonePanes(terminals: terminals)
         panes.start()
         return Recording(terminals: terminals, panes: panes, pane: pane)
@@ -118,7 +118,7 @@ struct PhonePanesTests {
         let panes = recording.panes
         let id = recording.id
         // Return waits long after the paste is read, and the dialog's hook lands in between.
-        pane.replyPause = .seconds(2)
+        pane.terminal!.replyPause = .seconds(2)
         let reply = Task { try await panes.reply(PhoneReplyParams(pane: id, text: "go")) }
         #expect(await eventually { !recording.reads.isEmpty })
         pane.report(
@@ -241,7 +241,7 @@ struct PhonePanesTests {
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let pane = terminals.openTab(for: Fixture.context(dir.path), command: .script("seq 1 100; exec sleep 60")).pane
-        let emulator = try #require(pane.emulator as? FakeEmulator)
+        let emulator = try #require(pane.terminal!.emulator as? FakeEmulator)
         #expect(await eventually { emulator.lines.contains("100") })
         let panes = PhonePanes(terminals: terminals)
 

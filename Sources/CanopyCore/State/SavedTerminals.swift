@@ -32,14 +32,32 @@ public struct SavedWebPage: Codable, Hashable, Sendable {
     }
 }
 
-/// A terminal tab, with its layout, or a web tab, with its page.
+/// A chat as saved: its Claude Code session, which restoring resumes once the author sends something.
+public struct SavedChat: Codable, Equatable, Sendable {
+    /// Nil for a chat that never started.
+    public var session: String?
+    /// Nil leaves the choice to Claude Code's settings.
+    public var model: String?
+    public var mode: String
+    public var title: String
+
+    public init(session: String?, model: String?, mode: String, title: String) {
+        self.session = session
+        self.model = model
+        self.mode = mode
+        self.title = title
+    }
+}
+
+/// A terminal tab, with its layout, a web tab, with its page, or a chat tab.
 public struct SavedTab: Codable, Equatable, Sendable {
     public var name: String
-    /// Nil for a web tab.
+    /// Nil for a web or chat tab.
     public var layout: Layout<SavedPane>?
     /// The focused pane's position in layout order.
     public var focused: Int?
     public var web: SavedWebPage?
+    public var chat: SavedChat?
 
     public init(name: String, layout: Layout<SavedPane>, focused: Int?) {
         self.name = name
@@ -52,15 +70,21 @@ public struct SavedTab: Codable, Equatable, Sendable {
         self.web = web
     }
 
+    public init(name: String, chat: SavedChat) {
+        self.name = name
+        self.chat = chat
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         layout = try container.decodeIfPresent(Layout<SavedPane>.self, forKey: .layout)
         focused = try container.decodeIfPresent(Int.self, forKey: .focused)
         web = try container.decodeIfPresent(SavedWebPage.self, forKey: .web)
-        guard layout != nil || web != nil else {
+        chat = try container.decodeIfPresent(SavedChat.self, forKey: .chat)
+        guard layout != nil || web != nil || chat != nil else {
             throw DecodingError.dataCorruptedError(
-                forKey: .layout, in: container, debugDescription: "A tab needs a layout or a web page.")
+                forKey: .layout, in: container, debugDescription: "A tab needs a layout, a web page, or a chat.")
         }
     }
 }

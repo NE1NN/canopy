@@ -73,6 +73,47 @@ public enum TranscriptReader {
         }
     }
 
+    /// Raw lines, for a chat that builds its own items from them.
+    public struct LinePage: Sendable, Equatable {
+        /// Oldest first.
+        public var lines: [Data]
+        /// Where the next older page ends, or nil at the start of the file.
+        public var older: Int?
+    }
+
+    /// At least `minimumLines` complete lines ending at byte `before`, or at the last complete line, or as many as
+    /// there are. It reads from the end in chunks from 64 KB, doubling until it has enough.
+    public static func linePage(of url: URL, before: Int?, minimumLines: Int) throws -> LinePage {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { throw Failure.missing }
+        defer { try? handle.close() }
+        let size = Int(try handle.seekToEnd())
+        var end = min(before ?? size, size)
+        if before == nil {
+            // A line still being written is not part of the transcript yet. Find the last newline.
+            var probe = firstRead
+            while true {
+                let tail = try read(handle, from: max(0, end - probe), to: end)
+                if let lastNewline = tail.lastIndex(of: 0x0A) {
+                    end = end - tail.count + (lastNewline - tail.startIndex) + 1
+                    break
+                }
+                if end - probe <= 0 { return LinePage(lines: [], older: nil) }
+                probe *= 2
+            }
+        }
+        var span = firstRead
+        while true {
+            let start = max(0, end - span)
+            let lines = completeLines(try read(handle, from: start, to: end), dropFirst: start > 0)
+            if lines.count >= minimumLines || start == 0 {
+                guard let first = lines.first else { return LinePage(lines: [], older: start > 0 ? start : nil) }
+                let older = start + first.offset
+                return LinePage(lines: lines.map(\.line), older: older > 0 ? older : nil)
+            }
+            span *= 2
+        }
+    }
+
     private static func read(_ handle: FileHandle, from start: Int, to end: Int) throws -> Data {
         guard end > start else { return Data() }
         try handle.seek(toOffset: UInt64(start))

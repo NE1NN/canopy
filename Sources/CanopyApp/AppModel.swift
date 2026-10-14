@@ -19,6 +19,7 @@ final class AppModel {
     let activity: ActivityLog
     /// Every web page's web view, kept while the page is in its row.
     let webViews = WebViews()
+    let chatComposers = ChatComposers()
     private(set) var snapshot = WorkspaceSnapshot()
     private(set) var toast: String?
     var selectedRowPath: String? {
@@ -825,6 +826,16 @@ final class AppModel {
         withFolder(of: row) { self.terminals.openTab(for: self.context(for: row)) }
     }
 
+    /// Chats run Claude Code on this Mac, so a remote row has none yet.
+    var canOpenChat: Bool {
+        canOpenTerminal && selection?.worktree?.rowClass != .remote
+    }
+
+    func newChat() {
+        guard canOpenChat, let row = selection else { return }
+        withFolder(of: row) { self.terminals.openChat(for: self.context(for: row)) }
+    }
+
     /// Runs `open` at once for a worktree row, and for a plugin row once its folder is there again.
     private func withFolder(of row: SidebarRow, _ open: @escaping () -> Void) {
         guard case .plugin(let pluginRow) = row, !FileManager.default.fileExists(atPath: pluginRow.path) else {
@@ -837,9 +848,13 @@ final class AppModel {
         }
     }
 
-    /// Closes a terminal, first asking if a program other than the shell still runs in it.
+    /// Closes a terminal, first asking if a program other than the shell still runs in it, or a chat, first asking if
+    /// Claude is working.
     func requestClose(_ pane: Pane) {
-        if pane.isBusy, let program = pane.foreground?.name {
+        if pane.chat != nil, pane.hasRunningWork {
+            pendingClose = PendingClose(
+                target: .pane(pane.id), title: "Close this chat?", message: "Claude is still working in it.")
+        } else if pane.hasRunningWork, let program = pane.foreground?.name {
             pendingClose = PendingClose(
                 target: .pane(pane.id), title: "Close this terminal?", message: "\(program) is still running in it.")
         } else {
@@ -850,7 +865,11 @@ final class AppModel {
 
     /// Closes a tab and all its terminals, first asking if any of them are running programs.
     func requestCloseTab(_ tab: TerminalTab, inRow path: String) {
-        let busy = tab.paneList.compactMap { $0.isBusy ? $0.foreground?.name : nil }
+        // A chat can be working before its Claude Code has a process, so it is named rather than read.
+        let busy = tab.paneList.compactMap { pane -> String? in
+            guard pane.hasRunningWork else { return nil }
+            return pane.chat == nil ? pane.foreground?.name : "Claude"
+        }
         if busy.isEmpty {
             terminals.closeTab(tab.id, inRow: path)
         } else {
@@ -887,9 +906,9 @@ final class AppModel {
             height: 5 * cell.height + padding.top + padding.bottom + PaneHeader.height)
     }
 
-    /// Split Pane does nothing in a web tab.
+    /// Split Pane works in a terminal tab, or opens one in a row with none.
     var canSplit: Bool {
-        canOpenTerminal && selectedTab?.page == nil
+        canOpenTerminal && (selectedTab.map { $0.grid != nil } ?? true)
     }
 
     /// ⌘D and the tab bar's split button.
@@ -1019,8 +1038,10 @@ final class AppModel {
         if let page = selectedTab?.page {
             let webView = webViews.existing(page.id)?.webView
             webView?.window?.makeFirstResponder(webView)
+        } else if let chat = selectedTab?.chat {
+            chatComposers.focus(chat.id)
         } else {
-            (selectedTab?.focused?.emulator as? SwiftTermEmulator)?.focus()
+            (selectedTab?.focused?.terminal?.emulator as? SwiftTermEmulator)?.focus()
         }
     }
 

@@ -18,7 +18,7 @@ struct TerminalActivityTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
-        await pane.run("exit 3")
+        await pane.terminal!.run("exit 3")
         #expect(await eventually { pane.status == .exited(3) })
 
         let events = await logged(terminals, "term")
@@ -48,7 +48,7 @@ struct TerminalActivityTests {
         defer { terminals.closeAll() }
 
         let pane = terminals.openTab(for: Fixture.context(dir.path)).pane
-        await pane.run("exit 0")
+        await pane.terminal!.run("exit 0")
         #expect(await eventually { pane.status == .exited(0) })
         pane.screen.type("\r")
 

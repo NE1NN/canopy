@@ -29,6 +29,8 @@ public enum WorkspaceError: Error, Sendable, Equatable {
     case paneNotFound(String)
     case paneBusy(String, program: String)
     case paneExited(String)
+    /// A chat pane, asked for something only a terminal has, such as its screen or keys.
+    case notATerminal(String)
     case waitTimeout([String], String)
     case paneClosed(String)
     case agentStopped(String)
@@ -106,6 +108,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound: "pane_not_found"
         case .paneBusy: "pane_busy"
         case .paneExited: "pane_exited"
+        case .notATerminal: "not_a_terminal"
         case .waitTimeout: "wait_timeout"
         case .paneClosed: "pane_closed"
         case .agentStopped: "agent_stopped"
@@ -204,6 +207,7 @@ public enum WorkspaceError: Error, Sendable, Equatable {
         case .paneNotFound(let id): "No terminal \(id). Run `canopy term list --all`."
         case .paneBusy(let id, let program): "\(program) is still running in \(id). Pass --force to close it anyway."
         case .paneExited(let id): "The shell in \(id) has exited. Close it, or restart it from the window."
+        case .notATerminal(let id): "\(id) is a chat, which has no terminal screen or keys."
         case .waitTimeout(let ids, let target):
             "\(ids.joined(separator: ", ")) did not become \(target) before the timeout."
         case .paneClosed(let id): "\(id) closed during the wait."
