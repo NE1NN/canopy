@@ -145,9 +145,10 @@ stop_app() {
 }
 
 wait_for() { # seconds, then a command that must succeed
-    local seconds=$1
+    # By the clock, as a check can itself take seconds.
+    local deadline=$((SECONDS + $1))
     shift
-    for _ in $(seq 1 $((seconds * 4))); do
+    while ((SECONDS < deadline)); do
         "$@" >/dev/null 2>&1 && return 0
         sleep 0.25
     done
