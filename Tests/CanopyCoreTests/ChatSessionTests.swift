@@ -15,7 +15,9 @@ struct ChatSessionTests {
     }
 
     func session(
-        id: String? = nil, trusted: Bool = true, environment: [String: String] = [:], granted: @escaping () -> Void = {}
+        id: String? = nil, trusted: Bool = true, environment: [String: String] = [:],
+        granted: @escaping () -> Void = {},
+        tasksRoot: URL? = nil
     ) -> ChatSession {
         let home = home.path
         let folder = folder.path
@@ -35,7 +37,7 @@ struct ChatSessionTests {
                 grant: {
                     isTrusted = true
                     granted()
-                }))
+                }), tasksRoot: tasksRoot ?? URL(fileURLWithPath: home + "/tasks"))
     }
 
     /// Waits for things that need the stand-in Claude to have started, which takes longer on a loaded machine.
@@ -136,19 +138,91 @@ struct ChatSessionTests {
         chat.close()
     }
 
-    /// Questions come with the next milestone; until then Claude is told to ask in plain text.
-    @Test func turnsDownQuestionsItCannotShowYet() async throws {
+    @Test func countsASubagentsToolCallsOnItsLine() async throws {
+        let chat = session()
+
+        chat.send("agent")
+
+        #expect(await soon { !chat.isWorking })
+        guard case .tools(let group)? = chat.items.first(where: { $0.id.hasPrefix("toolu_") })?.content else {
+            Issue.record("no agent line in \(chat.items)")
+            return
+        }
+        #expect(group.calls.first?.innerCalls == 3)
+        #expect(chat.items.count == 2)
+        chat.close()
+    }
+
+    @Test func tailsARunningCommand() async throws {
+        let tasks = try TempDir()
+        let chat = session(environment: ["FAKE_CLAUDE_TASKS": tasks.path], tasksRoot: URL(fileURLWithPath: tasks.path))
+
+        chat.send("tail hold")
+
+        // Seen together while the command runs: lines from its task file, and the row that shows them.
+        #expect(
+            await soon {
+                guard let lines = chat.tails.values.first, !lines.isEmpty else { return false }
+                return lines.count <= ChatSession.tailLines && lines.allSatisfy { $0.hasPrefix("line ") }
+                    && ChatRows.rows(for: chat).contains { if case .running = $0 { true } else { false } }
+            })
+        chat.send("say done")
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.tails.isEmpty)
+        chat.close()
+    }
+
+    func answer(_ chat: ChatSession) -> String? {
+        chat.items.lazy.compactMap { item -> String? in
+            if case .question(let question) = item.content { question.answer } else { nil }
+        }.last
+    }
+
+    @Test func answersAQuestionByPickingAnOption() async throws {
         let chat = session()
 
         chat.send("ask")
-
-        #expect(await soon { !chat.isWorking })
-        #expect(chat.permission == nil)
-        guard case .question(let question)? = chat.items.last?.content else {
-            Issue.record("no question in \(chat.items)")
+        #expect(await soon { chat.permission != nil })
+        guard case .question(let questions)? = chat.permission?.kind else {
+            Issue.record("not a question: \(String(describing: chat.permission))")
             return
         }
-        #expect(question.answer == "Declined")
+        #expect(questions.first?.question == "Which color?")
+        chat.pick(1)
+
+        #expect(await soon { !chat.isWorking })
+        #expect(answer(chat) == "Red")
+        chat.close()
+    }
+
+    @Test func answersAQuestionInItsOwnWords() async throws {
+        let chat = session()
+
+        chat.send("ask")
+        #expect(await soon { chat.permission != nil })
+        chat.send("Green, please")
+
+        #expect(await soon { !chat.isWorking })
+        #expect(answer(chat) == "Green, please")
+        #expect(!texts(chat).contains("You: Green, please"))
+        chat.close()
+    }
+
+    @Test func approvesAPlanAndSwitchesToAcceptingEdits() async throws {
+        let chat = session()
+
+        chat.send("plan")
+        #expect(await soon { chat.permission != nil })
+        guard case .plan(let plan)? = chat.permission?.kind else {
+            Issue.record("not a plan")
+            return
+        }
+        #expect(plan.hasPrefix("# Plan"))
+        chat.approvePlan(acceptingEdits: true)
+
+        #expect(await soon { !chat.isWorking })
+        #expect(chat.mode == "acceptEdits")
+        #expect(texts(chat).last == "Approved in acceptEdits.")
         chat.close()
     }
 

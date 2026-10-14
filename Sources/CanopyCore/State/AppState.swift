@@ -85,6 +85,8 @@ public struct AppState: Codable, Sendable, Equatable {
     public var plugins: [String: PluginEntry] = [:]
     /// Where new web pages open: where the author last moved one.
     public var webPlacement = WebPlacement.panel
+    /// Nil until the author picks a model or mode in a chat.
+    public var chatDefaults: ChatDefaults?
     /// The web panel's width, the same for every row. Nil until the author drags it.
     public var webPanelWidth: Double?
     /// The next web page number, so `canopy web close` never closes a different page after a relaunch.
@@ -120,6 +122,7 @@ public struct AppState: Codable, Sendable, Equatable {
         self.plugins = plugins?.compactMapValues(\.value) ?? [:]
         // Web settings that cannot be read fall back to their defaults on their own.
         webPlacement = (try? container.decodeIfPresent(WebPlacement.self, forKey: .webPlacement)) ?? .panel
+        chatDefaults = try? container.decodeIfPresent(ChatDefaults.self, forKey: .chatDefaults)
         webPanelWidth = try? container.decodeIfPresent(Double.self, forKey: .webPanelWidth)
         nextWebPage = (try? container.decodeIfPresent(Int.self, forKey: .nextWebPage)) ?? 1
         pendingSessionKills =

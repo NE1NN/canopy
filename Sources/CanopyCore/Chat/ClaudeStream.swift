@@ -24,6 +24,23 @@ public struct ClaudeCommand: Equatable, Sendable, Decodable {
     }
 }
 
+/// A model Claude Code offers, as `initialize` lists it.
+public struct ClaudeModel: Equatable, Sendable, Decodable {
+    public var value: String
+    public var displayName: String
+
+    public init(value: String, displayName: String) {
+        self.value = value
+        self.displayName = displayName
+    }
+
+    /// Claude Code's own aliases, offered before it has started.
+    public static let aliases = [
+        ClaudeModel(value: "opus", displayName: "Opus"), ClaudeModel(value: "sonnet", displayName: "Sonnet"),
+        ClaudeModel(value: "haiku", displayName: "Haiku"),
+    ]
+}
+
 public enum ClaudeStreamError: Error, Equatable, Sendable {
     case notRunning
     case timedOut
@@ -37,6 +54,8 @@ public enum ClaudeLaunch {
         var arguments = [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
             "--include-partial-messages", "--replay-user-messages", "--permission-prompt-tool", "stdio",
+            // Lets the mode chip switch to Bypass permissions later; it does not turn bypass on.
+            "--allow-dangerously-skip-permissions",
         ]
         if let model { arguments += ["--model", model] }
         arguments += ["--permission-mode", mode]
@@ -75,6 +94,7 @@ public final class ClaudeStream {
     /// The exit code and the last lines of stderr.
     public var onExit: (Int32, [String]) -> Void = { _, _ in }
     public private(set) var commands: [ClaudeCommand] = []
+    public private(set) var models: [ClaudeModel] = []
     public private(set) var isRunning = false
 
     private var process: PipeProcess?
@@ -145,6 +165,11 @@ public final class ClaudeStream {
                 let commands = try? list.decode([ClaudeCommand].self)
             {
                 self.commands = commands
+            }
+            if case .object(let fields)? = value, let list = fields["models"],
+                let models = try? list.decode([ClaudeModel].self)
+            {
+                self.models = models
             }
             return
         case .controlResponse(let id, let error, let value):

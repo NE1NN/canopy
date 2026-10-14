@@ -27,24 +27,32 @@ struct ChatRowView: View {
             EmptyChatView()
         case .trust:
             TrustCard(onTrust: actions.trust, onDecline: actions.declineTrust)
-        case .item(let item):
-            ChatItemView(item: item)
+        case .item(let item, let expanded):
+            ChatItemView(item: item, expanded: expanded) { chat.toggle(item.id) }
         case .streaming(_, let block, _):
             MarkdownView(blocks: [block])
         case .queued(let queued):
             PromptBubble(prompt: queued.prompt, waitsForStep: queued.waitsForStep)
-        case .permission(let permission):
-            PermissionCard(permission: permission, chat: chat)
+        case .permission(let permission, _, _):
+            switch permission.kind {
+            case .permission: PermissionCard(permission: permission, chat: chat)
+            case .question(let questions): QuestionCard(questions: questions, chat: chat)
+            case .plan(let plan): PlanCard(plan: plan, chat: chat)
+            }
         case .failure(let failure):
             FailureCard(failure: failure, chat: chat)
         case .status:
             ChatStatusLine(chat: chat)
+        case .running(_, let command, let lines, let started, _):
+            RunningCard(command: command, lines: lines, started: started)
         }
     }
 }
 
 private struct ChatItemView: View {
     let item: ChatItem
+    let expanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
         switch item.content {
@@ -53,7 +61,9 @@ private struct ChatItemView: View {
         case .text(let text):
             MarkdownView(blocks: text.blocks)
         case .tools(let group):
-            ToolLine(group: group)
+            ToolLine(group: group, expanded: expanded, toggle: toggle)
+        case .edit(let call):
+            EditCard(call: call, isOpen: expanded, toggle: toggle)
         case .question(let question):
             HistoryLine(
                 symbol: "questionmark.bubble",
@@ -110,24 +120,79 @@ struct PromptBubble: View {
 /// A run of tool calls folded to one line: "Read TopBarView.swift and 3 more".
 private struct ToolLine: View {
     let group: ChatToolGroup
+    let expanded: Bool
+    let toggle: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: Self.symbol(group.kind))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(ChatStyle.secondaryText)
-                .frame(width: 18, height: 18)
-                .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
-            Text(group.summary)
-                .font(ChatStyle.toolLine)
-                .foregroundStyle(group.failed ? ChatStyle.removed : ChatStyle.secondaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if group.calls.contains(where: { $0.result == nil }) {
-                ProgressView().controlSize(.mini)
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    DisclosureChevron(isExpanded: expanded)
+                    Image(systemName: Self.symbol(group.kind))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(ChatStyle.secondaryText)
+                        .frame(width: 18, height: 18)
+                        .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                    Text(group.summary + Self.innerCount(group))
+                        .font(ChatStyle.toolLine)
+                        .foregroundStyle(group.failed ? ChatStyle.removed : ChatStyle.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if group.calls.contains(where: { $0.result == nil }) {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(group.calls, id: \.id) { call in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(Self.input(call))
+                                .font(ChatStyle.monoSmall)
+                                .foregroundStyle(ChatStyle.primaryText)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let result = call.result, !result.isEmpty {
+                                Text(Self.excerpt(result))
+                                    .font(ChatStyle.monoSmall)
+                                    .foregroundStyle(call.isError ? ChatStyle.removed : ChatStyle.tertiaryText)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.leading, 26)
             }
         }
-        .frame(minHeight: 22)
+    }
+
+    /// "· 4 tool calls" for subagents that made some.
+    static func innerCount(_ group: ChatToolGroup) -> String {
+        let count = group.calls.reduce(0) { $0 + $1.innerCalls }
+        return count == 0 ? "" : " · \(count) tool call" + (count == 1 ? "" : "s")
+    }
+
+    /// What a call was asked to do: its command, file, pattern, or address, else its name.
+    static func input(_ call: ChatToolCall) -> String {
+        let keys = ["command", "file_path", "pattern", "url", "query", "description", "prompt"]
+        let value = keys.lazy.compactMap { key -> String? in
+            if case .string(let text)? = call.input[key] { text } else { nil }
+        }.first
+        return value.map { "\(call.name): \($0)" } ?? call.name
+    }
+
+    /// An output's first 12 lines, so a long one stays readable.
+    static func excerpt(_ text: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.prefix(12).joined(separator: "\n")
+        return lines.count > 12 ? kept + "\n… \(lines.count - 12) more lines" : kept
     }
 
     static func symbol(_ kind: TranscriptParser.ToolKind) -> String {
@@ -470,5 +535,271 @@ struct ChatButton: View {
     private var fill: Color {
         if isPrimary { return Color.accentColor.opacity(isHovering ? 0.85 : 1) }
         return isHovering ? ChatStyle.buttonFill.opacity(1.6) : ChatStyle.buttonFill
+    }
+}
+
+/// A file change: its name and counts, then its changed lines, six until opened.
+struct EditCard: View {
+    let call: ChatToolCall
+    let isOpen: Bool
+    let toggle: () -> Void
+
+    private static let folded = 6
+
+    var body: some View {
+        let lines = call.edit?.hunks.flatMap(\.lines) ?? []
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    DisclosureChevron(isExpanded: isOpen)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .frame(width: 18, height: 18)
+                        .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                    Text(call.result == nil ? "Editing" : (call.isError ? "Could not edit" : "Edited"))
+                    Text(Self.fileName(call.edit?.file ?? ""))
+                        .font(ChatStyle.monoSmall)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    if let edit = call.edit {
+                        Text(verbatim: "+\(edit.added)").foregroundStyle(ChatStyle.added)
+                        Text(verbatim: "−\(edit.removed)").foregroundStyle(ChatStyle.removed)
+                    }
+                }
+                .font(ChatStyle.meta)
+                .foregroundStyle(ChatStyle.primaryText)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !lines.isEmpty {
+                Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array((isOpen ? lines : Array(lines.prefix(Self.folded))).enumerated()), id: \.offset) {
+                        _, line in DiffLine(line: line)
+                    }
+                    if !isOpen, lines.count > Self.folded {
+                        Text("\(lines.count - Self.folded) more lines")
+                            .font(.system(size: 11))
+                            .foregroundStyle(ChatStyle.tertiaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(.vertical, 7)
+            }
+        }
+        .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
+    }
+
+    static func fileName(_ path: String) -> String {
+        (path as NSString).lastPathComponent
+    }
+}
+
+private struct DiffLine: View {
+    let line: String
+
+    var body: some View {
+        Text(verbatim: line.isEmpty ? " " : line)
+            .font(ChatStyle.monoSmall)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 17, alignment: .leading)
+            .background(fill)
+    }
+
+    private var color: Color {
+        if line.hasPrefix("+") { return ChatStyle.added }
+        if line.hasPrefix("-") { return ChatStyle.removed }
+        return ChatStyle.secondaryText
+    }
+
+    private var fill: Color {
+        if line.hasPrefix("+") { return ChatStyle.added.opacity(0.11) }
+        if line.hasPrefix("-") { return ChatStyle.removed.opacity(0.1) }
+        return .clear
+    }
+}
+
+/// Claude asks: the current question's options as rows, picked with a click or keys 1 to 9.
+private struct QuestionCard: View {
+    let questions: [PromptQuestion]
+    let chat: ChatSession
+
+    var body: some View {
+        let step = min(chat.questionStep, questions.count - 1)
+        let question = questions[step]
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "questionmark.bubble").foregroundStyle(Style.agentWaiting)
+                Text("Claude asks")
+                if questions.count > 1 {
+                    Text(verbatim: "\(step + 1) of \(questions.count)").foregroundStyle(ChatStyle.tertiaryText)
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ChatStyle.strongText)
+            Text(question.question)
+                .font(ChatStyle.text)
+                .foregroundStyle(ChatStyle.strongText)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 6) {
+                ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                    OptionRow(
+                        number: index + 1, option: option, isMulti: question.multiSelect,
+                        isTicked: chat.questionSelection.contains(index)
+                    ) { chat.pick(index) }
+                }
+            }
+            HStack {
+                if question.multiSelect {
+                    ChatButton(title: "Submit", key: "⏎", isPrimary: true, action: chat.submitSelection)
+                }
+                Text("Or type your own answer")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChatStyle.tertiaryText)
+                Spacer()
+                ChatButton(title: "Decline", key: "esc", action: chat.deny)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(ChatStyle.askFill, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(ChatStyle.askBorder))
+    }
+}
+
+private struct OptionRow: View {
+    let number: Int
+    let option: PromptQuestion.Option
+    let isMulti: Bool
+    let isTicked: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    private var isRecommended: Bool { option.label.hasSuffix("(Recommended)") }
+    private var label: String {
+        isRecommended
+            ? String(option.label.dropLast("(Recommended)".count)).trimmingCharacters(in: .whitespaces)
+            : option.label
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(verbatim: "\(number)")
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .frame(width: 20, height: 20)
+                    .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 5))
+                if isMulti {
+                    Image(systemName: isTicked ? "checkmark.square.fill" : "square").padding(.top, 2)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(label).font(.system(size: 13, weight: .medium))
+                        if isRecommended { TagView(text: "Recommended") }
+                    }
+                    if let description = option.description, !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 12))
+                            .foregroundStyle(ChatStyle.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(ChatStyle.strongText)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovering ? ChatStyle.buttonFill.opacity(1.6) : ChatStyle.buttonFill,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// Claude's plan, to approve with edits accepted or asked about, or to keep planning.
+private struct PlanCard: View {
+    let plan: String
+    let chat: ChatSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.clipboard").foregroundStyle(Style.agentWaiting)
+                Text("Claude has a plan")
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ChatStyle.strongText)
+            MarkdownView(blocks: ChatMarkdown.parse(plan))
+                .padding(12)
+                .background(ChatStyle.codeFill, in: RoundedRectangle(cornerRadius: 7))
+            HStack(spacing: 8) {
+                ChatButton(title: "Approve and auto-accept edits", key: "⏎", isPrimary: true) {
+                    chat.approvePlan(acceptingEdits: true)
+                }
+                ChatButton(title: "Approve, ask before edits") { chat.approvePlan(acceptingEdits: false) }
+                Spacer()
+                ChatButton(title: "Keep planning", key: "esc", action: chat.deny)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(ChatStyle.askFill, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(ChatStyle.askBorder))
+    }
+}
+
+/// A command still running: its command, how long it has run, and the last lines it printed.
+private struct RunningCard: View {
+    let command: String
+    let lines: [String]
+    let started: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 18, height: 18)
+                    .background(ChatStyle.toolIcon, in: RoundedRectangle(cornerRadius: 5))
+                Text("Running")
+                Text(command).font(ChatStyle.monoSmall).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(ChatFormat.clock(context.date.timeIntervalSince(started)))
+                        .foregroundStyle(ChatStyle.tertiaryText)
+                }
+            }
+            .font(ChatStyle.meta)
+            .foregroundStyle(ChatStyle.primaryText)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            if !lines.isEmpty {
+                Rectangle().fill(ChatStyle.cardBorder).frame(height: 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(verbatim: line.isEmpty ? " " : line)
+                            .font(ChatStyle.monoSmall)
+                            .foregroundStyle(ChatStyle.secondaryText)
+                            .lineLimit(1)
+                            .frame(minHeight: 17, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+            }
+        }
+        .background(ChatStyle.cardFill, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(ChatStyle.cardBorder))
     }
 }

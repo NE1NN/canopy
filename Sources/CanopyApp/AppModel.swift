@@ -125,6 +125,7 @@ final class AppModel {
         terminals.continueNumbering(from: await workspace.savedNextPane)
         terminals.continueWebNumbering(from: await workspace.savedNextWebPage)
         terminals.webPlacement = await workspace.savedWebPlacement
+        terminals.chatDefaults = await workspace.savedChatDefaults
         savedWebPanelWidth = await workspace.webPanelWidth
         snapshot = await workspace.snapshot
         restoreTerminals(saved)
@@ -1009,7 +1010,8 @@ final class AppModel {
         do {
             try await workspace.setSavedTerminals(
                 terminals.saved().merging(deferredTerminals) { live, _ in live }, nextPane: terminals.nextPaneNumber,
-                nextWebPage: terminals.nextWebPageNumber, webPlacement: terminals.webPlacement)
+                nextWebPage: terminals.nextWebPageNumber, webPlacement: terminals.webPlacement,
+                chatDefaults: terminals.chatDefaults)
         } catch {
             show(error)
         }

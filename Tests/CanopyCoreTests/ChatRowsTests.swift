@@ -33,13 +33,14 @@ struct ChatRowsTests {
     func kinds(_ rows: [ChatRow]) -> [String] {
         rows.map {
             switch $0 {
-            case .item(let item): if case .prompt = item.content { "prompt" } else { "item" }
+            case .item(let item, _): if case .prompt = item.content { "prompt" } else { "item" }
             case .streaming: "streaming"
             case .queued: "queued"
             case .permission: "permission"
             case .trust: "trust"
             case .failure: "failure"
             case .status: "status"
+            case .running: "running"
             case .empty: "empty"
             }
         }

@@ -19,6 +19,20 @@ public struct ChatBuilder: Sendable {
         add(record)
     }
 
+    /// A subagent's own message, which counts its tool calls on the call that started it.
+    public mutating func add(subagentLine line: Data, parent: String) {
+        guard let record = TranscriptParser.Record(line: line), seen.insert(record.id).inserted,
+            let itemID = callItems[parent], let index = items.lastIndex(where: { $0.id == itemID }),
+            case .tools(let group) = items[index].content
+        else { return }
+        let calls = record.blocks.filter { if case .tool = $0 { true } else { false } }.count
+        guard calls > 0 else { return }
+        var updated = group.calls
+        if let call = updated.firstIndex(where: { $0.id == parent }) { updated[call].innerCalls += calls }
+        items[index].content = .tools(ChatToolGroup(calls: updated))
+        items[index].revision = nextRevision()
+    }
+
     /// A notice from Canopy rather than the transcript, such as an error Claude Code reported.
     public mutating func addNotice(_ text: String) {
         append(ChatItem(id: "notice-" + UUID().uuidString, content: .notice(text), at: Date().timeIntervalSince1970))
@@ -66,7 +80,8 @@ public struct ChatBuilder: Sendable {
             case .text(let text): parts.append(text)
             case .image: images += 1
             case .result(let id, let text, let isError):
-                addResult(id, TranscriptParser.ToolResult(text: text, isError: isError))
+                addResult(
+                    id, TranscriptParser.ToolResult(text: text, isError: isError), structured: record.toolUseResult)
             case .tool: break
             }
         }
@@ -100,7 +115,11 @@ public struct ChatBuilder: Sendable {
             case .text(let text): texts.append(text)
             case .tool(let id, let name, let input):
                 flush(&self)
-                addTool(ChatToolCall(id: id, name: name, input: input, result: nil, isError: false), at: record.at)
+                addTool(
+                    ChatToolCall(
+                        id: id, name: name, input: input, result: nil, isError: false,
+                        edit: ChatEdit(proposed: name, input: input)),
+                    at: record.at)
             case .image, .result: break
             }
         }
@@ -120,6 +139,8 @@ public struct ChatBuilder: Sendable {
             let questions = TranscriptParser.Builder.questions(call.input)
             let question = ChatQuestion(questions: questions, answer: answer(toQuestions: questions, call))
             append(ChatItem(id: call.id, content: .question(question), at: at))
+        case let name where ChatEdit.tools.contains(name):
+            append(ChatItem(id: call.id, content: .edit(call), at: at))
         case "ExitPlanMode":
             let plan = ChatPlan(
                 markdown: TranscriptParser.Builder.string(call.input["plan"]) ?? "", answer: answer(toPlan: call))
@@ -140,7 +161,9 @@ public struct ChatBuilder: Sendable {
         callItems[call.id] = call.id
     }
 
-    private mutating func addResult(_ id: String, _ result: TranscriptParser.ToolResult) {
+    private mutating func addResult(
+        _ id: String, _ result: TranscriptParser.ToolResult, structured: JSONValue? = nil
+    ) {
         guard let itemID = callItems[id], let index = items.lastIndex(where: { $0.id == itemID }) else {
             orphanResults[id] = result
             return
@@ -153,6 +176,12 @@ public struct ChatBuilder: Sendable {
                 calls[call].isError = result.isError
             }
             items[index].content = .tools(ChatToolGroup(calls: calls))
+            items[index].revision = nextRevision()
+        case .edit(var call):
+            call.result = result.text
+            call.isError = result.isError
+            if let edit = ChatEdit(result: structured) { call.edit = edit }
+            items[index].content = .edit(call)
             items[index].revision = nextRevision()
         case .question(var question):
             question.answer =

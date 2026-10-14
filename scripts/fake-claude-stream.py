@@ -15,6 +15,9 @@ What it does with a message depends on how the message starts:
   hold           asks to run `make test` and never ends the turn on its own
   crash          writes to stderr and exits 1
   /clear         starts a new session, as Claude Code's /clear does
+  tail [hold]    runs a command that prints ten lines over two seconds, written to its task file as Claude Code does
+  agent          runs a subagent that makes three tool calls of its own
+  plan           proposes a plan with ExitPlanMode, then says how it was answered
   two            asks two permissions at once, as parallel subagents do, and waits for both
   callback       sends a control request Canopy does not handle, then says how it was answered
   anything else  answers "You said: <message>"
@@ -156,6 +159,7 @@ def finish(text, error=False):
 
 
 def turn(text):
+    global mode
     interrupted.clear()
     if text == "/clear":
         old = SESSION
@@ -218,6 +222,56 @@ def turn(text):
         count = int(text[5:]) if text.startswith("slow ") else 200
         stream(" ".join(["word%d" % i for i in range(count)]))
         finish("slow")
+    elif text == "tail" or text == "tail hold":
+        tool_id, task = "toolu_" + uuid.uuid4().hex[:20], "b" + uuid.uuid4().hex[:8]
+        emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": "count"}}]))
+        root = os.environ.get("FAKE_CLAUDE_TASKS", "/tmp/claude-%d" % os.getuid())
+        folder = os.path.join(root, "".join(c if c.isalnum() else "-" for c in CWD), SESSION, "tasks")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, task + ".output")
+        emit({"type": "system", "subtype": "task_started", "task_id": task, "tool_use_id": tool_id,
+              "is_backgrounded": False, "task_type": "local_bash"})
+        with open(path, "w") as out:
+            for n in range(1, 11):
+                out.write("line %d\n" % n)
+                out.flush()
+                time.sleep(0.2)
+        if text == "tail hold":
+            # Runs until the next message comes, so a test decides when it ends.
+            deadline = time.time() + 120
+            while messages.qsize() < 1 and time.time() < deadline:
+                time.sleep(0.05)
+        else:
+            time.sleep(0.5)
+        os.remove(path)
+        emit({"type": "system", "subtype": "task_notification", "task_id": task, "tool_use_id": tool_id,
+              "status": "completed"})
+        emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "line 10"}]))
+        finish("counted")
+    elif text == "agent":
+        tool_id = "toolu_" + uuid.uuid4().hex[:20]
+        emit(record("assistant", [{"type": "tool_use", "id": tool_id, "name": "Agent",
+                                   "input": {"description": "Look around", "prompt": "Look"}}]))
+        for n in range(3):
+            inner = {"type": "assistant", "uuid": str(uuid.uuid4()), "parent_tool_use_id": tool_id,
+                     "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_in%d" % n,
+                                                                   "name": "Read", "input": {"file_path": "/x"}}]}}
+            emit(inner)
+        emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "looked"}]))
+        finish("looked")
+    elif text == "plan":
+        tool_id, answer = ask("ExitPlanMode", {"plan": "# Plan\n\n1. Add the case\n2. Save it"}, needs_author=True)
+        if answer and answer.get("behavior") == "allow":
+            for update in answer.get("updatedPermissions", []):
+                if update.get("type") == "setMode":
+                    mode = update.get("mode", mode)
+                    emit({"type": "system", "subtype": "status", "status": None, "permissionMode": mode})
+            emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "User has approved your plan."}]))
+            stream("Approved in " + mode + ".")
+            finish("Approved in " + mode + ".")
+        else:
+            emit(record("user", [{"type": "tool_result", "tool_use_id": tool_id, "content": "declined", "is_error": True}]))
+            finish("Kept planning.")
     elif text == "two":
         asked = []
         for command in ("ls a", "ls b"):

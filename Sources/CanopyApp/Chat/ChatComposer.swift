@@ -1,6 +1,8 @@
 import AppKit
 import CanopyCore
+import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The box at the bottom of a chat: what the author writes, then Stop or Send.
 struct ChatComposer: View {
@@ -17,6 +19,15 @@ struct ChatComposer: View {
     var body: some View {
         @Bindable var chat = chat
         VStack(alignment: .leading, spacing: 8) {
+            if !chat.draftImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(chat.draftImages) { image in
+                            ImageThumbnail(image: image) { chat.draftImages.removeAll { $0.id == image.id } }
+                        }
+                    }
+                }
+            }
             ZStack(alignment: .topLeading) {
                 if chat.draft.isEmpty {
                     Text(placeholder)
@@ -26,11 +37,13 @@ struct ChatComposer: View {
                 }
                 ComposerTextView(
                     text: $chat.draft, height: $height, paneID: paneID, composers: composers,
-                    onReturn: submit, onEscape: escape
+                    onReturn: submit, onEscape: escape, onDigit: digit,
+                    onImage: { chat.draftImages.append($0) }
                 )
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
             HStack(spacing: 6) {
+                ChatChips(chat: chat)
                 Spacer()
                 if chat.isWorking && chat.permission == nil {
                     Button(action: chat.interrupt) {
@@ -81,20 +94,24 @@ struct ChatComposer: View {
     }
 
     private var placeholder: String {
+        if case .question? = chat.permission?.kind { return "Or answer in your own words" }
+        if case .plan? = chat.permission?.kind { return "Or tell Claude what to change" }
         if chat.permission != nil { return "Or tell Claude what to do instead" }
         if chat.isWorking { return "Reply to Claude. It reads this when the current step ends." }
         return "Reply to Claude"
     }
 
     private var canSend: Bool {
-        !chat.needsTrust && !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.needsTrust
+            && (!chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty)
     }
 
     private func send() {
-        let text = chat.draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSend else { return }
+        let (text, images) = (chat.draft, chat.draftImages)
         chat.draft = ""
-        chat.send(text)
+        chat.draftImages = []
+        chat.send(text, images: images)
     }
 
     /// Return sends what is written; with nothing written it allows an open prompt.
@@ -103,9 +120,22 @@ struct ChatComposer: View {
             onTrust()
         } else if canSend {
             send()
-        } else if chat.permission != nil {
-            chat.allow()
+        } else if let permission = chat.permission {
+            switch permission.kind {
+            case .permission: chat.allow()
+            case .question: chat.submitSelection()
+            case .plan: chat.approvePlan(acceptingEdits: true)
+            }
         }
+    }
+
+    /// With nothing written, a digit picks an option of an open question.
+    private func digit(_ number: Int) -> Bool {
+        guard chat.draft.isEmpty, case .question? = chat.permission?.kind, chat.canPick(number - 1) else {
+            return false
+        }
+        chat.pick(number - 1)
+        return true
     }
 
     /// Esc turns down trust, denies an open prompt, or stops Claude.
@@ -153,6 +183,57 @@ final class ChatComposers {
 /// The composer's text view, which says when it joins a window so it can take the keyboard then.
 final class ComposerNSTextView: NSTextView {
     var onWindow: () -> Void = {}
+    /// Takes a digit pressed with no modifiers before it is typed; true when it was used.
+    var onDigit: (Int) -> Bool = { _ in false }
+    /// Takes an image pasted or dropped in, as PNG.
+    var onImage: (ChatImage) -> Void = { _ in }
+
+    override func paste(_ sender: Any?) {
+        if takeImages(from: .general) { return }
+        super.paste(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if takeImages(from: sender.draggingPasteboard) { return true }
+        return super.performDragOperation(sender)
+    }
+
+    /// Image files dropped or pasted, or image data, prepared off the main thread. False when there were none, and
+    /// when the pasteboard holds text as well, which an app that copies a picture alongside its text means as text.
+    private func takeImages(from pasteboard: NSPasteboard) -> Bool {
+        let urls =
+            (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?
+            .filter { ["png", "jpg", "jpeg", "gif", "heic", "tiff", "webp"].contains($0.pathExtension.lowercased()) }
+            ?? []
+        var sources = urls.compactMap { try? Data(contentsOf: $0) }
+        if sources.isEmpty, pasteboard.string(forType: .string) == nil,
+            let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff)
+        {
+            sources = [data]
+        }
+        guard !sources.isEmpty else { return false }
+        let datas = sources
+        Task { [weak self] in
+            let images = await Task.detached { datas.compactMap(ChatImagePrep.prepare) }.value
+            for image in images { self?.onImage(image) }
+        }
+        return true
+    }
+
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + [.fileURL, .png, .tiff]
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // An input method choosing a candidate with a digit keeps it.
+        if !hasMarkedText(), event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let characters = event.charactersIgnoringModifiers, characters.count == 1,
+            let number = Int(characters), (1...9).contains(number), onDigit(number)
+        {
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -168,6 +249,8 @@ private struct ComposerTextView: NSViewRepresentable {
     let composers: ChatComposers
     let onReturn: () -> Void
     let onEscape: () -> Void
+    let onDigit: (Int) -> Bool
+    let onImage: (ChatImage) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -188,6 +271,9 @@ private struct ComposerTextView: NSViewRepresentable {
         scroll.documentView = view
         let (pane, composers) = (paneID, self.composers)
         view.onWindow = { composers.joinedWindow(pane) }
+        view.onDigit = { [weak coordinator = context.coordinator] in coordinator?.parent.onDigit($0) ?? false }
+        view.onImage = { [weak coordinator = context.coordinator] in coordinator?.parent.onImage($0) }
+        view.registerForDraggedTypes([.fileURL, .png, .tiff])
         view.delegate = context.coordinator
         view.drawsBackground = false
         view.isRichText = false
@@ -254,5 +340,150 @@ private struct ComposerTextView: NSViewRepresentable {
             let height = max(ChatComposer.lineHeight, ceil(used))
             if parent.height != height { parent.height = height }
         }
+    }
+}
+
+/// The mode and model chips, and how much of the context the conversation uses.
+private struct ChatChips: View {
+    let chat: ChatSession
+
+    private static let modes = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Menu {
+                ForEach(Self.modes, id: \.self) { mode in
+                    Button {
+                        chat.setMode(mode)
+                    } label: {
+                        if mode == chat.mode {
+                            Label(ChatFormat.modeName(mode), systemImage: "checkmark")
+                        } else {
+                            Text(ChatFormat.modeName(mode))
+                        }
+                    }
+                }
+            } label: {
+                chip(ChatFormat.modeName(chat.mode), symbol: Self.symbol(chat.mode), tint: Self.tint(chat.mode))
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Permission mode")
+            Menu {
+                ForEach(chat.models, id: \.value) { model in
+                    Button(model.displayName) { chat.setModel(model.value) }
+                }
+            } label: {
+                chip(chat.model.map(ChatFormat.modelName) ?? "Default model", symbol: nil, tint: nil)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Model")
+            if let used = chat.contextTokens, let window = chat.contextWindow {
+                Text(ChatFormat.context(used: used, window: window))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(ChatStyle.tertiaryText)
+                    .padding(.leading, 4)
+            }
+        }
+    }
+
+    private func chip(_ title: String, symbol: String?, tint: Color?) -> some View {
+        HStack(spacing: 5) {
+            if let symbol { Image(systemName: symbol).foregroundStyle(tint ?? ChatStyle.chipText) }
+            Text(title)
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+        }
+        .font(.system(size: 11.5))
+        .foregroundStyle(ChatStyle.chipText)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
+    }
+
+    private static func symbol(_ mode: String) -> String {
+        switch mode {
+        case "acceptEdits": "pencil"
+        case "plan": "list.bullet.clipboard"
+        case "auto": "sparkles"
+        case "bypassPermissions": "chevron.forward.2"
+        default: "hand.raised"
+        }
+    }
+
+    private static func tint(_ mode: String) -> Color? {
+        mode == "bypassPermissions" ? ChatStyle.removed : nil
+    }
+}
+
+/// A pasted image waiting to be sent, with a button that takes it out.
+private struct ImageThumbnail: View {
+    let image: ChatImage
+    let remove: () -> Void
+
+    /// Decoded once per image, not on every keystroke's redraw.
+    @MainActor private static var pictures: [UUID: NSImage] = [:]
+
+    @MainActor static func picture(_ image: ChatImage) -> NSImage? {
+        if let picture = pictures[image.id] { return picture }
+        let picture = NSImage(data: image.data)
+        if pictures.count > 32 { pictures = [:] }
+        pictures[image.id] = picture
+        return picture
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let picture = ImageThumbnail.picture(image) {
+                Image(nsImage: picture)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+            }
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+            .padding(2)
+            .help("Remove")
+        }
+    }
+}
+
+/// Makes an image fit for Claude: at most 1568 pixels on its long side, as PNG, or JPEG when that is under 5 MB and
+/// PNG is not.
+enum ChatImagePrep {
+    static let longSide = 1568
+    static let limit = 5 * 1024 * 1024
+
+    static func prepare(_ data: Data) -> ChatImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: longSide,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+        else { return nil }
+        if let png = encode(image, "public.png", quality: nil), png.count < limit {
+            return ChatImage(mediaType: "image/png", data: png)
+        }
+        guard let jpeg = encode(image, "public.jpeg", quality: 0.85), jpeg.count < limit else { return nil }
+        return ChatImage(mediaType: "image/jpeg", data: jpeg)
+    }
+
+    private static func encode(_ image: CGImage, _ type: String, quality: Double?) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, type as CFString, 1, nil) else { return nil }
+        let options = quality.map { [kCGImageDestinationLossyCompressionQuality: $0] as CFDictionary }
+        CGImageDestinationAddImage(destination, image, options)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 }

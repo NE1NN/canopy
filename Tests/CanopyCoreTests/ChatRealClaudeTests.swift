@@ -72,6 +72,14 @@ struct ChatRealClaudeTests {
         let id = try #require(chat.sessionID)
         #expect(chat.contextWindow != nil)
         #expect(chat.contextTokens != nil)
+        #expect(chat.models.contains { $0.value == "sonnet" || $0.value.contains("sonnet") })
+
+        // The model chip switches the running session.
+        chat.setModel("sonnet")
+        chat.send("Reply with exactly the word SWITCHED and nothing else.")
+        #expect(await finished(chat))
+        #expect(chat.model?.contains("sonnet") == true)
+        chat.setModel("haiku")
 
         chat.send("Use the Bash tool to run exactly this command: touch made.txt")
         #expect(await eventually(timeout: .seconds(120)) { chat.permission != nil })
