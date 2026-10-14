@@ -1,5 +1,13 @@
 import Foundation
 
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#elseif canImport(Musl)
+    import Musl
+#endif
+
 public enum InstanceLockError: Error, Equatable {
     case heldElsewhere(String)
     case cannotOpen(String, errno: Int32)

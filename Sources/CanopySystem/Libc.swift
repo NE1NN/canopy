@@ -24,6 +24,16 @@ import Foundation
     let closeOnExecSocket: Int32 = 0
 #endif
 
+/// A new stream socket that never raises SIGPIPE. macOS refuses the option once the peer has gone, which can be as
+/// soon as `connect` returns, so it goes on before connecting, and on a listener for the sockets it accepts.
+func newStreamSocket(_ family: Int32) -> Int32 {
+    let fd = socket(family, streamSocket | closeOnExecSocket, 0)
+    #if canImport(Darwin)
+        if fd >= 0 { try? setOption(fd, SOL_SOCKET, SO_NOSIGPIPE, 1) }
+    #endif
+    return fd
+}
+
 func sendBytes(_ fd: Int32, _ bytes: UnsafeRawPointer, _ count: Int) -> Int {
     #if canImport(Darwin)
         Foundation.send(fd, bytes, count, 0)
