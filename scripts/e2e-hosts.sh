@@ -154,7 +154,8 @@ wait_for() { # seconds, then a command that must succeed
     return 1
 }
 
-screen_has() { "$cli" term read "$pane" --lines 200 | grep -q "$1"; }
+# Joined, as a narrow pane wraps a long message mid-word, as when a web panel shares the row.
+screen_has() { "$cli" term read "$pane" --lines 200 | tr -d '\n' | grep -q "$1"; }
 host_state() { "$cli" host list --json | json '[h["state"] for h in d if h["alias"] == "'"$alias"'"][0]'; }
 state_is() { [[ "$(host_state)" == "$1" ]]; }
 # The master's control socket is named after this home's id, in the home or, when that is too long, in /tmp.
