@@ -75,6 +75,26 @@ struct BoxProcessTests {
         #expect(first.handle.isRunning)
     }
 
+    /// Two started at the same moment both pass the socket check; the home's lock lets only one go on.
+    @Test func aSecondServeWhileTheHomeIsLockedStopsAtOnce() async throws {
+        let dir = try TempDir()
+        let paths = BoxPaths(root: Paths.canonical(dir.path), homeID: "abc12347")
+        try FileManager.default.createDirectory(atPath: paths.folder, withIntermediateDirectories: true)
+        let held = try InstanceLock(path: paths.folder + "/serve.lock")
+
+        // Without the lock it would serve on and never return, so it gets a while, not forever.
+        let status = Shared<Int32?>(nil)
+        let run = Task { [path = dir.path] in
+            let result = await BoxMain.run(["serve", "--home-id", "abc12347", "--root", path])
+            status.withLock { $0 = result }
+        }
+        defer { run.cancel() }
+
+        #expect(await eventually(timeout: .seconds(15)) { status.withLock { $0 } == 1 })
+        #expect(!FileManager.default.fileExists(atPath: paths.stateFile))
+        withExtendedLifetime(held) {}
+    }
+
     @Test func aBadCommandPrintsUsage() async throws {
         #expect(await BoxMain.run(["serve"]) == 2)
         #expect(await BoxMain.run(["nothing"]) == 2)
