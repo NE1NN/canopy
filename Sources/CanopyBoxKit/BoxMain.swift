@@ -36,7 +36,7 @@ public enum BoxMain {
             settings: PhoneServerSettings(
                 registryFile: URL(fileURLWithPath: paths.folder + "/phones.json"),
                 serverName: {
-                    BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.host ?? ProcessInfo.processInfo.hostName
+                    BoxDaemon.load(BoxConfig.self, from: paths.configFile)?.host ?? BoxDaemon.machineName
                 },
                 kind: PhoneServerKind.box,
                 wake: { phoneWake(paths) },
@@ -160,6 +160,26 @@ public enum BoxMain {
         }
         signal(SIGPIPE, SIG_IGN)
         let paths = BoxPaths(root: Paths.canonical(root), homeID: homeID)
+        // One daemon per home, held until it exits: two started at the same moment would both pass the socket check
+        // below, and both load and save the home's state before one lost the socket.
+        // A restart's new daemon can get here a moment before the old one has gone, so it waits a little for the lock.
+        try? FileManager.default.createDirectory(
+            atPath: paths.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let locked = await onOwnThread {
+            Result { try InstanceLock.waiting(path: paths.folder + "/serve.lock", timeout: 5) }
+        }
+        let lock: InstanceLock
+        switch locked {
+        case .success(let held):
+            lock = held
+        case .failure(InstanceLockError.heldElsewhere):
+            printError("canopy-box already runs for this home.")
+            return 1
+        case .failure(let error):
+            printError("canopy-box could not lock \(paths.folder)/serve.lock: \(error)")
+            return 1
+        }
+        defer { withExtendedLifetime(lock) {} }
         var environment = ProcessInfo.processInfo.environment
         environment["TMUX"] = nil
         let tmux = Tmux(
