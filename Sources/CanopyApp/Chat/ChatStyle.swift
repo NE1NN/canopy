@@ -57,6 +57,16 @@ enum ChatStyle {
     static let failureBorder = Color.adaptive(
         light: NSColor(hex: 0xD1342C).withAlphaComponent(0.4), dark: NSColor(hex: 0xFF6961).withAlphaComponent(0.35))
     static let failureFill = Color.adaptive(light: 0xFFF3F2, dark: 0x2A1E1E)
+    /// A published artifact's card, in the system blue.
+    static let artifactBorder = Color.adaptive(
+        light: NSColor(hex: 0x0A84FF).withAlphaComponent(0.45), dark: NSColor(hex: 0x0A84FF).withAlphaComponent(0.55))
+    static let artifactFill = Color.adaptive(
+        light: NSColor(hex: 0x0A84FF).withAlphaComponent(0.06), dark: NSColor(hex: 0x0A84FF).withAlphaComponent(0.08))
+    static let artifactLink = Color.adaptive(light: 0x0A6CFF, dark: 0x4DA3FF)
+    static let replacedFill = Color.adaptive(
+        light: NSColor.black.withAlphaComponent(0.025), dark: NSColor.white.withAlphaComponent(0.03))
+    static let thumbnailFill = Color.adaptive(light: 0xE9E9EC, dark: 0x2A2A2D)
+    static let thumbnailTile = Color.adaptive(light: 0xD6D6DA, dark: 0x3A3A3D)
 }
 
 /// A key's name in a small outlined box, as in "Allow ⏎".

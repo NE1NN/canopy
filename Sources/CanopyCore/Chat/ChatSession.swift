@@ -220,19 +220,39 @@ public final class ChatSession {
     @ObservationIgnored private var olderCursor: Int?
     @ObservationIgnored private var transcriptURL: URL?
     @ObservationIgnored private var pendingText = ""
+    /// The turn's newest token count, which `turnTokens` shows at most four times a second: Claude Code can report it
+    /// with every word, and each change redraws the chat.
+    @ObservationIgnored private var countedTokens = 0
+    @ObservationIgnored private var tokenFlush: Task<Void, Never>?
     @ObservationIgnored private var flush: Task<Void, Never>?
     @ObservationIgnored private var tokensBeforeMessage = 0
     /// An interrupt went out this turn, so a permission request still on its way is turned down.
     @ObservationIgnored private var interrupting = false
     @ObservationIgnored private var isOpen = false
+    @ObservationIgnored private let thumbnails: ArtifactThumbnails?
+
+    /// Called for each artifact Claude publishes while the chat watches, never for ones read from history.
+    @ObservationIgnored public var onArtifact: (ChatArtifact) -> Void = { _ in }
+    /// Counts snapshots saved, so cards redraw with theirs.
+    public private(set) var thumbnailsSaved = 0
+
+    /// The snapshot of an artifact's version, once one is saved.
+    public func thumbnail(for artifact: ChatArtifact) -> URL? {
+        thumbnails?.existing(for: artifact)
+    }
+
+    public func thumbnailSaved() {
+        thumbnailsSaved += 1
+    }
 
     public init(
         model: String?, mode: String, sessionID: String?, title: String, launcher: @escaping Launcher,
         transcript: @escaping (String) -> URL?, trust: ChatTrust,
         tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())"),
-        shell: ((String) -> TerminalLaunch)? = nil
+        shell: ((String) -> TerminalLaunch)? = nil, thumbnails: ArtifactThumbnails? = nil
     ) {
         self.shell = shell
+        self.thumbnails = thumbnails
         self.tasksRoot = tasksRoot
         self.model = model
         self.mode = mode
@@ -286,7 +306,7 @@ public final class ChatSession {
         guard !needsTrust else { return }
         if !isWorking {
             turnStarted = Date()
-            turnTokens = 0
+            showTokens(0)
             lastTurn = nil
         }
         // A slash command must start its message, so `!` output waits for the next plain one.
@@ -581,6 +601,8 @@ public final class ChatSession {
     public func close() {
         stopShell()
         flush?.cancel()
+        tokenFlush?.cancel()
+        tokenFlush = nil
         let stream = stream
         self.stream = nil
         stream?.stop()
@@ -608,6 +630,7 @@ public final class ChatSession {
             // A /clear or a new session since then makes the page belong to another conversation.
             guard let (older, cursor) = loaded, olderCursor == before, transcriptURL == url else { return }
             builder.prepend(older)
+            _ = builder.takePublished()
             olderCursor = cursor
             hasOlder = cursor != nil
         }
@@ -624,6 +647,7 @@ public final class ChatSession {
         }
         transcriptURL = url
         for line in page.lines { builder.add(line: line) }
+        _ = builder.takePublished()
         olderCursor = page.older
         hasOlder = page.older != nil
     }
@@ -682,7 +706,7 @@ public final class ChatSession {
             hasOlder = false
             endStreaming()
         case .messageStarted:
-            tokensBeforeMessage = turnTokens
+            tokensBeforeMessage = countedTokens
             endStreaming()
         case .blockStarted(_, let kind):
             activity = kind == "thinking" ? .thinking : .working
@@ -690,11 +714,13 @@ public final class ChatSession {
             pendingText += text
             publishStreamingSoon()
         case .outputTokens(let tokens):
-            turnTokens = tokensBeforeMessage + tokens
+            countedTokens = tokensBeforeMessage + tokens
+            showTokensSoon()
         case .message(let message):
             received(message)
         case .result(let result):
             endStreaming()
+            showTokens(countedTokens)
             // Claude Code drops what was queued when a turn is interrupted, so it goes back to the composer.
             if interrupting { returnQueuedToDraft() }
             interrupting = false
@@ -743,6 +769,7 @@ public final class ChatSession {
         }
         if message.isReplay { taken(message.line) }
         builder.add(line: message.line)
+        for artifact in builder.takePublished() { onArtifact(artifact) }
     }
 
     /// Puts messages Claude never took back in the composer, so nothing the author wrote is lost.
@@ -861,15 +888,39 @@ public final class ChatSession {
         for toolUse in Array(tasks.keys) { endTail(toolUse) }
     }
 
-    /// Draws the new text now if the last draw was at least `streamingInterval` ago, or else once it is.
+    /// How long to leave between draws. Each one lays out the growing block again, so a long paragraph or code block
+    /// is drawn less often, which keeps the cost of streaming about the same however long the block gets.
+    static func streamingInterval(growing length: Int) -> Duration {
+        min(max(streamingInterval, .microseconds(length * 20)), .milliseconds(300))
+    }
+
+    private func showTokensSoon() {
+        guard tokenFlush == nil else { return }
+        tokenFlush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            self.tokenFlush = nil
+            if self.turnTokens != self.countedTokens { self.turnTokens = self.countedTokens }
+        }
+    }
+
+    private func showTokens(_ count: Int) {
+        tokenFlush?.cancel()
+        tokenFlush = nil
+        countedTokens = count
+        if turnTokens != count { turnTokens = count }
+    }
+
+    /// Draws the new text now if the last draw was long enough ago, or else once it is.
     private func publishStreamingSoon() {
         let now = ContinuousClock.now
-        guard let last = lastStreamingPublish, now - last < Self.streamingInterval else {
+        let interval = Self.streamingInterval(growing: (streaming?.growingLength ?? 0) + pendingText.utf8.count)
+        guard let last = lastStreamingPublish, now - last < interval else {
             publishStreaming()
             return
         }
         guard flush == nil else { return }
-        let wait = Self.streamingInterval - (now - last)
+        let wait = interval - (now - last)
         flush = Task { [weak self] in
             try? await Task.sleep(for: wait)
             guard let self, !Task.isCancelled else { return }

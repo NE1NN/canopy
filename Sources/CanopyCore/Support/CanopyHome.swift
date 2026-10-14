@@ -40,6 +40,8 @@ public struct CanopyHome: Sendable, Equatable {
     public var pluginsRoot: URL { root.appending(path: "plugins") }
     /// One JSON Lines file of activity events per local day.
     public var activityFolder: URL { root.appending(path: "activity") }
+    /// Snapshots of the artifacts chats published, for their cards.
+    public var thumbnailsFolder: URL { root.appending(path: "thumbnails") }
     /// ZDOTDIR for zsh terminals while command logging is on.
     public var zshShimFolder: URL { root.appending(path: "shell/zsh") }
     public var socketPath: String { root.appending(path: "canopy.sock").path }

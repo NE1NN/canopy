@@ -10,7 +10,10 @@ public struct ChatBuilder: Sendable {
     private var callItems: [String: String] = [:]
     /// Results whose call is not loaded, which an older page may hold.
     private var orphanResults: [String: TranscriptParser.ToolResult] = [:]
+    private var orphanStructured: [String: JSONValue] = [:]
     private var revisions = 0
+    /// Artifacts published since `takePublished` last ran.
+    private var published: [ChatArtifact] = []
 
     public init() {}
 
@@ -47,6 +50,7 @@ public struct ChatBuilder: Sendable {
     public func olderPage(lines: [Data]) -> ChatBuilder {
         var older = ChatBuilder()
         older.orphanResults = orphanResults
+        older.orphanStructured = orphanStructured
         older.seen = seen
         for line in lines { older.add(line: line) }
         return older
@@ -55,12 +59,26 @@ public struct ChatBuilder: Sendable {
     public mutating func prepend(_ older: ChatBuilder) {
         // Results that arrived while the page loaded belong to its calls too.
         let late = orphanResults.filter { older.callItems[$0.key] != nil }
-        defer { for (id, result) in late { addResult(id, result) } }
-        for id in older.callItems.keys { orphanResults[id] = nil }
+        let lateStructured = orphanStructured.filter { older.callItems[$0.key] != nil }
+        defer {
+            for (id, result) in late { addResult(id, result, structured: lateStructured[id]) }
+            markVersions()
+        }
+        for id in older.callItems.keys {
+            orphanResults[id] = nil
+            orphanStructured[id] = nil
+        }
         items = older.items + items
         seen.formUnion(older.seen)
         callItems.merge(older.callItems) { new, _ in new }
         orphanResults.merge(older.orphanResults.filter { callItems[$0.key] == nil }) { new, _ in new }
+        orphanStructured.merge(older.orphanStructured.filter { callItems[$0.key] == nil }) { new, _ in new }
+    }
+
+    /// Artifacts whose publish came in since the last call, oldest first.
+    public mutating func takePublished() -> [ChatArtifact] {
+        defer { published = [] }
+        return published
     }
 
     mutating func add(_ record: TranscriptParser.Record) {
@@ -180,6 +198,7 @@ public struct ChatBuilder: Sendable {
 
     private mutating func addTool(_ call: ChatToolCall, at: Double) {
         var call = call
+        let structured = orphanStructured.removeValue(forKey: call.id)
         if let result = orphanResults.removeValue(forKey: call.id) {
             call.result = result.text
             call.isError = result.isError
@@ -187,6 +206,16 @@ public struct ChatBuilder: Sendable {
         switch call.name {
         case "ToolSearch":
             return
+        case "Artifact" where ChatArtifact.publishes(call) && !call.isError:
+            var artifact = ChatArtifact(call: call)
+            if let result = call.result { artifact.published(text: result, structured: structured) }
+            // A result that names no page reads as the tool call it was, as when it comes after the call.
+            if call.result != nil, artifact.url == nil {
+                append(ChatItem(id: call.id, content: .tools(ChatToolGroup(calls: [call])), at: at))
+            } else {
+                append(ChatItem(id: call.id, content: .artifact(artifact), at: at))
+                if artifact.url != nil { markVersions() }
+            }
         case "AskUserQuestion":
             let questions = TranscriptParser.Builder.questions(call.input)
             let question = ChatQuestion(questions: questions, answer: answer(toQuestions: questions, call))
@@ -218,6 +247,7 @@ public struct ChatBuilder: Sendable {
     ) {
         guard let itemID = callItems[id], let index = items.lastIndex(where: { $0.id == itemID }) else {
             orphanResults[id] = result
+            orphanStructured[id] = structured
             return
         }
         switch items[index].content {
@@ -245,8 +275,46 @@ public struct ChatBuilder: Sendable {
             plan.answer = result.isError ? "Declined" : "Approved"
             items[index].content = .plan(plan)
             items[index].revision = nextRevision()
+        case .artifact(var artifact):
+            items[index].revision = nextRevision()
+            var call = artifact.call
+            call.result = result.text
+            call.isError = result.isError
+            artifact.published(text: result.text, structured: structured)
+            guard !result.isError, artifact.url != nil else {
+                // A publish that failed, or whose result names no page, reads as the tool call it was.
+                items[index].content = .tools(ChatToolGroup(calls: [call]))
+                return
+            }
+            items[index].content = .artifact(artifact)
+            markVersions()
+            if case .artifact(let numbered) = items[index].content { published.append(numbered) }
         default:
             break
+        }
+    }
+
+    /// Numbers each artifact's versions in the conversation, where the result named none, and marks all but the
+    /// newest of each as replaced.
+    private mutating func markVersions() {
+        var counts: [URL: Int] = [:]
+        var newest: [URL: Int] = [:]
+        var numbered: [Int: Int] = [:]
+        for (index, item) in items.enumerated() {
+            guard case .artifact(let artifact) = item.content, let url = artifact.url else { continue }
+            counts[url, default: 0] += 1
+            let version = artifact.reportedVersion ?? counts[url, default: 1]
+            numbered[index] = version
+            newest[url] = max(newest[url] ?? 0, version)
+        }
+        for (index, version) in numbered {
+            guard case .artifact(var artifact) = items[index].content, let url = artifact.url else { continue }
+            let replacedBy = newest[url].flatMap { $0 > version ? $0 : nil }
+            guard artifact.version != version || artifact.replacedBy != replacedBy else { continue }
+            artifact.version = version
+            artifact.replacedBy = replacedBy
+            items[index].content = .artifact(artifact)
+            items[index].revision = nextRevision()
         }
     }
 

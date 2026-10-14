@@ -18,6 +18,39 @@ extension TerminalStore {
         panelsByRow[path].flatMap { $0.isHidden ? nil : $0.page }
     }
 
+    /// Shows an artifact a chat published, or one the author opened from its card, in the chat's row: beside it in the
+    /// panel, or in a tab. A page already showing it stays, and `reloading` loads the new version into it. A snapshot is
+    /// wanted for `thumbnail` when the chat has none of that version yet.
+    @discardableResult
+    public func showArtifact(
+        _ url: URL, from chatPane: Pane, placement: WebPlacement = .panel, thumbnail: String? = nil,
+        reloading: Bool = false
+    ) -> OpenedPage {
+        let opened = openPage(url, for: chatPane.context, placement: placement)
+        // The page may have moved on from the artifact since, so it loads the artifact's address again.
+        if reloading, !opened.isNew { onLoadPage(opened.page.id, url) }
+        if let thumbnail, !artifactThumbnails.has(thumbnail) {
+            thumbnailWishes[opened.page.id] = ThumbnailWish(key: thumbnail, url: url, pane: chatPane.id)
+        }
+        return opened
+    }
+
+    /// The snapshot a page showing `url` should give, if a chat asked for one. A page that went elsewhere, such as to
+    /// sign in, gives none until it comes back.
+    public func thumbnailWish(for page: WebPageID, at url: URL?) -> ThumbnailWish? {
+        guard let wish = thumbnailWishes[page], let url, url.host() == wish.url.host(),
+            url.path().trimmingSuffix("/") == wish.url.path().trimmingSuffix("/")
+        else { return nil }
+        return wish
+    }
+
+    /// Keeps a page's snapshot and redraws the cards of every chat, since another tab may show the same artifact.
+    public func saveThumbnail(_ png: Data, for wish: ThumbnailWish, page: WebPageID) throws {
+        try artifactThumbnails.save(png, for: wish.key)
+        if thumbnailWishes[page] == wish { thumbnailWishes[page] = nil }
+        for pane in panes { pane.chat?.thumbnailSaved() }
+    }
+
     /// Shows `url` in the row. A page the row already shows is shown where it is. Otherwise it opens in the panel,
     /// replacing the panel's page, or in a new tab after the selected one, by `placement` or else where the author
     /// last moved a page. Either way the row's panel shows, or the page's tab is selected.
@@ -171,6 +204,7 @@ extension TerminalStore {
 
     /// Logs a page that closed and lets the app drop its web view.
     func retire(_ page: WebPage) {
+        thumbnailWishes[page.id] = nil
         record(ActivityType.webClosed, page)
         onPageClosed(page.id)
     }
@@ -185,5 +219,11 @@ extension TerminalStore {
         }
         activity.record(
             type, repo: page.context.repoName, row: page.context.rowName, path: page.context.rowPath, data: data)
+    }
+}
+
+extension String {
+    fileprivate func trimmingSuffix(_ suffix: String) -> String {
+        hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
     }
 }

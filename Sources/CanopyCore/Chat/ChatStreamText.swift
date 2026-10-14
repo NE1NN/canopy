@@ -13,10 +13,14 @@ public struct ChatStreamText: Equatable, Sendable {
 
     public init() {}
 
+    /// The size of the block still growing, which each redraw lays out again.
+    public var growingLength: Int { text.utf8.count - settledLength }
+
     public mutating func append(_ delta: String) {
         text += delta
         let utf8 = Array(text.utf8)
-        if let boundary = Self.lastBoundary(in: utf8), boundary > settledLength {
+        // What came before the last settled block cannot change, and no fence is open there.
+        if let boundary = Self.lastBoundary(in: utf8, from: settledLength), boundary > settledLength {
             let chunk = String(decoding: utf8[settledLength..<boundary], as: UTF8.self)
             settledBlocks += ChatMarkdown.parse(chunk)
             settledLength = boundary
@@ -26,15 +30,16 @@ public struct ChatStreamText: Equatable, Sendable {
         blocks = settledBlocks + ChatMarkdown.parse(tail)
     }
 
-    /// Just past the last blank line that is not inside a code fence.
-    static func lastBoundary(in bytes: [UInt8]) -> Int? {
+    /// Just past the last blank line that is not inside a code fence, looking from `start`, which is outside one.
+    static func lastBoundary(in bytes: [UInt8], from start: Int = 0) -> Int? {
         // The open fence's character and length: a fence closes only with the same character, at least as long, and
         // nothing after it but spaces.
         var fence: (character: UInt8, length: Int)?
         var boundary: Int?
-        var lineStart = 0
-        var previousBlank = false
-        for index in 0...bytes.count {
+        var lineStart = start
+        // A settled block ends with a blank line.
+        var previousBlank = start > 0
+        for index in start...bytes.count {
             guard index == bytes.count || bytes[index] == 0x0A else { continue }
             let line = bytes[lineStart..<index]
             let trimmed = Array(line.drop { $0 == 0x20 })

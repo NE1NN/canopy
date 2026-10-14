@@ -285,6 +285,32 @@ struct ChatSessionTests {
         #expect(unsent == "I ran `printf 'a\\n```\\nb\\n'`:\n````\na\n```\nb\n````")
     }
 
+    @Test func opensOnlyWhatItPublishesLive() async throws {
+        let chat = session()
+        var opened: [ChatArtifact] = []
+        chat.onArtifact = { opened.append($0) }
+
+        chat.send("artifact Board")
+
+        #expect(await soon { !chat.isWorking })
+        #expect(opened.map(\.title) == ["Board"])
+        #expect(opened.first?.url?.absoluteString == "https://claude.ai/artifact/FakeBoard")
+        #expect(opened.first?.version == 1)
+        let session = try #require(chat.sessionID)
+        chat.close()
+
+        // Read again from history, the card is there but nothing opens.
+        let reopened = self.session(id: session)
+        var reopenedOpened: [ChatArtifact] = []
+        reopened.onArtifact = { reopenedOpened.append($0) }
+        reopened.open()
+        #expect(reopened.items.contains { if case .artifact = $0.content { true } else { false } })
+        reopened.send("say still here")
+        #expect(await soon { !reopened.isWorking })
+        #expect(reopenedOpened.isEmpty)
+        reopened.close()
+    }
+
     @Test func countsASubagentsToolCallsOnItsLine() async throws {
         let chat = session()
 

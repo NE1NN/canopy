@@ -19,6 +19,8 @@ final class WebViews {
     /// Whether a page is still in a row, so a view drawn a moment after it closed never brings its web view back.
     var isOpen: (WebPageID) -> Bool = { _ in false }
     var dismissPopUp: (WKWebView) -> Void = { _ in }
+    /// A page has loaded and shows in a window: after it loads, or when it comes back into view.
+    var onShown: (WebPageController) -> Void = { _ in }
 
     init() {
         configuration = WKWebViewConfiguration()
@@ -60,6 +62,12 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// WebKit's description of why the page failed to load, until it loads again.
     private(set) var error: String?
     @ObservationIgnored private var restartedAfterCrash = false
+    /// The HTTP status the page itself last loaded with.
+    @ObservationIgnored private(set) var loadedStatus: Int?
+    /// Counts the page's loads, so work waiting on one load can tell another began.
+    @ObservationIgnored private(set) var navigations = 0
+    /// A snapshot is under way, so a second one does not start.
+    @ObservationIgnored var isSnapshotting = false
     @ObservationIgnored private weak var owner: WebViews?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var popUps: [WKWebView] = []
@@ -72,6 +80,7 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        webView.onWindowChange = { [weak self] in self?.shownIfReady() }
         webView.allowsBackForwardNavigationGestures = true
         observations = [
             webView.observe(\.title, options: [.new]) { [weak self] webView, _ in
@@ -139,11 +148,21 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async
         -> WKNavigationResponsePolicy
     {
-        navigationResponse.canShowMIMEType ? .allow : .cancel
+        if webView === self.webView, navigationResponse.isForMainFrame {
+            loadedStatus = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+        }
+        return navigationResponse.canShowMIMEType ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if webView === self.webView { error = nil }
+        guard webView === self.webView else { return }
+        error = nil
+        navigations += 1
+    }
+
+    private func shownIfReady() {
+        guard webView.window != nil, !webView.isLoading, webView.url != nil else { return }
+        owner?.onShown(self)
     }
 
     func webView(
@@ -217,7 +236,9 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView === self.webView { restartedAfterCrash = false }
+        guard webView === self.webView else { return }
+        restartedAfterCrash = false
+        shownIfReady()
     }
 
     /// Only a page the author can see opens the browser or a pop-up, so one in a background row cannot.
@@ -228,6 +249,13 @@ final class WebPageController: NSObject, WKNavigationDelegate, WKUIDelegate {
 
 /// A page's web view, with the keys a browser gives it while it has focus.
 final class CanopyWebView: WKWebView {
+    var onWindowChange: () -> Void = {}
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange()
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let isFocused = window?.firstResponder.flatMap { ($0 as? NSView)?.isDescendant(of: self) } ?? false
         guard isFocused, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {

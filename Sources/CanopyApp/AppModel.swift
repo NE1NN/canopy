@@ -1100,6 +1100,58 @@ final class AppModel {
         webViews.isOpen = { [weak self] in self?.terminals.page($0) != nil }
         webViews.dismissPopUp = { [weak self] in self?.dismissPopUp($0) }
         terminals.onPageClosed = { [weak self] in self?.webViews.drop($0) }
+        terminals.onLoadPage = { [weak self] id, url in
+            self?.webViews.existing(id)?.webView.load(URLRequest(url: url))
+        }
+        webViews.onShown = { [weak self] in self?.snapshotIfWanted($0) }
+    }
+
+    /// Keeps a snapshot of an artifact a chat published, for its card, once the page has drawn in view. The wish stays
+    /// until a snapshot is saved, so a page that loaded out of view, or moved on meanwhile, gives one later.
+    private func snapshotIfWanted(_ controller: WebPageController) {
+        // A page that failed, such as one the author may not open, is no picture of the artifact.
+        guard !controller.isSnapshotting, (200..<300).contains(controller.loadedStatus ?? 200),
+            let wish = terminals.thumbnailWish(for: controller.pageID, at: controller.webView.url)
+        else { return }
+        controller.isSnapshotting = true
+        let navigation = controller.navigations
+        Task { [weak self, weak controller] in
+            // An artifact draws its page in a frame after the outer page loads.
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, let controller else { return }
+            defer { controller.isSnapshotting = false }
+            // Still the same load of the same address, in view: a sign-in or a newer version would have changed it.
+            guard controller.navigations == navigation, controller.webView.window != nil,
+                terminals.thumbnailWish(for: controller.pageID, at: controller.webView.url) == wish
+            else { return }
+            let configuration = WKSnapshotConfiguration()
+            configuration.snapshotWidth = 256
+            guard let image = try? await controller.webView.takeSnapshot(configuration: configuration),
+                controller.navigations == navigation,
+                let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+                let png = bitmap.representation(using: .png, properties: [:])
+            else { return }
+            do {
+                try terminals.saveThumbnail(png, for: wish, page: controller.pageID)
+            } catch {
+                show("Canopy could not save the artifact's snapshot: \(error)")
+            }
+        }
+    }
+
+    /// Shows an artifact from its card. It wants no snapshot: the page shows the artifact's newest version, which may
+    /// have been published since, elsewhere, and is not this card's.
+    func showArtifact(_ artifact: ChatArtifact, placement: WebPlacement, from pane: Pane) {
+        guard let url = artifact.url else { return }
+        terminals.showArtifact(url, from: pane, placement: placement)
+        if selectedRowPath != pane.context.rowPath { reveal(pane.context.rowPath) }
+    }
+
+    /// A link clicked in a chat: an artifact opens beside it, other web links in the browser.
+    func openLink(_ url: URL, from pane: Pane) -> OpenURLAction.Result {
+        guard ArtifactLink(url) != nil else { return open(url) }
+        terminals.showArtifact(url, from: pane)
+        return .handled
     }
 
     /// The page whose web view has the keyboard, if any.

@@ -27,6 +27,8 @@ public enum ChatContent: Equatable, Sendable {
     case notice(String)
     /// A `!` command the author ran, and what it printed.
     case shell(ChatShell)
+    /// A page Claude published, as a card.
+    case artifact(ChatArtifact)
 }
 
 public struct ChatShell: Equatable, Sendable {

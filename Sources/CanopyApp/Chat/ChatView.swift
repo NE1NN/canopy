@@ -39,7 +39,7 @@ struct ChatView: View {
                 onResume: { model.showsConversations = true })
         }
         .background(ChatStyle.background)
-        .environment(\.openURL, OpenURLAction { model.open($0) })
+        .environment(\.openURL, OpenURLAction { model.openLink($0, from: pane) })
         .onAppear {
             chat.open()
             model.chatComposers.focus(pane.id)
@@ -58,7 +58,9 @@ struct ChatView: View {
                     }
                 }
             },
-            declineTrust: { model.terminals.closePane(pane.id) })
+            declineTrust: { model.terminals.closePane(pane.id) },
+            openArtifact: { model.showArtifact($0, placement: $1, from: pane) },
+            openInBrowser: { model.openInBrowser($0) })
     }
 }
 
