@@ -30,8 +30,10 @@ struct BoxPanesTests {
         let daemon = try await home.daemon()
         let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/env"))
         let out = home.dir.sub("env.txt")
-        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: made.row.path, command: "env > \(out)"))
-        #expect(await eventually { contents(out)?.contains("CANOPY_PANE=") == true })
+        // Moved into place once whole, so it is never read while env is still writing it.
+        let pane = try await daemon.paneNew(
+            BoxPaneNewParams(rowPath: made.row.path, command: "env > \(out).part && mv \(out).part \(out)"))
+        #expect(await eventually { contents(out) != nil })
         let lines = Set((contents(out) ?? "").split(separator: "\n").map(String.init))
         #expect(lines.contains("CANOPY_PANE=\(pane)"))
         #expect(lines.contains("CANOPY_HOST=box"))
