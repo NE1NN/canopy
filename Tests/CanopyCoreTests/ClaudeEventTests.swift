@@ -130,6 +130,26 @@ struct ClaudeEventTests {
         #expect(event(line) == nil)
     }
 
+    /// Stream lines usually start with their type, which reads them the quick way; one that does not reads the same.
+    @Test func readsStreamLinesWhateverTheOrderOfTheirKeys() {
+        let delta = """
+            {"session_id":"s","event":{"delta":{"text":"Hel","type":"text_delta"},"index":1,\
+            "type":"content_block_delta"},"type":"stream_event"}
+            """
+        let subagent = """
+            {"parent_tool_use_id":"toolu_9","type":"stream_event","event":{"type":"content_block_delta","index":0,\
+            "delta":{"type":"text_delta","text":"inner"}}}
+            """
+        let thinking = """
+            {"type":"stream_event","event":{"type":"content_block_delta","index":0,\
+            "delta":{"type":"thinking_delta","thinking":"Hmm"}},"parent_tool_use_id":null}
+            """
+
+        #expect(event(delta) == .textDelta(index: 1, text: "Hel"))
+        #expect(event(subagent) == nil)
+        #expect(event(thinking) == nil)
+    }
+
     @Test func readsResults() {
         let line = """
             {"type":"result","subtype":"success","is_error":false,"duration_ms":18143,"result":"Done.",\

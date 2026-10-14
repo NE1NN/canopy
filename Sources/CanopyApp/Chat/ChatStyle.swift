@@ -7,6 +7,8 @@ enum ChatStyle {
     static let columnWidth = 720.0
     static let sidePadding = 24.0
     static let rowSpacing = 12.0
+    /// Between the blocks of one reply.
+    static let blockSpacing = 10.0
     static let topPadding = 22.0
 
     static let text = Font.system(size: 13.5)
@@ -20,20 +22,18 @@ enum ChatStyle {
 
     /// The terminal's own background, so chat and terminal tabs read as one app.
     static let background = Color.adaptive(light: 0xFFFFFF, dark: 0x161618)
-    static let primaryText = Color.adaptive(light: 0x1F1F24, dark: 0xE5E5E7)
-    static let strongText = Color.adaptive(light: 0x101014, dark: 0xF2F2F7)
-    static let secondaryText = Color.adaptive(light: 0x6E6E73, dark: 0xA1A1A6)
-    static let tertiaryText = Color.adaptive(light: 0x8E8E93, dark: 0x6E6E73)
+    static let primaryText = Color(nsColor: AppKit.primaryText)
+    static let strongText = Color(nsColor: AppKit.strongText)
+    static let secondaryText = Color(nsColor: AppKit.secondaryText)
+    static let tertiaryText = Color(nsColor: AppKit.tertiaryText)
 
     static let bubble = Color.adaptive(light: 0xEFEFF2, dark: 0x2F2F32)
-    static let inlineCode = Color.adaptive(
-        light: NSColor.black.withAlphaComponent(0.06), dark: NSColor.white.withAlphaComponent(0.08))
+    static let inlineCode = Color(nsColor: AppKit.inlineCode)
     static let toolIcon = Color.adaptive(
         light: NSColor.black.withAlphaComponent(0.05), dark: NSColor.white.withAlphaComponent(0.07))
     static let cardFill = Color.adaptive(light: 0xF7F7F9, dark: 0x232326)
-    static let cardBorder = Color.adaptive(
-        light: NSColor.black.withAlphaComponent(0.1), dark: NSColor.white.withAlphaComponent(0.09))
-    static let codeFill = Color.adaptive(light: 0xF5F5F7, dark: 0x1C1C1F)
+    static let cardBorder = Color(nsColor: AppKit.cardBorder)
+    static let codeFill = Color(nsColor: AppKit.codeFill)
 
     static let composerFill = Color.adaptive(light: 0xFFFFFF, dark: 0x2A2A2D)
     static let composerBorder = Color.adaptive(
@@ -67,6 +67,27 @@ enum ChatStyle {
         light: NSColor.black.withAlphaComponent(0.025), dark: NSColor.white.withAlphaComponent(0.03))
     static let thumbnailFill = Color.adaptive(light: 0xE9E9EC, dark: 0x2A2A2D)
     static let thumbnailTile = Color.adaptive(light: 0xD6D6DA, dark: 0x3A3A3D)
+
+    /// What the text Claude is still writing is drawn with, outside SwiftUI.
+    enum AppKit {
+        @MainActor static let text = NSFont.systemFont(ofSize: 13.5)
+        @MainActor static let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        @MainActor static let codeLabel = NSFont.systemFont(ofSize: 10.5)
+
+        static func heading(_ level: Int) -> NSFont {
+            NSFont.systemFont(ofSize: level == 1 ? 17 : level == 2 ? 15.5 : 13.5, weight: .semibold)
+        }
+
+        static let primaryText = NSColor.adaptive(light: 0x1F1F24, dark: 0xE5E5E7)
+        static let strongText = NSColor.adaptive(light: 0x101014, dark: 0xF2F2F7)
+        static let secondaryText = NSColor.adaptive(light: 0x6E6E73, dark: 0xA1A1A6)
+        static let tertiaryText = NSColor.adaptive(light: 0x8E8E93, dark: 0x6E6E73)
+        static let inlineCode = NSColor.adaptive(
+            light: NSColor.black.withAlphaComponent(0.06), dark: NSColor.white.withAlphaComponent(0.08))
+        static let cardBorder = NSColor.adaptive(
+            light: NSColor.black.withAlphaComponent(0.1), dark: NSColor.white.withAlphaComponent(0.09))
+        static let codeFill = NSColor.adaptive(light: 0xF5F5F7, dark: 0x1C1C1F)
+    }
 }
 
 /// A key's name in a small outlined box, as in "Allow ⏎".

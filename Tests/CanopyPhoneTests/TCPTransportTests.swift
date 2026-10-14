@@ -55,6 +55,16 @@ struct TCPTransportTests {
         }
     }
 
+    @Test func aConnectNobodyWaitsForAnyMoreIsGivenUp() async throws {
+        let mac = try await LoopbackMac.start()
+        defer { mac.stop() }
+        let attempt = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await TCPTransport().connect(host: "127.0.0.1", port: mac.port)
+        }
+        await #expect(throws: CancellationError.self) { try await attempt.value }
+    }
+
     @Test func aNameThatDoesNotResolveIsUnreachable() async throws {
         await #expect {
             try await TCPTransport(timeout: .seconds(10)).connect(host: "nothing.invalid", port: 6974)

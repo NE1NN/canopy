@@ -70,6 +70,20 @@ struct ChatRowsTests {
         chat.close()
     }
 
+    /// The list follows the conversation and what is pending apart, so the two must join into the same rows.
+    @Test func theConversationAndWhatIsPendingJoinIntoTheRows() async throws {
+        let chat = session()
+        #expect(kinds(ChatRows.joined(ChatRows.conversation(for: chat), ChatRows.pending(for: chat))) == ["empty"])
+
+        chat.send("run make deploy")
+        #expect(await eventually { chat.permission != nil })
+        #expect(kinds(ChatRows.conversation(for: chat)) == ["prompt", "item"])
+        #expect(kinds(ChatRows.pending(for: chat)) == ["permission", "status"])
+        #expect(
+            ChatRows.joined(ChatRows.conversation(for: chat), ChatRows.pending(for: chat)) == ChatRows.rows(for: chat))
+        chat.close()
+    }
+
     @Test func showsAFailureInsteadOfTheStatus() async throws {
         let chat = session()
         chat.send("crash")
@@ -92,5 +106,15 @@ struct ChatRowsTests {
         #expect(before[1].key != after[1].key)
         #expect(before[0].key == after[0].key)
         chat.close()
+    }
+
+    /// Only the block still growing is drawn as plain text; settled blocks and tables stay SwiftUI rows.
+    @Test func onlyTheGrowingBlockIsPlainText() {
+        let paragraph = ChatBlock.paragraph("Growing")
+        #expect(ChatRow.streaming(index: 1, block: paragraph, growth: 40).growingText == paragraph)
+        #expect(ChatRow.streaming(index: 0, block: paragraph, growth: 0).growingText == nil)
+        let table = ChatMarkdown.parse("| a |\n|---|\n| b |")[0]
+        #expect(ChatRow.streaming(index: 1, block: table, growth: 40).growingText == nil)
+        #expect(ChatRow.status.growingText == nil)
     }
 }

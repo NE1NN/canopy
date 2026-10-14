@@ -8,6 +8,8 @@ struct ChatActions {
     /// Opens a published artifact in the row: beside the chat, or in a tab.
     var openArtifact: (ChatArtifact, WebPlacement) -> Void
     var openInBrowser: (URL) -> Void
+    /// Opens a link in the text Claude is still writing; SwiftUI rows open theirs through the environment's `openURL`.
+    var openLink: (URL) -> Void
 }
 
 /// One row of the conversation, laid out in the chat's centered column.
@@ -20,8 +22,14 @@ struct ChatRowView: View {
         content
             .frame(maxWidth: ChatStyle.columnWidth, alignment: .leading)
             .padding(.horizontal, ChatStyle.sidePadding)
-            .padding(.bottom, ChatStyle.rowSpacing)
+            .padding(.bottom, spacingBelow)
             .frame(maxWidth: .infinity)
+    }
+
+    /// A reply's settled blocks sit as close as they will once it is one message, so they do not move then.
+    private var spacingBelow: Double {
+        if case .streaming(_, _, 0) = row { return ChatStyle.blockSpacing }
+        return ChatStyle.rowSpacing
     }
 
     @ViewBuilder private var content: some View {

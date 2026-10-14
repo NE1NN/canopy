@@ -26,8 +26,43 @@ public struct ChatStreamText: Equatable, Sendable {
             settledLength = boundary
         }
         settledCount = settledBlocks.count
-        let tail = String(decoding: utf8[settledLength...], as: UTF8.self)
-        blocks = settledBlocks + ChatMarkdown.parse(tail)
+        let tail = Self.withoutUnderline(Array(utf8[settledLength...]))
+        blocks = settledBlocks + ChatMarkdown.parse(String(decoding: tail, as: UTF8.self))
+    }
+
+    /// The growing text without a last line of only `-` or `=` under a line of text. Markdown reads that as the
+    /// underline of a heading, so the start of a list item or rule would show the line above as a heading until the
+    /// next word came.
+    static func withoutUnderline(_ bytes: [UInt8]) -> ArraySlice<UInt8> {
+        guard let newline = bytes.lastIndex(of: 0x0A) else { return bytes[...] }
+        let last = bytes[(newline + 1)...].filter { $0 != 0x20 }
+        guard let mark = last.first, mark == 0x2D || mark == 0x3D, last.allSatisfy({ $0 == mark }) else {
+            return bytes[...]
+        }
+        let above = bytes[..<newline]
+        let lineAbove = above[((above.lastIndex(of: 0x0A) ?? -1) + 1)...]
+        guard lineAbove.contains(where: { $0 != 0x20 && $0 != 0x09 }), !isInFence(above) else { return bytes[...] }
+        return bytes[...newline]
+    }
+
+    /// Whether a code fence is open at the end of `bytes`.
+    private static func isInFence(_ bytes: ArraySlice<UInt8>) -> Bool {
+        var fence: (character: UInt8, length: Int)?
+        for line in bytes.split(separator: 0x0A, omittingEmptySubsequences: false) {
+            let trimmed = line.drop { $0 == 0x20 }
+            guard let character = trimmed.first, character == 0x60 || character == 0x7E else { continue }
+            let length = trimmed.prefix { $0 == character }.count
+            if let open = fence {
+                if character == open.character, length >= open.length,
+                    trimmed.dropFirst(length).allSatisfy({ $0 == 0x20 })
+                {
+                    fence = nil
+                }
+            } else if length >= 3 {
+                fence = (character, length)
+            }
+        }
+        return fence != nil
     }
 
     /// Just past the last blank line that is not inside a code fence, looking from `start`, which is outside one.

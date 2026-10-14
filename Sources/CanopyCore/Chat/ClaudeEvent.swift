@@ -76,6 +76,12 @@ public enum ClaudeEvent: Equatable, Sendable {
     case controlResponse(id: String, error: String?, value: JSONValue?)
 
     public init?(line: Data) {
+        if line.starts(with: Self.streamPrefix), let stream = try? JSONDecoder().decode(StreamLine.self, from: line),
+            stream.type == "stream_event"
+        {
+            self.init(stream: stream)
+            return
+        }
         guard let object = try? JSONDecoder().decode([String: JSONValue].self, from: line),
             let type = object["type"]?.text
         else { return nil }
@@ -84,9 +90,8 @@ public enum ClaudeEvent: Equatable, Sendable {
         case "conversation_reset": self = .conversationReset
         case "assistant", "user": self.init(message: object, role: type, line: line)
         case "stream_event":
-            // A subagent's own partial messages fold under its call, which comes with a later milestone.
-            if object["parent_tool_use_id"]?.text != nil { return nil }
-            self.init(stream: object["event"]?.fields ?? [:])
+            guard let stream = try? JSONDecoder().decode(StreamLine.self, from: line) else { return nil }
+            self.init(stream: stream)
         case "result":
             var window: Int?
             if case .object(let models)? = object["modelUsage"] {
@@ -158,25 +163,70 @@ public enum ClaudeEvent: Equatable, Sendable {
                 isReplay: object["isReplay"]?.flag ?? false, contextTokens: context, line: line))
     }
 
-    private init?(stream event: [String: JSONValue]) {
-        switch event["type"]?.text {
+    private init?(stream line: StreamLine) {
+        // A subagent's own partial messages fold under its call, which comes with a later milestone.
+        guard line.parentToolUse == nil, let event = line.event else { return nil }
+        switch event.type {
         case "message_start":
-            guard let id = event["message"]?.fields?["id"]?.text else { return nil }
+            guard let id = event.message?.id else { return nil }
             self = .messageStarted(id: id)
         case "content_block_start":
-            guard let index = event["index"]?.integer, let kind = event["content_block"]?.fields?["type"]?.text
-            else { return nil }
+            guard let index = event.index, let kind = event.block?.type else { return nil }
             self = .blockStarted(index: index, kind: kind)
         case "content_block_delta":
-            guard let index = event["index"]?.integer, let delta = event["delta"]?.fields,
-                delta["type"]?.text == "text_delta", let text = delta["text"]?.text
+            guard let index = event.index, event.delta?.type == "text_delta", let text = event.delta?.text
             else { return nil }
             self = .textDelta(index: index, text: text)
         case "message_delta":
-            guard let tokens = event["usage"]?.fields?["output_tokens"]?.integer else { return nil }
+            guard let tokens = event.usage?.outputTokens else { return nil }
             self = .outputTokens(tokens)
         default:
             return nil
+        }
+    }
+
+    /// How Claude Code starts a `stream_event` line, which skips the general decoding. A line written another way still
+    /// decodes, the slower way.
+    private static let streamPrefix = Data(#"{"type":"stream_event""#.utf8)
+
+    /// A reply streams in as a `stream_event` line every few words, so these are decoded into only what Canopy reads
+    /// rather than a tree of every value in the line.
+    private struct StreamLine: Decodable {
+        struct Event: Decodable {
+            struct Part: Decodable {
+                var type: String?
+                var text: String?
+                var id: String?
+            }
+
+            struct Usage: Decodable {
+                var outputTokens: Int?
+
+                enum CodingKeys: String, CodingKey {
+                    case outputTokens = "output_tokens"
+                }
+            }
+
+            var type: String?
+            var index: Int?
+            var delta: Part?
+            var message: Part?
+            var block: Part?
+            var usage: Usage?
+
+            enum CodingKeys: String, CodingKey {
+                case type, index, delta, message, usage
+                case block = "content_block"
+            }
+        }
+
+        var type: String
+        var parentToolUse: String?
+        var event: Event?
+
+        enum CodingKeys: String, CodingKey {
+            case type, event
+            case parentToolUse = "parent_tool_use_id"
         }
     }
 

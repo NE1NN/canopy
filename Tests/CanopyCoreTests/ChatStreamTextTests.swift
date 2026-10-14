@@ -21,6 +21,23 @@ struct ChatStreamTextTests {
         #expect(text.blocks[1] == ChatMarkdown.parse("Second paragraph, still growing")[0])
     }
 
+    /// A nested item or rule starting under a line of text is not shown as that line's heading for a moment.
+    @Test func theStartOfAnItemUnderALineIsNotTakenForAHeading() {
+        var text = ChatStreamText()
+        text.append("- A bullet with **bold**\n  -")
+        #expect(text.blocks == ChatMarkdown.parse("- A bullet with **bold**"))
+        text.append(" nested")
+        #expect(text.blocks == ChatMarkdown.parse("- A bullet with **bold**\n  - nested"))
+
+        var title = ChatStreamText()
+        title.append("Title\n===")
+        #expect(title.blocks == ChatMarkdown.parse("Title"))
+
+        var code = ChatStreamText()
+        code.append("```\nlet a = 1\n-")
+        #expect(code.blocks == ChatMarkdown.parse("```\nlet a = 1\n-"))
+    }
+
     /// A blank line inside a code fence does not end a block.
     @Test func aFenceKeepsItsBlankLines() {
         var text = ChatStreamText()

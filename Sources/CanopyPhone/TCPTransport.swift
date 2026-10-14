@@ -42,13 +42,22 @@ final class TCPChannel: PhoneChannel {
     }
 
     func open(timeout: Duration) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            opening.withLock { $0 = continuation }
-            connection.stateUpdateHandler = { [weak self] state in self?.changed(to: state) }
-            connection.start(queue: queue)
-            queue.asyncAfter(deadline: .now() + timeout.timeInterval) { [weak self] in
-                self?.finishOpening(.failure(PhoneTransportError.timedOut))
+        // An abandoned attempt closes now, rather than at its timeout or never, should it connect after all.
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                opening.withLock { $0 = continuation }
+                if Task.isCancelled {
+                    finishOpening(.failure(CancellationError()))
+                    return
+                }
+                connection.stateUpdateHandler = { [weak self] state in self?.changed(to: state) }
+                connection.start(queue: queue)
+                queue.asyncAfter(deadline: .now() + timeout.timeInterval) { [weak self] in
+                    self?.finishOpening(.failure(PhoneTransportError.timedOut))
+                }
             }
+        } onCancel: {
+            finishOpening(.failure(CancellationError()))
         }
         receive(after: Data())
     }

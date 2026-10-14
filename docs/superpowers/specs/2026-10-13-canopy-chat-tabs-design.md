@@ -341,7 +341,7 @@ What keeps them:
 
 - Only messages near the viewport are laid out, by the `NSTableView` list, with row heights cached by item ID and width.
 - History loads by pages from the end of the transcript.
-- Streaming updates are coalesced to 30 a second and change only the last item.
+- Streaming updates are coalesced to 20 a second and change only the last item.
 - Markdown and diffs are parsed once per message and kept.
 - Tool output, diffs, and shell output stay folded until opened, and a live tail keeps five lines.
 - Restored chats start no process until used.

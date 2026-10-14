@@ -244,6 +244,7 @@ public final class ServerConnection: Identifiable {
     private func open(_ server: PairedServer) async throws -> PhoneClient {
         var lastError: any Error = PhoneTransportError.closed
         for host in server.hosts {
+            try Task.checkCancellation()
             do {
                 let channel = try await within(timeout) { [transport] in
                     try await transport.connect(host: host, port: server.port)
