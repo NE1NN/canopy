@@ -271,7 +271,8 @@ struct PluginHostTests {
         defer { setup.terminals.closeAll() }
         let created = try await setup.host.createRow("t", reference: "i1", run: "sleep 30", select: false)
         let pane = try #require(setup.terminals.panes.first { $0.id.description == created.pane })
-        #expect(await eventually { pane.isBusy })
+        // The shell that starts `sleep` is busy too, for a moment, before it becomes `sleep`.
+        #expect(await eventually { pane.isBusy && pane.foreground?.name == "sleep" })
 
         await #expect(throws: WorkspaceError.rowBusy("title-i1", programs: ["sleep"])) {
             try await setup.host.removeRow(created.row, force: false)
@@ -364,7 +365,8 @@ struct PluginHostTests {
         setup.host.onClosingRows = { closing += $0 }
         let created = try await setup.host.createRow("t", reference: "i1", run: "sleep 30", select: false)
         let pane = try #require(setup.terminals.panes.first { $0.id.description == created.pane })
-        #expect(await eventually { pane.isBusy })
+        // The shell that starts `sleep` is busy too, for a moment, before it becomes `sleep`.
+        #expect(await eventually { pane.isBusy && pane.foreground?.name == "sleep" })
 
         await #expect(throws: WorkspaceError.pluginBusy("Test", id: "t", programs: ["sleep"])) {
             try await setup.host.disable("t", force: false)
