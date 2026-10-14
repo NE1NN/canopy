@@ -381,6 +381,19 @@ public struct WorkspaceControlHandler: Sendable {
                 return try .from(await rows.newTerminal(PaneContext(pluginRow: row), params))
             }
 
+        case ChatMethod.new:
+            let params = try request.decodeParams(ChatNewParams.self)
+            let snapshot = await workspace.snapshot
+            switch try TargetResolver.sidebarRow(for: params.target, in: snapshot) {
+            case .worktree(let row):
+                guard !row.isMissing else { throw WorkspaceError.pathNotFound(row.path) }
+                let repoName = snapshot.repo(path: row.repoPath)?.name ?? ""
+                return try .from(await rows.newChat(PaneContext(row: row, repoName: repoName), params))
+            case .plugin(let row):
+                await plugins.ensureFolder(row)
+                return try .from(await rows.newChat(PaneContext(pluginRow: row), params))
+            }
+
         case TermMethod.send:
             let params = try request.decodeParams(TermSendParams.self)
             try await rows.sendToTerminal(params)

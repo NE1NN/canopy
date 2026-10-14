@@ -255,9 +255,6 @@ struct ChatTabTests {
             try phone.screen(PhonePaneParams(pane: id), scrollback: nil)
         }
         #expect(throws: WorkspaceError.notATerminal(id)) { try phone.keys(PhoneKeysParams(pane: id, text: "x")) }
-        await #expect(throws: WorkspaceError.notATerminal(id)) {
-            try await phone.reply(PhoneReplyParams(pane: id, text: "hi"))
-        }
     }
 
     /// The author's actions stand for the keys they replace, so the agent's state follows as it does for a terminal.

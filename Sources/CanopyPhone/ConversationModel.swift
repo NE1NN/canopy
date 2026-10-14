@@ -67,8 +67,11 @@ public final class ConversationModel {
         let found = Self.find(pane, in: connection.inbox)
         row = found?.row
         lastAgent = found?.agent
-        tab = found?.agent.hasTranscript == false ? .terminal : .chat
+        tab = found?.agent.kind != .chat && found?.agent.hasTranscript == false ? .terminal : .chat
     }
+
+    /// A chat tab on the Mac, which has no terminal to show.
+    public var isChat: Bool { (agent ?? lastAgent)?.kind == .chat }
 
     /// The agent as the inbox has it now, or nil once it left the inbox.
     public var agent: PhoneAgent? { Self.find(pane, in: connection.inbox)?.agent }

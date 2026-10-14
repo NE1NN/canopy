@@ -14,6 +14,9 @@ public final class PhonePanes {
         message: "Claude Code is not running in this pane, so a reply would go to whatever is. Use the Terminal tab.")
     /// How long a reply waits to be taken before it is forgotten.
     static let deliveryWindow: TimeInterval = 10 * 60
+    public nonisolated static let chatWaits = ControlError(
+        code: "chat_waiting",
+        message: "The chat waits on the Mac, such as for its folder to be trusted. The reply waits in its composer.")
     public nonisolated static let noTranscript = ControlError(
         code: "no_transcript",
         message: "This pane has no Claude Code conversation on this Mac. Its terminal shows what it does.")
@@ -59,11 +62,19 @@ public final class PhonePanes {
         waitingReplies = [:]
     }
 
-    /// Pastes the reply and presses Return. `delivered` runs when the agent takes it, as its next prompt.
     /// Pastes the reply into Claude Code and presses Return. `delivered` runs when the agent takes it, as its next
     /// prompt. A reply is refused while a dialog is open, and Return is held back if one opens during the paste.
+    /// A chat takes it as a message, as its composer does: an open prompt is turned down first.
     public func reply(_ params: PhoneReplyParams, delivered: @escaping @Sendable () -> Void = {}) async throws {
         let pane = try running(params.pane)
+        if let chat = pane.chat {
+            switch chat.send(params.text, asMessage: true) {
+            case .queued: waitingReplies[pane.id, default: []].append((Date(), delivered))
+            case .drafted: throw Self.chatWaits
+            case .answered, .ranShell, .ignored: break
+            }
+            return
+        }
         let terminal = try Self.terminal(of: pane)
         guard pane.agent.session != nil else { throw Self.agentNotRunning }
         guard !Self.showsDialog(pane) else { throw Self.promptOpen }
@@ -79,9 +90,18 @@ public final class PhonePanes {
 
     public func answer(_ params: PhoneAnswerParams) async throws {
         let pane = try running(params.pane)
-        let terminal = try Self.terminal(of: pane)
+        // A chat answers its own open prompt, which the inbox shows by its request ID.
+        if let chat = pane.chat {
+            guard let prompt = chat.openPrompt, prompt.id == params.prompt else { throw Self.promptGone }
+            _ = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+            guard chat.answer(prompt: prompt.id, allow: params.answer.allow, options: params.answer.options) else {
+                throw Self.promptGone
+            }
+            return
+        }
         guard let prompt = pane.agent.prompt, prompt.id == params.prompt else { throw Self.promptGone }
         let keys = try PhoneAnswerKeys.keys(for: prompt, params.answer)
+        let terminal = try Self.terminal(of: pane)
         guard pane.answerPrompt(id: prompt.id) else { throw Self.promptGone }
         await terminal.press(keys)
     }
@@ -118,7 +138,7 @@ public final class PhonePanes {
         return pane
     }
 
-    /// Chats take replies and answers through their own session, which comes with a later milestone.
+    /// A chat has no screen or keys; it takes replies and answers through its session.
     private static func terminal(of pane: Pane) throws -> TerminalBody {
         guard let terminal = pane.terminal else { throw WorkspaceError.notATerminal(pane.id.description) }
         return terminal

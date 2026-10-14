@@ -105,7 +105,8 @@ struct ChatComposer: View {
         .padding(.top, 6)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
-        .opacity(chat.needsTrust ? 0.5 : 1)
+        // A message waiting on trust shows at full strength: Return trusts the folder and sends it.
+        .opacity(chat.needsTrust && chat.draft.isEmpty && chat.draftImages.isEmpty ? 0.5 : 1)
     }
 
     private var placeholder: String {

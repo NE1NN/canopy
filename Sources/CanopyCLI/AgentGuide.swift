@@ -129,7 +129,7 @@ struct AgentGuide: ParsableCommand {
 
         ## Terminals
 
-            canopy term list [--all]                      ID, row, tab, process, title, and folder
+            canopy term list [--all]                      ID, row, tab, kind, process, title, and folder
             canopy term new [--tab <name> | --new-tab] [--run <cmd>] [--title <t>]
             canopy term send <id> <text> [--enter]        type text, then Return with --enter
             canopy term read <id> [--lines N]             the screen, or the last N lines with scrollback
@@ -141,6 +141,22 @@ struct AgentGuide: ParsableCommand {
         that arrives with the text for part of a paste, so this is what makes a long or multi-line message submit.
         Send to a program you just started once its prompt shows in `term read`: until it reads keys itself, the
         terminal hands it typed-ahead lines together with their Return.
+
+        ## Chats
+
+            canopy chat new [--prompt <text>] [--model <m>] [--mode <mode>] [--resume <session>]
+
+        A chat is a tab that runs Claude Code and shows its conversation, which the author can read and answer without a
+        terminal. `chat new` opens one at the end of your row's tabs, prints its ID, and with --prompt sends that as its
+        first message; it never changes which row the author has selected. The term commands take a chat's ID: `term
+        send <id> <text> --enter` sends the text as a message of its own, and without --enter adds it to the composer,
+        which `term send <id> "" --enter` then sends; `term wait <id>` waits for its turn to end; `term read <id>
+        [--lines N]` prints the conversation as text, "You: …" for messages, Claude's replies, one line per tool call,
+        what waits on the author, and why Claude Code stopped if it did. A message sent while a permission or question
+        is open turns it down first. Until the author trusts the row's folder for Claude Code, a message waits in the
+        composer: `term send` fails with chat_waiting, and `chat new` says so in `waiting`. --mode takes default,
+        acceptEdits, plan, auto, or bypassPermissions; --resume of a conversation the row does not have fails with
+        session_not_found. Chats run in this Mac's rows only.
 
         ## Web pages
 

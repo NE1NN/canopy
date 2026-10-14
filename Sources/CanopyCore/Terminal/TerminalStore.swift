@@ -336,11 +336,13 @@ public final class TerminalStore {
 
     /// Opens a chat tab at the end of the row's tab bar. Claude Code starts when the author first sends something.
     @discardableResult
-    public func openChat(for context: PaneContext, session: String? = nil, title: String = "", select: Bool = true)
-        -> (tab: TerminalTab, pane: Pane)
-    {
+    public func openChat(
+        for context: PaneContext, session: String? = nil, title: String = "", select: Bool = true,
+        model: String? = nil, mode: String? = nil
+    ) -> (tab: TerminalTab, pane: Pane) {
         let pane = makeChatPane(
-            context, model: chatDefaults.model, mode: chatDefaults.mode, session: session, title: title)
+            context, model: model ?? chatDefaults.model, mode: mode ?? chatDefaults.mode, session: session,
+            title: title)
         let tab = TerminalTab(id: TabID(nextTab), chat: pane)
         nextTab += 1
         tabsByRow[context.rowPath] = tabs(inRow: context.rowPath) + [tab]
@@ -378,8 +380,7 @@ public final class TerminalStore {
         guard let (path, tab) = tab(containing: chatPane.id),
             let index = tabs(inRow: path).firstIndex(where: { $0.id == tab.id })
         else { return nil }
-        // UI fixtures, e2e runs, and tests set CANOPY_CLAUDE to a stand-in.
-        var words = [settings.baseEnvironment["CANOPY_CLAUDE"] ?? "claude"]
+        var words = [ClaudeLaunch.command(settings)]
         if let session = chat.sessionID { words += ["--resume", session] }
         if let model = chat.model { words += ["--model", model] }
         words += ["--permission-mode", chat.mode]

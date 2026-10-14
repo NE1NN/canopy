@@ -260,6 +260,21 @@ struct ChatSessionTests {
         #expect(texts(chat).contains("[Interrupted]"))
     }
 
+    /// An agent can send before the author has trusted the folder, and nothing it sent is lost.
+    @Test func aMessageSentBeforeTrustWaitsInTheDraft() async throws {
+        let chat = session(trusted: false)
+
+        chat.send("say waited")
+
+        #expect(chat.needsTrust)
+        #expect(!chat.isRunning)
+        #expect(chat.draft == "say waited")
+        #expect(chat.readableText.hasSuffix("trust this folder for Claude Code, then it sends: say waited"))
+        try await chat.grantTrust()
+        #expect(await soon { !chat.isWorking && texts(chat).last == "waited" })
+        chat.close()
+    }
+
     /// Return answers the trust question, so a message written before it goes once the folder is trusted.
     @Test func trustingSendsWhatWasWritten() async throws {
         let chat = session(trusted: false)

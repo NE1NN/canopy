@@ -12,6 +12,8 @@ export CANOPY_HOME="$work/home"
 # Nothing here may reach the Canopy this script runs in, or the Claude Code settings every agent here runs with.
 unset CANOPY_PANE CANOPY_CLI CANOPY_REPO CANOPY_ROW CANOPY_ROW_PATH CANOPY_PLUGIN CANOPY_ITEM CANOPY_HOST
 export CLAUDE_CONFIG_DIR="$work/claude"
+# Chats here run the stand-in, never the real Claude Code.
+export CANOPY_CLAUDE="$PWD/scripts/fake-claude-stream.py"
 mkdir -p "$shots"
 
 app_pid() {
@@ -266,6 +268,22 @@ wait_for_text sent-text || fail "term send did not reach the terminal"
 "$cli" term close "$pane" >/dev/null
 if "$cli" term list --all --json | grep -q "\"$pane\""; then fail "closed terminal is still listed"; fi
 grep -q "canopy term read" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing term read"
+
+step "canopy chat new opens a chat, which term list, send, read, and close take"
+chat=$("$cli" chat new --repo demo --row feat/term --mode plan --prompt 'say from e2e' --json |
+    /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["pane"])')
+"$cli" term list --repo demo --row feat/term --json | /usr/bin/python3 -c '
+import json, sys
+panes = {pane["pane"]: pane for pane in json.load(sys.stdin)}
+assert panes[sys.argv[1]]["kind"] == "chat", panes' "$chat" || fail "term list does not call $chat a chat"
+# The folder is not trusted here, so the prompt waits for the author, and nothing starts.
+"$cli" term send "$chat" ' and more' >/dev/null
+"$cli" term read "$chat" | grep -q "trust this folder for Claude Code, then it sends: say from e2e and more" ||
+    fail "term read of the chat said: $("$cli" term read "$chat")"
+if "$cli" chat new --repo demo --row feat/term --mode yolo >/dev/null 2>&1; then fail "chat new took --mode yolo"; fi
+"$cli" term close "$chat" >/dev/null
+if "$cli" term list --all --json | grep -q "\"$chat\""; then fail "closed chat is still listed"; fi
+grep -q "canopy chat new" <<<"$("$cli" agent-guide)" || fail "agent-guide is missing chat new"
 
 step "term send --enter presses Return as a keystroke of its own, with no paste markers"
 # Puts its terminal in raw mode, turns on bracketed paste as Claude Code and vim do, and logs each read, with Return
