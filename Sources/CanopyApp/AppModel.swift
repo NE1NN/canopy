@@ -866,7 +866,11 @@ final class AppModel {
 
     /// Closes a tab and all its terminals, first asking if any of them are running programs.
     func requestCloseTab(_ tab: TerminalTab, inRow path: String) {
-        let busy = tab.paneList.compactMap { $0.hasRunningWork ? $0.foreground?.name : nil }
+        // A chat can be working before its Claude Code has a process, so it is named rather than read.
+        let busy = tab.paneList.compactMap { pane -> String? in
+            guard pane.hasRunningWork else { return nil }
+            return pane.chat == nil ? pane.foreground?.name : "Claude"
+        }
         if busy.isEmpty {
             terminals.closeTab(tab.id, inRow: path)
         } else {
