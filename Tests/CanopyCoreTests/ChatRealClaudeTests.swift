@@ -40,7 +40,11 @@ struct ChatRealClaudeTests {
                 return settings.script(script, environment: environment, directory: folder)
             },
             transcript: { ClaudeProjects.transcript(session: $0, folder: folder, home: home) },
-            trust: ChatTrust(isTrusted: { true }, grant: {}))
+            trust: ChatTrust(isTrusted: { true }, grant: {}),
+            shell: { command in
+                let environment = ["HOME": home, "USER": NSUserName(), "PATH": "/usr/bin:/bin"]
+                return settings.script(command, environment: environment, directory: folder)
+            })
     }
 
     func lastText(_ chat: ChatSession) -> String {
@@ -109,6 +113,18 @@ struct ChatRealClaudeTests {
         #expect(await startedRunning(chat))
         chat.interrupt()
         #expect(await finished(chat, within: 20))
+
+        // A `!` command reaches Claude with the next message, and so does how it ended.
+        chat.send("!echo canopy-$((6*7)); exit 4")
+        #expect(await eventually(timeout: .seconds(30)) { chat.shellRuns.first?.shell.exitCode == 4 })
+        chat.send("What did my shell command print, and with which exit code did it end? Reply as: PRINTED CODE")
+        #expect(await finished(chat))
+        #expect(lastText(chat).contains("canopy-42") && lastText(chat).contains("4"))
+        #expect(
+            chat.items.contains {
+                $0.content
+                    == .shell(ChatShell(command: "echo canopy-$((6*7)); exit 4", output: "canopy-42", exitCode: 4))
+            })
         chat.close()
 
         // Opened again, it shows the conversation and goes on with it.

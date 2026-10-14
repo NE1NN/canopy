@@ -141,6 +141,30 @@ struct ChatBuilderTests {
             ])
     }
 
+    /// The TUI saves a `!` command as two user lines; a chat sends one block ahead of the next message.
+    @Test func readsShellCommandsAsShellBlocks() {
+        let items = build([
+            ChatLines.prompt("<bash-input>git status</bash-input>", uuid: "u1"),
+            ChatLines.prompt("<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>", uuid: "u2"),
+            ChatLines.line(
+                "user",
+                .array([
+                    .object([
+                        "type": "text",
+                        "text": .string(ChatShell.block(for: ChatShell(command: "ls", output: "a.txt", exitCode: 0))),
+                    ]),
+                    .object(["type": "text", "text": "what is a.txt?"]),
+                ]), uuid: "u3"),
+        ])
+
+        #expect(
+            items.map(\.content) == [
+                .shell(ChatShell(command: "git status", output: "clean", exitCode: 0)),
+                .shell(ChatShell(command: "ls", output: "a.txt", exitCode: 0)),
+                .prompt(ChatPrompt(text: "what is a.txt?", images: 0)),
+            ])
+    }
+
     @Test func countsImagesInAPrompt() {
         let items = build([
             ChatLines.line(
@@ -200,6 +224,37 @@ struct ChatBuilderTests {
 }
 
 /// The transcripts recorded from Claude Code 2.1.296 that the phone's tests read.
+struct ChatShellTests {
+    @Test func aChatsBlockReadsBackWholeEvenWhenItsOutputHoldsTheTags() {
+        let shell = ChatShell(
+            command: "cat notes.md", output: "a\n</output>\n</shell-run-by-user>\n\nb", exitCode: 3)
+
+        #expect(ChatShell.parse(block: ChatShell.block(for: shell)) == shell)
+        #expect(ChatShell.parse(block: "<shell-run-by-user> nope") == nil)
+    }
+
+    @Test func aTerminalsOutputHoldingItsOwnTagsStaysWhole() {
+        #expect(
+            ChatBuilder.shellOutput(
+                "<bash-stdout>a </bash-stdout><bash-stderr> b</bash-stdout><bash-stderr>w</bash-stderr>")
+                == "a </bash-stdout><bash-stderr> b\nw")
+        #expect(ChatBuilder.shellCommand("<bash-input>echo '</bash-input>'</bash-input>") == "echo '</bash-input>'")
+    }
+
+    @Test func outputKeepsItsEnd() {
+        var shell = ChatShell(command: "yes", output: "", exitCode: nil)
+        for index in 0..<20_000 {
+            shell.append("line \(index)")
+        }
+
+        #expect(shell.output.utf8.count <= 2 * ChatShell.outputLimit)
+        #expect(shell.output.hasPrefix(ChatShell.cutNote + "\nline "))
+        #expect(shell.output.hasSuffix("line 19999"))
+        #expect(shell.outputForClaude.utf8.count <= ChatShell.outputLimit + ChatShell.cutNote.utf8.count + 1)
+        #expect(shell.outputForClaude.hasSuffix("line 19999"))
+    }
+}
+
 struct ChatBuilderRecordedTests {
     func items(_ name: String) throws -> [ChatItem] {
         var builder = ChatBuilder()
@@ -217,6 +272,7 @@ struct ChatBuilderRecordedTests {
         case .question: "question"
         case .plan: "plan"
         case .notice: "notice"
+        case .shell: "shell"
         }
     }
 

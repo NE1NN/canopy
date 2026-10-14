@@ -27,6 +27,8 @@ public final class TerminalBody {
     @ObservationIgnored var returnPatience = Duration.seconds(2)
     /// How long Return waits after a reply's paste has been read.
     @ObservationIgnored var replyPause = TerminalBody.returnPause
+    /// Runs between a reply's paste and its Return, so a test can open a dialog there without racing a clock.
+    @ObservationIgnored var beforeReplyReturn: (@MainActor () async -> Void)?
 
     /// How long Return waits after the program has read the text. Codex takes an Enter that comes within 120 ms of a
     /// burst of typed characters for part of a paste.
@@ -133,6 +135,7 @@ public final class TerminalBody {
         let clean = Self.pasteable(text)
         await process.write(
             Data("\u{1b}[200~\(clean)\u{1b}[201~".utf8), then: Data(), pause: replyPause, patience: returnPatience)
+        await beforeReplyReturn?()
         guard case .running? = pane?.status, returnIf() else { return false }
         process.write(Data("\r".utf8))
         pane?.typed(Data("\r".utf8))

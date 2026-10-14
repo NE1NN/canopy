@@ -316,7 +316,15 @@ def text_of(message):
     content = message.get("message", {}).get("content")
     if isinstance(content, str):
         return content
-    return " ".join(block.get("text", "") for block in content or [] if block.get("type") == "text")
+    # A `!` command's block goes ahead of the message; what the stand-in acts on is the message itself.
+    return " ".join(block.get("text", "") for block in content or []
+                    if block.get("type") == "text" and not block.get("text", "").startswith(("<bash-", "<shell-run")))
+
+
+def has_bash_tags(message):
+    content = message.get("message", {}).get("content")
+    blocks = [content] if isinstance(content, str) else [b.get("text", "") for b in content or []]
+    return any("<bash-" in block for block in blocks)
 
 
 def worker():
@@ -333,7 +341,8 @@ def worker():
             message = merged(message, more)
         text = text_of(message)
         written = record("user", message.get("message", {}).get("content", text))
-        if REPLAY:
+        # Claude Code 2.1.296 replays no message holding `<bash-…>` tags.
+        if REPLAY and not has_bash_tags(message):
             replay = dict(message)
             replay.update({"uuid": written["uuid"], "isReplay": True, "session_id": SESSION})
             emit(replay)

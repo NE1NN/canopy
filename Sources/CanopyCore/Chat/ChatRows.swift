@@ -36,7 +36,13 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     /// Changes whenever what the row shows does, cheaply: an item's revision rather than its content.
     public var key: String {
         switch self {
-        case .item(let item, let expanded): "\(item.id)#\(item.revision)#\(expanded)"
+        case .item(let item, let expanded):
+            if case .shell(let shell) = item.content, item.revision == 0 {
+                // A command still being run here grows without a revision.
+                "\(item.id)#\(shell.output.utf8.count)#\(shell.exitCode.map(String.init) ?? "running")#\(expanded)"
+            } else {
+                "\(item.id)#\(item.revision)#\(expanded)"
+            }
         case .streaming(_, _, let growth): "\(id)#\(growth)"
         case .queued(let prompt): "\(id)#\(prompt.waitsForStep)"
         case .failure(let failure): "failure#\(failure)"
@@ -67,13 +73,19 @@ public enum ChatRows {
         }
         // A saved conversation stays readable above the question.
         if chat.needsTrust { return rows + [.trust] }
+        func shellRow(_ run: ChatShellRun) -> ChatRow {
+            let id = "shell-" + run.id
+            return .item(ChatItem(id: id, content: .shell(run.shell), at: 0), expanded: chat.expanded.contains(id))
+        }
+        rows += chat.shellRuns.map(shellRow)
         if let streaming = chat.streaming {
             for (index, block) in streaming.blocks.enumerated() {
                 let growth = index < streaming.settledCount ? 0 : streaming.text.utf8.count
                 rows.append(.streaming(index: index, block: block, growth: growth))
             }
         }
-        rows += chat.queued.map(ChatRow.queued)
+        // Until Claude takes a message, the `!` commands that go with it show above it.
+        rows += chat.queued.flatMap { $0.shellRuns.map(shellRow) + [.queued($0)] }
         if let permission = chat.permission {
             rows.append(.permission(permission, step: chat.questionStep, ticked: chat.questionSelection.count))
         }

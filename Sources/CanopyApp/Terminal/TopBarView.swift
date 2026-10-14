@@ -232,6 +232,15 @@ extension LayoutShape {
 struct NewTabMenu: View {
     @Environment(AppModel.self) private var model
     @State private var isHovering = false
+    /// Read off the main thread when the row changes and as the pointer comes over the button, before the menu opens.
+    @State private var conversations: [ClaudeSessionInfo] = []
+
+    /// Keeps only a list read for the row still selected, since an earlier row's read can finish last.
+    private func loadConversations() async {
+        let path = model.selection?.path
+        let found = await model.conversations()
+        if model.selection?.path == path { conversations = found }
+    }
 
     var body: some View {
         Menu {
@@ -249,6 +258,20 @@ struct NewTabMenu: View {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
             .disabled(!model.canOpenChat)
+            if model.canOpenChat, !conversations.isEmpty {
+                Divider()
+                Section("Resume in a chat") {
+                    ForEach(conversations.prefix(5)) { conversation in
+                        Button {
+                            model.resume(conversation)
+                        } label: {
+                            Text(conversation.title)
+                            Text(conversation.modified.formatted(.relative(presentation: .named)))
+                        }
+                    }
+                    Button("More conversations…") { model.showsConversations = true }
+                }
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .medium))
@@ -260,7 +283,14 @@ struct NewTabMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .foregroundStyle(isHovering ? .primary : .secondary)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering { Task { await loadConversations() } }
+        }
+        .task(id: model.selection?.path) {
+            conversations = []
+            await loadConversations()
+        }
         .help("New Tab")
         .accessibilityLabel("New Tab")
     }

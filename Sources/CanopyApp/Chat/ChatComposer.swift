@@ -11,6 +11,9 @@ struct ChatComposer: View {
     let paneID: PaneID
     var onTrust: () -> Void = {}
     var onDeclineTrust: () -> Void = {}
+    var onTerminalCommand: (String) -> Void = { _ in }
+    var onResume: () -> Void = {}
+    @State private var menuSelection = 0
     @State private var height = ChatComposer.lineHeight
 
     static let lineHeight = 21.0
@@ -19,6 +22,10 @@ struct ChatComposer: View {
     var body: some View {
         @Bindable var chat = chat
         VStack(alignment: .leading, spacing: 8) {
+            if !menuItems.isEmpty {
+                CommandMenu(items: menuItems, selection: min(menuSelection, menuItems.count - 1), pick: run)
+                    .onChange(of: chat.draft) { menuSelection = 0 }
+            }
             if !chat.draftImages.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -37,12 +44,20 @@ struct ChatComposer: View {
                 }
                 ComposerTextView(
                     text: $chat.draft, height: $height, paneID: paneID, composers: composers,
-                    onReturn: submit, onEscape: escape, onDigit: digit,
+                    onReturn: submit, onEscape: escape, onDigit: digit, onArrow: arrow,
                     onImage: { chat.draftImages.append($0) }
                 )
                 .frame(height: min(max(height, Self.lineHeight), Self.maxHeight))
             }
             HStack(spacing: 6) {
+                if chat.draft.hasPrefix("!") {
+                    Text(verbatim: "$ shell command")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(ChatStyle.chipText)
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(ChatStyle.chipFill, in: RoundedRectangle(cornerRadius: 7))
+                }
                 ChatChips(chat: chat)
                 Spacer()
                 if chat.isWorking && chat.permission == nil {
@@ -94,6 +109,7 @@ struct ChatComposer: View {
     }
 
     private var placeholder: String {
+        if chat.isRunningShell { return "Running your command. Esc stops it." }
         if case .question? = chat.permission?.kind { return "Or answer in your own words" }
         if case .plan? = chat.permission?.kind { return "Or tell Claude what to change" }
         if chat.permission != nil { return "Or tell Claude what to do instead" }
@@ -101,9 +117,13 @@ struct ChatComposer: View {
         return "Reply to Claude"
     }
 
+    private var hasDraft: Bool {
+        !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty
+    }
+
+    /// A `!` command typed while another runs stays in the composer until it can run.
     private var canSend: Bool {
-        !chat.needsTrust
-            && (!chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !chat.draftImages.isEmpty)
+        !chat.needsTrust && hasDraft && chat.takes(chat.draft)
     }
 
     private func send() {
@@ -114,11 +134,54 @@ struct ChatComposer: View {
         chat.send(text, images: images)
     }
 
+    /// The `/` menu's entries while the draft is a slash and a name, with nothing after it yet.
+    private var menuItems: [ChatMenuItem] {
+        let draft = chat.draft
+        guard draft.hasPrefix("/"), !draft.contains(" "), !draft.contains("\n") else { return [] }
+        return Array(
+            ChatCommandMenu.items(
+                commands: chat.commands, terminal: chat.terminalCommands, typed: String(draft.dropFirst())
+            )
+            .prefix(8))
+    }
+
+    private func arrow(_ step: Int) -> Bool {
+        guard !menuItems.isEmpty else { return false }
+        menuSelection = (min(menuSelection, menuItems.count - 1) + step + menuItems.count) % menuItems.count
+        return true
+    }
+
+    /// Runs a menu entry: in a terminal when it needs the full screen, the conversation sheet for /resume, or else
+    /// into the composer when it takes an argument, or straight to Claude.
+    private func run(_ item: ChatMenuItem) {
+        menuSelection = 0
+        if item.name == "resume" {
+            chat.draft = ""
+            onResume()
+        } else if item.opensInTerminal {
+            chat.draft = ""
+            onTerminalCommand("/" + item.name)
+        } else if !item.argumentHint.isEmpty {
+            chat.draft = "/" + item.name + " "
+        } else if chat.needsTrust {
+            // Trusting sends the draft, so the command waits in it.
+            chat.draft = "/" + item.name
+            onTrust()
+        } else {
+            chat.draft = ""
+            chat.send("/" + item.name)
+        }
+    }
+
     /// Return sends what is written; with nothing written it allows an open prompt.
     private func submit() {
+        if !menuItems.isEmpty {
+            run(menuItems[min(menuSelection, menuItems.count - 1)])
+            return
+        }
         if chat.needsTrust {
             onTrust()
-        } else if canSend {
+        } else if hasDraft {
             send()
         } else if let permission = chat.permission {
             switch permission.kind {
@@ -138,9 +201,13 @@ struct ChatComposer: View {
         return true
     }
 
-    /// Esc turns down trust, denies an open prompt, or stops Claude.
+    /// Esc closes the `/` menu, turns down trust, stops a shell command, denies an open prompt, or stops Claude.
     private func escape() {
-        if chat.needsTrust {
+        if !menuItems.isEmpty {
+            chat.draft = ""
+        } else if chat.isRunningShell {
+            chat.stopShell()
+        } else if chat.needsTrust {
             onDeclineTrust()
         } else if chat.permission != nil {
             chat.deny()
@@ -250,6 +317,7 @@ private struct ComposerTextView: NSViewRepresentable {
     let onReturn: () -> Void
     let onEscape: () -> Void
     let onDigit: (Int) -> Bool
+    let onArrow: (Int) -> Bool
     let onImage: (ChatImage) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -325,6 +393,10 @@ private struct ComposerTextView: NSViewRepresentable {
                     parent.onReturn()
                 }
                 return true
+            case #selector(NSResponder.moveUp(_:)):
+                return parent.onArrow(-1)
+            case #selector(NSResponder.moveDown(_:)):
+                return parent.onArrow(1)
             case #selector(NSResponder.cancelOperation(_:)):
                 parent.onEscape()
                 return true
@@ -485,5 +557,49 @@ enum ChatImagePrep {
         let options = quality.map { [kCGImageDestinationLossyCompressionQuality: $0] as CFDictionary }
         CGImageDestinationAddImage(destination, image, options)
         return CGImageDestinationFinalize(destination) ? data as Data : nil
+    }
+}
+
+/// The `/` menu above the composer: commands, then skills, the picked one highlighted.
+private struct CommandMenu: View {
+    let items: [ChatMenuItem]
+    let selection: Int
+    let pick: (ChatMenuItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                Button {
+                    pick(item)
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("/" + item.name).font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                        Text(item.description).font(.system(size: 12)).foregroundStyle(ChatStyle.secondaryText)
+                            .lineLimit(1)
+                        Spacer()
+                        if item.opensInTerminal {
+                            Text("Opens in Terminal").font(.system(size: 11)).foregroundStyle(ChatStyle.tertiaryText)
+                        } else if item.isSkill {
+                            Text("Skill").font(.system(size: 11)).foregroundStyle(ChatStyle.tertiaryText)
+                        }
+                    }
+                    .foregroundStyle(ChatStyle.primaryText)
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .background(
+                        index == selection ? Color.accentColor.opacity(0.18) : .clear,
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Text("↑↓ to pick · ⏎ to run · start with ! to run a shell command")
+                .font(.system(size: 11))
+                .foregroundStyle(ChatStyle.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+        }
+        .padding(.bottom, 4)
     }
 }

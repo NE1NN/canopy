@@ -1,6 +1,12 @@
 import Foundation
 import Observation
 
+/// A `!` command the author ran here, before Claude has it.
+public struct ChatShellRun: Identifiable, Equatable, Sendable {
+    public let id: String
+    public var shell: ChatShell
+}
+
 public struct ChatImage: Equatable, Sendable, Identifiable {
     public let id = UUID()
     public var mediaType: String
@@ -20,6 +26,8 @@ public enum ChatFailure: Equatable, Sendable {
     case tooOld(version: String)
     /// The saved session's transcript is gone.
     case transcriptMissing
+    /// A terminal pane runs this conversation, so a second Claude Code must not.
+    case heldElsewhere(pane: String)
 }
 
 /// What Claude is doing in a turn, for the status line.
@@ -33,6 +41,8 @@ public struct QueuedPrompt: Identifiable, Equatable, Sendable {
     public var prompt: ChatPrompt
     /// Sent while Claude worked, so it reads it when the current step ends.
     public var waitsForStep: Bool
+    /// `!` commands that go to Claude with it.
+    public var shellRuns: [ChatShellRun] = []
 }
 
 /// A tool call waiting for the author: a permission, Claude's questions, or a plan to approve.
@@ -179,6 +189,10 @@ public final class ChatSession {
     public var draft = ""
     /// Images pasted or dropped into the composer, sent with the next message.
     public var draftImages: [ChatImage] = []
+    /// `!` commands run since the last message, which Claude reads with the next one.
+    public private(set) var shellRuns: [ChatShellRun] = []
+    @ObservationIgnored private let shell: ((String) -> TerminalLaunch)?
+    @ObservationIgnored private var shellProcess: PipeProcess?
 
     /// Called when something worth saving changes: the session, the title.
     @ObservationIgnored public var onChange: () -> Void = {}
@@ -215,8 +229,10 @@ public final class ChatSession {
     public init(
         model: String?, mode: String, sessionID: String?, title: String, launcher: @escaping Launcher,
         transcript: @escaping (String) -> URL?, trust: ChatTrust,
-        tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())")
+        tasksRoot: URL = URL(fileURLWithPath: "/tmp/claude-\(getuid())"),
+        shell: ((String) -> TerminalLaunch)? = nil
     ) {
+        self.shell = shell
         self.tasksRoot = tasksRoot
         self.model = model
         self.mode = mode
@@ -240,6 +256,9 @@ public final class ChatSession {
 
     public var pid: pid_t? { stream?.pid }
 
+    /// Commands that need Claude Code's full screen, from `init`.
+    public private(set) var terminalCommands: [String] = []
+
     /// The commands Claude Code offers, once it has started.
     public var commands: [ClaudeCommand] { stream?.commands ?? [] }
 
@@ -252,6 +271,10 @@ public final class ChatSession {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
         open()
+        if text.hasPrefix("!"), images.isEmpty {
+            runShell(String(text.dropFirst()).trimmingCharacters(in: .whitespaces))
+            return
+        }
         if failure == .transcriptMissing { startFresh() }
         if needsTrust { needsTrust = !trust.isTrusted() }
         // Text typed at a question answers it in the author's own words.
@@ -266,10 +289,13 @@ public final class ChatSession {
             turnTokens = 0
             lastTurn = nil
         }
+        // A slash command must start its message, so `!` output waits for the next plain one.
+        let ran = text.hasPrefix("/") ? [] : shellRuns.filter { $0.shell.exitCode != nil }
+        shellRuns.removeAll { run in ran.contains { $0.id == run.id } }
         queued.append(
             QueuedPrompt(
                 id: UUID().uuidString, prompt: ChatPrompt(text: text, images: images.count),
-                waitsForStep: isWorking))
+                waitsForStep: isWorking, shellRuns: ran))
         isWorking = true
         if title.isEmpty, let line = text.split(whereSeparator: \.isNewline).first {
             title = String(line.prefix(80))
@@ -279,7 +305,21 @@ public final class ChatSession {
             guard isRunning else { return }
         }
         onInput(Self.returnKey)
-        stream?.send(images.map { .image(mediaType: $0.mediaType, data: $0.data) } + [.text(text)])
+        stream?.send(
+            Self.shellBlocks(ran) + images.map { .image(mediaType: $0.mediaType, data: $0.data) } + [.text(text)])
+    }
+
+    /// Whether `send` takes `text` now. A `!` command waits for the one running, and a bare `!` is not one.
+    public func takes(_ text: String) -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("!") else { return true }
+        return !isRunningShell && !text.dropFirst().trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// `!` commands as blocks of Canopy's own. Claude Code 2.1.296 replays no message holding the TUI's
+    /// `<bash-input>` tags, and without the echo a chat cannot tell when Claude took the message.
+    static func shellBlocks(_ runs: [ChatShellRun]) -> [ClaudeInput.Content] {
+        runs.map { .text(ChatShell.block(for: $0.shell)) }
     }
 
     public func allow() {
@@ -341,6 +381,94 @@ public final class ChatSession {
         } else {
             record(answer: question.options[index].label)
         }
+    }
+
+    /// Runs a `!` command in the row, as the author's login shell would, and keeps what it prints for Claude. Its
+    /// stderr joins stdout in order, and it reads no input, so a command that asks for some ends instead of waiting.
+    private func runShell(_ command: String) {
+        guard !command.isEmpty, shellProcess == nil, let shell else { return }
+        let id = UUID().uuidString
+        shellRuns.append(ChatShellRun(id: id, shell: ChatShell(command: command, output: "", exitCode: nil)))
+        do {
+            let process = try PipeProcess(
+                shell("{ \(command)\n} </dev/null 2>&1"), keepsBlankLines: true,
+                onLines: { [weak self] lines in
+                    let text = lines.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "\n")
+                    self?.updateShell(id) { $0.append(text) }
+                },
+                onExit: { [weak self] code in
+                    guard let self else { return }
+                    self.updateShell(id) { $0.exitCode = code }
+                    self.shellProcess = nil
+                })
+            // The login shell's own startup reads nothing either.
+            process.closeInput()
+            shellProcess = process
+        } catch {
+            updateShell(id) {
+                $0.output = "\(error)"
+                $0.exitCode = 127
+            }
+        }
+    }
+
+    private func updateShell(_ id: String, _ change: (inout ChatShell) -> Void) {
+        guard let index = shellRuns.firstIndex(where: { $0.id == id }) else { return }
+        change(&shellRuns[index].shell)
+    }
+
+    /// Stops a `!` command still running.
+    public func stopShell() {
+        shellProcess?.terminate()
+    }
+
+    public var isRunningShell: Bool { shellProcess != nil }
+
+    /// The name of another pane holding a session, so this chat does not start a second Claude Code on it.
+    @ObservationIgnored public var heldBy: (String) -> String? = { _ in nil }
+    /// Shows the pane that holds this chat's session.
+    @ObservationIgnored public var showHolder: () -> Void = {}
+
+    /// Ends the chat so a terminal can take its conversation over. A turn under way is interrupted first, so the
+    /// transcript ends where Claude stopped. Returns what Claude has not read yet, the draft and finished `!` commands,
+    /// as one message for the terminal to send.
+    public func handOff() async -> String? {
+        if isWorking {
+            interrupt()
+            let deadline = Date().addingTimeInterval(5)
+            while isWorking, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        returnQueuedToDraft()
+        let runs = shellRuns.filter { $0.shell.exitCode != nil }.map { run in
+            let output = run.shell.outputForClaude
+            let fence = String(repeating: "`", count: max(3, Self.longestBacktickRun(in: output) + 1))
+            return "I ran `\(run.shell.command)`"
+                + (run.shell.exitCode == 0 ? "" : " (exit \(run.shell.exitCode ?? 0))")
+                + ":\n\(fence)\n\(output)\n\(fence)"
+        }
+        let parts = runs + (draft.isEmpty ? [] : [draft])
+        let pid = stream?.pid
+        close()
+        // The terminal's Claude Code must not start on the session while this one still runs.
+        if let pid {
+            let deadline = Date().addingTimeInterval(5)
+            while kill(pid, 0) == 0, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
+    static func longestBacktickRun(in text: String) -> Int {
+        var longest = 0
+        var run = 0
+        for character in text {
+            run = character == "`" ? run + 1 : 0
+            longest = max(longest, run)
+        }
+        return longest
     }
 
     /// Whether `index` is one of the current question's options, so a digit typed past them stays text.
@@ -437,13 +565,21 @@ public final class ChatSession {
         onChange()
     }
 
+    /// Trusts the folder, then sends what the author wrote while the question showed, since Return answered both.
     public func grantTrust() async throws {
         try await trust.grant()
         needsTrust = !trust.isTrusted()
+        let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftImages.isEmpty
+        guard !needsTrust, hasDraft, takes(draft) else { return }
+        let (text, images) = (draft, draftImages)
+        draft = ""
+        draftImages = []
+        send(text, images: images)
     }
 
     /// Ends Claude Code for good.
     public func close() {
+        stopShell()
         flush?.cancel()
         let stream = stream
         self.stream = nil
@@ -494,6 +630,12 @@ public final class ChatSession {
 
     private func start() {
         failure = nil
+        if let sessionID, let holder = heldBy(sessionID) {
+            failure = .heldElsewhere(pane: holder)
+            returnQueuedToDraft()
+            isWorking = false
+            return
+        }
         let stream = ClaudeStream()
         stream.onEvent = { [weak self] in self?.received($0) }
         stream.onExit = { [weak self, weak stream] code, errors in
@@ -525,6 +667,7 @@ public final class ChatSession {
             model = info.model
             mode = info.mode
             cwd = info.cwd
+            if !info.terminalCommands.isEmpty { terminalCommands = info.terminalCommands }
         case .status(let status):
             if let mode = status.mode { self.mode = mode }
             switch status.activity {
@@ -583,7 +726,7 @@ public final class ChatSession {
             guard let toolUse else { break }
             runningCommands.remove(toolUse)
             endTail(toolUse)
-        case .taskStarted, .taskEnded, .unknownRequest, .controlResponse:
+        case .taskStarted, .unknownRequest, .controlResponse:
             break
         }
     }
@@ -607,6 +750,7 @@ public final class ChatSession {
         guard !queued.isEmpty else { return }
         let texts = queued.map(\.prompt.text) + (draft.isEmpty ? [] : [draft])
         draft = texts.joined(separator: "\n\n")
+        shellRuns = queued.flatMap(\.shellRuns) + shellRuns
         queued = []
     }
 

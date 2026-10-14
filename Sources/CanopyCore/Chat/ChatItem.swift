@@ -25,6 +25,64 @@ public enum ChatContent: Equatable, Sendable {
     case question(ChatQuestion)
     case plan(ChatPlan)
     case notice(String)
+    /// A `!` command the author ran, and what it printed.
+    case shell(ChatShell)
+}
+
+public struct ChatShell: Equatable, Sendable {
+    public var command: String
+    public var output: String
+    /// Nil while it runs, for one the author is running now.
+    public var exitCode: Int32?
+
+    public init(command: String, output: String, exitCode: Int32?) {
+        self.command = command
+        self.output = output
+        self.exitCode = exitCode
+    }
+
+    /// How much output Claude gets, as Claude Code's own `!` keeps: the end of it.
+    public static let outputLimit = 30_000
+
+    /// Adds printed lines, keeping about the last `outputLimit` bytes so a command that prints without end stays cheap.
+    public mutating func append(_ text: String) {
+        output += (output.isEmpty ? "" : "\n") + text
+        if output.utf8.count > 2 * Self.outputLimit { output = Self.lastPart(of: output) }
+    }
+
+    /// The output as Claude gets it.
+    public var outputForClaude: String {
+        output.utf8.count > Self.outputLimit ? Self.lastPart(of: output) : output
+    }
+
+    static let cutNote = "[earlier output cut]"
+
+    /// How a chat hands Claude a `!` command.
+    public static func block(for shell: ChatShell) -> String {
+        "<shell-run-by-user>\n<command>\(shell.command)</command>\n<exit-code>\(shell.exitCode ?? 0)</exit-code>\n"
+            + "<output>\n\(shell.outputForClaude)\n</output>\n</shell-run-by-user>"
+    }
+
+    /// Reads `block(for:)` back. The output is cut at the last closing tags, since it may hold them itself.
+    public static func parse(block text: String) -> ChatShell? {
+        let start = "<shell-run-by-user>\n<command>"
+        let end = "\n</output>\n</shell-run-by-user>"
+        guard text.hasPrefix(start), text.hasSuffix(end) else { return nil }
+        let body = text.dropFirst(start.count).dropLast(end.count)
+        guard let command = body.range(of: "</command>\n<exit-code>"),
+            let code = body[command.upperBound...].range(of: "</exit-code>\n<output>\n")
+        else { return nil }
+        return ChatShell(
+            command: String(body[..<command.lowerBound]), output: String(body[code.upperBound...]),
+            exitCode: Int32(body[command.upperBound..<code.lowerBound]) ?? 0)
+    }
+
+    private static func lastPart(of output: String) -> String {
+        let tail = String(decoding: output.utf8.suffix(outputLimit), as: UTF8.self)
+        let lines = tail.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        let whole = lines.count == 2 && !tail.hasPrefix(cutNote) ? String(lines[1]) : tail
+        return whole.hasPrefix(cutNote) ? whole : cutNote + "\n" + whole
+    }
 }
 
 public struct ChatPrompt: Equatable, Sendable {

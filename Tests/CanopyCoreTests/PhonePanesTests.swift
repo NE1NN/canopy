@@ -117,14 +117,18 @@ struct PhonePanesTests {
         let pane = recording.pane
         let panes = recording.panes
         let id = recording.id
-        // Return waits long after the paste is read, and the dialog's hook lands in between.
-        pane.terminal!.replyPause = .seconds(2)
+        // Return waits until the dialog's hook has landed after the paste was read.
+        let (dialogShown, showDialog) = AsyncStream<Void>.makeStream()
+        pane.terminal!.beforeReplyReturn = {
+            for await _ in dialogShown { break }
+        }
         let reply = Task { try await panes.reply(PhoneReplyParams(pane: id, text: "go")) }
         #expect(await eventually { !recording.reads.isEmpty })
         pane.report(
             AgentReport(
                 state: .waiting, session: "s1", event: "PermissionRequest",
                 prompt: AgentPrompt(kind: .permission, tool: "Bash", detail: "rm -rf build")))
+        showDialog.yield()
         await #expect(throws: PhonePanes.promptOpen) { try await reply.value }
         try await Task.sleep(for: .milliseconds(300))
         #expect(!recording.reads.contains("<0d>"))

@@ -55,7 +55,7 @@ The approved mockup is https://claude.ai/artifact/6EqY65kmwcqx68rH6qTPBd (privat
 | Message layout | The author's messages in bubbles, Claude's as plain document text | Option 1 on the mockup's question board, which the author approved. |
 | Markdown | Apple's `swift-markdown` package | Tested, and it reads GitHub tables; a home-made parser would not be. |
 | Conversation list | An `NSTableView` with SwiftUI cells and cached row heights | It keeps steady scrolling at thousands of rows of varying height, where `LazyVStack` jumps. Milestone 1 measures it before anything builds on it. |
-| `!` commands | Canopy runs them and hands Claude the result with the next message | Headless Claude Code sends `!` to the model as a request. The TUI saves `!` as `<bash-input>` and `<bash-stdout>` messages that Claude reads on its next turn, and Canopy sends the same. |
+| `!` commands | Canopy runs them and hands Claude the result with the next message | Headless Claude Code sends `!` to the model as a request. The TUI saves `!` as `<bash-input>` and `<bash-stdout>` messages that Claude reads on its next turn. Canopy sends a block of its own instead, because Claude Code 2.1.296 does not echo a message holding those tags. |
 | Folder trust | Canopy asks, with its own card | Headless Claude Code skips the trust dialog. |
 | Remote rows and the box | Later | The author chose local rows first. |
 
@@ -157,7 +157,7 @@ The agent state still comes from the hooks, as for terminals, since the agent ru
 ### History
 
 `TranscriptReader` reads the session's transcript from the end in chunks from 64 KB, as `phone.transcript` does, and `TranscriptParser` turns the lines into items.
-The parser gains what a chat shows and the phone leaves out: an edit's patch, a shell block from `<bash-input>` and `<bash-stdout>`, an artifact publish, and a command's output as a notice.
+The parser gains what a chat shows and the phone leaves out: an edit's patch, a shell block from `<bash-input>` and `<bash-stdout>` or from a chat's `<shell-run-by-user>`, an artifact publish, and a command's output as a notice.
 The phone keeps its current entries; the new kinds are dropped from what it is sent.
 Older pages load as the author scrolls up.
 Live events take over from the end of the file; a message that is in both is matched by its UUID.
@@ -270,7 +270,8 @@ The menu's footer says "Start with ! to run a shell command".
 
 `!` at the start of the composer switches it to shell mode, with a `$` badge.
 Return runs the command through the author's login shell with the pane's environment, in the row's folder, and its output streams into a shell block; esc stops it.
-Claude gets the command and its output with the author's next message, as a `<bash-input>` text block and a `<bash-stdout>`/`<bash-stderr>` text block ahead of the message, the records the TUI writes.
+Claude gets the command, its exit code, and its output with the author's next message, as a `<shell-run-by-user>` text block ahead of the message.
+The TUI's `<bash-input>` and `<bash-stdout>` blocks would read the same to Claude, but Claude Code 2.1.296 does not echo a message holding them, and the echo is how a chat knows Claude took it.
 Until then the block says "Claude sees this with your next message".
 
 ### Artifacts

@@ -832,6 +832,35 @@ final class AppModel {
         canOpenTerminal && selection?.worktree?.rowClass != .remote
     }
 
+    /// The selected row's Claude conversations, newest first, for Resume in a chat.
+    func conversations() async -> [ClaudeSessionInfo] {
+        guard let row = selection else { return [] }
+        let (folder, home) = (Paths.canonical(row.path), terminals.claudeHome)
+        return await Task.detached { ClaudeSessions.list(folder: folder, home: home) }.value
+    }
+
+    /// Opens a conversation in a chat, or shows the pane that already holds it.
+    func resume(_ conversation: ClaudeSessionInfo) {
+        guard canOpenChat, let row = selection else { return }
+        if let pane = terminals.pane(holdingSession: conversation.id) {
+            terminals.show(pane)
+            focusSelectedTerminal()
+            return
+        }
+        terminals.openChat(for: context(for: row), session: conversation.id, title: conversation.title)
+    }
+
+    /// With a prompt, such as a full-screen command, the terminal's Claude Code runs it first.
+    func openInTerminal(_ pane: Pane, running prompt: String? = nil) {
+        Task {
+            await terminals.openInTerminal(pane, running: prompt)
+            focusSelectedTerminal()
+        }
+    }
+
+    /// Whether the sheet listing every conversation of the row shows.
+    var showsConversations = false
+
     func newChat() {
         guard canOpenChat, let row = selection else { return }
         withFolder(of: row) { self.terminals.openChat(for: self.context(for: row)) }

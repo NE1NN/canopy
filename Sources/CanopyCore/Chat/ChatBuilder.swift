@@ -85,6 +85,34 @@ public struct ChatBuilder: Sendable {
             case .tool: break
             }
         }
+        // A TUI's `!` commands come as `<bash-input>` and `<bash-stdout>` lines, a chat's as blocks ahead of a message.
+        var shellIndex: Int?
+        parts = parts.filter { part in
+            let text = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let shell = ChatShell.parse(block: text) {
+                append(ChatItem(id: record.id + "#shell\(items.count)", content: .shell(shell), at: record.at))
+                return false
+            }
+            if let command = Self.shellCommand(text) {
+                // Done unless its output says otherwise: in a TUI transcript the output can be on an older page.
+                append(
+                    ChatItem(
+                        id: record.id + "#shell\(items.count)",
+                        content: .shell(ChatShell(command: command, output: "", exitCode: 0)), at: record.at))
+                shellIndex = items.count - 1
+                return false
+            }
+            if let output = Self.shellOutput(text) {
+                let index = shellIndex ?? items.lastIndex { if case .shell = $0.content { true } else { false } }
+                if let index, case .shell(var shell) = items[index].content {
+                    shell.output = output
+                    items[index].content = .shell(shell)
+                    items[index].revision = nextRevision()
+                }
+                return false
+            }
+            return true
+        }
         if record.isCompactSummary {
             append(ChatItem(id: record.id, content: .notice("The conversation was compacted"), at: record.at))
             return
@@ -97,6 +125,30 @@ public struct ChatBuilder: Sendable {
             return
         }
         append(ChatItem(id: record.id, content: .prompt(ChatPrompt(text: text, images: images)), at: record.at))
+    }
+
+    static func shellCommand(_ text: String) -> String? {
+        guard text.hasPrefix("<bash-input>"), text.hasSuffix("</bash-input>") else { return nil }
+        return String(text.dropFirst("<bash-input>".count).dropLast("</bash-input>".count))
+    }
+
+    /// A TUI's output, cut at the last closing tags, since the output itself may hold them. Its stderr stays output.
+    static func shellOutput(_ text: String) -> String? {
+        guard text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") else { return nil }
+        var stdout = ""
+        var stderr = Substring(text)
+        if text.hasPrefix("<bash-stdout>") {
+            let body = text.dropFirst("<bash-stdout>".count)
+            guard let end = body.range(of: "</bash-stdout><bash-stderr>", options: .backwards) else {
+                return String(body.hasSuffix("</bash-stdout>") ? body.dropLast("</bash-stdout>".count) : body)
+            }
+            stdout = String(body[..<end.lowerBound])
+            stderr = "<bash-stderr>" + body[end.upperBound...]
+        }
+        stderr = stderr.dropFirst("<bash-stderr>".count)
+        if stderr.hasSuffix("</bash-stderr>") { stderr = stderr.dropLast("</bash-stderr>".count) }
+        return [stdout.trimmingCharacters(in: .newlines), stderr.trimmingCharacters(in: .whitespacesAndNewlines)]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private mutating func addAssistant(_ record: TranscriptParser.Record) {
