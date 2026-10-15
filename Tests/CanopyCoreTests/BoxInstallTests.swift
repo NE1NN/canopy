@@ -105,6 +105,8 @@ struct BoxInstallTests {
             contentsOfFile: host.fake.home + "/.config/systemd/user/canopy-box-\(host.homeID).service", encoding: .utf8)
         #expect(unit.contains("Restart=always"))
         #expect(unit.contains("RestartSec=2"))
+        // A tmux server canopy-box started, with every session and agent in it, outlives a restart for an update.
+        #expect(unit.contains("KillMode=process"))
         #expect(unit.contains("ExecStart=%h/.canopy/\(host.homeID)/bin/canopy-box serve --home-id \(host.homeID)"))
         #expect(unit.contains("WantedBy=default.target"))
         let log = try String(contentsOfFile: host.fake.home + "/systemctl.log", encoding: .utf8)
