@@ -47,13 +47,26 @@ struct RemotePaneTests {
         #expect(Fixture.context(dir.path).remote == nil)
     }
 
+    /// Never the stand-in on this Mac, which the host does not have, so tmux would start the session in the home
+    /// folder there, outside every row, and canopy-box would not know whose it is.
+    @Test func aNewRemotePaneStartsInTheRowsFolderOnTheHost() throws {
+        let dir = try TempDir()
+        let terminals = Fixture.terminals(dir)
+        defer { terminals.closeAll() }
+
+        let pane = terminals.openTab(for: try remoteContext(dir)).pane
+
+        #expect(pane.terminal!.remoteFolder == "/home/u/.canopy/worktrees/demo/feat-x")
+    }
+
     @Test func savingAndRestoringKeepsTheSessionAndTheFolderOnTheHost() throws {
         let dir = try TempDir()
         let terminals = Fixture.terminals(dir)
         defer { terminals.closeAll() }
         let context = try remoteContext(dir)
         let pane = terminals.openTab(for: context).pane
-        pane.terminal!.remoteActivity = SessionActivity(busy: false, foreground: "bash", folder: "/home/u/elsewhere")
+        let web = "/home/u/.canopy/worktrees/demo/feat-x/web"
+        pane.terminal!.remoteActivity = SessionActivity(busy: false, foreground: "bash", folder: web)
 
         let saved = try #require(terminals.saved()[context.rowPath])
         let restored = Fixture.terminals(dir)
@@ -61,11 +74,40 @@ struct RemotePaneTests {
         restored.continueNumbering(from: 50)
         restored.restore(saved, for: context)
 
-        #expect(saved.tabs[0].layout?.leaves == [SavedPane(folder: "/home/u/elsewhere", session: pane.id.description)])
+        #expect(saved.tabs[0].layout?.leaves == [SavedPane(folder: web, session: pane.id.description)])
         let again = try #require(restored.tabs(inRow: context.rowPath).first?.focused)
         #expect(again.terminal!.remoteSession == pane.id.description)
-        #expect(again.terminal!.remoteFolder == "/home/u/elsewhere")
+        #expect(again.terminal!.remoteFolder == web)
         #expect(again.id == pane.id)
+    }
+
+    /// Such as the stand-in an older build saved, or the home folder tmux started a session in when its folder was
+    /// missing.
+    @Test func aRestoredFolderOutsideTheRowOnTheHostGivesWayToTheRows() throws {
+        let dir = try TempDir()
+        let context = try remoteContext(dir)
+        let restored = Fixture.terminals(dir)
+        defer { restored.closeAll() }
+
+        for folder in [context.rowPath, "/home/u", "/home/u/.canopy/worktrees/demo/feat-xy"] {
+            restored.restore(
+                SavedRowTerminals(
+                    tabs: [SavedTab(name: "", layout: .leaf(SavedPane(folder: folder, session: "p1")), focused: 0)],
+                    selectedTab: 0),
+                for: context)
+            let pane = try #require(restored.tabs(inRow: context.rowPath).last?.focused)
+            #expect(pane.terminal!.remoteFolder == "/home/u/.canopy/worktrees/demo/feat-x")
+            restored.closeRow(path: context.rowPath)
+        }
+    }
+
+    @Test func aRemotePanesStartFolderIsTheFirstInsideItsRowOnTheHost() {
+        let remote = PaneRemote(host: "box", path: "/home/u/wt")
+
+        #expect(remote.startFolder("/home/u/wt/web", "/home/u/wt/api") == "/home/u/wt/web")
+        #expect(remote.startFolder(nil, "/home/u", "/home/u/wt/api") == "/home/u/wt/api")
+        #expect(remote.startFolder("/Users/me/.canopy/remote/box/demo/wt", nil) == "/home/u/wt")
+        #expect(remote.startFolder() == "/home/u/wt")
     }
 
     /// The session's shell, and Claude in it, keep the CANOPY_PANE it started with, so a relaunched pane keeps it too.

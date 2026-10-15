@@ -13,7 +13,8 @@ public final class TerminalBody {
     public let startDirectory: String?
     /// A remote pane's tmux session on its host, named after the pane that first made it.
     public let remoteSession: String?
-    /// Where a remote pane's session starts when the host has none: the folder it was last in, or the row's.
+    /// Where a remote pane's session starts when the host has none: the folder it was last in, or the row's, on the
+    /// host.
     public let remoteFolder: String?
     /// What the host last said the session is doing. Nil until it has, and while it has no such session.
     public var remoteActivity: SessionActivity? {
@@ -45,16 +46,16 @@ public final class TerminalBody {
     @ObservationIgnored private var commandMarks: CommandMarkScanner?
 
     init(
-        emulator: any TerminalEmulator, command: PaneCommand, isRemote: Bool, settings: ShellSettings,
-        directory: String?, session: String?, paneID: PaneID, rowPath: String, environment: [String: String] = [:]
+        emulator: any TerminalEmulator, command: PaneCommand, remote: PaneRemote?, settings: ShellSettings,
+        directory: String?, session: String?, paneID: PaneID, environment: [String: String] = [:]
     ) {
         self.emulator = emulator
         extraEnvironment = environment
         self.command = command
         self.settings = settings
-        remoteSession = isRemote ? session ?? paneID.description : nil
-        remoteFolder = isRemote ? directory ?? rowPath : nil
-        startDirectory = isRemote ? nil : directory
+        remoteSession = remote.map { _ in session ?? paneID.description }
+        remoteFolder = remote?.startFolder(directory)
+        startDirectory = remote == nil ? directory : nil
     }
 
     /// Joins the body to its pane and starts the process.

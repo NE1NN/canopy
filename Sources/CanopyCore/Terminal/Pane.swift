@@ -56,8 +56,8 @@ public final class Pane: Identifiable {
         self.context = context
         self.activity = activity
         let terminal = TerminalBody(
-            emulator: emulator, command: command, isRemote: context.remote != nil, settings: settings,
-            directory: directory, session: session, paneID: id, rowPath: context.rowPath, environment: environment)
+            emulator: emulator, command: command, remote: context.remote, settings: settings, directory: directory,
+            session: session, paneID: id, environment: environment)
         body = .terminal(terminal)
         terminal.attach(to: self)
     }

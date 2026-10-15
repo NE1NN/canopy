@@ -239,7 +239,7 @@ extension RowLifecycle: RemotePaneHooks {
         else { return nil }
         return RemotePaneInfo(
             pane: id, host: remote.host, session: session,
-            folder: pane.terminal?.remoteActivity?.folder ?? pane.terminal?.remoteFolder ?? remote.path,
+            folder: remote.startFolder(pane.terminal?.remoteActivity?.folder, pane.terminal?.remoteFolder),
             repoPath: repoPath,
             rowPath: pane.context.rowPath, rowName: pane.context.rowName)
     }
@@ -254,7 +254,7 @@ extension RowLifecycle {
             else { return nil }
             return BoxAdoptedPane(
                 id: session, rowPath: remote.path,
-                folder: terminal.remoteActivity?.folder ?? terminal.remoteFolder ?? remote.path, agent: pane.agent)
+                folder: remote.startFolder(terminal.remoteActivity?.folder, terminal.remoteFolder), agent: pane.agent)
         }
         return try await workspace.upgradeHost(alias, panes: panes)
     }
