@@ -27,6 +27,15 @@ struct TmuxTests {
         #expect(!(await tmux.hasSession("t")))
     }
 
+    @Test func aSessionsVariableReadsBackUntilItIsUnsetOrTheSessionIsGone() async throws {
+        try await tmux.newSession(
+            "v", folder: dir.path, environment: ["CANOPY_ROW_PATH": "/w/my row"], command: "exec sleep 30")
+
+        #expect(await tmux.variable("CANOPY_ROW_PATH", of: "v") == "/w/my row")
+        #expect(await tmux.variable("CANOPY_PANE", of: "v") == nil)
+        #expect(await tmux.variable("CANOPY_ROW_PATH", of: "gone") == nil)
+    }
+
     @Test func panesListEachSessionsCommandAndFolder() async throws {
         try await tmux.newSession("a", folder: dir.path, environment: [:], command: "exec sleep 30")
         try await tmux.newSession("b", folder: "/", environment: [:], command: "exec sleep 31")

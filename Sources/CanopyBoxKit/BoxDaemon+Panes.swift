@@ -170,15 +170,29 @@ extension BoxDaemon {
         guard !state.released, !makingPanes.contains(id),
             let session = try? await tmux.panes().first(where: { $0.session == id })
         else { return false }
-        // Another call may have taken it, or the box been released, while tmux listed.
+        let placed = await placement(of: session)
+        // Another call may have taken it, or the box been released, while tmux was asked.
         if pane(id) != nil { return true }
-        guard !state.released else { return false }
-        let folder = Paths.canonical(session.start)
-        guard let row = row(holding: folder) else { return false }
-        state.panes.append(StoredPane(id: id, rowPath: row.path, folder: folder, agent: PaneAgent()))
+        guard !state.released, !makingPanes.contains(id), let placed else { return false }
+        state.panes.append(StoredPane(id: id, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
         bumpNextPane()
         changed()
         return true
+    }
+
+    /// The row a session is a pane of, and its folder there: the row holding the folder it started in, or else the row
+    /// its CANOPY_ROW_PATH names, which every pane Canopy opens has, or else the row holding the folder it is in now.
+    /// Nil for a session outside them all.
+    func placement(of session: TmuxPane) async -> (row: StoredRow, folder: String)? {
+        let start = Paths.canonical(session.start)
+        if let row = row(holding: start) { return (row, start) }
+        let now = Paths.canonical(session.folder)
+        if let named = await tmux.variable("CANOPY_ROW_PATH", of: session.session),
+            let row = row(Paths.canonical(named))
+        {
+            return (row, Paths.isInside(now, row.path) ? now : row.path)
+        }
+        return row(holding: now).map { ($0, now) }
     }
 
     /// Reads what each pane runs, its title, whether a program holds its terminal, and its last line. Panes whose
@@ -197,9 +211,12 @@ extension BoxDaemon {
         }
         for session in sessions
         where !state.released && pane(session.session) == nil && !makingPanes.contains(session.session) {
-            let folder = Paths.canonical(session.start)
-            guard let row = row(holding: folder) else { continue }
-            state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))
+            let placed = await placement(of: session)
+            // Taken, made, or released while tmux was asked.
+            guard let placed, !state.released, pane(session.session) == nil, !makingPanes.contains(session.session)
+            else { continue }
+            state.panes.append(
+                StoredPane(id: session.session, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
             bumpNextPane()
             changedPanes = true
         }

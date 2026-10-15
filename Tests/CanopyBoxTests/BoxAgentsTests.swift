@@ -54,6 +54,25 @@ struct BoxAgentsTests {
         #expect(await daemon.hook(pane: "p9", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
     }
 
+    /// As every pane an older Mac opened did: it gave tmux its stand-in folder, which the host does not have, so tmux
+    /// started each session in the home folder.
+    @Test func aHookFromASessionStartedOutsideEveryRowCountsForTheRowItsVariablesName() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        try await home.server.tmux.newSession(
+            "p7", folder: home.dir.path, environment: ["CANOPY_ROW_PATH": home.clone], command: "exec sleep 60")
+        try await home.server.tmux.newSession(
+            "p8", folder: home.dir.path, environment: ["CANOPY_ROW_PATH": home.dir.sub("nowhere")],
+            command: "exec sleep 60")
+
+        #expect(await daemon.hook(pane: "p7", input: Self.hookInput("UserPromptSubmit"), startedAt: Date()) == .working)
+        #expect(await daemon.hook(pane: "p8", input: Self.hookInput("Stop"), startedAt: Date()) == nil)
+        let taken = await daemon.snapshot().panes
+        #expect(taken.map(\.id) == ["p7"])
+        #expect(taken.first?.rowPath == home.clone)
+        #expect(taken.first?.folder == home.clone)
+    }
+
     @Test func anOlderHookIsIgnored() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

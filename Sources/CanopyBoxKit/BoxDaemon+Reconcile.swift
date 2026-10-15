@@ -70,9 +70,11 @@ extension BoxDaemon {
         where !state.released && !state.panes.contains(where: { $0.id == session.session })
             && !makingPanes.contains(session.session)
         {
-            let folder = Paths.canonical(session.start)
-            guard let row = row(holding: folder) else { continue }
-            state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))
+            let placed = await placement(of: session)
+            guard let placed, !state.released, pane(session.session) == nil, !makingPanes.contains(session.session)
+            else { continue }
+            state.panes.append(
+                StoredPane(id: session.session, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
         }
         bumpNextPane()
     }

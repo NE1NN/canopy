@@ -106,6 +106,35 @@ struct BoxPanesTests {
         #expect(await daemon.snapshot().panes.isEmpty)
     }
 
+    /// A session started outside every row is the pane of the row its CANOPY_ROW_PATH names, or else of the row it
+    /// is in now, on the next poll and when the box starts again.
+    @Test func sessionsStartedOutsideEveryRowAreTakenByTheirRowVariableOrTheirFolder() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/placed"))
+        let sub = made.row.path + "/sub"
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        let tmux = home.server.tmux
+        try await tmux.newSession(
+            "p1", folder: home.dir.path, environment: ["CANOPY_ROW_PATH": made.row.path],
+            command: "cd '\(sub)' && exec sleep 60")
+        try await tmux.newSession(
+            "p2", folder: home.dir.path, environment: [:], command: "cd '\(sub)' && exec sleep 60")
+        try await tmux.newSession("p3", folder: home.dir.path, environment: [:], command: "exec sleep 60")
+        let placed = ["p1 \(made.row.path) \(sub)", "p2 \(made.row.path) \(sub)"]
+        func panes(_ daemon: BoxDaemon) async -> [String] {
+            await daemon.snapshot().panes.map { "\($0.id) \($0.rowPath) \($0.folder)" }.sorted()
+        }
+
+        #expect(
+            await eventually {
+                await daemon.pollPanes()
+                return await panes(daemon) == placed
+            })
+        try FileManager.default.removeItem(atPath: home.paths.stateFile)
+        #expect(await panes(try await home.daemon()) == placed)
+    }
+
     @Test func thePollFillsForegroundTitleAndBusy() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()
