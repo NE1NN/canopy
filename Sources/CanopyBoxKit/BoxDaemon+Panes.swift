@@ -72,8 +72,9 @@ extension BoxDaemon {
     /// Ends a pane's session and forgets the pane.
     public func paneClose(_ id: String) async throws {
         guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
-        closedPanes[id] = ContinuousClock.now
         await tmux.killSession(id)
+        // Dated once the session is gone, as a listing taken while tmux killed it can still have it.
+        closedPanes[id] = ContinuousClock.now
         forgetPane(id)
     }
 

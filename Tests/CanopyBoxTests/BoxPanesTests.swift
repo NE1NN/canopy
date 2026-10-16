@@ -140,7 +140,9 @@ struct BoxPanesTests {
         let daemon = try await home.daemon()
         let outside = home.dir.sub("outside")
         try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: true)
-        try await home.server.tmux.newSession("p1", folder: outside, environment: [:], command: "exec sleep 60")
+        let elsewhere = home.dir.sub("elsewhere")
+        try FileManager.default.createDirectory(atPath: elsewhere, withIntermediateDirectories: true)
+        try await home.server.tmux.newSession("p1", folder: outside, environment: [:])
         func asked() -> Int { home.server.calls.filter { $0.contains("show-environment") }.count }
 
         await daemon.pollPanes()
@@ -149,6 +151,15 @@ struct BoxPanesTests {
         _ = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/more"))
         await daemon.pollPanes()
         #expect(asked() == 2)
+        try await home.server.tmux.sendText("cd '\(elsewhere)'", to: "p1")
+        try await home.server.tmux.sendBytes(Data([0x0D]), to: "p1")
+        #expect(
+            await eventually {
+                await daemon.pollPanes()
+                return asked() == 3
+            })
+        await daemon.pollPanes()
+        #expect(asked() == 3)
         #expect(await daemon.snapshot().panes.isEmpty)
     }
 
@@ -166,6 +177,19 @@ struct BoxPanesTests {
         #expect(await daemon.snapshot().panes.isEmpty)
         await daemon.pollPanes()
         #expect(await daemon.closedPanes.isEmpty)
+    }
+
+    @Test func aPaneWhoseSessionTheTmuxListingCaughtDuringItsCloseStaysClosed() async throws {
+        let home = try await BoxTestHome(pauses: ["list-panes": 2], delays: ["kill-session": 1])
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let closing = Task { try await daemon.paneClose(pane) }
+        try await Task.sleep(for: .milliseconds(300))
+
+        await daemon.pollPanes()
+        try await closing.value
+
+        #expect(await daemon.snapshot().panes.isEmpty)
     }
 
     @Test func thePollFillsForegroundTitleAndBusy() async throws {

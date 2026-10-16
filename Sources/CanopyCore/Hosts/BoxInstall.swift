@@ -84,8 +84,8 @@ public enum BoxInstall {
     }
 
     /// The systemd unit: restarted always, two seconds after it stops, and started with the user's manager. Stopping it
-    /// stops canopy-box alone: a tmux server it started, as when a pane is the first since the host booted, runs in
-    /// its unit, and every session and agent would go with it.
+    /// stops canopy-box alone: a tmux server it started, as when a pane it opens is the first since the host booted,
+    /// runs in its unit, and every session and agent would go with it.
     static func unit(homeID: String) -> String {
         """
         # Written by Canopy. Changes here are replaced when Canopy updates it.
