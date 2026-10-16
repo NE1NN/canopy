@@ -72,6 +72,7 @@ extension BoxDaemon {
     /// Ends a pane's session and forgets the pane.
     public func paneClose(_ id: String) async throws {
         guard pane(id) != nil else { throw BoxErrors.paneNotFound(id) }
+        closedPanes[id] = ContinuousClock.now
         await tmux.killSession(id)
         forgetPane(id)
     }
@@ -167,17 +168,32 @@ extension BoxDaemon {
     /// as one the Mac just opened does, rather than on the next poll, so its agent's first hooks are not lost.
     func takeSession(_ id: String) async -> Bool {
         if pane(id) != nil { return true }
-        guard !state.released, !makingPanes.contains(id),
-            let session = try? await tmux.panes().first(where: { $0.session == id })
+        let listedAt = ContinuousClock.now
+        guard mayTake(id, listedAt: listedAt), let session = try? await tmux.panes().first(where: { $0.session == id })
         else { return false }
-        let placed = await placement(of: session)
-        // Another call may have taken it, or the box been released, while tmux was asked.
+        // Another call may have taken it while tmux listed.
         if pane(id) != nil { return true }
-        guard !state.released, !makingPanes.contains(id), let placed else { return false }
-        state.panes.append(StoredPane(id: id, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
+        guard await take(session, listedAt: listedAt) else { return pane(id) != nil }
         bumpNextPane()
         changed()
         return true
+    }
+
+    /// Makes a session a pane of the row it belongs in, unless it is one already, is being made or was closed since
+    /// tmux listed it at `listedAt`, or no row holds it. Returns whether it did.
+    func take(_ session: TmuxPane, listedAt: ContinuousClock.Instant) async -> Bool {
+        let id = session.session
+        guard mayTake(id, listedAt: listedAt) else { return false }
+        let placed = await placement(of: session)
+        // Asking tmux lets other calls run: one may have taken, made, or closed it, or released the box.
+        guard let placed, mayTake(id, listedAt: listedAt) else { return false }
+        state.panes.append(StoredPane(id: id, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
+        return true
+    }
+
+    private func mayTake(_ id: String, listedAt: ContinuousClock.Instant) -> Bool {
+        !state.released && pane(id) == nil && !makingPanes.contains(id)
+            && (closedPanes[id].map { $0 < listedAt } ?? true)
     }
 
     /// The row a session is a pane of, and its folder there: the row holding the folder it started in, or else the row
@@ -187,12 +203,17 @@ extension BoxDaemon {
         let start = Paths.canonical(session.start)
         if let row = row(holding: start) { return (row, start) }
         let now = Paths.canonical(session.folder)
+        let checked = ([now] + allRows.map(\.path)).joined(separator: "\n")
+        guard unplaced[session.session] != checked else { return nil }
         if let named = await tmux.variable("CANOPY_ROW_PATH", of: session.session),
             let row = row(Paths.canonical(named))
         {
+            unplaced[session.session] = nil
             return (row, Paths.isInside(now, row.path) ? now : row.path)
         }
-        return row(holding: now).map { ($0, now) }
+        let placed = row(holding: now).map { ($0, now) }
+        unplaced[session.session] = placed == nil ? checked : nil
+        return placed
     }
 
     /// Reads what each pane runs, its title, whether a program holds its terminal, and its last line. Panes whose
@@ -200,6 +221,7 @@ extension BoxDaemon {
     public func pollPanes() async {
         // Panes made while tmux lists are not in its listing, so only panes from before it can be gone.
         let known = Set(state.panes.map(\.id))
+        let listedAt = ContinuousClock.now
         guard let sessions = try? await tmux.panes() else { return }
         let groups = await Self.foregroundGroups()
         let byName = Dictionary(sessions.map { ($0.session, $0) }, uniquingKeysWith: { first, _ in first })
@@ -209,14 +231,10 @@ extension BoxDaemon {
             forgetPane(pane.id)
             changedPanes = true
         }
-        for session in sessions
-        where !state.released && pane(session.session) == nil && !makingPanes.contains(session.session) {
-            let placed = await placement(of: session)
-            // Taken, made, or released while tmux was asked.
-            guard let placed, !state.released, pane(session.session) == nil, !makingPanes.contains(session.session)
-            else { continue }
-            state.panes.append(
-                StoredPane(id: session.session, rowPath: placed.row.path, folder: placed.folder, agent: PaneAgent()))
+        unplaced = unplaced.filter { byName[$0.key] != nil }
+        closedPanes = closedPanes.filter { byName[$0.key] != nil || $0.value >= listedAt }
+        for session in sessions {
+            guard await take(session, listedAt: listedAt) else { continue }
             bumpNextPane()
             changedPanes = true
         }

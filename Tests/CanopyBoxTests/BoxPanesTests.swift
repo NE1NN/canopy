@@ -135,6 +135,39 @@ struct BoxPanesTests {
         #expect(await panes(try await home.daemon()) == placed)
     }
 
+    @Test func aSessionNoRowHoldsIsAskedAboutAgainOnlyOnceItsFolderOrTheRowsChange() async throws {
+        let home = try await BoxTestHome(logsCalls: true)
+        let daemon = try await home.daemon()
+        let outside = home.dir.sub("outside")
+        try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: true)
+        try await home.server.tmux.newSession("p1", folder: outside, environment: [:], command: "exec sleep 60")
+        func asked() -> Int { home.server.calls.filter { $0.contains("show-environment") }.count }
+
+        await daemon.pollPanes()
+        await daemon.pollPanes()
+        #expect(asked() == 1)
+        _ = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/more"))
+        await daemon.pollPanes()
+        #expect(asked() == 2)
+        #expect(await daemon.snapshot().panes.isEmpty)
+    }
+
+    /// A poll that listed tmux's sessions just before a pane closed still has the pane's session in its listing.
+    @Test func aPaneClosedWhileThePollListsStaysClosed() async throws {
+        let home = try await BoxTestHome(pauses: ["list-panes": 1])
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let poll = Task { await daemon.pollPanes() }
+        try await Task.sleep(for: .milliseconds(300))
+
+        try await daemon.paneClose(pane)
+        await poll.value
+
+        #expect(await daemon.snapshot().panes.isEmpty)
+        await daemon.pollPanes()
+        #expect(await daemon.closedPanes.isEmpty)
+    }
+
     @Test func thePollFillsForegroundTitleAndBusy() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

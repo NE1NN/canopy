@@ -16,9 +16,9 @@ final class BoxTestHome: Sendable {
     let clone: String
     let paths: BoxPaths
 
-    init(pauses: [String: Double] = [:]) async throws {
+    init(pauses: [String: Double] = [:], logsCalls: Bool = false) async throws {
         dir = try TempDir(in: "/tmp")
-        server = try TmuxServer(pauses: pauses)
+        server = try TmuxServer(pauses: pauses, logsCalls: logsCalls)
         clone = try await GitFixture.repo(in: dir, origin: true)
         paths = BoxPaths(root: dir.path, homeID: Self.homeID)
     }
