@@ -32,7 +32,8 @@ No other place since PR 48 swaps a host path for a stand-in.
   A tmux server canopy-box starts, as for a phone's task that is the first pane since the host booted, runs in its unit; without this an update's restart, or a crash, would end every session and agent in it.
 - [x] e2e on the fake host: a pane opened on the upgraded host starts in its row's folder there and canopy-box takes it, and a session started outside every row with `CANOPY_ROW_PATH` set is taken, shows on the Mac, and closes from there.
   The first step fails on `main`.
-- [x] The hosts e2e names what holds the port when its local listener cannot bind, for a flake seen once in this work and not reproduced in two more runs.
+- [x] A hosts e2e flake, seen twice in this work: the step holding a port on this Mac checked its listener by binding the port, and that probe could take the port from under the listener's own bind.
+  The listener now writes a file once it listens, and the step waits for that.
 
 ## Decisions to review
 
