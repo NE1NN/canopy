@@ -498,6 +498,8 @@ if ((with_box)); then
         (exec /usr/bin/python3 -I "$PWD/scripts/fake-aws.py" --port-file "$work/aws.port" --lifetime 600 \
             </dev/null >/dev/null 2>&1) &
         aws_pid=$!
+        # Stopped with kill later, which bash would otherwise report.
+        disown
         wait_for 10 test -s "$work/aws.port" || fail "the fake instance metadata service did not start"
         on_host "echo '127.0.0.1 $(cat "$work/aws.port")' > ~/.canopy/${server#canopy-}/box/imds"
         printf 'AKIAFAKEWAKEKEY\nwake-secret-e2e\n' | "$cli" host wake-key "$alias" >/dev/null || fail "host wake-key failed"
