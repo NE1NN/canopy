@@ -341,7 +341,7 @@ disown
 taken() { ! /usr/bin/python3 -c "$binds" "$1"; }
 # A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load, for the listener and for
 # each check alike, so this waits well past that.
-wait_for 120 taken "$held" || fail "the local listener did not take port $held ($(kill -0 "$listener" 2>/dev/null && echo running || echo exited): $(cat "$work/listener.err"))"
+wait_for 120 taken "$held" || fail "the local listener did not take port $held ($(kill -0 "$listener" 2>/dev/null && echo running || echo exited): $(cat "$work/listener.err")). Held by: $(lsof -nP -iTCP:"$held" -sTCP:LISTEN 2>&1). Ports: $(ports_json)"
 serve "$held" 127.0.0.1
 wait_for 60 forwarded "$held" || fail "port $held on the host was not forwarded: $(ports_json)"
 held_mac=$(mac_port "$held")
@@ -453,6 +453,32 @@ if ((with_box)); then
     in_pane hook-box "$(hook_report 'Over to you?')"
     succeeded hook-box
     wait_for 20 eval '[[ "$(agent_state)" == waiting ]]' || fail "the box's agent is $(agent_state), not waiting"
+
+    step "a pane opened on the upgraded host starts in its row's folder there, and canopy-box has it from the first"
+    box_state() { on_host "cat ~/.canopy/${server#canopy-}/box/state.json"; }
+    box_has() { # pane, row path
+        box_state | json 'any(p["id"] == "'"$1"'" and p["rowPath"] == "'"$2"'" for p in d["panes"])' | grep -qx True
+    }
+    start_of() { on_host "tmux -u -L $server display-message -p -t '=$1:' '#{session_path}'"; }
+    opened=$("$cli" term new --repo demo --row e2e/remote --json | json 'd["pane"]')
+    wait_for 30 on_host "tmux -u -L $server has-session -t =$opened" || fail "no session for $opened on the host"
+    [[ "$(start_of "$opened")" == "$remote" ]] || fail "$opened started in $(start_of "$opened"), not $remote"
+    wait_for 10 box_has "$opened" "$remote" || fail "canopy-box does not have $opened: $(box_state)"
+    "$cli" term close "$opened" --force >/dev/null
+
+    step "a session started outside every row, as older builds started them, is taken by the row it names"
+    # Shown here in a pane of its own, whose ID is this Mac's next, not the session's name.
+    shown_before=$("$cli" term list --all --json | json '" ".join(t["pane"] for t in d)')
+    on_host "tmux -u -L $server new-session -d -s p900 -c / -e 'CANOPY_ROW_PATH=$remote' 'exec sleep 600'"
+    wait_for 20 box_has p900 "$remote" || fail "canopy-box did not take the session outside every row: $(box_state)"
+    stray_pane() {
+        "$cli" term list --all --json | json 'next((t["pane"] for t in d if t["row"] == "e2e/remote"
+            and t["pane"] not in "'"$shown_before"'".split()), "")'
+    }
+    wait_for 20 eval '[[ -n "$(stray_pane)" ]]' || fail "the session canopy-box took does not show here"
+    "$cli" term close "$(stray_pane)" --force >/dev/null
+    stray_gone() { ! on_host "tmux -u -L $server has-session -t =p900" 2>/dev/null; }
+    wait_for 20 stray_gone || fail "closing the taken session here did not end it on the host"
 
     if [[ "$alias" == fake-box ]]; then
         step "a phone pairs with canopy-box through the Mac, and reads and answers the box's agent"
