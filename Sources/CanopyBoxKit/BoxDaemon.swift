@@ -25,6 +25,12 @@ public actor BoxDaemon {
     var lastFetch: [String: (finishedAt: ContinuousClock.Instant, failure: String?)] = [:]
     /// Panes and rows being made, which a listing taken meanwhile neither takes in nor drops.
     var makingPanes: Set<String> = []
+    /// When each pane was closed, so a tmux listing taken before then, which still has its session, does not bring it
+    /// back.
+    var closedPanes: [String: ContinuousClock.Instant] = [:]
+    /// Sessions no row holds, with the folder and rows they were checked against, so they are not asked about again
+    /// on every poll until either changes.
+    var unplaced: [String: String] = [:]
     var phonesConnected = false
     var makingRows: Set<String> = []
     /// What `wait` calls are waiting on, woken on each agent change or pane end.

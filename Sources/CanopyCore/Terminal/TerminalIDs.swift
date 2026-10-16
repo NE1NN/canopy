@@ -80,4 +80,11 @@ public struct PaneRemote: Sendable, Equatable {
         self.host = host
         self.path = path
     }
+
+    /// Where the pane's session starts on the host: the first of `candidates` inside the row there, or else the row's
+    /// folder. Any other folder may not exist there, and a session canopy-box finds outside every row is not one of
+    /// its panes.
+    public func startFolder(_ candidates: String?...) -> String {
+        candidates.lazy.compactMap { $0 }.first { Paths.isInside($0, path) } ?? path
+    }
 }

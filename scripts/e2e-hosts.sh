@@ -335,13 +335,14 @@ held=$((base + 2))
 s = socket.socket(socket.AF_INET6)
 s.bind(("::1", int(sys.argv[1])))
 s.listen()
-time.sleep(600)' "$held" "canopy-e2e-listener-$id" </dev/null >/dev/null 2>"$work/listener.err") &
+open(sys.argv[2], "w").close()
+time.sleep(600)' "$held" "$work/listener.ready" "canopy-e2e-listener-$id" </dev/null >/dev/null 2>"$work/listener.err") &
 listener=$!
 disown
-taken() { ! /usr/bin/python3 -c "$binds" "$1"; }
-# A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load, for the listener and for
-# each check alike, so this waits well past that.
-wait_for 120 taken "$held" || fail "the local listener did not take port $held ($(kill -0 "$listener" 2>/dev/null && echo running || echo exited): $(cat "$work/listener.err"))"
+# The listener says when it listens, as probing the port by binding it could take the port from under its own bind.
+# A fresh python3 can wait 20 s or more for this Mac's endpoint security scanner under load, so this waits well past
+# that.
+wait_for 120 test -e "$work/listener.ready" || fail "the local listener did not take port $held ($(kill -0 "$listener" 2>/dev/null && echo running || echo exited): $(cat "$work/listener.err")). Held by: $(lsof -nP -iTCP:"$held" -sTCP:LISTEN 2>&1). Ports: $(ports_json)"
 serve "$held" 127.0.0.1
 wait_for 60 forwarded "$held" || fail "port $held on the host was not forwarded: $(ports_json)"
 held_mac=$(mac_port "$held")
@@ -454,6 +455,32 @@ if ((with_box)); then
     succeeded hook-box
     wait_for 20 eval '[[ "$(agent_state)" == waiting ]]' || fail "the box's agent is $(agent_state), not waiting"
 
+    step "a pane opened on the upgraded host starts in its row's folder there, and canopy-box takes it"
+    box_state() { on_host "cat ~/.canopy/${server#canopy-}/box/state.json"; }
+    box_has() { # pane, row path
+        box_state | json 'any(p["id"] == "'"$1"'" and p["rowPath"] == "'"$2"'" for p in d["panes"])' | grep -qx True
+    }
+    start_of() { on_host "tmux -u -L $server display-message -p -t '=$1:' '#{session_path}'"; }
+    opened=$("$cli" term new --repo demo --row e2e/remote --json | json 'd["pane"]')
+    wait_for 30 on_host "tmux -u -L $server has-session -t =$opened" || fail "no session for $opened on the host"
+    [[ "$(start_of "$opened")" == "$remote" ]] || fail "$opened started in $(start_of "$opened"), not $remote"
+    wait_for 10 box_has "$opened" "$remote" || fail "canopy-box does not have $opened: $(box_state)"
+    "$cli" term close "$opened" --force >/dev/null
+
+    step "a session started outside every row, as older builds started them, is taken by the row it names"
+    # Shown here in a pane of its own, whose ID is this Mac's next, not the session's name.
+    shown_before=$("$cli" term list --all --json | json '" ".join(t["pane"] for t in d)')
+    on_host "tmux -u -L $server new-session -d -s p900 -c / -e 'CANOPY_ROW_PATH=$remote' 'exec sleep 600'"
+    wait_for 20 box_has p900 "$remote" || fail "canopy-box did not take the session outside every row: $(box_state)"
+    stray_pane() {
+        "$cli" term list --all --json | json 'next((t["pane"] for t in d if t["row"] == "e2e/remote"
+            and t["pane"] not in "'"$shown_before"'".split()), "")'
+    }
+    wait_for 20 eval '[[ -n "$(stray_pane)" ]]' || fail "the session canopy-box took does not show here"
+    "$cli" term close "$(stray_pane)" --force >/dev/null
+    stray_gone() { ! on_host "tmux -u -L $server has-session -t =p900" 2>/dev/null; }
+    wait_for 20 stray_gone || fail "closing the taken session here did not end it on the host"
+
     if [[ "$alias" == fake-box ]]; then
         step "a phone pairs with canopy-box through the Mac, and reads and answers the box's agent"
         phone="/usr/bin/python3 -I $PWD/scripts/phone-client.py"
@@ -472,6 +499,8 @@ if ((with_box)); then
         (exec /usr/bin/python3 -I "$PWD/scripts/fake-aws.py" --port-file "$work/aws.port" --lifetime 600 \
             </dev/null >/dev/null 2>&1) &
         aws_pid=$!
+        # Stopped with kill later, which bash would otherwise report.
+        disown
         wait_for 10 test -s "$work/aws.port" || fail "the fake instance metadata service did not start"
         on_host "echo '127.0.0.1 $(cat "$work/aws.port")' > ~/.canopy/${server#canopy-}/box/imds"
         printf 'AKIAFAKEWAKEKEY\nwake-secret-e2e\n' | "$cli" host wake-key "$alias" >/dev/null || fail "host wake-key failed"

@@ -62,18 +62,12 @@ extension BoxDaemon {
     private func reconcilePanes() async {
         // Panes made while tmux lists are not in its listing, so only panes from before it can be gone.
         let known = Set(state.panes.map(\.id))
+        let listedAt = ContinuousClock.now
         // A server that cannot be asked says nothing about which sessions run, so the saved panes stay.
         guard let sessions = try? await tmux.panes() else { return }
         let names = Set(sessions.map(\.session))
         state.panes.removeAll { known.contains($0.id) && !names.contains($0.id) && !makingPanes.contains($0.id) }
-        for session in sessions
-        where !state.released && !state.panes.contains(where: { $0.id == session.session })
-            && !makingPanes.contains(session.session)
-        {
-            let folder = Paths.canonical(session.start)
-            guard let row = row(holding: folder) else { continue }
-            state.panes.append(StoredPane(id: session.session, rowPath: row.path, folder: folder, agent: PaneAgent()))
-        }
+        for session in sessions { _ = await take(session, listedAt: listedAt) }
         bumpNextPane()
     }
 

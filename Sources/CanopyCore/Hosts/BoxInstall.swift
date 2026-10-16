@@ -83,7 +83,9 @@ public enum BoxInstall {
         _ = try await run(stopCommand(homeID: homeID), on: connection)
     }
 
-    /// The systemd unit: restarted always, two seconds after it stops, and started with the user's manager.
+    /// The systemd unit: restarted always, two seconds after it stops, and started with the user's manager. Stopping it
+    /// stops canopy-box alone: a tmux server it started, as when a pane it opens is the first since the host booted,
+    /// runs in its unit, and every session and agent would go with it.
     static func unit(homeID: String) -> String {
         """
         # Written by Canopy. Changes here are replaced when Canopy updates it.
@@ -94,6 +96,7 @@ public enum BoxInstall {
         ExecStart=%h/.canopy/\(homeID)/bin/canopy-box serve --home-id \(homeID)
         Restart=always
         RestartSec=2
+        KillMode=process
 
         [Install]
         WantedBy=default.target

@@ -64,6 +64,15 @@ public struct Tmux: Sendable {
             path: variables["PATH"])
     }
 
+    /// A variable of the session's own environment, as `-e` gave it when the session started. Nil when it has none,
+    /// or there is no such session.
+    public func variable(_ variable: String, of session: String) async -> String? {
+        guard let line = try? await run(["show-environment", "-t", "=\(session)", variable]) else { return nil }
+        let prefix = variable + "="
+        let value = line.trimmingCharacters(in: .newlines)
+        return value.hasPrefix(prefix) ? String(value.dropFirst(prefix.count)) : nil
+    }
+
     public func hasSession(_ name: String) async -> Bool {
         (try? await run(["has-session", "-t", "=\(name)"])) != nil
     }

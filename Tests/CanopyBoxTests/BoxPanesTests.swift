@@ -106,6 +106,98 @@ struct BoxPanesTests {
         #expect(await daemon.snapshot().panes.isEmpty)
     }
 
+    /// A session started outside every row is the pane of the row its CANOPY_ROW_PATH names, or else of the row it
+    /// is in now, on the next poll and when the box starts again.
+    @Test func sessionsStartedOutsideEveryRowAreTakenByTheirRowVariableOrTheirFolder() async throws {
+        let home = try await BoxTestHome()
+        let daemon = try await home.daemon()
+        let made = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/placed"))
+        let sub = made.row.path + "/sub"
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+        let tmux = home.server.tmux
+        try await tmux.newSession(
+            "p1", folder: home.dir.path, environment: ["CANOPY_ROW_PATH": made.row.path],
+            command: "cd '\(sub)' && exec sleep 60")
+        try await tmux.newSession(
+            "p2", folder: home.dir.path, environment: [:], command: "cd '\(sub)' && exec sleep 60")
+        try await tmux.newSession("p3", folder: home.dir.path, environment: [:], command: "exec sleep 60")
+        let placed = ["p1 \(made.row.path) \(sub)", "p2 \(made.row.path) \(sub)"]
+        func panes(_ daemon: BoxDaemon) async -> [String] {
+            await daemon.snapshot().panes.map { "\($0.id) \($0.rowPath) \($0.folder)" }.sorted()
+        }
+
+        #expect(
+            await eventually {
+                await daemon.pollPanes()
+                return await panes(daemon) == placed
+            })
+        try FileManager.default.removeItem(atPath: home.paths.stateFile)
+        #expect(await panes(try await home.daemon()) == placed)
+    }
+
+    @Test func aSessionNoRowHoldsIsAskedAboutAgainOnlyOnceItsFolderOrTheRowsChange() async throws {
+        let home = try await BoxTestHome(logsCalls: true)
+        let daemon = try await home.daemon()
+        let outside = home.dir.sub("outside")
+        try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: true)
+        let elsewhere = home.dir.sub("elsewhere")
+        try FileManager.default.createDirectory(atPath: elsewhere, withIntermediateDirectories: true)
+        try await home.server.tmux.newSession("p1", folder: outside, environment: [:])
+        func asked() -> Int { home.server.calls.filter { $0.contains("show-environment") }.count }
+
+        await daemon.pollPanes()
+        await daemon.pollPanes()
+        #expect(asked() == 1)
+        _ = try await daemon.rowNew(BoxRowNewParams(repo: "demo", branch: "feat/more"))
+        await daemon.pollPanes()
+        #expect(asked() == 2)
+        try await home.server.tmux.sendText("cd '\(elsewhere)'", to: "p1")
+        try await home.server.tmux.sendBytes(Data([0x0D]), to: "p1")
+        #expect(
+            await eventually {
+                await daemon.pollPanes()
+                return asked() == 3
+            })
+        await daemon.pollPanes()
+        #expect(asked() == 3)
+        #expect(await daemon.snapshot().panes.isEmpty)
+        // A hook looks again, as the session's row may have been set since.
+        try await home.server.tmux.run(["set-environment", "-t", "=p1", "CANOPY_ROW_PATH", home.clone])
+        #expect(
+            await daemon.hook(pane: "p1", input: BoxAgentsTests.hookInput("UserPromptSubmit"), startedAt: Date())
+                == .working)
+        #expect(await daemon.snapshot().panes.map(\.rowPath) == [home.clone])
+    }
+
+    /// A poll that listed tmux's sessions just before a pane closed still has the pane's session in its listing.
+    @Test func aPaneClosedWhileThePollListsStaysClosed() async throws {
+        let home = try await BoxTestHome(pauses: ["list-panes": 1])
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let poll = Task { await daemon.pollPanes() }
+        try await Task.sleep(for: .milliseconds(300))
+
+        try await daemon.paneClose(pane)
+        await poll.value
+
+        #expect(await daemon.snapshot().panes.isEmpty)
+        await daemon.pollPanes()
+        #expect(await daemon.closedPanes.isEmpty)
+    }
+
+    @Test func aPaneWhoseSessionTheTmuxListingCaughtDuringItsCloseStaysClosed() async throws {
+        let home = try await BoxTestHome(pauses: ["list-panes": 2], delays: ["kill-session": 1])
+        let daemon = try await home.daemon()
+        let pane = try await daemon.paneNew(BoxPaneNewParams(rowPath: home.clone))
+        let closing = Task { try await daemon.paneClose(pane) }
+        try await Task.sleep(for: .milliseconds(300))
+
+        await daemon.pollPanes()
+        try await closing.value
+
+        #expect(await daemon.snapshot().panes.isEmpty)
+    }
+
     @Test func thePollFillsForegroundTitleAndBusy() async throws {
         let home = try await BoxTestHome()
         let daemon = try await home.daemon()

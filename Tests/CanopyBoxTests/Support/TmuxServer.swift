@@ -11,25 +11,35 @@ final class TmuxServer: Sendable {
     let tmux: Tmux
 
     /// `pauses` holds tmux back after a command of that name has run, by seconds, through a stand-in `tmux` first on
-    /// PATH, so a test can land work in the gap.
-    init(config: String? = nil, pauses: [String: Double] = [:]) throws {
+    /// PATH, so a test can land work in the gap. `delays` holds a command back before it runs. With `logsCalls`, the
+    /// stand-in writes each call's words to `calls`.
+    init(
+        config: String? = nil, pauses: [String: Double] = [:], delays: [String: Double] = [:], logsCalls: Bool = false
+    ) throws {
         folder = "/tmp/cbx-\(getuid())-\(UUID().uuidString.prefix(8))"
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         var environment = GitFixture.environment
         environment["TMUX_TMPDIR"] = folder
         environment["TMUX"] = nil
         environment["SHELL"] = "/bin/sh"
-        if !pauses.isEmpty {
+        if !pauses.isEmpty || !delays.isEmpty || logsCalls {
             let real = Tmux.find("tmux", path: environment["PATH"]) ?? "/usr/bin/tmux"
             let cases = pauses.map { "        \($0.key)) pause=\($0.value) ;;" }.joined(separator: "\n")
+            let delayCases = delays.map { "        \($0.key)) delay=\($0.value) ;;" }.joined(separator: "\n")
             let script = """
                 #!/bin/sh
+                \(logsCalls ? "echo \"$*\" >> '\(folder)/calls'" : "")
                 pause=0
+                delay=0
                 for word in "$@"; do
                     case "$word" in
                 \(cases)
                     esac
+                    case "$word" in
+                \(delayCases)
+                    esac
                 done
+                sleep "$delay"
                 '\(real)' "$@"
                 status=$?
                 sleep "$pause"
@@ -42,6 +52,12 @@ final class TmuxServer: Sendable {
             environment["PATH"] = folder + "/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
         }
         tmux = Tmux(server: "t\(UUID().uuidString.prefix(6))", config: config, environment: environment)
+    }
+
+    /// Each call's words, with `logsCalls`.
+    var calls: [String] {
+        let logged = FileManager.default.contents(atPath: folder + "/calls") ?? Data()
+        return String(decoding: logged, as: UTF8.self).split(separator: "\n").map(String.init)
     }
 
     deinit {
