@@ -174,17 +174,20 @@ extension BoxDaemon {
         else { return false }
         // Another call may have taken it while tmux listed.
         if pane(id) != nil { return true }
-        guard await take(session, listedAt: listedAt) else { return pane(id) != nil }
+        // A hook says an agent runs there, so the session is looked at afresh, as its variables may have changed.
+        guard await take(session, listedAt: listedAt, afresh: true) else { return pane(id) != nil }
         bumpNextPane()
         changed()
         return true
     }
 
     /// Makes a session a pane of the row it belongs in, unless it is one already, is being made or was closed since
-    /// tmux listed it at `listedAt`, or no row holds it. Returns whether it did.
-    func take(_ session: TmuxPane, listedAt: ContinuousClock.Instant) async -> Bool {
+    /// tmux listed it at `listedAt`, or no row holds it. Returns whether it did. `afresh` asks tmux about a session
+    /// even when it was found in no row before.
+    func take(_ session: TmuxPane, listedAt: ContinuousClock.Instant, afresh: Bool = false) async -> Bool {
         let id = session.session
         guard mayTake(id, listedAt: listedAt) else { return false }
+        if afresh { unplaced[id] = nil }
         let placed = await placement(of: session)
         // Asking tmux lets other calls run: one may have taken, made, or closed it, or released the box.
         guard let placed, mayTake(id, listedAt: listedAt) else { return false }

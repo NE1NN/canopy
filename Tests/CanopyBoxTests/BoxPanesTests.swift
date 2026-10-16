@@ -161,6 +161,12 @@ struct BoxPanesTests {
         await daemon.pollPanes()
         #expect(asked() == 3)
         #expect(await daemon.snapshot().panes.isEmpty)
+        // A hook looks again, as the session's row may have been set since.
+        try await home.server.tmux.run(["set-environment", "-t", "=p1", "CANOPY_ROW_PATH", home.clone])
+        #expect(
+            await daemon.hook(pane: "p1", input: BoxAgentsTests.hookInput("UserPromptSubmit"), startedAt: Date())
+                == .working)
+        #expect(await daemon.snapshot().panes.map(\.rowPath) == [home.clone])
     }
 
     /// A poll that listed tmux's sessions just before a pane closed still has the pane's session in its listing.

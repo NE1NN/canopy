@@ -62,5 +62,7 @@ An opus review found three major issues and four minor ones, then rechecked the 
 - Minor, fixed: a session no row holds cost a `tmux show-environment` call on every poll.
   canopy-box remembers it until its folder or the rows change (`unplaced`).
 - Minor, gone with `box.paneOpen`: a pane open could report success for a session that had just ended, and the box path threw where the old one coped without a row.
+- CodeRabbit, minor, fixed: a session whose `CANOPY_ROW_PATH` was set after it started stayed unplaced while its folder and the rows stayed the same.
+  A hook from it looks at the session afresh, since a hook says an agent runs there.
 - Not changed: a tmux server canopy-box starts for a phone's task still dies with the user's manager when lingering is off, as before this branch.
   Lingering is the author's step on each host, and `host upgrade` already warns when it is off; it is on for hindie-box.
