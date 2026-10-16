@@ -454,7 +454,7 @@ if ((with_box)); then
     succeeded hook-box
     wait_for 20 eval '[[ "$(agent_state)" == waiting ]]' || fail "the box's agent is $(agent_state), not waiting"
 
-    step "a pane opened on the upgraded host starts in its row's folder there, and canopy-box has it from the first"
+    step "a pane opened on the upgraded host starts in its row's folder there, and canopy-box takes it"
     box_state() { on_host "cat ~/.canopy/${server#canopy-}/box/state.json"; }
     box_has() { # pane, row path
         box_state | json 'any(p["id"] == "'"$1"'" and p["rowPath"] == "'"$2"'" for p in d["panes"])' | grep -qx True
